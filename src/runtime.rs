@@ -226,6 +226,20 @@ pub fn wait_ready(
     }
 }
 
+/// 无重定向的 HTTP agent：整体超时参数化，内置 `.redirects(0)`。
+///
+/// 安全纪律（与 dispatch.rs 请求账本注释一致）：请求经 3xx 重定向后失败，
+/// 无法证明服务端「未提交」——可能已产生费用/副作用，因此凡走账本的调用
+/// 必须禁止跟随重定向。这里在构造处统一内置，不靠每个调用点自觉。
+/// 需要 connect/read 细分超时的场景（fetch.rs 元数据、models.rs 大文件下载）
+/// 形态不合，保留各自 AgentBuilder，不套用本 helper。
+pub fn http_agent(timeout: Duration) -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .redirects(0)
+        .build()
+}
+
 /// 在 PATH 上查找可执行文件（Windows 自动尝试 .exe 后缀）。
 pub fn which(cmd: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;

@@ -25,10 +25,7 @@ fn host() -> String {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(10))
-        .redirects(0)
-        .build()
+    crate::runtime::http_agent(std::time::Duration::from_secs(10))
 }
 
 /// 已下载的模型名列表（GET {host}/api/tags）。

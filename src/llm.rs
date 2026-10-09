@@ -128,10 +128,7 @@ const MAX_ATTEMPTS: usize = 3;
 /// 不再每请求新建（对照 asr.rs 的共享 client 模式）。
 /// Agent clone 共享底层连接池，可安全传入 spawn_blocking 任务。
 pub(crate) fn chat_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(300))
-        .redirects(0)
-        .build()
+    crate::runtime::http_agent(Duration::from_secs(300))
 }
 
 /// chat/completions 公共参数：温度固定 0（校对/总结都要求确定性输出）。
@@ -932,10 +929,7 @@ pub fn test_connection(s: &LlmSettings) -> Result<()> {
         "连接失败。请检查服务地址、密钥和模型。 / Connection failed. Check the URL, API key, and model."
     };
     // 与生产路径同一纪律：禁止跟随重定向；空密钥不发送 Bearer 头（本地无鉴权服务）
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(60))
-        .redirects(0)
-        .build();
+    let agent = crate::runtime::http_agent(Duration::from_secs(60));
     let mut request = agent.post(&crate::provider::endpoint(s));
     for (name, value) in crate::provider::auth_headers(s)? {
         request = request.set(&name, &value);

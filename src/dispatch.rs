@@ -746,10 +746,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ledger = Ledger::new(dir.path(), None, &Default::default()).unwrap();
         let payload = serde_json::json!({"text":"lesson"});
-        let client = ureq::AgentBuilder::new()
-            .redirects(0)
-            .timeout(std::time::Duration::from_secs(2))
-            .build();
+        let client = crate::runtime::http_agent(std::time::Duration::from_secs(2));
         let failure = ledger
             .send(
                 "llm",

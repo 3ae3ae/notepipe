@@ -33,10 +33,7 @@ const CLIENT_VERSION: &str = "1.0.0";
 
 /// 拉取该账号可用的模型目录（slug + 展示名）；失败由调用方回落默认模型。
 fn fetch_models(tokens: &CodexTokens) -> Result<Vec<(String, String)>> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(15))
-        .redirects(0)
-        .build();
+    let agent = crate::runtime::http_agent(Duration::from_secs(15));
     let mut request = agent
         .get(&format!(
             "{}/models?client_version={CLIENT_VERSION}",
@@ -189,10 +186,7 @@ fn needs_refresh(tokens: &CodexTokens) -> bool {
 
 /// 刷新（refresh token 单次使用且会轮换：成功必须写回；4xx = 登录已失效）。
 fn refresh(tokens: &CodexTokens) -> Result<CodexTokens> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(30))
-        .redirects(0)
-        .build();
+    let agent = crate::runtime::http_agent(Duration::from_secs(30));
     let response = agent
         .post(TOKEN_URL)
         .set("Content-Type", "application/json")
@@ -378,10 +372,7 @@ fn open_browser(url: &str) {
 
 /// 授权码换取令牌（form 编码；对照 login/src/oauth/client.rs TokenEncoding::Form）。
 fn exchange_code(code: &str, verifier: &str, port: u16) -> Result<CodexTokens> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(30))
-        .redirects(0)
-        .build();
+    let agent = crate::runtime::http_agent(Duration::from_secs(30));
     let response = agent
         .post(TOKEN_URL)
         .send_form(&[

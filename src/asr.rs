@@ -459,10 +459,7 @@ fn run_api(
         "{spinner:.green} asr {pos}/{len} [{bar:32.cyan/blue}] {elapsed} {eta} {msg}",
     );
 
-    let client = ureq::AgentBuilder::new()
-        .timeout(API_HTTP_TIMEOUT)
-        .redirects(0)
-        .build();
+    let client = crate::runtime::http_agent(API_HTTP_TIMEOUT);
     // 断点续跑：预先过滤出未完成的 chunk（worker 只拿真正需要执行的任务）
     let pending: Vec<usize> = (0..segs.len())
         .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))

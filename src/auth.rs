@@ -176,6 +176,7 @@ fn request(agent: &ureq::Agent, url: &str, cookies: &Cookies) -> Result<ureq::Re
     // Transport errors may contain the URL, including a one-use QR ticket.
     agent
         .get(url)
+        .set("User-Agent", USER_AGENT)
         .set("Referer", "https://passport.bilibili.com/")
         .set("Cookie", &cookie_header(cookies))
         .call()
@@ -301,11 +302,7 @@ pub enum AccountStatus {
 }
 
 fn login_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(12))
-        .redirects(0)
-        .user_agent(USER_AGENT)
-        .build()
+    crate::runtime::http_agent(Duration::from_secs(12))
 }
 
 /// Check saved credentials against Bilibili. A network failure is an error, not logout.
