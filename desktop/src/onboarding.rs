@@ -1367,6 +1367,16 @@ impl Desktop {
         self.ensure_model_diagnostic(request.provider, Some(&request.model), &request.root, cx);
         let snapshot =
             self.setup_model_snapshot(request.provider, Some(&request.model), &request.root);
+        let model_ready = !snapshot.checking
+            && snapshot.device_issue.is_none()
+            && matches!(
+                snapshot
+                    .result
+                    .as_ref()
+                    .and_then(|result| result.as_ref().ok())
+                    .map(|status| &status.state),
+                Some(CacheState::Loaded | CacheState::Cached)
+            );
         let model_status = if snapshot.checking {
             "正在检查模型".to_owned()
         } else if snapshot.device_issue.is_some() {
@@ -1430,10 +1440,17 @@ impl Desktop {
                             "识别模型",
                             icons::microphone(),
                         ))
+                        .child(settings_value("setup-current-model", current_model))
+                        // Readiness reads as the model's status, next to its name.
                         .child(
-                            settings_value("setup-current-model", current_model)
-                                .flex_1()
-                                .min_w_0(),
+                            h_flex().flex_1().min_w_0().child(
+                                badge(if model_ready {
+                                    BadgeKind::Success
+                                } else {
+                                    BadgeKind::Neutral
+                                })
+                                .child(model_status),
+                            ),
                         )
                         .child(
                             quiet("setup-change-model")
@@ -1454,7 +1471,6 @@ impl Desktop {
                                 })),
                         ),
                 )
-                .child(help("setup-current-model-readiness", model_status).text_size(TEXT_AUX))
                 .child(motion::disclosure(
                     "setup-model-choices",
                     self.onboarding.model_choices_open,
