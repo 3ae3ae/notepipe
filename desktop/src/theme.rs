@@ -107,7 +107,9 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
         DANGER_BG => tint(p.danger, 0.12),
         BADGE_PROGRESS => rgb(p.accent),
         BADGE_PROGRESS_BG => tint(p.accent, 0.10),
-        PROGRESS_TRACK | SEGMENT_TRACK | SWITCH_TRACK_OFF => rgb(p.border),
+        // M3 linear progress: the track is the indicator's tonal container.
+        PROGRESS_TRACK => tint(p.accent, if id.is_dark() { 0.26 } else { 0.24 }),
+        SEGMENT_TRACK | SWITCH_TRACK_OFF => rgb(p.border),
         HOVER_WARM => tint(p.text, 0.05),
         SELECTION => rgb(p.selection),
         FIND_HIGHLIGHT => tint(p.warning, 0.16),
@@ -499,6 +501,52 @@ pub fn text_input(
 }
 
 /* ---------- 共享控件 ---------- */
+
+/// M3 search bar: a filled, borderless pill with a leading search icon. The
+/// field's own frame is off, so the bar draws the focus outline itself.
+pub fn search_field(
+    state: &gpui::Entity<gpui_component::input::InputState>,
+    label: impl Into<gpui::SharedString>,
+    height: Rems,
+    window: &Window,
+    cx: &App,
+) -> gpui::Div {
+    use gpui::{Focusable, prelude::*};
+    let focused = state.read(cx).focus_handle(cx).is_focused(window);
+    gpui::div()
+        .flex()
+        .items_center()
+        .w_full()
+        .min_w_0()
+        .h(height)
+        .px(rems(16. / 14.))
+        .gap(rems(10. / 14.))
+        .rounded(RADIUS_PILL)
+        .bg(color(SURFACE_HIGH))
+        .border_2()
+        .border_color(if focused {
+            color(ACCENT)
+        } else {
+            gpui::Rgba { a: 0., ..color(SURFACE_HIGH) }
+        })
+        .child(
+            crate::icons::search()
+                .size(rems(18. / 14.))
+                .flex_shrink_0()
+                .text_color(color(GRAY)),
+        )
+        .child(
+            gpui::div().flex_1().min_w_0().child(
+                gpui_component::input::Input::new(state)
+                    .appearance(false)
+                    .aria_label(label.into())
+                    .w_full()
+                    .px_0()
+                    .text_size(TEXT_BODY)
+                    .cleanable(true),
+            ),
+        )
+}
 
 /// Standard card container: surface fill, card border and corner radius.
 /// Callers chain their own gap and contents on top of the shared frame.

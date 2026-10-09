@@ -2617,6 +2617,7 @@ impl Desktop {
             compact,
             short_reader,
             toc_fits_beside,
+            window,
             cx,
         );
 
@@ -3139,6 +3140,7 @@ impl Desktop {
         compact: bool,
         short_reader: bool,
         toc_fits_beside: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> ReaderToolbarParts {
         let note_query = self.reader_ui.find.read(cx).value().to_string();
@@ -3161,23 +3163,17 @@ impl Desktop {
             .when(!short_reader, |row| row.flex_basis(rems(18.)))
             .gap_1()
             .items_center()
-            .child(
-                div().flex_1().min_w_0().child(
-                    text_input(&input)
-                        .w_full()
-                        .aria_label(if reading_note {
-                            "查找笔记内容"
-                        } else {
-                            "搜索截图对应文字"
-                        })
-                        .prefix(
-                            icons::search()
-                                .size(rems(18. / 14.))
-                                .text_color(color(GRAY)),
-                        )
-                        .cleanable(true),
-                ),
-            );
+            .child(theme::search_field(
+                &input,
+                if reading_note {
+                    "查找笔记内容"
+                } else {
+                    "搜索截图对应文字"
+                },
+                CONTROL_HEIGHT,
+                window,
+                cx,
+            ));
         let mut short_matches = None;
         if !active_query.trim().is_empty() {
             let count = if reading_note {

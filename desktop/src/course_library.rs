@@ -1355,7 +1355,7 @@ impl Desktop {
     }
 
     /// Library controls share Material action icons and theme-aware state surfaces.
-    pub fn library_toolbar(&self, cx: &mut Context<Self>) -> Div {
+    pub fn library_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         if !self.library_controls_visible(cx) {
             return div();
         }
@@ -1442,30 +1442,13 @@ impl Desktop {
             .min_w_0()
             .gap_4()
             .pb_4()
-            .child(
-                // M3 search bar: a filled, borderless pill.
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .h(rems(52. / 14.))
-                    .px(rems(18. / 14.))
-                    .gap_3()
-                    .items_center()
-                    .rounded(RADIUS_PILL)
-                    .bg(color(SURFACE_HIGH))
-                    .child(icons::search().size(rems(20. / 14.)).text_color(color(GRAY)))
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            text_input(&self.inputs[&Field::Search])
-                                .appearance(false)
-                                .aria_label("搜索笔记标题")
-                                .w_full()
-                                .px_0()
-                                .text_size(TEXT_BODY)
-                                .cleanable(true),
-                        ),
-                    ),
-            )
+            .child(theme::search_field(
+                &self.inputs[&Field::Search],
+                "搜索笔记标题",
+                rems(48. / 14.),
+                window,
+                cx,
+            ))
             .child(filters)
     }
 
