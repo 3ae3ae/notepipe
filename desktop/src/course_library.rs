@@ -2051,17 +2051,7 @@ impl Desktop {
                 );
             } else if !uncertain && !partial_components.is_empty() {
                 let retry_id = id.clone();
-                let label = if partial_components.len() > 1 {
-                    "补全未完成部分"
-                } else {
-                    match partial_components[0].as_str() {
-                        "screenshots" => "补生成截图",
-                        "proofreading" => "重试 AI 校对",
-                        "summary" => "补生成摘要",
-                        "exports" => "仅补导出",
-                        _ => "补全未完成部分",
-                    }
-                };
+                let label = crate::task_ui::retry_components_label(&partial_components);
                 actions = actions.child(
                     quiet(SharedString::from(format!("recent-retry-{id}")))
                         .icon(icons::refresh())

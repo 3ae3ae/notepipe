@@ -419,6 +419,26 @@ pub(crate) fn task_requires_service_repair(task: &TaskRecord) -> bool {
     task_service_repair_reason(task).is_some()
 }
 
+/// 组件 key → 补做按钮文案的唯一来源（任务卡/课程库/阅读页共用，防止多处漂移）。
+pub(crate) fn retry_component_label(component: &str) -> &'static str {
+    match component {
+        "screenshots" => "补生成截图",
+        "proofreading" => "重试 AI 校对",
+        "summary" => "补生成摘要",
+        "exports" => "仅补导出",
+        _ => "补全未完成部分",
+    }
+}
+
+/// 补做按钮文案：单组件按组件命名，多组件统一「补全未完成部分」。
+pub(crate) fn retry_components_label(components: &[String]) -> &'static str {
+    if components.len() == 1 {
+        retry_component_label(&components[0])
+    } else {
+        "补全未完成部分"
+    }
+}
+
 #[derive(IntoElement)]
 struct TaskStages {
     rows: Vec<TaskStage>,

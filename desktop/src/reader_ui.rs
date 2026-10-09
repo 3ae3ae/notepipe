@@ -3779,15 +3779,7 @@ impl Desktop {
                     .collect::<Vec<_>>();
                 if can_retry && !components.is_empty() {
                     let retry = id.clone();
-                    let label = if components.len() > 1 {
-                        "补全未完成部分"
-                    } else {
-                        match components[0].as_str() {
-                            "screenshots" => "补生成截图",
-                            "proofreading" => "重试 AI 校对",
-                            _ => "补生成摘要",
-                        }
-                    };
+                    let label = crate::task_ui::retry_components_label(&components);
                     actions = actions.child(
                         outline_pill("reader-retry-incomplete")
                             .icon(icons::refresh())
