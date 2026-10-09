@@ -1179,16 +1179,16 @@ impl Desktop {
                 setting_surface().gap_3().child(self.account_settings_page(cx)),
             ),
         );
-        // AI 账号：Codex 订阅登录与 Ollama 本地发现的入口与状态（与服务列表平级可见，
-        // 不再只藏在服务编辑器里）。卡片与「来源账号」同一边界处理。
+        // Codex 订阅登录与 Ollama 本地发现：AI 服务的连接入口与状态（与服务列表平级可见）。
+        // Ollama 不是账号，组名按「连接」命名而不是「AI 账号」。
         view = view.child(
-            group("ai-accounts-heading", "AI 账号")
-                .child(setting_surface().gap_3().child(self.codex_account_section(
+            group("ai-accounts-heading", "AI 服务连接")
+                .child(setting_surface().child(self.codex_account_section(
                     crate::codex_ui::CodexSurface::Settings,
                     false,
                     cx,
                 )))
-                .child(setting_surface().gap_3().child(self.ollama_account_section(cx))),
+                .child(setting_surface().child(self.ollama_account_section(cx))),
         );
         let latest = self.preferences.latest_versions();
         for (purpose, heading_id, heading, add_label) in [
@@ -1206,33 +1206,43 @@ impl Desktop {
             ),
         ] {
             let mut section = group(heading_id, heading);
+            let mut empty = true;
             for version in latest.values().filter(|version| {
                 version.config.protocol.purpose() == purpose
                     && !self
                         .preferences
                         .service_retired_in_snapshot(&version.service_id)
             }) {
+                empty = false;
                 section = section.child(self.service_card(version, cx));
             }
-            // The add action is the list's last item; the speech consequence
-            // sits beside it because adding is where the choice is made.
+            // The add action is the list's last item. An empty list says so in
+            // the same row for both kinds; otherwise the speech consequence sits
+            // beside the action because adding is where the choice is made.
+            let lead = if empty {
+                Some(
+                    text(("services-empty", purpose as usize), "尚未添加")
+                        .text_color(color(MUTED))
+                        .into_any_element(),
+                )
+            } else if purpose == ServicePurpose::Speech {
+                Some(
+                    theme::supporting_info("speech-services-purpose", "音频会发送到所选服务")
+                        .into_any_element(),
+                )
+            } else {
+                None
+            };
             section = section.child(
                 setting_surface().child(
                     h_flex()
                         .w_full()
                         .min_w_0()
+                        .min_h(CONTROL_HEIGHT)
                         .gap_4()
                         .items_center()
                         .flex_wrap()
-                        .child(div().flex_1().min_w(rems(12.)).when(
-                            purpose == ServicePurpose::Speech,
-                            |slot| {
-                                slot.child(theme::supporting_info(
-                                    "speech-services-purpose",
-                                    "音频会发送到所选服务",
-                                ))
-                            },
-                        ))
+                        .child(div().flex_1().min_w(rems(12.)).children(lead))
                         .child(
                             outline_pill(("add-service", purpose as usize))
                                 .icon(icons::add())

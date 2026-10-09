@@ -281,7 +281,11 @@ impl Desktop {
                 "configure-service",
                 purpose as usize * 2 + current_task as usize,
             ))
-            .icon(icons::settings())
+            .icon(if editor_version.is_some() {
+                icons::edit()
+            } else {
+                icons::add()
+            })
             .ghost()
             .label(match (purpose, editor_version.is_some()) {
                 (ServicePurpose::Speech, true) => "编辑",
@@ -356,7 +360,7 @@ impl Desktop {
                     "AI 服务"
                 },
                 if purpose == ServicePurpose::Ai {
-                    "校对与摘要会把文字发送到所选服务。"
+                    "校对与摘要会把文字发送到所选服务"
                 } else {
                     ""
                 },
