@@ -952,6 +952,139 @@ impl Desktop {
                 ),
             );
         }
+        view = view.child(self.service_test_section(configuration_saved, window, cx));
+        if let Some(status) = &editor.status
+            && !busy
+        {
+            view = view.child(text("service-editor-status", status.clone()).text_sm());
+        }
+        let actions = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .gap_2()
+            .flex_wrap()
+            .child(
+                quiet("close-service-editor")
+                    .icon(icons::close())
+                    .label(if configuration_saved {
+                        "关闭"
+                    } else {
+                        "取消"
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.close_service_editor(window, cx) && !inline {
+                            window.close_dialog(cx);
+                        }
+                    })),
+            )
+            .child(div().flex_1())
+            .child(
+                outline_pill("run-service-test")
+                    .icon(icons::science())
+                    .label(if busy {
+                        format!("正在测试{test_label}…")
+                    } else {
+                        match editor
+                            .evidence
+                            .as_ref()
+                            .map(|evidence| evidence.outcome.clone())
+                        {
+                            Some(preferences::TestOutcome::Passed) => {
+                                format!("{test_label}通过 · 重测")
+                            }
+                            Some(preferences::TestOutcome::OutcomeUnknown) => {
+                                format!("{test_label}结果未确认 · 重试")
+                            }
+                            Some(
+                                preferences::TestOutcome::AuthenticationRefused
+                                | preferences::TestOutcome::ModelRefused
+                                | preferences::TestOutcome::ContractMismatch
+                                | preferences::TestOutcome::SampleMismatch,
+                            ) => format!("{test_label}未通过 · 重试"),
+                            _ => format!("测试{test_label}"),
+                        }
+                    })
+                    .loading(busy)
+                    .disabled(busy || awaiting_binding)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.start_service_test(window, cx)),
+                    ),
+            )
+            .when(editor.repair_task.is_some(), |row| {
+                row.child(
+                    quiet("save-repair-service-only")
+                        .icon(icons::save())
+                        .label("仅保存")
+                        .disabled(busy || awaiting_binding || editor.saved_configuration.is_some())
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.publish_service_editor(false, window, cx)
+                        })),
+                )
+            })
+            .child(
+                primary_pill("save-service")
+                    .icon(icons::save())
+                    .label(if editor.repair_task.is_some() {
+                        repair_submit_label
+                    } else if awaiting_binding {
+                        "重试保存本次选择"
+                    } else {
+                        "保存"
+                    })
+                    .disabled(editor.repair_task.is_some() && (busy || repair_refusal.is_some()))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.publish_open_service(window, cx)),
+                    ),
+            );
+        let footer = self.service_editor_footer(
+            actions,
+            fixed_test_failure,
+            repair_submit_label,
+            test_outcome_unknown,
+            cx,
+        );
+        v_flex()
+            .w_full()
+            .min_w_0()
+            .min_h_0()
+            .gap_3()
+            .when(inline, |view| view.h_full().flex_1())
+            .when(!inline, |view| {
+                view.max_h(
+                    (window.viewport_size().height
+                        - task_dialog_top(window)
+                        - window.rem_size() * 4.
+                        - px(64.))
+                    .max(px(120.)),
+                )
+            })
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .child(view)
+                    .child(crate::backend::vertical_scrollbar(&editor.scroll)),
+            )
+            .child(footer)
+            .into_any_element()
+    }
+
+    /// Test-kind choice, busy state, result card and expandable details.
+    fn service_test_section(
+        &self,
+        configuration_saved: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let Some(editor) = &self.settings_ui.editor else {
+            return div();
+        };
+        let protocol = editor.draft.protocol;
+        let busy = editor.test_running.is_some();
+        let awaiting_binding = editor.pending_binding.is_some();
         let mut testing = settings_detail_group("service-test-heading", icons::science(), "检查服务")
             .flex_shrink_0()
             .pt_2();
@@ -1115,91 +1248,32 @@ impl Desktop {
                 )),
                 result));
         }
-        view = view.child(testing);
-        if let Some(status) = &editor.status
-            && !busy
-        {
-            view = view.child(text("service-editor-status", status.clone()).text_sm());
-        }
-        let actions = h_flex()
-            .w_full()
-            .flex_shrink_0()
-            .gap_2()
-            .flex_wrap()
-            .child(
-                quiet("close-service-editor")
-                    .icon(icons::close())
-                    .label(if configuration_saved {
-                        "关闭"
-                    } else {
-                        "取消"
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if this.close_service_editor(window, cx) && !inline {
-                            window.close_dialog(cx);
-                        }
-                    })),
-            )
-            .child(div().flex_1())
-            .child(
-                outline_pill("run-service-test")
-                    .icon(icons::science())
-                    .label(if busy {
-                        format!("正在测试{test_label}…")
-                    } else {
-                        match editor
-                            .evidence
-                            .as_ref()
-                            .map(|evidence| evidence.outcome.clone())
-                        {
-                            Some(preferences::TestOutcome::Passed) => {
-                                format!("{test_label}通过 · 重测")
-                            }
-                            Some(preferences::TestOutcome::OutcomeUnknown) => {
-                                format!("{test_label}结果未确认 · 重试")
-                            }
-                            Some(
-                                preferences::TestOutcome::AuthenticationRefused
-                                | preferences::TestOutcome::ModelRefused
-                                | preferences::TestOutcome::ContractMismatch
-                                | preferences::TestOutcome::SampleMismatch,
-                            ) => format!("{test_label}未通过 · 重试"),
-                            _ => format!("测试{test_label}"),
-                        }
-                    })
-                    .loading(busy)
-                    .disabled(busy || awaiting_binding)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.start_service_test(window, cx)),
-                    ),
-            )
-            .when(editor.repair_task.is_some(), |row| {
-                row.child(
-                    quiet("save-repair-service-only")
-                        .icon(icons::save())
-                        .label("仅保存")
-                        .disabled(busy || awaiting_binding || editor.saved_configuration.is_some())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.publish_service_editor(false, window, cx)
-                        })),
+        testing
+    }
+
+
+    /// Failure reason, saved-only hint, billing notice and the action row.
+    fn service_editor_footer(
+        &self,
+        actions: Div,
+        fixed_test_failure: Option<(TestKind, preferences::ServiceTestEvidence)>,
+        repair_submit_label: &'static str,
+        test_outcome_unknown: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let repair_refused = self.repair_service_refusal(cx).is_some();
+        let (configuration_saved, repair_task) = self
+            .settings_ui
+            .editor
+            .as_ref()
+            .map(|editor| {
+                (
+                    editor.saved_configuration.is_some() || editor.pending_binding.is_some(),
+                    editor.repair_task.is_some(),
                 )
             })
-            .child(
-                primary_pill("save-service")
-                    .icon(icons::save())
-                    .label(if editor.repair_task.is_some() {
-                        repair_submit_label
-                    } else if awaiting_binding {
-                        "重试保存本次选择"
-                    } else {
-                        "保存"
-                    })
-                    .disabled(editor.repair_task.is_some() && (busy || repair_refusal.is_some()))
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.publish_open_service(window, cx)),
-                    ),
-            );
-        let footer = v_flex()
+            .unwrap_or((false, false));
+        v_flex()
             .w_full()
             .min_w_0()
             .flex_shrink_0()
@@ -1215,7 +1289,7 @@ impl Desktop {
                             "{}：{}{}",
                             kind.label(),
                             evidence.message,
-                            if repair_refusal.is_some() {
+                            if repair_refused {
                                 "。修改配置或重新测试后再补做。"
                             } else {
                                 ""
@@ -1235,7 +1309,7 @@ impl Desktop {
                     })),
                 )
             })
-            .when(configuration_saved && editor.repair_task.is_some(), |footer| {
+            .when(configuration_saved && repair_task, |footer| {
                 footer.child(
                     text("service-config-saved-only", "服务配置已保存，尚未开始补做。")
                         .text_size(TEXT_AUX)
@@ -1245,11 +1319,11 @@ impl Desktop {
             .child(
                 theme::supporting_info(
                     "service-test-notice",
-                    if test_outcome_unknown && editor.repair_task.is_some() {
+                    if test_outcome_unknown && repair_task {
                         format!("上次测试结果未确认。重试测试会发送新测试请求；点击「{repair_submit_label}」会重新发送失败部分，服务可能计费。")
                     } else if test_outcome_unknown {
                         "上次测试结果未确认。重试会发送新的内置测试内容，服务可能按其规则计费。".to_owned()
-                    } else if editor.repair_task.is_some() {
+                    } else if repair_task {
                         format!("测试使用内置内容；点击「{repair_submit_label}」会重新发送失败部分。服务可能按其规则计费。")
                     } else {
                         service_test::TEST_NOTICE.to_owned()
@@ -1257,35 +1331,10 @@ impl Desktop {
                 )
                 .text_size(TEXT_AUX),
             )
-            .child(actions);
-        v_flex()
-            .w_full()
-            .min_w_0()
-            .min_h_0()
-            .gap_3()
-            .when(inline, |view| view.h_full().flex_1())
-            .when(!inline, |view| {
-                view.max_h(
-                    (window.viewport_size().height
-                        - task_dialog_top(window)
-                        - window.rem_size() * 4.
-                        - px(64.))
-                    .max(px(120.)),
-                )
-            })
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .child(view)
-                    .child(crate::backend::vertical_scrollbar(&editor.scroll)),
-            )
-            .child(footer)
-            .into_any_element()
+            .child(actions)
     }
+
+
     fn live_service_model_draft(&self, cx: &App) -> Option<ServiceDraft> {
         let mut draft = self.settings_ui.editor.as_ref()?.draft.clone();
         draft.address = self.setting_value(EditField::Address, cx);
