@@ -297,9 +297,6 @@ struct Desktop {
     task_status: String,
     task_error: Option<String>,
     progress: BTreeMap<String, activity::Activity>,
-    settings_snapshot: course2md::settings::ConfigFile,
-    settings_deadline: Option<Instant>,
-    settings_status: String,
     desktop_settings: course2md::settings::DesktopSettings,
     last_tick: Instant,
     logs: VecDeque<String>,
@@ -545,14 +542,7 @@ impl Desktop {
                 smol::Timer::after(Duration::from_millis(if busy { 100 } else { 500 })).await;
                 match this.update_in(cx, |this, _, cx| {
                     this.poll(cx);
-                    if this
-                        .settings_deadline
-                        .is_some_and(|deadline| Instant::now() >= deadline)
-                    {
-                        this.settings_deadline = None;
-                        this.save_settings(cx);
-                    }
-                    this.job.is_some() || this.settings_deadline.is_some()
+                    this.job.is_some()
                 }) {
                     Ok(active) => busy = active,
                     Err(_) => break,
@@ -641,10 +631,7 @@ impl Desktop {
             environment: None,
             scrolls: std::array::from_fn(|_| ScrollHandle::new()),
             inputs,
-            settings_snapshot: config.clone(),
             desktop_settings: config.desktop.clone(),
-            settings_deadline: None,
-            settings_status: String::new(),
             last_tick: Instant::now(),
             config,
             task_options: options.clone(),
@@ -687,7 +674,6 @@ impl Desktop {
             _subscriptions: subscriptions,
             _poll: poll,
         };
-        this.settings_snapshot = this.edited_settings(cx);
         // Preferences and workspace records are saved separately. Reconcile
         // inherited options after an interrupted save before restoring input.
         this.refresh_preference_defaults(cx);
@@ -840,16 +826,7 @@ impl Desktop {
     fn value(&self, field: Field, cx: &App) -> String {
         self.inputs[&field].read(cx).value().trim().to_string()
     }
-    fn field_error(&self, field: Field, cx: &App) -> Option<&'static str> {
-        self.settings_status
-            .starts_with("未保存：")
-            .then(|| self.invalid_setting(cx))
-            .flatten()
-            .filter(|(invalid, _)| *invalid == field)
-            .map(|(_, message)| message)
-    }
     fn input(&self, field: Field, label: &'static str, cx: &App) -> Div {
-        let error = self.field_error(field, cx);
         v_flex()
             .gap_2()
             .w_full()
@@ -858,21 +835,7 @@ impl Desktop {
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM),
             )
-            .child(
-                theme::text_input(&self.inputs[&field])
-                    .aria_label(label)
-                    .when(error.is_some(), |input| {
-                        input.border_color(theme::color(theme::DANGER))
-                    }),
-            )
-            .when_some(error, |v, message| {
-                v.child(
-                    div()
-                        .text_sm()
-                        .text_color(theme::color(theme::DANGER))
-                        .child(message),
-                )
-            })
+            .child(theme::text_input(&self.inputs[&field]).aria_label(label))
     }
     fn output(&self, _cx: &App) -> PathBuf {
         self.workspace

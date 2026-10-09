@@ -4898,20 +4898,4 @@ impl Desktop {
         }
         true
     }
-    pub fn edited_settings(&self, _cx: &App) -> course2md::settings::ConfigFile {
-        self.preferences.defaults_config()
-    }
-    pub fn invalid_setting(&self, _cx: &App) -> Option<(Field, &'static str)> {
-        None
-    }
-    pub fn save_settings(&mut self, cx: &mut Context<Self>) {
-        let mut next = self.generation_edit_base();
-        let mut config = self.preferences.defaults_config();
-        self.settings_options.apply_to(&mut config);
-        next.options = config.defaults;
-        next.ai_proofread = config.llm.enabled;
-        next.ai_summary = config.llm.summarize;
-        next.vision = config.llm.vision;
-        self.commit_generation(next, cx);
-    }
 }
