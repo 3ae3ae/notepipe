@@ -105,7 +105,7 @@ fn log_event(level: &str, message: &str) -> serde_json::Value {
 static TOKENS: Mutex<(u64, u64)> = Mutex::new((0, 0));
 
 fn reset_tokens() {
-    *crate::runtime::lock_recover(TOKENS) = (0, 0);
+    *crate::runtime::lock_recover(&TOKENS) = (0, 0);
 }
 
 fn tokens_event(stage: &str, prompt: u64, completion: u64) -> serde_json::Value {
@@ -117,7 +117,7 @@ pub fn note_tokens(stage: &str, prompt: u64, completion: u64) {
     if prompt == 0 && completion == 0 {
         return;
     }
-    let mut guard = crate::runtime::lock_recover(TOKENS);
+    let mut guard = crate::runtime::lock_recover(&TOKENS);
     guard.0 += prompt;
     guard.1 += completion;
     emit(tokens_event(stage, guard.0, guard.1));
@@ -126,7 +126,7 @@ pub fn note_tokens(stage: &str, prompt: u64, completion: u64) {
 /// 视频下载字节进度：yt-dlp 每次刷一行，这里限流后发给 GUI。
 pub fn download_progress(current: u64, total: u64) {
     static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-    let mut last = crate::runtime::lock_recover(LAST);
+    let mut last = crate::runtime::lock_recover(&LAST);
     if current != total
         && last.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(200))
     {
@@ -199,7 +199,7 @@ impl Bar {
     pub fn set_message(&self, msg: impl Into<String>) {
         let msg = msg.into();
         if is_json() {
-            *crate::runtime::lock_recover(self.message) = msg;
+            *crate::runtime::lock_recover(&self.message) = msg;
             let cur = self.current.load(Ordering::Relaxed);
             self.emit_progress(cur, false);
         } else {
@@ -215,7 +215,7 @@ impl Bar {
     }
 
     fn emit_progress(&self, current: u64, force: bool) {
-        let mut last = crate::runtime::lock_recover(self.last_emit);
+        let mut last = crate::runtime::lock_recover(&self.last_emit);
         if !force
             && current != 0
             && current != self.total

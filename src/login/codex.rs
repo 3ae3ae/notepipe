@@ -243,7 +243,7 @@ fn fresh_tokens() -> Result<CodexTokens> {
     if !needs_refresh(&tokens) {
         return Ok(tokens);
     }
-    let _guard = crate::runtime::lock_recover(REFRESH_LOCK);
+    let _guard = crate::runtime::lock_recover(&REFRESH_LOCK);
     // 锁内复查：另一线程可能刚刷新完
     let Some(current) = load_tokens()? else {
         return Err(CodexLoginRequired.into());
