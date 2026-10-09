@@ -1797,6 +1797,43 @@ impl Desktop {
             .children((row.len()..layout.columns).map(|_| div().flex_1()))
     }
 
+    /// 16:9 row thumbnail at the shared course-row size; the card cover is a
+    /// different full-width variant and keeps its own sizing.
+    fn course_row_thumbnail(thumbnail: &std::path::Path) -> gpui::Img {
+        img(thumbnail.to_path_buf())
+            .w(rems(6.857))
+            .h(rems(3.857))
+            .object_fit(ObjectFit::Cover)
+            .rounded(RADIUS_SMALL)
+            .flex_shrink_0()
+    }
+
+    /// Title, caller-built meta line and the incomplete badge, shared by the
+    /// list row and the recent-note row.
+    fn course_row_text(
+        &self,
+        course: &Course,
+        clamp_title: bool,
+        meta: Div,
+    ) -> Div {
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_2()
+            .child(
+                div()
+                    .w_full()
+                    .whitespace_normal()
+                    .when(clamp_title, |title| title.text_ellipsis().line_clamp(2))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(course.title.clone()),
+            )
+            .child(meta)
+            .when(course.incomplete(), |view| {
+                view.child(badge(BadgeKind::Warning).child("部分内容待补全"))
+            })
+    }
+
     /// One course row in the list presentation.
     fn library_list_row(
         &self,
@@ -1807,45 +1844,23 @@ impl Desktop {
     ) -> Div {
         let mut read = h_flex().w_full().min_w_0().items_center().gap(px(12.));
         if !layout.stacked && let Some(thumbnail) = &course.thumbnail {
-            read = read.child(
-                img(thumbnail.clone())
-                    .w(rems(6.857))
-                    .h(rems(3.857))
-                    .object_fit(ObjectFit::Cover)
-                    .rounded(RADIUS_SMALL)
-                    .flex_shrink_0(),
-            );
+            read = read.child(Self::course_row_thumbnail(thumbnail));
         }
-        read = read.child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap_2()
-                .child(
-                    div()
-                        .w_full()
-                        .whitespace_normal()
-                        .when(!layout.stacked, |title| title.text_ellipsis().line_clamp(2))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(course.title.clone()),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .whitespace_normal()
-                        .text_size(TEXT_AUX)
-                        .font_weight(FontWeight::NORMAL)
-                        .text_color(color(GRAY))
-                        .child(format!(
-                            "{} · {}",
-                            self.course_meta(course),
-                            course.content_description()
-                        )),
-                )
-                .when(course.incomplete(), |view| {
-                    view.child(badge(BadgeKind::Warning).child("部分内容待补全"))
-                }),
-        );
+        read = read.child(self.course_row_text(
+            course,
+            !layout.stacked,
+            div()
+                .w_full()
+                .whitespace_normal()
+                .text_size(TEXT_AUX)
+                .font_weight(FontWeight::NORMAL)
+                .text_color(color(GRAY))
+                .child(format!(
+                    "{} · {}",
+                    self.course_meta(course),
+                    course.content_description()
+                )),
+        ));
         let read = control(("read-course", *index))
             .ghost()
             .flex_1()
@@ -2126,46 +2141,23 @@ impl Desktop {
     fn recent_note_row(&self, course: Course, index: usize, cx: &mut Context<Self>) -> Div {
         let mut content = h_flex().w_full().min_w_0().gap_3().items_center();
         if let Some(thumbnail) = &course.thumbnail {
-            content = content.child(
-                img(thumbnail.clone())
-                    .w(rems(6.857))
-                    .h(rems(3.857))
-                    .object_fit(ObjectFit::Cover)
-                    .rounded(RADIUS_SMALL)
-                    .flex_shrink_0(),
-            );
+            content = content.child(Self::course_row_thumbnail(thumbnail));
         }
-        content = content.child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap_2()
-                .child(
-                    div()
-                        .w_full()
-                        .whitespace_normal()
-                        .text_ellipsis()
-                        .line_clamp(2)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(course.title.clone()),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(TEXT_AUX)
-                        .text_color(color(GRAY))
-                        .child(format!(
-                            "{} · {}",
-                            course.content_description(),
-                            self.course_meta(&course)
-                        )),
-                )
-                .when(course.incomplete(), |view| {
-                    view.child(badge(BadgeKind::Warning).child("部分内容待补全"))
-                }),
-        );
+        content = content.child(self.course_row_text(
+            &course,
+            true,
+            div()
+                .w_full()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(TEXT_AUX)
+                .text_color(color(GRAY))
+                .child(format!(
+                    "{} · {}",
+                    course.content_description(),
+                    self.course_meta(&course)
+                )),
+        ));
         let open = course.clone();
         h_flex()
             .w_full()
