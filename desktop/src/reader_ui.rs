@@ -2648,9 +2648,6 @@ impl Desktop {
             (None, page)
         };
         page = page.children(self.course_export_feedback(&preview.course, cx));
-        let reveal = |id: &'static str, child: AnyElement| {
-            crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone()).inline()
-        };
         if self.reading {
             page = page.child(crate::motion::enter(
                 "reader-version-loading",
