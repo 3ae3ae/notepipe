@@ -222,7 +222,7 @@ pub fn polish_sections_report(
                 scope.spawn(|| {
                     loop {
                         if let Err(e) = crate::dispatch::check_control() {
-                            let mut guard = aborted.lock().unwrap_or_else(|p| p.into_inner());
+                            let mut guard = crate::runtime::lock_recover(aborted);
                             if guard.is_none() {
                                 *guard = Some(e);
                             }
@@ -248,7 +248,7 @@ pub fn polish_sections_report(
                 });
             }
         });
-        if let Some(e) = aborted.lock().unwrap_or_else(|p| p.into_inner()).take() {
+        if let Some(e) = crate::runtime::lock_recover(aborted).take() {
             return Err(e);
         }
         for sec in sections.iter_mut() {
@@ -260,7 +260,7 @@ pub fn polish_sections_report(
             attempted,
             succeeded,
             failed: attempted.saturating_sub(succeeded),
-            note: first_error.lock().unwrap_or_else(|p| p.into_inner()).take(),
+            note: crate::runtime::lock_recover(first_error).take(),
         });
     }
 
@@ -297,7 +297,7 @@ pub fn polish_sections_report(
             scope.spawn(|| {
                 loop {
                     if let Err(e) = crate::dispatch::check_control() {
-                        let mut guard = aborted.lock().unwrap_or_else(|p| p.into_inner());
+                        let mut guard = crate::runtime::lock_recover(aborted);
                         if guard.is_none() {
                             *guard = Some(e);
                         }
@@ -328,7 +328,7 @@ pub fn polish_sections_report(
             });
         }
     });
-    if let Some(e) = aborted.lock().unwrap_or_else(|p| p.into_inner()).take() {
+    if let Some(e) = crate::runtime::lock_recover(aborted).take() {
         return Err(e);
     }
     // 删除「成功润色为空串」的纯语气词条目（全部 chunk 完成后统一过滤；
@@ -342,7 +342,7 @@ pub fn polish_sections_report(
         attempted,
         succeeded,
         failed: attempted.saturating_sub(succeeded),
-        note: first_error.lock().unwrap_or_else(|p| p.into_inner()).take(),
+        note: crate::runtime::lock_recover(first_error).take(),
     })
 }
 
@@ -454,7 +454,7 @@ fn polish_chunk_refs(
 
 /// 记录首个失败原因（后续失败不覆盖），截断避免超长错误刷屏。
 fn record_first_error(slot: &std::sync::Mutex<Option<String>>, msg: String) {
-    let mut guard = slot.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = crate::runtime::lock_recover(slot);
     if guard.is_none() {
         *guard = Some(brief(&msg));
     }
