@@ -2017,6 +2017,7 @@ impl Desktop {
                         })),
                 );
             }
+            let summary = crate::task_ui::task_attention_summary(&task);
             section = section.child(
                 v_flex()
                     .w_full()
@@ -2041,13 +2042,15 @@ impl Desktop {
                                     .child(task.plan.title.clone()),
                             ),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(color(GRAY))
-                            .whitespace_normal()
-                            .child(crate::task_ui::task_attention_summary(&task)),
-                    )
+                    .when(summary != task.state.label(), |card| {
+                        card.child(
+                            div()
+                                .text_sm()
+                                .text_color(color(GRAY))
+                                .whitespace_normal()
+                                .child(summary),
+                        )
+                    })
                     .child(actions),
             );
         }
