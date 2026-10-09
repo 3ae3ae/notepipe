@@ -2861,12 +2861,15 @@ impl Desktop {
                 _ => self.box_task_attention(&task, cx),
             };
             view = view.child(
+                // The current task is the workbench's hero object, as on the
+                // canvas's progress board: large radius and raised surface.
                 task_view
-                    .p_6()
-                    .rounded(RADIUS_CARD)
+                    .p(rems(28. / 14.))
+                    .rounded(RADIUS_HERO)
                     .bg(color(SURFACE))
                     .border_1()
-                    .border_color(color(HAIRLINE)),
+                    .border_color(color(CARD_LINE))
+                    .shadow(shadow_hero()),
             );
             if !show_source_input {
                 view = view.child(

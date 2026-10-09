@@ -126,7 +126,7 @@ pub fn progress(
     let amount = value(id, target, window, cx);
     div()
         .w_full()
-        .h(px(5.))
+        .h(px(6.))
         .rounded_full()
         .overflow_hidden()
         .bg(color(PROGRESS_TRACK))
