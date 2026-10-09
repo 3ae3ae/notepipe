@@ -1316,17 +1316,14 @@ impl Desktop {
                         window,
                         cx,
                     )
-                    // Readiness is status, not a label: the shared badge, regular weight.
-                    .child(
-                        h_flex().pl(rems(28. / 14.)).child(
-                            badge(if ready == Some(true) {
-                                BadgeKind::Success
-                            } else {
-                                BadgeKind::Neutral
-                            })
-                            .child(status),
-                        ),
-                    )
+                    // A ready engine needs no badge; only checking or unavailable is status.
+                    .when(ready != Some(true), |choice| {
+                        choice.child(
+                            h_flex()
+                                .pl(rems(28. / 14.))
+                                .child(badge(BadgeKind::Neutral).child(status)),
+                        )
+                    })
                     .disabled(provider.is_some() && ready == Some(false))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_setup_provider(provider, cx);
@@ -1454,6 +1451,7 @@ impl Desktop {
                         )
                         .child(
                             quiet("setup-change-model")
+                                .mr(rems(-0.625))
                                 .icon(if self.onboarding.model_choices_open {
                                     icons::chevron_up()
                                 } else {
@@ -1687,6 +1685,7 @@ impl Desktop {
                     .child(div().flex_1().min_w_0().child(input))
                     .child(
                         quiet(format!("setup-key-visibility-{}", purpose as usize))
+                            .mr(rems(-0.625))
                             .icon(if service.show_key {
                                 icons::eye_off()
                             } else {
@@ -2569,6 +2568,7 @@ impl Desktop {
         if step == Step::Engine && !model_review {
             row = row.child(
                 quiet("setup-later")
+                    .ml(rems(-0.625))
                     .icon(icons::arrow_forward())
                     .label("直接开始使用")
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -2582,6 +2582,7 @@ impl Desktop {
         if step != Step::Engine && !model_review {
             row = row.child(
                 quiet("setup-back")
+                    .ml(rems(-0.625))
                     .icon(icons::arrow_left())
                     .label("上一步")
                     .disabled(step == Step::Model && model_running)
