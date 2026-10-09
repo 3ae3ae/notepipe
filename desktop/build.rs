@@ -22,52 +22,57 @@ fn main() {
 }
 
 fn emit_commit() {
-    use std::{path::PathBuf, process::Command};
+    use std::path::PathBuf;
 
     let desktop = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let root = desktop.parent().unwrap();
-    let git = |args: &[&str]| -> Option<String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let value = String::from_utf8(output.stdout).ok()?.trim().to_owned();
-        (!value.is_empty()).then_some(value)
-    };
-    // Archive builds have no repository provenance; omit the row instead of
-    // attributing an enclosing repository's commit to this application.
-    let mut commit = None;
-    if root.join(".git").exists() {
-        // A worktree's .git is a pointer file. Watching the repository
-        // directory would also rebuild on index refreshes and unrelated refs.
-        if root.join(".git").is_file() {
-            println!("cargo:rerun-if-changed={}", root.join(".git").display());
-        }
-        let symbolic_ref = git(&["symbolic-ref", "--quiet", "HEAD"]);
-        for name in [
-            Some("HEAD"),
-            symbolic_ref.as_deref(),
-            Some("packed-refs"),
-            Some("logs/HEAD"),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if let Some(path) = git(&["rev-parse", "--git-path", name]) {
-                let path = root.join(path);
-                if path.is_file() {
-                    println!("cargo:rerun-if-changed={}", path.display());
-                }
-            }
-        }
-        commit = git(&["rev-parse", "--short=12", "HEAD"]);
-    }
+    let root = desktop.parent().unwrap().to_path_buf();
+    let commit = git_commit(&root);
     println!(
         "cargo:rustc-env=COURSE2MD_DESKTOP_COMMIT={}",
         commit.as_deref().unwrap_or("")
     );
+}
+
+/// Resolve `HEAD` to a 12-character prefix via vergen-gix (pure Rust gix backend,
+/// no git CLI dependency, handles linked worktrees). Returns `None` outside a git
+/// checkout so archive builds omit the row instead of attributing an enclosing
+/// repository's commit to this application.
+fn git_commit(root: &std::path::Path) -> Option<String> {
+    use std::path::PathBuf;
+
+    if !root.join(".git").exists() {
+        return None;
+    }
+    let mut gix = vergen_gix::Gix::builder().sha(false).build();
+    gix.at_path(root.to_path_buf());
+    vergen_gix::Emitter::default()
+        .quiet()
+        .add_instructions(&gix)
+        .ok()?
+        .emit_and_set()
+        .ok()?;
+    // `.sha(false)` yields the full id; `--short=12` is its 12-character prefix.
+    let sha = std::env::var("VERGEN_GIT_SHA").ok()?;
+    let commit = sha.get(..12)?.to_owned();
+    // vergen watches HEAD and the resolved ref. The reflog also changes on every
+    // commit (including in linked worktrees, where the ref lives in the common
+    // gitdir) and is cheap to watch.
+    let git = root.join(".git");
+    let reflog = if git.is_dir() {
+        git.join("logs").join("HEAD")
+    } else {
+        // A worktree's .git is a pointer file: "gitdir: <private gitdir>".
+        let pointer = std::fs::read_to_string(&git).unwrap_or_default();
+        let gitdir = pointer.trim().strip_prefix("gitdir:").map(str::trim)?;
+        let gitdir = if std::path::Path::new(gitdir).is_absolute() {
+            PathBuf::from(gitdir)
+        } else {
+            root.join(gitdir)
+        };
+        gitdir.join("logs").join("HEAD")
+    };
+    if reflog.is_file() {
+        println!("cargo:rerun-if-changed={}", reflog.display());
+    }
+    Some(commit)
 }
