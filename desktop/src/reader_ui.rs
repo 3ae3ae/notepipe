@@ -1404,6 +1404,8 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
                                         .icon(icons::play_arrow())
                                         .label("从此处观看")
                                         .min_h(rems(1.6))
+                                        // 抵消按钮内边距（gpui-component px_2p5），图标与截图左缘对齐
+                                        .ml(-rems(0.625))
                                         .accessibility_label("在原视频打开这个位置")
                                         .on_click(move |_, _, cx| cx.open_url(&url)),
                                 ),
