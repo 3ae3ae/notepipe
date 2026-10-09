@@ -551,6 +551,8 @@ impl Desktop {
                     .service_retired_in_snapshot(&version.service_id)
             });
         let draft_protocol = draft.protocol;
+        let origin_tab = (inline && self.page == Page::Settings && self.settings_tab != 1)
+            .then_some(self.settings_tab);
         self.settings_ui.editor = Some(ServiceEditor {
             draft,
             models: Default::default(),
@@ -570,6 +572,7 @@ impl Desktop {
             show_key: false,
             test_details_open: false,
             save_failed: false,
+            origin_tab,
         });
         if draft_protocol == ServiceProtocol::CodexResponses {
             self.codex_refresh_status(crate::codex_ui::CodexSurface::Editor, cx);
@@ -1777,6 +1780,16 @@ impl Desktop {
         if let Some(editor) = self.settings_ui.editor.take() {
             if let Some(cancel) = editor.test_running {
                 cancel.store(true, Ordering::Release);
+            }
+            // Opened from another category's picker: go back there, where the
+            // returning focus target lives.
+            if let Some(tab) = editor.origin_tab
+                && self.page == Page::Settings
+                && self.settings_tab == 1
+            {
+                self.settings_tab = tab;
+                self.normalize_settings_tab();
+                self.sync_settings_tab_stops();
             }
             if let Some(focus) = editor.return_focus {
                 focus.focus(window, cx);

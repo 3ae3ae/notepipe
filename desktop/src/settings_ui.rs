@@ -65,6 +65,9 @@ struct ServiceEditor {
     show_key: bool,
     test_details_open: bool,
     save_failed: bool,
+    /// The settings category the inline editor was opened from (e.g. 生成笔记);
+    /// closing it returns there instead of leaving the user on 服务与账号.
+    origin_tab: Option<usize>,
 }
 
 pub struct OrdinaryPreferenceIssue {
