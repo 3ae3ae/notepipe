@@ -312,47 +312,42 @@ fn validate_journal_paths(journal: &Journal) -> Result<()> {
     Ok(())
 }
 
-pub fn pending_journals(directory: &Path) -> Vec<(PathBuf, Journal)> {
+/// One directory scan with two outcomes: readable pending journals (sorted by
+/// creation time) and corrupt records. Committed/abandoned journals and other
+/// schemas stay invisible, matching the old separate scans; a half-broken
+/// journal from a crash remains visible instead of being silently skipped,
+/// consistent with the "keep the original file" recovery policy.
+pub fn scan_journals(directory: &Path) -> (Vec<(PathBuf, Journal)>, Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(directory) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    let mut journals = Vec::new();
+    let mut pending = Vec::new();
+    let mut corrupt = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
-        if let Ok(bytes) = std::fs::read(&path) {
-            if let Ok(journal) = serde_json::from_slice::<Journal>(&bytes) {
-                if journal.schema == 1
-                    && !matches!(journal.phase, Phase::Committed | Phase::Abandoned)
+        match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Journal>(&bytes) {
+                Ok(journal)
+                    if journal.schema == 1
+                        && !matches!(journal.phase, Phase::Committed | Phase::Abandoned) =>
                 {
-                    journals.push((path, journal));
+                    pending.push((path, journal))
                 }
-            }
+                Ok(_) => {}
+                Err(_) => corrupt.push(path),
+            },
+            Err(_) => corrupt.push(path),
         }
     }
-    journals.sort_by_key(|(_, journal)| journal.created);
-    journals
+    pending.sort_by_key(|(_, journal)| journal.created);
+    (pending, corrupt)
 }
 
-/// 无法读取/解析的迁移记录：崩溃留下的半残 journal 也应可见，而不是静默跳过。
-/// 与分类恢复的「保留原文件」策略一致——用户需要知道它存在才能手动处理。
-pub fn corrupt_journals(directory: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
-        .filter(|path| {
-            std::fs::read(path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Journal>(&bytes).ok())
-                .is_none()
-        })
-        .collect()
+pub fn pending_journals(directory: &Path) -> Vec<(PathBuf, Journal)> {
+    scan_journals(directory).0
 }
 
 pub fn prepare_move(
@@ -485,7 +480,8 @@ fn copy_journal(
         }
         let total = journal.files.iter().map(|file| file.bytes).sum();
         let mut completed = 0;
-        for record in journal.files.clone() {
+        for index in 0..journal.files.len() {
+            let record = &journal.files[index];
             check_cancel(cancel)?;
             let source = journal.source.join(&record.path);
             let destination = journal.destination.join(&record.path);
