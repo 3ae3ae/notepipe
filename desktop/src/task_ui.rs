@@ -202,6 +202,12 @@ impl StageStatus {
         }
     }
 
+    /// Visible status column text. A running row is already announced by its
+    /// spinner or progress bar and the card badge.
+    fn status_text(self) -> &'static str {
+        if self == Self::Running { "" } else { self.label() }
+    }
+
     fn ink(self) -> Rgba {
         color(match self {
             Self::Running => ACCENT_STRONG,
@@ -433,8 +439,15 @@ struct TaskStages {
 impl RenderOnce for TaskStages {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut view = v_flex().w_full().min_w_0().gap_3();
+        // 进行中由图标（转圈/进度条）与卡片徽章表达，不再重复「处理中」；
+        // 只有同列表里还有其他状态时才保留状态列，使说明列仍对齐
+        let status_column = self
+            .rows
+            .iter()
+            .any(|stage| stage.status != StageStatus::Running);
         for stage in self.rows {
             let status_id = SharedString::from(format!("{}-status", stage.id));
+            let status_text = stage.status.status_text();
             let mut row = v_flex().w_full().min_w_0().gap_2().child(
                 h_flex()
                     .w_full()
@@ -465,13 +478,15 @@ impl RenderOnce for TaskStages {
                             .max_w_full()
                             .gap_3()
                             .items_start()
-                            .child(
-                                accessible_text(status_id, stage.status.label())
-                                    .w(rems(4.5))
-                                    .flex_shrink_0()
-                                    .text_size(TEXT_BODY)
-                                    .text_color(stage.status.ink()),
-                            )
+                            .when(status_column, |cell| {
+                                cell.child(
+                                    accessible_text(status_id, status_text)
+                                        .w(rems(4.5))
+                                        .flex_shrink_0()
+                                        .text_size(TEXT_BODY)
+                                        .text_color(stage.status.ink()),
+                                )
+                            })
                             .child(
                                 div()
                                     .flex_1()
