@@ -21,7 +21,7 @@ const SPEECH_SAMPLE: &[u8] = include_bytes!("../assets/tests/service-speech.wav"
 const BLUE_CARD: &[u8] = include_bytes!("../assets/tests/service-blue-card.png");
 const MAX_RESPONSE: u64 = 128 * 1024;
 
-pub const TEST_NOTICE: &str = "会发送应用内置的测试内容，不包含你的课程。服务可能按其规则计费。";
+pub const TEST_NOTICE: &str = "测试会发送内置样例（不含你的课程），可能计费";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestKind {
@@ -126,7 +126,7 @@ pub fn test_codex_blocking(
         outcome: TestOutcome::NotSent,
         message: String::new(),
         details: vec![
-            format!("用途：{}；Codex 连接检查（登录态与模型可用性）", kind.label()),
+            format!("用途：{}", kind.label()),
             format!("请求模型：{}", config.model),
         ],
     };
@@ -149,9 +149,6 @@ pub fn test_codex_blocking(
         Ok(()) => {
             evidence.outcome = TestOutcome::Passed;
             evidence.message = "连接测试通过：Codex 登录与模型可用".into();
-            evidence
-                .details
-                .push("仅验证登录态、模型与图文输入路径，不代表所有内容均可校对".into());
         }
         Err(error) => {
             let outcome = codex_failure_outcome(&error);
@@ -250,7 +247,7 @@ fn run_test(
         outcome: TestOutcome::NotSent,
         message: String::new(),
         details: vec![
-            format!("用途：{}；内置样例语言：英语", kind.label()),
+            format!("用途：{}", kind.label()),
             format!("请求模型：{}", config.model),
         ],
     };
@@ -302,9 +299,6 @@ fn run_test(
         Err(TransportFailure::Unknown) => {
             evidence.outcome = TestOutcome::OutcomeUnknown;
             evidence.message = "未收到确定结果，测试可能已产生费用".into();
-            evidence
-                .details
-                .push("没有自动重测；再次测试将发送新的请求".into());
             return evidence;
         }
         Err(TransportFailure::ResponseTooLarge(status)) => {
@@ -389,16 +383,13 @@ fn run_test(
         Ok(()) => {
             evidence.outcome = TestOutcome::Passed;
             evidence.message = format!("{}用途测试通过", kind.label());
-            evidence
-                .details
-                .push("仅验证这份内置短样例，不代表所有语言、长视频或未来额度均可用".into());
         }
         Err((outcome, detail)) => {
             evidence.outcome = outcome;
             evidence.message = if evidence.outcome == TestOutcome::ContractMismatch {
-                "已收到回应，但返回结构与此用途的契约不符".into()
+                "返回格式不符合要求".into()
             } else {
-                "这份样例未通过，请查看差异；这不表示模型永远不可用".into()
+                "样例未通过，请查看详情".into()
             };
             evidence.details.push(detail);
             let excerpt = if let Some(secret) = &request.authorization {

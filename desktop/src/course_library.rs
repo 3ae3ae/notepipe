@@ -93,7 +93,7 @@ enum LibraryItem {
     Coverage(String),
     Issues(Vec<String>),
     Loading,
-    Empty { partial: bool },
+    Empty,
     SearchScope(String),
     GroupHeader(Box<LibraryGroupHeader>),
     GroupBody(Box<LibraryGroupBody>),
@@ -128,7 +128,7 @@ impl LibraryItem {
             LibraryItem::Coverage(_) => "coverage".to_owned(),
             LibraryItem::Issues(_) => "issues".to_owned(),
             LibraryItem::Loading => "loading".to_owned(),
-            LibraryItem::Empty { .. } => "empty".to_owned(),
+            LibraryItem::Empty => "empty".to_owned(),
             LibraryItem::SearchScope(_) => "search-scope".to_owned(),
             LibraryItem::GroupHeader(header) => format!("group-h-{}", header.key),
             LibraryItem::GroupBody(body) => format!("group-b-{}", body.key),
@@ -322,7 +322,6 @@ impl CourseRenameDialog {
             Ok(()) => {
                 self.desktop.update(cx, |desktop, cx| {
                     desktop.refresh_library(cx);
-                    desktop.message = Some(format!("笔记已更名为「{}」。", name.trim()));
                     cx.notify();
                 });
                 window.close_dialog(cx);
@@ -352,11 +351,6 @@ impl Render for CourseRenameDialog {
                         .text_color(color(DANGER)),
                 )
             })
-            .child(
-                accessible_text("rename-note-scope", "仅修改笔记名称。")
-                    .text_sm()
-                    .text_color(color(MUTED)),
-            )
             .child(
                 h_flex()
                     .justify_end()
@@ -535,7 +529,7 @@ impl Desktop {
                     self.library_error = None;
                 }
                 self.message = Some(format!(
-                    "分类已{}，原损坏记录保留在 {}。笔记正文和显示名称仍保留。",
+                    "分类已{}，损坏记录保留在 {}",
                     if rebuild { "重建" } else { "恢复" },
                     preserved.display()
                 ));
@@ -568,7 +562,7 @@ impl Desktop {
                         .child(badge(BadgeKind::Warning).child("保存位置不可用"))
                         .child(accessible_text(
                             ("library-unavailable", index),
-                            format!("{name} 暂时无法访问。连接后可继续浏览笔记。"),
+                            format!("{name} 暂时无法访问"),
                         ))
                         .child(
                             control(("retry-library-location", index))
@@ -633,7 +627,7 @@ impl Desktop {
                         .child(accessible_text(
                             ("classification-recovery", index),
                             format!(
-                                "{} 的分类记录无法读取。已读取的笔记仍可阅读，文件夹分类暂不可用。",
+                                "{} 的分类记录无法读取",
                                 location.name
                             ),
                         ))
@@ -684,7 +678,7 @@ impl Desktop {
                             match organize::recover_titles(&root, reset) {
                                 Ok(path) => {
                                     this.message = Some(format!(
-                                        "笔记名称已恢复，损坏记录保留在 {}。正文和分类保持完整。",
+                                        "笔记名称已恢复，损坏记录保留在 {}",
                                         path.display()
                                     ));
                                     this.refresh_library(cx);
@@ -707,7 +701,7 @@ impl Desktop {
                         .child(accessible_text(
                             ("title-recovery", index),
                             format!(
-                                "{} 的笔记名称记录无法读取，现有正文文件会保留。",
+                                "{} 的笔记名称记录无法读取",
                                 location.name
                             ),
                         ))
@@ -786,27 +780,21 @@ impl Desktop {
         if self.library_recovery_view(&all_access, cx).is_some() {
             items.push(LibraryItem::Recovery);
         }
-        if coverage != crate::storage::LibraryCoverage::Complete {
-            let message = if coverage == crate::storage::LibraryCoverage::Unavailable {
-                if query.is_empty() {
-                    "当前范围的保存位置暂时无法访问，笔记列表尚未读取。重新连接后可继续浏览。"
-                        .to_owned()
-                } else {
-                    "当前范围的保存位置暂时无法访问，尚未搜索笔记。关键词已保留，重新连接后可继续搜索。".to_owned()
-                }
-            } else if query.is_empty() {
-                format!(
-                    "当前仅显示 {} 个可访问位置中的笔记；另外 {} 个位置尚未读取。",
-                    scope.available.len(),
-                    scope.unavailable.len()
-                )
-            } else {
-                format!(
-                    "当前仅搜索 {} 个可访问的保存位置；另外 {} 个位置尚未纳入搜索结果。",
-                    scope.available.len(),
-                    scope.unavailable.len()
-                )
-            };
+        let coverage_message = match coverage {
+            crate::storage::LibraryCoverage::Unavailable if query.is_empty() => {
+                Some("保存位置暂时无法访问".to_owned())
+            }
+            crate::storage::LibraryCoverage::Unavailable => {
+                Some("保存位置暂时无法访问，未能搜索".to_owned())
+            }
+            // 未连接的位置各有恢复卡片；仅搜索时提示结果不完整
+            crate::storage::LibraryCoverage::Partial if !query.is_empty() => Some(format!(
+                "另有 {} 个位置未纳入搜索",
+                scope.unavailable.len()
+            )),
+            _ => None,
+        };
+        if let Some(message) = coverage_message {
             items.push(LibraryItem::Coverage(message));
         }
         // Recovery cards own their matching diagnostics. Keep unrelated read
@@ -861,21 +849,11 @@ impl Desktop {
             {
                 return self.library_list_page(items, layout, rem, cx);
             }
-            items.push(LibraryItem::Empty {
-                partial: coverage == crate::storage::LibraryCoverage::Partial,
-            });
+            items.push(LibraryItem::Empty);
             return self.library_list_page(items, layout, rem, cx);
         }
         if !query.is_empty() {
-            let raw = self.value(Field::Search, cx);
-            let scoped = if self.folder_filter.is_some() {
-                format!(
-                    "在当前文件夹中搜索「{raw}」，找到 {} 篇笔记。",
-                    courses.len()
-                )
-            } else {
-                format!("在全部笔记中搜索「{raw}」，找到 {} 篇笔记。", courses.len())
-            };
+            let scoped = format!("找到 {} 篇笔记", courses.len());
             items.push(LibraryItem::SearchScope(scoped));
         }
         if self.desktop_settings.library_group_folders
@@ -963,7 +941,7 @@ impl Desktop {
         }
         if !items
             .iter()
-            .any(|item| matches!(item, LibraryItem::Empty { .. }))
+            .any(|item| matches!(item, LibraryItem::Empty))
         {
             self.entered.remove("library-empty-state");
         }
@@ -1075,10 +1053,6 @@ impl Desktop {
                 .border_color(color(WARNING_BG))
                 .rounded(RADIUS_CARD)
                 .child(badge(BadgeKind::Warning).child("部分内容暂未读取"))
-                .child(accessible_text(
-                    "library-issues-title",
-                    "已读取的笔记仍可阅读。请检查保存位置后重新检查；当前列表和搜索仅包含已读取的内容。",
-                ))
                 .child(
                     control("retry-unread-library-content")
                         .self_start()
@@ -1099,8 +1073,7 @@ impl Desktop {
                 .child(crate::motion::spinner("library-scan-spinner", cx))
                 .child(accessible_text("library-loading", "正在读取笔记…"))
                 .into_any_element(),
-            LibraryItem::Empty { partial } => {
-                let partial = *partial;
+            LibraryItem::Empty => {
                 let query = self.value(Field::Search, cx).to_lowercase();
                 let content = v_flex()
                     .py_12()
@@ -1117,11 +1090,7 @@ impl Desktop {
                         accessible_text(
                             "library-empty-heading",
                             if !query.is_empty() {
-                                if partial || !self.library_issues.is_empty() {
-                                    "已读取的笔记中没有匹配的笔记。"
-                                } else {
-                                    "没有匹配的笔记"
-                                }
+                                "没有匹配的笔记"
                             } else if self.folder_filter.is_some() {
                                 "这个文件夹还没有笔记"
                             } else {
@@ -1130,23 +1099,6 @@ impl Desktop {
                         )
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(
-                        accessible_text(
-                            "library-empty-description",
-                            if !query.is_empty() {
-                                if partial {
-                                    "未连接的位置尚未搜索。可以重新连接保存位置，或调整关键词。"
-                                } else {
-                                    "试试更短的关键词。"
-                                }
-                            } else if self.folder_filter.is_some() {
-                                "从全部笔记中选择内容，移到这个文件夹。"
-                            } else {
-                                "导入视频，生成的内容会保存在这里"
-                            },
-                        )
-                        .text_color(color(MUTED)),
                     )
                     .when(!query.is_empty(), |empty| {
                         empty.child(
@@ -1876,7 +1828,6 @@ impl Desktop {
             .justify_start()
             .when(layout.stacked, |button| button.w_full().flex_none())
             .accessibility_label(format!("阅读 {}", course.title))
-            .tooltip("阅读笔记")
             .child(read)
             .on_click({
                 let course = course.clone();
@@ -1902,7 +1853,7 @@ impl Desktop {
                     .loading(self.opening_course.as_ref() == Some(&course.dir))
                     .disabled(self.opening_course.as_ref() == Some(&course.dir))
                     .accessibility_label(format!("阅读 {}", course.title))
-                    .tooltip("阅读笔记")
+                    .when(layout.compact && !layout.stacked, |button| button.tooltip("阅读笔记"))
                     .on_click({
                         let course = course.clone();
                         cx.listener(move |this, _, _, cx| this.open_course(course.clone(), cx))

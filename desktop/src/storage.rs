@@ -184,7 +184,7 @@ pub fn validate_destination(source: &Path, destination: &Path) -> Result<(PathBu
     );
     ensure!(
         std::fs::read_dir(&destination)?.next().is_none(),
-        "目标文件夹不是空的，请选择一个空文件夹；现有内容已保留"
+        "目标文件夹不是空的，请选择空文件夹"
     );
     Ok((source, destination))
 }
@@ -655,7 +655,7 @@ pub fn cleanup_backup(
     check_cancel(cancel)?;
     journal.cleanup_started = true;
     save_journal(&backup.journal_path, &journal)?;
-    std::fs::remove_dir_all(&path).context("旧位置备份尚未清理完成，请重试；当前课程库不受影响")?;
+    std::fs::remove_dir_all(&path).context("旧位置备份尚未清理完成，请重试")?;
     if let Some(parent) = path.parent() {
         sync_directory(parent)?;
     }

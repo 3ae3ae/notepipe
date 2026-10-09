@@ -220,7 +220,6 @@ struct Desktop {
     preference_defaults_pending: bool,
     active_task: Option<String>,
     transient_task_result: Option<(String, Instant)>,
-    reader_opened_notice_at: Option<Instant>,
     draft_loading: bool,
     draft_deadline: Option<Instant>,
     quit_deadline: Option<Instant>,
@@ -556,7 +555,7 @@ impl Desktop {
                 Ok(workspace) => (Some(workspace), None),
                 Err(error) => (
                     None,
-                    Some(format!("输入与任务记录无法读取，原文件已保留：{error:#}")),
+                    Some(format!("输入与任务记录无法读取：{error:#}")),
                 ),
             };
         let settings_ui = settings_ui::State::new(window, cx);
@@ -573,7 +572,6 @@ impl Desktop {
             preference_defaults_pending: false,
             active_task: None,
             transient_task_result: None,
-            reader_opened_notice_at: None,
             draft_loading: false,
             draft_deadline: None,
             quit_deadline: None,
@@ -891,7 +889,7 @@ impl Desktop {
             return;
         }
         if self.job.is_some() {
-            self.message = Some("当前任务正在处理，结束后可以进行这项操作。".into());
+            self.message = Some("当前任务结束后再试".into());
             cx.notify();
             return;
         }
@@ -929,16 +927,6 @@ impl Desktop {
         cx.notify();
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
-        if self
-            .reader_opened_notice_at
-            .is_some_and(|shown| shown.elapsed() >= Duration::from_secs(5))
-        {
-            self.reader_opened_notice_at = None;
-            if self.message.as_deref() == Some("笔记已打开") {
-                self.message = None;
-                cx.notify();
-            }
-        }
         if self
             .transient_task_result
             .as_ref()
@@ -1345,10 +1333,6 @@ impl Desktop {
                         this.page = Page::Result;
                         if follow.is_some() {
                             this.following_conversion = None;
-                            if this.message.is_none() {
-                                this.message = Some("笔记已打开".into());
-                                this.reader_opened_notice_at = Some(Instant::now());
-                            }
                         }
                     }
                     Err(error) => {
@@ -1357,11 +1341,11 @@ impl Desktop {
                         });
                         let message = match io_kind {
                             Some(std::io::ErrorKind::NotFound) =>
-                                "笔记文件暂时无法访问。请重新连接保存位置或恢复文件后再次阅读，也可刷新课程库。",
+                                "笔记文件不存在，请重新连接保存位置后重试",
                             Some(std::io::ErrorKind::PermissionDenied) =>
-                                "暂时无法读取这份笔记。请检查保存位置的访问权限后再次阅读，也可刷新课程库。",
+                                "无权读取这份笔记，请检查保存位置的访问权限",
                             _ =>
-                                "这份笔记暂时无法读取。请检查保存位置中的文件，恢复可读版本后再次阅读，也可刷新课程库。",
+                                "这份笔记无法读取，请检查保存位置中的文件",
                         }.to_owned();
                         this.reader_course_error = Some((reading_path, message.clone()));
                         if origin != Page::Library {

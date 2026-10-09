@@ -265,9 +265,9 @@ fn reader_export_items(
                             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                             this.message = Some(
                                 if markdown {
-                                    "已复制 Markdown 文本，不含图片引用。"
+                                    "已复制 Markdown 文本"
                                 } else {
-                                    "已复制纯文本，不含图片。"
+                                    "已复制纯文本"
                                 }
                                 .into(),
                             );
@@ -281,15 +281,15 @@ fn reader_export_items(
     for (format, label) in [
         (
             course2md::config::OutputFormat::Md,
-            "导出 Markdown 包（含图片）…",
+            "导出 Markdown 包…",
         ),
         (
             course2md::config::OutputFormat::Html,
-            "导出网页文件（可独立阅读）…",
+            "导出网页文件…",
         ),
         (
             course2md::config::OutputFormat::Json,
-            "导出 JSON 数据（不含图片文件）…",
+            "导出结构化数据…",
         ),
     ] {
         let weak = desktop.clone();
@@ -1295,7 +1295,7 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
                                 theme::accessible_text(
                                     ("missing-body-image", frame_index),
                                     format!(
-                                        "{}无法读取。对应正文保留在下方。",
+                                        "{}无法读取",
                                         frame_label(&preview.course.title, frame, frame_index)
                                     ),
                                 )
@@ -1322,7 +1322,7 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
                             item_ix,
                             theme::accessible_text(
                                 ("unreadable-inline-image", index),
-                                "这张截图无法读取；对应正文仍可阅读。",
+                                "截图无法读取",
                             )
                             .text_sm()
                             .text_color(color(WARNING))
@@ -1372,7 +1372,7 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
                                                     "failed-reader-image",
                                                     frame_index.unwrap_or(0)
                                                 ),
-                                                "这张截图无法读取；对应正文仍可阅读。",
+                                                "截图无法读取",
                                             )
                                             .into_any_element()
                                         }),
@@ -1873,7 +1873,7 @@ impl Desktop {
                         cx.open_with_system(path);
                     } else {
                         this.message =
-                            Some("此版本的离线视频暂不可用，仍可打开原视频网页。".into());
+                            Some("离线视频不可用".into());
                     }
                 }
                 this.reader_ui.offline_video = status;
@@ -1917,7 +1917,7 @@ impl Desktop {
             nav::SourceTarget::Local(path) if path.is_file() => cx.open_with_system(&path),
             nav::SourceTarget::Local(path) => {
                 self.message = Some(format!(
-                    "原视频不在 {}。请使用“重新定位原视频”选择它的新位置。",
+                    "原视频不在 {}，可重新定位",
                     path.display()
                 ));
                 cx.notify();
@@ -2162,7 +2162,6 @@ impl Desktop {
                         this.restore_reading_position(cx);
                         if refresh {
                             this.reader_ui.pending_restore = position.clone();
-                            this.message = Some("已重新读取这份笔记。".into());
                         }
                         if !refresh
                             && !has_saved_position
@@ -2188,13 +2187,12 @@ impl Desktop {
                                 }
                             } else {
                                 this.reader_ui.pending_restore = Some(Default::default());
-                                this.message = Some("本版没有可对应的时间，已从开头显示。".into());
                             }
                         }
                     }
                     Err(error) => {
                         this.message = Some(format!(
-                            "这个版本暂时无法打开：{error:#}。当前笔记仍可阅读。"
+                            "这个版本暂时无法打开：{error:#}"
                         ))
                     }
                 }
@@ -2287,7 +2285,7 @@ impl Desktop {
                                 && ancestor.parent().is_some_and(|parent| parent
                                     .file_name()
                                     .is_some_and(|name| name == "versions"))),
-                        "请将导出文件保存到笔记版本目录以外，避免覆盖已保存的正文和图片。"
+                        "请保存到笔记版本目录以外"
                     );
                     // The native save panel owns the explicit overwrite decision; the old file
                     // remains intact until a complete export is ready beside it.
@@ -2313,7 +2311,7 @@ impl Desktop {
             let _ = this.update(cx, |this, cx| {
                 let result = exported
                     .map(|()| path.clone())
-                    .map_err(|error| format!("{error:#}。笔记正文仍可阅读。"));
+                    .map_err(|error| format!("{error:#}"));
                 let success = result.is_ok();
                 if !this.reader_ui.export_state.finish(
                     generation,
@@ -2388,7 +2386,6 @@ impl Desktop {
                         quiet(SharedString::from(format!("{id}:reveal")))
                             .icon(icons::folder_open())
                             .label("打开导出位置")
-                            .tooltip(format!("显示《{}》的导出文件", feedback.title))
                             .on_click(move |_, _, cx| cx.reveal_path(&path)),
                     )
                     .child(dismiss)
@@ -3010,7 +3007,7 @@ impl Desktop {
                             row.child(
                                 theme::accessible_text(
                                     "missing-original-video",
-                                    "原视频暂不可用，笔记仍可阅读",
+                                    "原视频不可用",
                                 )
                                 .text_size(TEXT_AUX)
                                 .text_color(color(GRAY)),
@@ -3053,7 +3050,7 @@ impl Desktop {
                     .child(
                         theme::accessible_text(
                             "reader-offline-video-missing",
-                            "此版本的离线视频暂不可用，仍可打开原视频网页。",
+                            "离线视频不可用",
                         )
                         .text_size(TEXT_AUX)
                         .text_color(color(MUTED)),
@@ -3086,7 +3083,6 @@ impl Desktop {
                     (quiet("choose-note-version")
                         .icon(icons::history())
                         .label(format!("版本 {}", manifest.revision))
-                        .tooltip("选择笔记版本")
                         .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
                         .min_h(rems(1.6))
                         .disabled(self.reading)
@@ -3311,7 +3307,6 @@ impl Desktop {
                     } else {
                         "导出"
                     })
-                    .tooltip("复制或导出整份笔记")
                     .accessibility_label("复制或导出整份笔记")
                     .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
                     .loading(exporting_current)
@@ -3866,7 +3861,7 @@ impl Desktop {
                         .child(
                             theme::accessible_text(
                                 ("reader-processing-detail-label", index),
-                                format!("{}的技术详情", issue.stage.label()),
+                                issue.stage.label(),
                             )
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM),
@@ -3907,7 +3902,7 @@ impl Desktop {
                     view.child(
                         theme::accessible_text(
                             "reader-unreadable-images",
-                            "部分截图暂时无法读取，笔记正文仍可阅读。",
+                            "部分截图无法读取",
                         )
                         .text_sm()
                         .text_color(color(WARNING)),
@@ -4029,18 +4024,16 @@ impl Desktop {
                             .text_size(TEXT_TITLE)
                             .font_weight(FontWeight::SEMIBOLD),
                     )
-                    .child(
-                        theme::accessible_text(
-                            "no-note-images-reason",
-                            if preview.processing_issues.iter().any(|issue| {
-                                matches!(issue.stage, notes::ProcessingStage::Screenshots)
-                            }) {
-                                "截图生成未完成，文字内容仍可阅读。"
-                            } else {
-                                "本次没有生成截图，文字内容已保存在笔记中。"
-                            },
-                        )
-                        .text_color(color(MUTED)),
+                    .when(
+                        preview.processing_issues.iter().any(|issue| {
+                            matches!(issue.stage, notes::ProcessingStage::Screenshots)
+                        }),
+                        |view| {
+                            view.child(
+                                theme::accessible_text("no-note-images-reason", "截图生成未完成")
+                                    .text_color(color(MUTED)),
+                            )
+                        },
                     )
                     .child(
                         outline_pill("empty-images-to-note")
@@ -4063,13 +4056,6 @@ impl Desktop {
                         "没有对应的截图",
                         icons::search(),
                     ))
-                    .child(
-                        theme::accessible_text(
-                            "gallery-no-matches-help",
-                            "搜索范围是截图说明和对应文字。试试更短的关键词。",
-                        )
-                        .text_color(color(MUTED)),
-                    )
                     .child(
                         quiet("clear-gallery-search")
                             .icon(icons::close())
@@ -4132,7 +4118,7 @@ impl Desktop {
                                 .with_fallback(move || {
                                     theme::accessible_text(
                                         ("failed-reader-image", index),
-                                        "这张截图无法读取；对应正文仍可阅读。",
+                                        "截图无法读取",
                                     )
                                     .into_any_element()
                                 }),
@@ -4154,7 +4140,7 @@ impl Desktop {
                         .child(
                             theme::accessible_text(
                                 ("missing-frame", index),
-                                "这张图片无法读取；可继续阅读对应正文。",
+                                "截图无法读取",
                             )
                             .text_size(TEXT_AUX)
                             .text_color(color(WARNING)),
@@ -4587,7 +4573,6 @@ impl Desktop {
                     })
                     .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
                     .accessibility_label("缩放图片")
-                    .tooltip("缩放图片")
                     .dropdown_menu(move |menu, _, _| {
                         let larger = weak.clone();
                         let smaller = weak.clone();
@@ -4828,7 +4813,7 @@ impl Desktop {
                                                     // 放大查看器同时只存在一个，固定 id 无碰撞
                                                     theme::accessible_text(
                                                         "failed-reader-image-enlarged",
-                                                        "这张截图无法读取；对应正文仍可阅读。",
+                                                        "截图无法读取",
                                                     )
                                                     .into_any_element()
                                                 }),
@@ -4839,7 +4824,7 @@ impl Desktop {
             } else {
                 body = body.child(theme::accessible_text(
                     "image-unreadable",
-                    "这张截图无法读取；对应正文仍可在笔记中查看。",
+                    "截图无法读取",
                 ));
             }
         }
@@ -4892,7 +4877,7 @@ impl Desktop {
             details = details.child(
                 theme::accessible_text(
                     "image-no-text",
-                    "这张截图没有对应文字。可以返回图片，或在笔记中查看上下文。",
+                    "这张截图没有对应文字",
                 )
                 .text_size(TEXT_READER)
                 .whitespace_normal(),
@@ -4959,7 +4944,7 @@ impl Desktop {
                             "在笔记中查看"
                         })
                         .accessibility_label("在笔记中查看")
-                        .tooltip("在笔记中查看")
+                        .when(compact, |button| button.tooltip("在笔记中查看"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let index =
                                 this.preview
@@ -4986,7 +4971,7 @@ impl Desktop {
                     .ghost()
                     .label(if compact { "观看" } else { "从此处观看" })
                     .accessibility_label("从此处观看原视频")
-                    .tooltip("从此处观看原视频")
+                    .when(compact, |button| button.tooltip("从此处观看原视频"))
                     .on_click(move |_, _, cx| cx.open_url(&url)))
                 .into_any_element(),
             ));
@@ -5002,7 +4987,7 @@ impl Desktop {
                         "打开原视频"
                     })
                     .accessibility_label("打开原视频")
-                    .tooltip("打开原视频")
+                    .when(compact, |button| button.tooltip("打开原视频"))
                     .on_click(move |_, _, cx| match &source {
                         nav::SourceTarget::Web(url) => cx.open_url(url),
                         nav::SourceTarget::Local(path) => cx.open_with_system(path),
@@ -5137,7 +5122,7 @@ fn load_reader_data(preview: &notes::Preview) -> ReaderData {
                 }
                 Err(error) => data
                     .issues
-                    .push(format!("其他版本暂时无法读取：{error}。当前版本仍可阅读。")),
+                    .push(format!("其他版本暂时无法读取：{error}")),
             }
         }
     }
@@ -5172,7 +5157,7 @@ fn processing_notice(issues: &[crate::notes::ProcessingIssue]) -> Option<String>
         return None;
     }
     Some(format!(
-        "正文已保存，{}未完成。",
+        "{}未完成",
         issues
             .iter()
             .map(|issue| issue.stage.label())
@@ -5631,7 +5616,7 @@ mod tests {
         assert!(preview.issues.is_empty());
         assert_eq!(
             processing_notice(&preview.processing_issues).as_deref(),
-            Some("正文已保存，摘要未完成。")
+            Some("摘要未完成")
         );
         assert_eq!(
             preview.processing_issues[0].outcome.message.as_deref(),
@@ -5646,7 +5631,7 @@ mod tests {
         assert!(files_need_reload(&damaged, &data.issues, &data.frames));
         assert_eq!(
             processing_notice(&damaged.processing_issues).as_deref(),
-            Some("正文已保存，摘要未完成。")
+            Some("摘要未完成")
         );
     }
     #[test]

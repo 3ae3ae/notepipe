@@ -106,7 +106,7 @@ fn inspect_location(location: &workspace::LibraryLocation) -> LocationCheck {
         Ok(identity) if identity.trim() == location.id => {}
         Ok(_) => {
             check.problem =
-                Some("保存位置对应其他课程库，请恢复原位置或在存储设置中重新登记".into())
+                Some("此位置属于其他课程库，请恢复原位置或重新登记".into())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             check.needs_reassociation = true
@@ -163,18 +163,18 @@ impl State {
             (
                 "重新定位课程库",
                 "取消重新定位",
-                "正在结束核对，原保存位置保持不变…",
+                "正在取消…",
             )
         } else if self.association {
             (
                 "重新关联保存位置",
                 "取消重新关联",
-                "正在结束读取，现有文件会保留…",
+                "正在取消…",
             )
         } else if self.cleanup {
-            ("清理旧位置备份", "取消清理", "正在结束清理操作…")
+            ("清理旧位置备份", "取消清理", "正在取消…")
         } else {
-            ("移动课程库", "取消迁移", "正在结束迁移，原课程库会保留…")
+            ("移动课程库", "取消迁移", "正在取消…")
         }
     }
 
@@ -519,7 +519,7 @@ impl Desktop {
         self.storage_ui.progress = Progress::default();
         if self.job.is_some() || self.preview_workers > 0 {
             self.storage_ui.error = Some(
-                "正在读取或生成内容，请等待结束或停止后再重新定位。原保存位置保持不变。".into(),
+                "正在处理内容，结束或停止后再重新定位".into(),
             );
             self.open_storage_dialog(window, cx);
             return;
@@ -591,7 +591,7 @@ impl Desktop {
                     return;
                 }
                 let result = result.and_then(|located| {
-                    ensure!(!this.closing && !cancel.load(Ordering::Relaxed), "已取消重新定位，原保存位置保持不变");
+                    ensure!(!this.closing && !cancel.load(Ordering::Relaxed), "已取消重新定位");
                     ensure!(this.job.is_none() && this.preview_workers == 0, "内容仍在处理中，请停止后重新定位");
                     this.workspace.as_mut().context("课程库登记记录暂时不可用")?
                         .transaction(|state| publish_relocation(state, &located))?;
@@ -621,7 +621,7 @@ impl Desktop {
                         let settings = this.relocate_settings_paths(&located.previous_root, &located.destination, cx);
                         this.storage_ui.error = settings.err().map(|error| format!("课程库已重新定位，模型位置尚未保存。请在生成笔记设置中重试保存：{error:#}"));
                         this.storage_ui.progress = Progress {
-                            message: format!("已找到课程库：{}。已有文件保留在所选位置。", located.destination.display()),
+                            message: format!("已重新定位到 {}", located.destination.display()),
                             completed: 1,
                             total: 1,
                         };
@@ -633,7 +633,7 @@ impl Desktop {
                         }
                     }
                     Err(error) => {
-                        this.storage_ui.error = Some(format!("尚未重新定位：{error:#}。原登记和文件保持不变。"));
+                        this.storage_ui.error = Some(format!("尚未重新定位：{error:#}"));
                     }
                 }
                 this.start_next_task(cx);
@@ -691,7 +691,7 @@ impl Desktop {
             for course in courses {
                 ensure!(
                     !worker_cancel.load(Ordering::Relaxed),
-                    "已取消重新关联，原文件保持完整。"
+                    "已取消重新关联"
                 );
                 let title = course.title.clone();
                 if crate::notes::read_preview(course).is_ok() {
@@ -706,7 +706,7 @@ impl Desktop {
             );
             ensure!(
                 !worker_cancel.load(Ordering::Relaxed),
-                "已取消重新关联，原文件保持完整。"
+                "已取消重新关联"
             );
             Ok::<_, anyhow::Error>((stamp, names, unreadable))
         });
@@ -729,7 +729,7 @@ impl Desktop {
             };
             let mut detail = format!("保存位置：{}\n\n", location.root.display());
             if names.is_empty() {
-                detail.push_str("目前未读到已列入课程库的笔记。现有文件会全部保留。\n");
+                detail.push_str("未读到笔记。\n");
             } else {
                 detail.push_str(&format!(
                     "目前可读取 {} 份笔记：\n{}",
@@ -748,11 +748,10 @@ impl Desktop {
             }
             if unreadable > 0 {
                 detail.push_str(&format!(
-                    "另有 {unreadable} 份已列出的笔记暂时无法读取，文件会保留。\n"
+                    "另有 {unreadable} 份笔记无法读取。\n"
                 ));
             }
-            detail
-                .push_str("\n关联后继续使用这个文件夹，现有笔记、原视频、当前输入和任务都会保留。");
+            let detail = detail.trim_end().to_owned();
             let answer = this.update_in(cx, |this, window, cx| {
                 this.storage_ui.cancel = None;
                 window.close_dialog(cx);
@@ -797,7 +796,7 @@ impl Desktop {
                     Ok(()) => {
                         this.storage_ui.error = None;
                         this.message = Some(format!(
-                            "已重新关联「{}」。已有笔记保持完整，可以继续原任务。",
+                            "已重新关联「{}」",
                             location.name
                         ));
                     }
@@ -822,7 +821,7 @@ impl Desktop {
         self.storage_ui.pending = pending;
         if !corrupt.is_empty() {
             self.storage_ui.error = Some(format!(
-                "{} 个迁移记录无法读取（原文件已保留，可手动检查或删除）：{}",
+                "{} 个迁移记录无法读取：{}",
                 corrupt.len(),
                 corrupt
                     .iter()
@@ -1035,7 +1034,7 @@ impl Desktop {
         let generation = self.storage_ui.generation;
         self.storage_ui.error = None;
         self.storage_ui.progress = Progress {
-            message: "正在保存当前任务进度，完成后开始复制…".into(),
+            message: "正在保存任务进度…".into(),
             completed: 0,
             total: 0,
         };
@@ -1061,9 +1060,9 @@ impl Desktop {
             loop {
                 if cancel.load(Ordering::Relaxed) || waiting.elapsed() > Duration::from_secs(30) {
                     let message = if cancel.load(Ordering::Relaxed) {
-                        "已取消迁移，原保存位置未改变。"
+                        "已取消迁移"
                     } else {
-                        "当前任务还在保存进度，迁移尚未开始。任务停止后可重新移动课程库。"
+                        "当前任务仍在保存进度，停止后再移动课程库"
                     };
                     let _ = this.update_in(cx, |this, _, cx| {
                         this.finish_storage_error(message.into(), cx)
@@ -1131,7 +1130,7 @@ impl Desktop {
                     Ok(mut prepared) => {
                         if this.closing || cancel.load(Ordering::Relaxed) {
                             this.finish_storage_error(
-                                "迁移副本已核验，保存位置尚未切换，原文件未删除。".into(),
+                                "副本已核验，保存位置尚未切换".into(),
                                 cx,
                             );
                             return;
@@ -1373,22 +1372,10 @@ impl Desktop {
             );
         }
         if let Some(access) = self.cached_library_access() {
-            let message = match access.coverage() {
-                storage::LibraryCoverage::Unavailable => Some(
-                    "已登记的保存位置暂时都无法访问，笔记内容尚未读取；当前输入和任务记录仍保留。"
-                        .into(),
-                ),
-                storage::LibraryCoverage::Partial => Some(format!(
-                    "目前 {} 个保存位置可访问，{} 个暂时无法访问。课程库只显示和搜索可访问位置中的笔记。",
-                    access.available.len(),
-                    access.unavailable.len()
-                )),
-                storage::LibraryCoverage::Complete => None,
-            };
-            if let Some(message) = message {
+            if access.coverage() == storage::LibraryCoverage::Unavailable {
                 has_content = true;
                 view = view.child(
-                    accessible_text("storage-access-coverage", message)
+                    accessible_text("storage-access-coverage", "所有保存位置都暂时无法访问")
                         .text_sm()
                         .text_color(color(MUTED)),
                 );
@@ -1433,7 +1420,7 @@ impl Desktop {
                     .child(accessible_text(
                         ("storage-pending-description", index),
                         format!(
-                            "尚未完成迁移：{} → {}",
+                            "{} → {}",
                             journal.source.display(),
                             journal.destination.display()
                         ),
@@ -1505,7 +1492,7 @@ impl Desktop {
                         .min_w_0()
                         .child(accessible_text(
                             ("storage-backup-description", index),
-                            format!("旧位置备份：{}", backup.path.display()),
+                            backup.path.display().to_string(),
                         ))
                         .child(
                             h_flex()
@@ -1600,10 +1587,7 @@ impl Desktop {
                             card.child(text(("storage-location-problem", index), problem).text_size(TEXT_AUX).text_color(color(DANGER)))
                         })
                         .when(needs_reassociation, |card| {
-                            card.child(text(("storage-association-needed", index), "关联记录缺失。重新关联后可继续使用，已有文件会保留。").text_size(TEXT_AUX).text_color(color(WARNING)))
-                        })
-                        .when(needs_relocation, |card| {
-                            card.child(text(("storage-relocation-help", index), "文件夹已移动时，请重新定位到它现在的位置。").text_size(TEXT_AUX).text_color(color(MUTED)))
+                            card.child(text(("storage-association-needed", index), "关联记录缺失").text_size(TEXT_AUX).text_color(color(WARNING)))
                         })
                         .child(
                             h_flex().w_full().min_w_0().gap_2().justify_end().flex_wrap()
@@ -1619,7 +1603,7 @@ impl Desktop {
                                                 if let Err(error) = result {
                                                     this.workspace_error = Some(format!("默认位置尚未更改：{error:#}"));
                                                 } else {
-                                                    this.message = Some("后续生成的笔记将保存在此位置，已有笔记和任务保持原位置".into());
+                                                    this.message = Some("已设为默认保存位置".into());
                                                 }
                                             }
                                             cx.notify();
@@ -1677,7 +1661,7 @@ impl Desktop {
         if self.preferences.references_storage_path(&backup.path) {
             self.storage_ui.cleanup = true;
             self.storage_ui.progress = Progress::default();
-            self.storage_ui.error = Some("识别模型仍引用这个旧位置，备份已保留。请先在“生成笔记”设置中完成模型位置的保存，再清理备份。".into());
+            self.storage_ui.error = Some("模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份".into());
             self.open_storage_dialog(window, cx);
             return;
         }
@@ -1705,7 +1689,7 @@ impl Desktop {
                     this.storage_ui.cancel = Some(cancel.clone());
                     this.storage_ui.error = None;
                     this.storage_ui.progress = Progress {
-                        message: "正在核验旧位置备份，确认内容未变化后清理…".into(),
+                        message: "正在清理备份…".into(),
                         completed: 0,
                         total: 0,
                     };
@@ -1741,7 +1725,7 @@ impl Desktop {
                             }) {
                                 Ok(()) => {
                                     this.storage_ui.progress.message =
-                                        "旧位置备份已清理，当前课程库保持完整。".into();
+                                        "旧位置备份已清理".into();
                                 }
                                 Err(error) => {
                                     this.storage_ui.error =
@@ -1751,7 +1735,7 @@ impl Desktop {
                         }
                     }
                     Err(_) if cancel.load(Ordering::Relaxed) => {
-                        this.storage_ui.error = Some("已取消清理，旧位置备份仍保留。".into())
+                        this.storage_ui.error = Some("已取消清理".into())
                     }
                     Err(error) => this.storage_ui.error = Some(format!("{error:#}")),
                 }

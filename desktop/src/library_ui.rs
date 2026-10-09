@@ -190,7 +190,7 @@ impl Desktop {
                             };
                             if let Some(previous) = previous_source { source.selected_subtitle = previous.selected_subtitle.clone(); }
                             if wanted.is_some() && default_track.is_none() {
-                                let message = "原来选择的字幕暂时无法读取。已确认的正文仍保留，请明确选择要使用的文字来源。".to_owned();
+                                let message = "原来选择的字幕无法读取，请重新选择文字来源".to_owned();
                                 this.subtitle_error = Some(message.clone());
                                 source.subtitle_read_error = Some(course2md::subtitle::SubtitleReadError::Failed { message });
                             }
@@ -208,7 +208,7 @@ impl Desktop {
                             if this.source_candidates.is_empty() {
                                 this.preview_error = Some("还无法确定要处理哪个视频。请复制具体视频的链接。".into());
                             } else if unavailable_entries > 0 {
-                                this.preview_error = Some(format!("另有 {unavailable_entries} 个条目暂时无法确认。可选择下列视频，或复制具体视频的链接。"));
+                                this.preview_error = Some(format!("另有 {unavailable_entries} 个条目无法确认"));
                             }
                         }
                         Ok(source::SourceProbe::Unresolved { message }) => this.preview_error = Some(message),
@@ -534,7 +534,7 @@ impl Desktop {
                     .child(
                         accessible_text(
                             "folder-delete-description",
-                            "其中的课程会回到未分类，笔记和原视频都会保留。",
+                            "其中的笔记会移到未分类",
                         )
                         .text_color(color(MUTED)),
                     )
@@ -551,7 +551,7 @@ impl Desktop {
                             ))
                             .child(
                                 control("delete-folder")
-                                    .label("删除文件夹，保留课程")
+                                    .label("删除文件夹")
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         match organize::Library::edit(&origin.root, |library| {
                                             library.remove(id);
@@ -597,7 +597,7 @@ impl Desktop {
         let answer = window.prompt(
             PromptLevel::Warning,
             &format!("删除「{name}」文件夹？"),
-            Some("其中的笔记会回到未分类，笔记正文和原视频都会保留。"),
+            Some("其中的笔记会移到未分类"),
             &["删除文件夹", "保留文件夹"],
             cx,
         );

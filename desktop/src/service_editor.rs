@@ -349,9 +349,7 @@ impl Desktop {
                 } else {
                     "AI 服务"
                 },
-                if purpose == ServicePurpose::Ai && !self.preferences.generation().needs_ai() {
-                    "开启校对或摘要后，文字会发送到所选服务。"
-                } else if purpose == ServicePurpose::Ai {
+                if purpose == ServicePurpose::Ai {
                     "校对与摘要会把文字发送到所选服务。"
                 } else {
                     ""
@@ -687,26 +685,13 @@ impl Desktop {
             .px_1()
             // 滚动容器为末行字段的边框/焦点外绘留出空间（system.md：clipped container 需预留 outward paint）
             .pb_3();
-        view = view.child(
-            text(
-                "service-editor-scope",
-                if editor.repair_task.is_some() {
-                    if configuration_saved {
-                        format!(
-                            "配置已保存。点击「{repair_submit_label}」后才重新发送这篇笔记的失败部分；默认服务保持不变。"
-                        )
-                    } else {
-                        "仅保存不会开始补做；点击「保存并补做」后才重新发送这篇笔记的失败部分。默认服务保持不变。".to_owned()
-                    }
-                } else if editor.target.is_some() {
-                    "保存后用于本次笔记。已提交的任务不受影响。".to_owned()
-                } else {
-                    "保存后设为默认服务。已提交的任务不受影响。".to_owned()
-                },
-            )
-            .text_sm()
-            .text_color(color(MUTED)),
-        );
+        if editor.repair_task.is_none() && editor.target.is_none() {
+            view = view.child(
+                text("service-editor-scope", "保存后设为默认服务")
+                    .text_sm()
+                    .text_color(color(MUTED)),
+            );
+        }
         view = view
             .child(
                 settings_detail_group("service-connection-heading", icons::cloud(), "连接信息")
@@ -766,13 +751,6 @@ impl Desktop {
         // Codex 端点固定、凭据由登录态持有：不展示地址与认证编辑
         if protocol != ServiceProtocol::CodexResponses {
             view = view.child(self.setting_field(EditField::Address, "服务地址", cx));
-        } else {
-            view = view.child(
-                theme::supporting_info("service-codex-endpoint", crate::codex_ui::ENDPOINT_NOTE)
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal(),
-            );
         }
         let address = self.setting_value(EditField::Address, cx);
         if protocol != ServiceProtocol::CodexResponses
@@ -869,7 +847,7 @@ impl Desktop {
                 view = view.child(
                     text(
                         "service-key-existing",
-                        "API Key 已安全保存。填写新值可替换，留空保留原密钥。",
+                        "已保存密钥，留空则保留",
                     )
                     .text_sm()
                     .text_color(color(MUTED)),
@@ -878,7 +856,7 @@ impl Desktop {
             view = view.child(preference(
                 None,
                 "显示输入的密钥",
-                "开启后输入的密钥明文可见。",
+                "",
                 Switch::new("toggle-service-key")
                     .checked(editor.show_key)
                     .on_click(cx.listener(|this, value, window, cx| {
@@ -896,7 +874,7 @@ impl Desktop {
             view = view.child(
                 text(
                     "service-credential-source",
-                    format!("密钥已安全保存 · 来源：{source}"),
+                    format!("密钥来源：{source}"),
                 )
                 .text_sm(),
             );
@@ -939,7 +917,7 @@ impl Desktop {
                 self.setting_preference(
                     icons::check_circle(),
                     "同时设为默认服务",
-                    "后续转换自动使用",
+                    "",
                     Switch::new("service-also-default")
                         .checked(editor.also_default)
                         .disabled(awaiting_binding)
@@ -952,7 +930,7 @@ impl Desktop {
                 ),
             );
         }
-        view = view.child(self.service_test_section(configuration_saved, window, cx));
+        view = view.child(self.service_test_section(window, cx));
         if let Some(status) = &editor.status
             && !busy
         {
@@ -1075,7 +1053,6 @@ impl Desktop {
     /// Test-kind choice, busy state, result card and expandable details.
     fn service_test_section(
         &self,
-        configuration_saved: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -1179,23 +1156,12 @@ impl Desktop {
                         view.child(text("service-test-result", evidence.message.clone()).text_sm())
                     },
                 );
-            if evidence.outcome == preferences::TestOutcome::Passed {
+            if evidence.outcome == preferences::TestOutcome::Passed
+                && editor.repair_task.is_none()
+                && awaiting_binding
+            {
                 result = result.child(
-                    text(
-                        "service-tested-save-state",
-                        if editor.repair_task.is_some() {
-                            if configuration_saved {
-                                "配置已保存，尚未补做这篇笔记。"
-                            } else {
-                                "测试不会保存配置或开始补做。"
-                            }
-                        } else if awaiting_binding {
-                            "配置已保存，本次笔记的选择仍需重试保存。"
-                        } else {
-                            "保存服务后使用这些更改。"
-                        },
-                    )
-                    .text_sm(),
+                    text("service-tested-save-state", "本次笔记的选择尚未保存").text_sm(),
                 );
             }
             result = result.child(
@@ -1320,11 +1286,11 @@ impl Desktop {
                 theme::supporting_info(
                     "service-test-notice",
                     if test_outcome_unknown && repair_task {
-                        format!("上次测试结果未确认。重试测试会发送新测试请求；点击「{repair_submit_label}」会重新发送失败部分，服务可能计费。")
+                        format!("上次结果未确认；重测或「{repair_submit_label}」都会再次发送请求，可能计费")
                     } else if test_outcome_unknown {
-                        "上次测试结果未确认。重试会发送新的内置测试内容，服务可能按其规则计费。".to_owned()
+                        "上次结果未确认；重测会再次发送，可能计费".to_owned()
                     } else if repair_task {
-                        format!("测试使用内置内容；点击「{repair_submit_label}」会重新发送失败部分。服务可能按其规则计费。")
+                        format!("「{repair_submit_label}」会重新发送失败部分，可能计费")
                     } else {
                         service_test::TEST_NOTICE.to_owned()
                     },
@@ -1610,7 +1576,7 @@ impl Desktop {
                         editor.evidence = Some(evidence);
                         if !persisted {
                             editor.status =
-                                Some("测试结果已收到，但尚未保存到设置；不会自动重测".into());
+                                Some("测试结果尚未保存".into());
                         }
                     }
                 }
@@ -1851,7 +1817,7 @@ impl Desktop {
                 .child(
                     text(
                         "default-service-consequence",
-                        "以后生成的笔记将使用这份配置。已提交的任务和已有笔记保持不变，此操作不会开始补做。",
+                        "仅影响以后生成的笔记",
                     )
                     .text_sm()
                     .text_color(color(MUTED)),
@@ -1867,7 +1833,7 @@ impl Desktop {
                         match this.preferences.set_default_service(purpose, Some(&id)) {
                             Ok(()) => this.set_settings_feedback(
                                 PreferenceGroup::Services,
-                                "已更新默认服务，以后生成的笔记将使用此配置".into(),
+                                "已更新默认服务".into(),
                                 false,
                             ),
                             Err(error) => {
@@ -1932,7 +1898,7 @@ impl Desktop {
                 .title("删除此服务")
                 .child(text(
                     "delete-service-consequence",
-                    "将删除此服务配置。已经发出的请求无法撤回，收到的结果和已有笔记仍会保存。需要时可以重新添加。",
+                    "将删除此服务配置，已有笔记不受影响",
                 ))
                 .when(affected > 0, |dialog| {
                     dialog.child(text(

@@ -300,7 +300,7 @@ impl Desktop {
     }
     fn begin_model_preparation(&mut self, request: Request, cx: &mut Context<Self>) {
         if self.job.is_some() {
-            self.message = Some("当前处理结束后可以准备模型。已下载的文件会保留。".into());
+            self.message = Some("当前处理结束后才能准备模型".into());
             cx.notify();
             return;
         }
@@ -325,23 +325,19 @@ impl Desktop {
             .unwrap_or_else(|| self.default_model_request());
         let result = (
             if success {
-                format!(
-                    "{} · {} 的准备已完成，正在重新检查缓存。",
-                    provider_name(request.provider),
-                    request.model
-                )
+                format!("{} 已准备完成", request.model)
             } else if cancelled {
                 format!(
-                    "{} 的准备已停止。已下载完成的文件保留，可以继续准备。",
+                    "{} 的准备已停止",
                     request.model
                 )
             } else {
                 format!(
-                    "{} 的准备未完成：{}。已下载完成的文件保留。",
+                    "{} 的准备未完成：{}",
                     request.model,
                     self.task_error
                         .as_deref()
-                        .unwrap_or("转换程序没有返回成功结果")
+                        .unwrap_or("准备失败")
                 )
             },
             !success && !cancelled,
@@ -359,14 +355,14 @@ impl Desktop {
     fn model_device_issue(&self, provider: AsrProvider) -> Option<String> {
         let environment = self.environment.as_ref()?;
         Some(match device_issue(provider, environment)? {
-            DeviceIssue::Engine => "转换程序无法运行，请先恢复应用内的转换程序。".into(),
-            DeviceIssue::AppleRuntime if !cfg!(all(target_os = "macos", target_arch = "aarch64")) => "已选择 Apple 原生，但当前系统无法使用这套识别方式。选择仍保留，请选择本机可用的识别方式。".into(),
-            DeviceIssue::AppleRuntime => "已选择 Apple 原生，但本机没有检测到完整的 Apple 识别运行时。选择仍保留；安装完整应用可以恢复组件，也可以明确选择其他可用方式。".into(),
-            DeviceIssue::LlamaMissing if provider == AsrProvider::Gpu => "已选择 GPU，但未检测到 llama-server 识别运行时。选择仍保留；安装运行时后重新检查。".into(),
-            DeviceIssue::LlamaMissing => "已选择 CPU，但未检测到 llama-server 识别运行时。安装完成后可以使用已缓存的模型。".into(),
-            DeviceIssue::GpuAbsent => "已选择 GPU，但识别运行时没有报告可用的 GPU。选择仍保留；可以明确改用 CPU。".into(),
-            DeviceIssue::NpuDevice => "已选择 Intel NPU，但本机未检测到可用的 Intel NPU 设备。选择仍保留，请选择本机可用的识别方式。".into(),
-            DeviceIssue::NpuRuntime => "已选择 Intel NPU，已检测到设备，但缺少 uv 或 Python 启动器。安装完成后重新检查；选择仍保留。".into(),
+            DeviceIssue::Engine => "转换程序无法运行，请重新安装应用".into(),
+            DeviceIssue::AppleRuntime if !cfg!(all(target_os = "macos", target_arch = "aarch64")) => "当前系统不支持 Apple 原生识别，请改用其他方式".into(),
+            DeviceIssue::AppleRuntime => "缺少 Apple 识别组件，请重新安装应用或改用其他方式".into(),
+            DeviceIssue::LlamaMissing if provider == AsrProvider::Gpu => "未检测到 llama-server，安装后重新检查".into(),
+            DeviceIssue::LlamaMissing => "未检测到 llama-server，安装后重新检查".into(),
+            DeviceIssue::GpuAbsent => "未检测到可用 GPU，可改用 CPU".into(),
+            DeviceIssue::NpuDevice => "未检测到 Intel NPU，请改用其他方式".into(),
+            DeviceIssue::NpuRuntime => "缺少 uv 或 Python，安装后重新检查".into(),
         })
     }
     fn model_runtime_repair(&self, provider: AsrProvider, key: &str) -> Div {
@@ -382,15 +378,7 @@ impl Desktop {
             _ => false,
         };
         if reinstall {
-            return view
-                .child(
-                    settings_value(
-                        SharedString::from(format!("model-reinstall-help-{key}")),
-                        "重新安装完整应用会恢复应用内组件，已保存的笔记和设置保留。",
-                    )
-                    .text_size(TEXT_AUX),
-                )
-                .child(
+            return view.child(
                     control(SharedString::from(format!("model-reinstall-{key}")))
                         .icon(icons::download())
                         .label("下载完整应用")
@@ -416,16 +404,16 @@ impl Desktop {
                 view = view
                     .child(settings_value(
                         SharedString::from(format!("model-llama-install-command-{key}")),
-                        "已安装 Homebrew 时，可在终端运行 brew install llama.cpp。完成后重新打开应用并检查本机能力。",
+                        "需要 Homebrew；安装后重新打开应用",
                     ).text_sm())
                     .child(control(SharedString::from(format!("model-copy-llama-install-{key}")))
-                        .icon(icons::content_copy()).label("复制识别程序安装命令")
+                        .icon(icons::content_copy()).label("复制安装命令")
                         .self_start()
                         .on_click(|_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string("brew install llama.cpp".into()))));
             } else {
                 view = view.child(settings_value(
                     SharedString::from(format!("model-llama-path-help-{key}")),
-                    "安装与当前系统及设备匹配的 llama-server，并将它所在的目录加入 PATH。完成后重新打开应用并检查本机能力。",
+                    "安装 llama-server 并加入 PATH，然后重新打开应用",
                 ).text_sm());
             }
         }
@@ -571,7 +559,7 @@ impl Desktop {
                 "检查结果",
                 settings_value(
                     SharedString::from(format!("model-check-error-{key}")),
-                    format!("模型缓存检查未完成：{error}"),
+                    format!("检查失败：{error}"),
                 )
                 .text_color(color(DANGER)),
             ));
@@ -585,27 +573,17 @@ impl Desktop {
                 .as_ref()
                 .is_some_and(|request| request.key() == key);
             let (kind, label, description) = if being_prepared {
-                (
-                    BadgeKind::Progress,
-                    "准备中",
-                    "正在下载或校验模型文件，已下载完成的部分会保留。",
-                )
+(BadgeKind::Progress, "准备中", None)
             } else {
                 match status.state {
-                CacheState::Missing => (BadgeKind::Neutral, "待下载", "首次识别时自动准备。"),
-                CacheState::Partial => (
-                    BadgeKind::Warning,
-                    "待准备",
-                    "尚未下载完整，继续准备会复用已有文件。",
-                ),
-                CacheState::Cached => (BadgeKind::Success, "已下载", "尚未验证加载。"),
-                CacheState::Loaded => {
-                    (BadgeKind::Success, "已验证可加载", "验证后模型文件未改变。")
-                }
+                CacheState::Missing => (BadgeKind::Neutral, "待下载", Some("首次识别时自动下载。")),
+                CacheState::Partial => (BadgeKind::Warning, "待准备", None),
+                CacheState::Cached => (BadgeKind::Success, "已下载", None),
+                CacheState::Loaded => (BadgeKind::Success, "已验证可加载", None),
                 CacheState::Unsupported => (
                     BadgeKind::Warning,
                     "不支持",
-                    "这种识别方式不支持当前模型。原选择保留，请明确选择支持的模型。",
+                    Some("请选择这种识别方式支持的模型"),
                 ),
                 }
             };
@@ -614,13 +592,15 @@ impl Desktop {
                 "模型状态",
                 badge(kind).child(label),
             ));
-            view = view.child(
-                theme::supporting_info(
-                    SharedString::from(format!("model-state-{key}")),
-                    description,
-                )
-                .text_size(TEXT_AUX),
-            );
+            if let Some(description) = description {
+                view = view.child(
+                    theme::supporting_info(
+                        SharedString::from(format!("model-state-{key}")),
+                        description,
+                    )
+                    .text_size(TEXT_AUX),
+                );
+            }
             let detail_key = key.clone();
             let cache_open = self
                 .settings_ui
@@ -875,19 +855,9 @@ impl Desktop {
                 extras.push(
                     settings_value(
                         SharedString::from(format!("model-waits-for-job-{key}")),
-                        "当前处理结束后可准备模型；本次已保存的任务不受影响。",
+                        "当前处理结束后可准备",
                     )
                     .text_sm()
-                    .into_any_element(),
-                );
-            }
-            if !loaded {
-                extras.push(
-                    theme::supporting_info(
-                        SharedString::from(format!("model-network-scope-{key}")),
-                        "准备时可能下载模型，课程内容不会上传。",
-                    )
-                    .text_size(TEXT_AUX)
                     .into_any_element(),
                 );
             }
@@ -907,7 +877,7 @@ impl Desktop {
                 settings_detail_row(
                     "default-asr-provider-label",
                     "识别方式",
-                    settings_value("default-asr-is-service", "语音服务，本机模型不参与。"),
+                    settings_value("default-asr-is-service", "语音服务"),
                 ),
             ));
         } else {
@@ -1001,9 +971,9 @@ impl Desktop {
                 "gpu-device",
                 "GPU",
                 environment.gpu.as_deref().unwrap_or(if environment.llama {
-                    "识别运行时未报告可用设备"
+                    "未检测到"
                 } else {
-                    "缺少 llama-server，尚无法检查"
+                    "无法检查（缺少 llama-server）"
                 }),
             ),
             (
@@ -1019,7 +989,7 @@ impl Desktop {
                 "npu-runtime",
                 "NPU 启动器",
                 if environment.npu_runtime {
-                    "已找到；首次准备时验证 OpenVINO 及设备编译"
+                    "已找到"
                 } else {
                     "未找到 uv 或 Python"
                 },
@@ -1028,9 +998,9 @@ impl Desktop {
                 "apple-runtime",
                 "Apple 识别程序",
                 if environment.apple {
-                    "已检测到原生运行时与 Metal 资源"
+                    "已检测到"
                 } else {
-                    "未检测到完整运行时与 Metal 资源"
+                    "不完整"
                 },
             ),
         ]
@@ -1118,7 +1088,7 @@ impl Desktop {
     pub(super) fn default_model_conclusion(&self) -> (bool, String) {
         let request = self.default_model_request();
         if request.provider == AsrProvider::Api {
-            return (true, "当前使用语音服务识别，本机模型不参与。".into());
+            return (true, "使用语音服务识别".into());
         }
         if self.model_device_issue(request.provider).is_some() {
             return (
@@ -1149,7 +1119,7 @@ impl Desktop {
             .map(|status| &status.state)
         {
             Some(CacheState::Loaded) => (true, "识别模型已就绪。".into()),
-            Some(CacheState::Cached) => (true, "模型已下载，尚未验证加载。".into()),
+            Some(CacheState::Cached) => (true, "模型已下载。".into()),
             Some(CacheState::Missing | CacheState::Partial) => {
                 (true, "首次识别时会自动下载所选模型。".into())
             }
