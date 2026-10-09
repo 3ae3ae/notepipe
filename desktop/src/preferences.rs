@@ -522,6 +522,33 @@ pub struct ServiceVersion {
     pub config: ServiceConfiguration,
 }
 
+impl ServiceVersion {
+    /// Field-level differences against another version of the same service, in
+    /// display order (name/model/endpoint/protocol/auth). Shared by the service
+    /// picker's "新版 vN · …已更新" label.
+    pub fn changes_since(&self, old: &ServiceVersion) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+        if old.config.name != self.config.name {
+            changed.push("名称");
+        }
+        if old.config.model != self.config.model {
+            changed.push("模型");
+        }
+        if old.config.endpoint != self.config.endpoint {
+            changed.push("地址");
+        }
+        if old.config.protocol != self.config.protocol {
+            changed.push("协议");
+        }
+        if old.config.authentication != self.config.authentication
+            || old.config.credential != self.config.credential
+        {
+            changed.push("认证");
+        }
+        changed
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServiceRefs {

@@ -2035,24 +2035,7 @@ impl Desktop {
                         if old.id == version.id {
                             format!("当前使用 · 旧配置 v{}", version.number)
                         } else {
-                            let mut changed = Vec::new();
-                            if old.config.name != version.config.name {
-                                changed.push("名称");
-                            }
-                            if old.config.model != version.config.model {
-                                changed.push("模型");
-                            }
-                            if old.config.endpoint != version.config.endpoint {
-                                changed.push("地址");
-                            }
-                            if old.config.protocol != version.config.protocol {
-                                changed.push("协议");
-                            }
-                            if old.config.authentication != version.config.authentication
-                                || old.config.credential != version.config.credential
-                            {
-                                changed.push("认证");
-                            }
+                            let changed = version.changes_since(old);
                             format!(
                                 "新版 v{} · {}",
                                 version.number,
