@@ -3752,7 +3752,7 @@ impl Desktop {
                         && !task
                             .blocked
                             .iter()
-                            .any(|blocked| blocked.reason == "uncertain")
+                            .any(|blocked| blocked.reason == course2md::dispatch::REASON_UNCERTAIN)
                         && task.artifact.as_ref() == Some(&preview.course.dir)
                 });
                 let components = preview

@@ -2005,7 +2005,7 @@ impl Desktop {
                 || task
                     .blocked
                     .iter()
-                    .any(|request| request.reason == "uncertain");
+                    .any(|request| request.reason == course2md::dispatch::REASON_UNCERTAIN);
             let requires_repair = !uncertain && crate::task_ui::task_requires_service_repair(&task);
             let partial_components = if task.state == crate::workspace::TaskState::Partial {
                 task.artifact

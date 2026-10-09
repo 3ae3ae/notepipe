@@ -89,8 +89,6 @@ const PROVIDERS: [(&str, &str); 6] = [
     ("api", "云端 API"),
 ];
 
-/// 识别引擎的规范展示名：全桌面唯一来源（选择与描述场景共用）。
-/// 与 PROVIDERS 表的 id 一一对应；None 表示「自动」。
 /// Runs blocking IO on a dedicated OS thread and delivers the result through a channel.
 ///
 /// GPUI's background executor dispatches to GCD global queues, and macOS may run those
@@ -107,16 +105,15 @@ pub(crate) fn spawn_blocking_io<T: Send + 'static>(
     rx
 }
 
+/// 识别引擎的规范展示名：全桌面唯一来源（选择与描述场景共用）。
+/// 与 PROVIDERS 表的 id 一一对应；None 表示「自动」。
 pub(crate) fn provider_label(provider: Option<course2md::config::AsrProvider>) -> &'static str {
-    use course2md::config::AsrProvider;
-    match provider {
-        None => "自动",
-        Some(AsrProvider::Coreml) => "Apple 原生",
-        Some(AsrProvider::Gpu) => "GPU",
-        Some(AsrProvider::Cpu) => "CPU",
-        Some(AsrProvider::Npu) => "Intel NPU",
-        Some(AsrProvider::Api) => "云端 API",
-    }
+    let id = provider.map(|provider| provider.as_str()).unwrap_or("");
+    PROVIDERS
+        .iter()
+        .find(|(provider_id, _)| *provider_id == id)
+        .map(|(_, label)| *label)
+        .unwrap_or("自动")
 }
 
 /// PROVIDERS 下标 → AsrProvider：索引与枚举映射的唯一实现（与 PROVIDERS 顺序同源）。
@@ -388,6 +385,15 @@ impl Desktop {
         self.entered.insert(id)
     }
 
+    /// Stop background preview/subtitle readers; request_close and Drop share this.
+    fn cancel_background_reads(&self) {
+        if let Some(cancel) = &self.preview_cancel {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(cancel) = &self.subtitle_cancel {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     fn request_close(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.flush_settings_for_exit(cx) || !self.save_current_draft(cx) {
             return false;
@@ -404,12 +410,7 @@ impl Desktop {
                 return false;
             }
         }
-        if let Some(cancel) = &self.preview_cancel {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        if let Some(cancel) = &self.subtitle_cancel {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
+        self.cancel_background_reads();
         self.closing = true;
         self.quit_deadline = Some(Instant::now() + Duration::from_secs(10));
         self.refresh_dispatch_controls(cx);
@@ -1502,13 +1503,7 @@ mod reader_notice_tests {
 
 impl Drop for Desktop {
     fn drop(&mut self) {
-        if let Some(cancel) = &self.preview_cancel {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        // 与 request_close 一致：字幕读取也要停
-        if let Some(cancel) = &self.subtitle_cancel {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
+        self.cancel_background_reads();
     }
 }
 

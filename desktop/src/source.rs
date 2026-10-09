@@ -11,6 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Preview/subtitle probing gives up on a hung helper after this long.
+const PREVIEW_TIMEOUT: Duration = Duration::from_secs(45);
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Source {
     pub input: String,
@@ -213,7 +216,7 @@ fn command_output(name: &str, args: &[&str], cancel: &AtomicBool) -> Result<Comm
         let message = error.to_string();
         if name != "yt-dlp"
             || cancel.load(Ordering::Relaxed)
-            || start.elapsed() >= Duration::from_secs(45)
+            || start.elapsed() >= PREVIEW_TIMEOUT
         {
             return result;
         }
@@ -235,7 +238,7 @@ fn command_output(name: &str, args: &[&str], cancel: &AtomicBool) -> Result<Comm
 fn check_preview_deadline(cancel: &AtomicBool, start: Instant) -> Result<()> {
     ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
     ensure!(
-        start.elapsed() < Duration::from_secs(45),
+        start.elapsed() < PREVIEW_TIMEOUT,
         "读取超过 45 秒，请重新读取；也可以选择本地视频"
     );
     Ok(())
@@ -276,7 +279,7 @@ fn command_once(
         .spawn()
         .with_context(|| format!("无法启动 {name}，请在设置中检查运行环境"))?;
     let status = loop {
-        if cancel.load(Ordering::Relaxed) || start.elapsed() > Duration::from_secs(45) {
+        if cancel.load(Ordering::Relaxed) || start.elapsed() > PREVIEW_TIMEOUT {
             crate::backend::terminate(&mut child);
             let _ = child.wait();
             check_preview_deadline(cancel, start)?;

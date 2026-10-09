@@ -15,6 +15,9 @@ pub(crate) struct AccountUi {
     checking: bool,
     has_saved_login: bool,
     status_error: Option<String>,
+    /// The current status_error is the logout-incomplete message; a flag so a
+    /// copy change cannot silently break the status derivation.
+    logout_failed: bool,
     retry_source: Option<(u64, String)>,
     return_focus: Option<FocusHandle>,
 }
@@ -116,8 +119,12 @@ impl AccountUi {
                 self.has_saved_login = !matches!(status, AccountStatus::Disconnected);
                 self.status = Some(status);
                 self.status_error = None;
+                self.logout_failed = false;
             }
-            Err(error) => self.status_error = Some(error),
+            Err(error) => {
+                self.status_error = Some(error);
+                self.logout_failed = false;
+            }
         }
         true
     }
@@ -176,6 +183,7 @@ impl Desktop {
         let generation = self.account.status_generation;
         self.account.checking = true;
         self.account.status_error = None;
+        self.account.logout_failed = false;
         // 账号状态是同步网络请求；见 crate::spawn_blocking_io 的说明
         let task = crate::spawn_blocking_io(|| {
             let saved = course2md::auth::cookie_path().is_file();
@@ -229,10 +237,7 @@ impl Desktop {
         } else {
             (BadgeKind::Neutral, "未登录")
         };
-        let detail = status
-            .trim_start_matches("Bilibili：")
-            .trim_start_matches("已登录 · ")
-            .to_owned();
+        let detail = status.trim_start_matches("已登录 · ").to_owned();
         let show_detail = !self.account.checking && detail != label;
         v_flex()
             .w_full()
@@ -325,36 +330,38 @@ impl Desktop {
             )
     }
 
+    /// Status text without the「Bilibili：」prefix and the「已登录 · 」name
+    /// separator; the single source for the summary row, the compact source
+    /// row and the detail line, which each format their own wrapper.
     fn account_status_text(&self) -> String {
         if self.account.checking {
-            return "Bilibili：正在验证登录状态…".into();
+            return "正在验证登录状态…".into();
         }
-        if self.account.status_error.as_deref() == Some("退出登录尚未完成，原登录状态已保留。")
-        {
-            return "Bilibili：退出登录尚未完成，原登录状态已保留".into();
+        if self.account.logout_failed {
+            return "退出登录尚未完成，原登录状态已保留".into();
         }
         if self.account.status_error.is_some() {
             return if self.account.has_saved_login {
-                "Bilibili：暂时无法验证，已保留登录".into()
+                "暂时无法验证，已保留登录".into()
             } else {
-                "Bilibili：暂时无法检查登录状态".into()
+                "暂时无法检查登录状态".into()
             };
         }
         match &self.account.status {
             Some(AccountStatus::Connected(profile)) if !profile.name.trim().is_empty() => {
-                format!("Bilibili：已登录 · {}", profile.name)
+                format!("已登录 · {}", profile.name)
             }
-            Some(AccountStatus::Connected(_)) => "Bilibili：已登录".into(),
-            Some(AccountStatus::Expired) => "Bilibili：登录已失效".into(),
-            Some(AccountStatus::Disconnected) => "Bilibili：未登录".into(),
-            None if self.account.has_saved_login => "Bilibili：已保留登录，尚未验证".into(),
-            None => "Bilibili：未登录".into(),
+            Some(AccountStatus::Connected(_)) => "已登录".into(),
+            Some(AccountStatus::Expired) => "登录已失效".into(),
+            Some(AccountStatus::Disconnected) => "未登录".into(),
+            None if self.account.has_saved_login => "已保留登录，尚未验证".into(),
+            None => "未登录".into(),
         }
     }
 
     /// Only rendered inside source details or a permission repair, never a permanent status row.
     pub fn source_account_row(&self, cx: &mut Context<Self>) -> Div {
-        let status = self.account_status_text();
+        let status = format!("Bilibili：{}", self.account_status_text());
         let login_action = self.account.login_action();
         h_flex()
             .w_full()
@@ -414,9 +421,11 @@ impl Desktop {
                 self.account.has_saved_login = false;
                 self.account.status = Some(AccountStatus::Disconnected);
                 self.account.status_error = None;
+                self.account.logout_failed = false;
             }
             Err(_) => {
-                self.account.status_error = Some("退出登录尚未完成，原登录状态已保留。".into())
+                self.account.status_error = Some("退出登录尚未完成，原登录状态已保留。".into());
+                self.account.logout_failed = true;
             }
         }
         cx.notify();
@@ -545,6 +554,7 @@ impl Desktop {
                                     this.account.has_saved_login = true;
                                     this.account.status = Some(AccountStatus::Connected(profile.clone()));
                                     this.account.status_error = None;
+                                    this.account.logout_failed = false;
                                     (QrDialogState::Success(profile), false)
                                 }
                                 Err(_) => (QrDialogState::Error("账号已确认，但保存登录状态失败。请检查本地权限后重新扫码。".into()), false),
