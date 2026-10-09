@@ -865,6 +865,21 @@ impl Desktop {
         }
     }
 
+    /// 该任务是否正持有运行中的后台作业（记录状态可能尚未追上事件流）。
+    pub(crate) fn is_running_task(&self, id: &str) -> bool {
+        self.active_task.as_deref() == Some(id) && self.job.is_some()
+    }
+
+    /// 任务计划对应的课程库保存位置；记录可能引用了已移除的库。
+    pub(crate) fn task_library(
+        &self,
+        task: &TaskRecord,
+    ) -> Option<&workspace::LibraryLocation> {
+        self.workspace
+            .as_ref()
+            .and_then(|w| w.state.library(&task.plan.library_id))
+    }
+
     pub fn save_current_draft(&mut self, cx: &mut Context<Self>) -> bool {
         if self.draft_loading {
             return true;
@@ -1441,10 +1456,7 @@ impl Desktop {
         task: &TaskRecord,
         secrets: &HashMap<String, String>,
     ) -> Result<course2md::execution::Request> {
-        let location = self
-            .workspace
-            .as_ref()
-            .and_then(|w| w.state.library(&task.plan.library_id))
+        let location = self.task_library(task)
             .context("任务保存位置暂时不可用")?;
         workspace::check_library(location)?;
         ensure!(
@@ -1521,10 +1533,7 @@ impl Desktop {
     }
 
     fn write_task_control(&self, task: &TaskRecord, resend: Vec<String>) -> Result<()> {
-        let library = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.state.library(&task.plan.library_id))
+        let library = self.task_library(task)
             .context("任务保存位置尚未恢复")?;
         workspace::check_library(library)?;
         ensure!(
@@ -1720,7 +1729,7 @@ impl Desktop {
     }
 
     pub fn set_task_intent(&mut self, id: String, intent: Intent, cx: &mut Context<Self>) {
-        let active = self.active_task.as_deref() == Some(&id) && self.job.is_some();
+        let active = self.is_running_task(&id);
         if active && intent == Intent::Run {
             self.message = Some("当前任务还在处理，请等候当前操作结束。".into());
             cx.notify();
@@ -1814,7 +1823,7 @@ impl Desktop {
     }
 
     pub fn resend_uncertain(&mut self, id: String, cx: &mut Context<Self>) {
-        if self.active_task.as_deref() == Some(&id) && self.job.is_some() {
+        if self.is_running_task(&id) {
             self.message = Some("正在保存当前结果，请等候当前任务停止后再选择重新发送。".into());
             cx.notify();
             return;
@@ -1876,7 +1885,7 @@ impl Desktop {
         resend: Vec<String>,
         cx: &mut Context<Self>,
     ) {
-        if self.active_task.as_deref() == Some(&id) && self.job.is_some() {
+        if self.is_running_task(&id) {
             self.message = Some("正在保存当前结果，请等候当前任务停止后再补做。".into());
             cx.notify();
             return;
@@ -1951,7 +1960,7 @@ impl Desktop {
     ) -> bool {
         let result = (|| -> Result<String> {
             ensure!(
-                self.active_task.as_deref() != Some(&id) || self.job.is_none(),
+                !self.is_running_task(&id),
                 "正在保存当前结果，请等待任务停止后再补做"
             );
             let task = self
@@ -2000,7 +2009,7 @@ impl Desktop {
     }
 
     pub fn adjust_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_task.as_deref() == Some(&id) && self.job.is_some() {
+        if self.is_running_task(&id) {
             self.message = Some("当前任务还在处理，请先暂停并等候当前步骤结束。".into());
             cx.notify();
             return;
@@ -2203,12 +2212,7 @@ impl Desktop {
                     });
                 if let Some(done) = &done {
                     self.completed = Some(done.clone());
-                    if let Some(root) = self
-                        .workspace
-                        .as_ref()
-                        .and_then(|w| w.state.library(&task.plan.library_id))
-                        .map(|l| l.root.clone())
-                    {
+                    if let Some(root) = self.task_library(&task).map(|l| l.root.clone()) {
                         let _ = source::save_cover(&task.plan.source, &done.out_dir).map_err(|e| {
                             self.message = Some(format!("笔记已保存，封面暂未保存：{e:#}"))
                         });
@@ -2492,6 +2496,60 @@ impl Desktop {
         wrapper.into_any_element()
     }
 
+    /// 任务卡共享的暂停/取消动作组。队列卡与工作台卡仅按钮构造器、暂停文案与
+    /// 元素 id 前缀不同；是否展示由调用点按各自的状态语义决定。
+    #[allow(clippy::too_many_arguments)]
+    fn task_stop_actions(
+        &self,
+        mut actions: Div,
+        task: &TaskRecord,
+        visible: bool,
+        pause_label: &'static str,
+        id_prefix: &'static str,
+        primary: fn(SharedString) -> Button,
+        secondary: fn(SharedString) -> Button,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        if visible {
+            let id = task.id.clone();
+            let cancelling = task.state == TaskState::Pausing && task.intent == Intent::Cancel;
+            actions = actions
+                .when(!cancelling, |actions| {
+                    actions.child(
+                        primary(SharedString::from(format!("{id_prefix}pause-{id}")))
+                            .label(if task.state == TaskState::Pausing {
+                                "正在暂停…"
+                            } else {
+                                pause_label
+                            })
+                            .icon(icons::pause())
+                            .loading(task.state == TaskState::Pausing)
+                            .disabled(task.state == TaskState::Pausing)
+                            .on_click(cx.listener({
+                                let id = id.clone();
+                                move |this, _, _, cx| {
+                                    this.set_task_intent(id.clone(), Intent::Pause, cx)
+                                }
+                            })),
+                    )
+                })
+                .child(
+                    secondary(SharedString::from(format!("{id_prefix}cancel-{id}")))
+                        .icon(icons::close())
+                        .label(if cancelling { "正在取消…" } else { "取消任务" })
+                        .loading(cancelling)
+                        .disabled(cancelling)
+                        .on_click(cx.listener({
+                            let id = id.clone();
+                            move |this, _, _, cx| {
+                                this.set_task_intent(id.clone(), Intent::Cancel, cx)
+                            }
+                        })),
+                );
+        }
+        actions
+    }
+
     /// One task card in the virtualized queue: the heading row, live progress
     /// or attention summary, and the expanded detail while selected.
     fn queue_task_card(
@@ -2604,10 +2662,7 @@ impl Desktop {
             .items_center()
             .flex_wrap()
             .child(div().flex_1().min_w(rems(14.)).max_w_full().child(heading));
-        let has_exports = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.state.library(&task.plan.library_id))
+        let has_exports = self.task_library(task)
             .is_some_and(|location| !workspace::task_export_files(task, location).is_empty());
         if let Some(path) = &task.artifact {
             let path = path.clone();
@@ -2658,10 +2713,7 @@ impl Desktop {
                 .pt_3()
                 .border_t_1()
                 .border_color(color(LINE));
-            let destination = self
-                .workspace
-                .as_ref()
-                .and_then(|w| w.state.library(&task.plan.library_id))
+            let destination = self.task_library(task)
                 .map(|lib| lib.name.clone())
                 .unwrap_or_else(|| "保存位置暂时不可用".into());
             let facts = v_flex()
@@ -2700,10 +2752,7 @@ impl Desktop {
                 details = details.child(block);
             }
             let mut actions = h_flex().gap_2().flex_wrap();
-            if let Some(library) = self
-                .workspace
-                .as_ref()
-                .and_then(|workspace| workspace.state.library(&task.plan.library_id))
+            if let Some(library) = self.task_library(task)
                 && self
                     .cached_location_check(library)
                     .is_some_and(|check| check.needs_reassociation)
@@ -2727,48 +2776,17 @@ impl Desktop {
                         .on_click(cx.listener(move |this, _, _, cx| this.select_task(&next, cx))),
                 );
             }
-            if matches!(task.state, TaskState::Running | TaskState::Queued)
-                || (self.active_task.as_deref() == Some(&id) && self.job.is_some())
-            {
-                let cancelling = task.state == TaskState::Pausing && task.intent == Intent::Cancel;
-                actions = actions
-                    .when(!cancelling, |actions| {
-                        actions.child(
-                            control(SharedString::from(format!("pause-{id}")))
-                                .label(if task.state == TaskState::Pausing {
-                                    "正在暂停…"
-                                } else {
-                                    "暂停"
-                                })
-                                .icon(icons::pause())
-                                .loading(task.state == TaskState::Pausing)
-                                .disabled(task.state == TaskState::Pausing)
-                                .on_click(cx.listener({
-                                    let id = id.clone();
-                                    move |this, _, _, cx| {
-                                        this.set_task_intent(id.clone(), Intent::Pause, cx)
-                                    }
-                                })),
-                        )
-                    })
-                    .child(
-                        control(SharedString::from(format!("cancel-{id}")))
-                            .icon(icons::close())
-                            .label(if cancelling {
-                                "正在取消…"
-                            } else {
-                                "取消任务"
-                            })
-                            .loading(cancelling)
-                            .disabled(cancelling)
-                            .on_click(cx.listener({
-                                let id = id.clone();
-                                move |this, _, _, cx| {
-                                    this.set_task_intent(id.clone(), Intent::Cancel, cx)
-                                }
-                            })),
-                    );
-            }
+            actions = self.task_stop_actions(
+                actions,
+                task,
+                matches!(task.state, TaskState::Running | TaskState::Queued)
+                    || self.is_running_task(&id),
+                "暂停",
+                "",
+                control,
+                control,
+                cx,
+            );
             if task.handled_by.is_none()
                 && matches!(task.state, TaskState::Paused | TaskState::NeedsAttention)
                 && uncertain.is_empty()
@@ -2939,7 +2957,7 @@ impl Desktop {
 
     /// Live and retained stages use the same labels, status column and icon slot.
     fn task_stage_rows(&self, task: &TaskRecord) -> Vec<TaskStage> {
-        let active = self.active_task.as_deref() == Some(&task.id) && self.job.is_some();
+        let active = self.is_running_task(&task.id);
         let mut names: std::collections::BTreeSet<_> = task.stages.keys().cloned().collect();
         if active {
             names.extend(self.progress.keys().cloned());
@@ -3009,7 +3027,7 @@ impl Desktop {
             .task_stage_rows(task)
             .into_iter()
             .partition(|stage| stage.status == StageStatus::Complete);
-        let active = self.active_task.as_deref() == Some(&task.id) && self.job.is_some();
+        let active = self.is_running_task(&task.id);
         let waiting = worker_wait_state(
             active,
             self.pending_done.is_some(),
@@ -3113,7 +3131,7 @@ impl Desktop {
         if uncertain.is_empty() || task.handled_by.is_some() {
             return None;
         }
-        let active = self.active_task.as_deref() == Some(&id) && self.job.is_some();
+        let active = self.is_running_task(&id);
         Some(
             v_flex()
                 .gap_2()
@@ -3293,7 +3311,7 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> Div {
         let id = task.id.clone();
-        let active = self.active_task.as_deref() == Some(&id) && self.job.is_some();
+        let active = self.is_running_task(&id);
         let mut card = v_flex()
             .w_full()
             .min_w_0()
@@ -3339,50 +3357,19 @@ impl Desktop {
         let (progress, _) = self.task_progress_sections(task, cx);
         card = card.when_some(progress, |view, progress| view.child(progress));
         let mut actions = h_flex().gap_2().flex_wrap();
-        if matches!(
-            task.state,
-            TaskState::Running | TaskState::Queued | TaskState::Pausing
-        ) || active
-        {
-            let cancelling = task.state == TaskState::Pausing && task.intent == Intent::Cancel;
-            actions = actions
-                .when(!cancelling, |actions| {
-                    actions.child(
-                        outline_pill(SharedString::from(format!("box-pause-{id}")))
-                            .icon(icons::pause())
-                            .label(if task.state == TaskState::Pausing {
-                                "正在暂停…"
-                            } else {
-                                "暂停生成"
-                            })
-                            .loading(task.state == TaskState::Pausing)
-                            .disabled(task.state == TaskState::Pausing)
-                            .on_click(cx.listener({
-                                let id = id.clone();
-                                move |this, _, _, cx| {
-                                    this.set_task_intent(id.clone(), Intent::Pause, cx)
-                                }
-                            })),
-                    )
-                })
-                .child(
-                    quiet(SharedString::from(format!("box-cancel-{id}")))
-                        .icon(icons::close())
-                        .label(if cancelling {
-                            "正在取消…"
-                        } else {
-                            "取消任务"
-                        })
-                        .loading(cancelling)
-                        .disabled(cancelling)
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, _, cx| {
-                                this.set_task_intent(id.clone(), Intent::Cancel, cx)
-                            }
-                        })),
-                );
-        }
+        actions = self.task_stop_actions(
+            actions,
+            task,
+            matches!(
+                task.state,
+                TaskState::Running | TaskState::Queued | TaskState::Pausing
+            ) || active,
+            "暂停生成",
+            "box-",
+            outline_pill,
+            quiet,
+            cx,
+        );
         card = card.child(actions).child(
             theme::supporting_info(
                 SharedString::from(format!("task-hint-{id}")),
@@ -3579,10 +3566,7 @@ impl Desktop {
             );
         }
         if partial_failures.is_empty() {
-            if let Some(library) = self
-                .workspace
-                .as_ref()
-                .and_then(|workspace| workspace.state.library(&task.plan.library_id))
+            if let Some(library) = self.task_library(task)
                 && self
                     .cached_location_check(library)
                     .is_some_and(|check| check.needs_reassociation)

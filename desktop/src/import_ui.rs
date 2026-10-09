@@ -3083,9 +3083,7 @@ impl Desktop {
         if let Some(task) = self.matching_current_task().cloned() {
             let id = task.id.clone();
             let location = self
-                .workspace
-                .as_ref()
-                .and_then(|workspace| workspace.state.library(&task.plan.library_id))
+                .task_library(&task)
                 .map(|library| library.name.clone())
                 .unwrap_or_else(|| "原保存位置".into());
             inset = inset
