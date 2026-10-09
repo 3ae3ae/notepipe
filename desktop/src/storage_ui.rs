@@ -1425,15 +1425,9 @@ impl Desktop {
             let journal = journal.clone();
             let destination = journal.destination.clone();
             view = view.child(
-                v_flex()
+                card_surface()
                     .gap_2()
-                    .w_full()
                     .min_w_0()
-                    .p_4()
-                    .bg(color(SURFACE))
-                    .border_1()
-                    .border_color(color(CARD_LINE))
-                    .rounded(RADIUS_CARD)
                     .child(accessible_text(
                         ("storage-pending-description", index),
                         format!(
@@ -1504,15 +1498,9 @@ impl Desktop {
                 let id = backup.id.clone();
                 let path = backup.path.clone();
                 view = view.child(
-                    v_flex()
+                    card_surface()
                         .gap_2()
-                        .w_full()
                         .min_w_0()
-                        .p_4()
-                        .bg(color(SURFACE))
-                        .border_1()
-                        .border_color(color(CARD_LINE))
-                        .rounded(RADIUS_CARD)
                         .child(accessible_text(
                             ("storage-backup-description", index),
                             format!("旧位置备份：{}", backup.path.display()),
@@ -1596,8 +1584,9 @@ impl Desktop {
                     check.is_some_and(|check| !check.available || check.problem.is_some());
                 let needs_reassociation = check.is_some_and(|check| check.needs_reassociation);
                 view = view.child(
-                    v_flex().w_full().min_w_0().gap_3().p_4()
-                        .bg(color(SURFACE)).border_1().border_color(color(CARD_LINE)).rounded(RADIUS_CARD)
+                    card_surface()
+                        .min_w_0()
+                        .gap_3()
                         .child(
                             h_flex().w_full().min_w_0().gap_2().items_center().flex_wrap()
                                 .child(semantic_label(("storage-location-name", index), library.name.clone(), icons::folder_open()).flex_1().min_w_0())
