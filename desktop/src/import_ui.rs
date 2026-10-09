@@ -1068,9 +1068,9 @@ impl Desktop {
                                         .text_size(TEXT_TITLE),
                                 ),
                             )
-                            .when(self.can_start_input(cx), |row| {
-                                row.child(self.box_bottom_row(cx))
-                            }),
+                            // The link pill always ends in its action; an unavailable
+                            // start stays visible as a disabled button.
+                            .child(self.box_bottom_row(!self.can_start_input(cx), cx)),
                     )
                     .when_some(validation, |view, message| view.child(issue(message))),
             );
@@ -1606,7 +1606,7 @@ impl Desktop {
                                     })),
                             )
                             .when(self.can_start_input(cx), |row| {
-                                row.child(self.box_bottom_row(cx))
+                                row.child(self.box_bottom_row(false, cx))
                             }),
                     )
                     .on_drop(
@@ -1679,7 +1679,7 @@ impl Desktop {
                         .flex_wrap()
                         .when(
                             !self.source_editor_open && self.can_start_input(cx),
-                            |row| row.child(self.box_bottom_row(cx)),
+                            |row| row.child(self.box_bottom_row(false, cx)),
                         )
                         .child(
                             quiet("change-source")
@@ -2658,9 +2658,10 @@ impl Desktop {
     }
 
     /// The single start command owns source preparation and conversion.
-    fn box_bottom_row(&self, cx: &mut Context<Self>) -> Div {
-        let disabled =
-            self.pending_conversion.is_some() || self.value(Field::Source, cx).is_empty();
+    fn box_bottom_row(&self, unavailable: bool, cx: &mut Context<Self>) -> Div {
+        let disabled = unavailable
+            || self.pending_conversion.is_some()
+            || self.value(Field::Source, cx).is_empty();
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("start-conversion"), disabled, cx)
                 .h(rems(48. / 14.))
@@ -2810,24 +2811,21 @@ impl Desktop {
             .min_w_0()
             .max_w(rems(WORKBENCH_WIDTH / 14.))
             .mx_auto()
-            .map(|view| {
-                if hero {
-                    view.child(
-                        h_flex().w_full().justify_center().pt(px(56.)).child(
-                            accessible_text("workbench-title", "把视频整理成笔记")
-                                .role(Role::Heading)
-                                .text_size(rems(36. / 14.))
-                                .line_height(rems(44. / 14.))
-                                .font_weight(FontWeight::MEDIUM),
-                        ),
-                    )
-                } else {
-                    view.child(theme::page_heading(
-                        "workbench-title",
-                        "把视频整理成笔记",
-                    ))
-                }
-            })
+            // The workbench keeps one centered heading in every state; only its
+            // top space shrinks once a task or source fills the page.
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_center()
+                    .pt(px(if hero { 56. } else { 8. }))
+                    .child(
+                        accessible_text("workbench-title", "把视频整理成笔记")
+                            .role(Role::Heading)
+                            .text_size(rems(if hero { 36. } else { 28. } / 14.))
+                            .line_height(rems(if hero { 44. } else { 36. } / 14.))
+                            .font_weight(FontWeight::MEDIUM),
+                    ),
+            )
             .when(show_source_input, |view| view.child(input));
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
