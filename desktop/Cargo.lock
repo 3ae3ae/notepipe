@@ -1479,6 +1479,7 @@ dependencies = [
  "ureq",
  "url",
  "vergen-gix",
+ "which",
  "zip",
 ]
 
