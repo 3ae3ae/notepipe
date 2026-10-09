@@ -121,13 +121,19 @@ pub(crate) fn apply_local_engine(options: &mut ConversionOptions, provider: usiz
     options.provider = provider;
 }
 
+/// Only a consequence the label cannot carry (data sent elsewhere) earns a hint.
 fn conversion_ai_preference_row(
     option: ConversionAiOption,
-    hint: &'static str,
+    hint: Option<&'static str>,
     control: Switch,
 ) -> Div {
     // AI 选项行不组合前导图标列（见文件顶部设计决定注释）
-    crate::settings_ui::preference(None, conversion_ai_option_label(option), hint, control)
+    crate::settings_ui::preference(
+        None,
+        conversion_ai_option_label(option),
+        hint.unwrap_or_default(),
+        control,
+    )
 }
 
 /// A shared heading for related conversion options. 图标由调用方显式给出（不做文案子串匹配）。
@@ -562,12 +568,14 @@ impl Desktop {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        // A localized first line is the summary; only a raw tool line is replaced.
+        let first = message.lines().next().unwrap_or(message);
         let summary = if source::is_login_failure(message) {
-            "字幕需要登录后才能读取；可以登录，或改用语音识别"
-        } else if message.contains("WARNING:") || message.contains("ERROR:") {
-            "暂时无法读取字幕；可以重试，或改用语音识别"
+            "字幕需要登录，或改用语音识别"
+        } else if first.contains("WARNING:") || first.contains("ERROR:") {
+            "无法读取字幕，可重试或改用语音识别"
         } else {
-            message.lines().next().unwrap_or(message)
+            first
         };
         let details = if summary != message { message } else { "" };
         let id = text_id(kind, message);
@@ -661,7 +669,7 @@ impl Desktop {
                 .await
                 .unwrap_or_else(|_| {
                     Err(course2md::subtitle::SubtitleReadError::Failed {
-                        message: "读取字幕的工作线程意外结束".into(),
+                        message: "字幕读取意外中断".into(),
                     })
                 });
             let _ = this.update(cx, |this, cx| {
@@ -799,7 +807,7 @@ impl Desktop {
         self.subtitle_error = None;
         if let Some(source) = &mut self.source_preview {
             source.subtitle_read_error = Some(SubtitleReadError::Failed {
-                message: "字幕重新读取尚未完成。可以重试，或继续使用已确认的正文。".into(),
+                message: "字幕重新读取未完成".into(),
             });
         }
         if !self.save_current_draft(cx) {
@@ -818,7 +826,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("刷新字幕的工作线程意外结束")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("字幕读取意外中断")));
             let _ = this.update(cx, |this, cx| {
                 this.preview_workers = this.preview_workers.saturating_sub(1);
                 if this.subtitle_generation != generation
@@ -859,7 +867,7 @@ impl Desktop {
                             None => evidence.tracks().first(),
                         }.cloned();
                         if old_id.is_some() && track.is_none() {
-                            this.subtitle_error = Some("原来选择的字幕已无法重新读取。已确认的正文仍保留；可以继续使用它，或明确选择其他文字来源。".into());
+                            this.subtitle_error = Some("原字幕无法重新读取".into());
                         }
                         if let Some(source) = &mut this.source_preview {
                             source.subtitles = evidence;
@@ -966,7 +974,7 @@ impl Desktop {
             [] => {}
             _ => {
                 self.invalidate_source();
-                self.source_collection_title = Some("拖入了多个文件，请选择本次处理的视频".into());
+                self.source_collection_title = Some("选择要处理的视频".into());
                 self.source_candidates = files
                     .iter()
                     .map(|path| source::SourceCandidate {
@@ -1120,7 +1128,7 @@ impl Desktop {
                     .bg(color(INSET))
                     .child(motion::spinner("source-reading-spinner", cx))
                     .child(
-                        accessible_text("import-reading-state", "正在读取视频信息与字幕…")
+                        accessible_text("import-reading-state", "正在读取视频…")
                             .flex_1()
                             .min_w_0(),
                     )
@@ -1292,11 +1300,6 @@ impl Desktop {
                     accessible_text("import-collection-title", title)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(help(if batch {
-                    "勾选本次要整理的视频，可以一次加入多个"
-                } else {
-                    "选择本次要整理的视频"
-                }))
                 .child(list)
                 .when(batch && any_batchable, |view| {
                     view.child(
@@ -1323,13 +1326,6 @@ impl Desktop {
                                                 cx.notify();
                                             })),
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(TEXT_AUX)
-                                            .text_color(color(MUTED))
-                                            .whitespace_nowrap()
-                                            .child(format!("已选 {selected_count} 个")),
-                                    )
                                     .when(noted_selected > 0, |row| {
                                         row.child(
                                             div()
@@ -1338,7 +1334,7 @@ impl Desktop {
                                                 .text_color(color(WARNING))
                                                 .text_ellipsis()
                                                 .child(format!(
-                                                    "含 {noted_selected} 个已有笔记，将生成新版本"
+                                                    "{noted_selected} 个已有笔记，将生成新版"
                                                 )),
                                         )
                                     }),
@@ -1473,12 +1469,17 @@ impl Desktop {
                                 .flex_shrink_0(),
                         )
                         .child(
-                            issue(if source::is_login_failure(error) {
-                                "视频需要登录后读取，请登录后重试转换".to_owned()
-                            } else if error.contains("WARNING:") || error.contains("ERROR:") {
-                                "暂时无法读取这个视频，请检查链接或稍后重试".to_owned()
-                            } else {
-                                error.lines().next().unwrap_or(error).to_owned()
+                            issue({
+                                // A localized first line is the summary; only a
+                                // raw tool line falls back to the generic message.
+                                let first = error.lines().next().unwrap_or(error);
+                                if source::is_login_failure(error) {
+                                    "视频需要登录后读取，请登录后重试转换".to_owned()
+                                } else if first.contains("WARNING:") || first.contains("ERROR:") {
+                                    "暂时无法读取这个视频，请检查链接或稍后重试".to_owned()
+                                } else {
+                                    first.to_owned()
+                                }
                             })
                             .flex_1()
                             .min_w_0(),
@@ -1780,22 +1781,18 @@ impl Desktop {
             && (source.subtitle_request.is_some() || source.subtitle_read_error.is_some())
         {
             match &source.selected_subtitle {
-                Some(_) => "字幕尚未确认，已读内容仍保留".into(),
+                Some(_) => "字幕尚未确认".into(),
                 None => "所选字幕尚未确认".into(),
             }
         } else if speech {
             "识别视频声音".into()
         } else if let Some(subtitle) = &source.selected_subtitle {
-            if self.task_options.source_mode == 0 {
-                // 自动选择的解析结果就是它的说明，不是可更换的平行设置（review2#4）
-                format!("将优先使用「{}」。", subtitle.label)
-            } else {
-                subtitle.label.clone()
-            }
+            // 自动选择的解析结果就是当前值，与显式选择同样只显示字幕名（review2#4）
+            subtitle.label.clone()
         } else {
             match &source.subtitles {
-                SubtitleEvidence::Unchecked => "尚未检查可读取的字幕".into(),
-                SubtitleEvidence::Found { .. } => "找到字幕，请确认要使用的文字".into(),
+                SubtitleEvidence::Unchecked => "未检查字幕".into(),
+                SubtitleEvidence::Found { .. } => "请选择字幕".into(),
                 SubtitleEvidence::NoneFound | SubtitleEvidence::Unsupported { .. } => {
                     "尚未选择文字来源".into()
                 }
@@ -1907,7 +1904,7 @@ impl Desktop {
         let show_text_choices = self.show_options || needs_text_choice;
         if speech && !show_text_choices {
             match &source.subtitles {
-                SubtitleEvidence::NoneFound => view = view.child(help("未找到可直接读取的字幕")),
+                SubtitleEvidence::NoneFound => view = view.child(help("未找到字幕")),
                 SubtitleEvidence::Unsupported { message } => {
                     view = view.child(help(message.clone()))
                 }
@@ -1982,7 +1979,7 @@ impl Desktop {
                 options = options.child(help(message.clone()));
             }
             if matches!(source.subtitles, SubtitleEvidence::NoneFound) {
-                options = options.child(help("未找到可直接读取的字幕，可以识别视频声音。"));
+                options = options.child(help("未找到字幕"));
             }
             options = options.child(
                 h_flex()
@@ -2086,7 +2083,7 @@ impl Desktop {
         let mut view = v_flex().w_full().min_w_0().gap_3();
         let vision_options = conversion_ai_preference_row(
             ConversionAiOption::Vision,
-            "文字及对应截图会发送到所选服务",
+            Some("文字及对应截图会发送到所选服务"),
             coral_switch(
                 Switch::new("import-vision")
                     .checked(conversion_ai_option_enabled(
@@ -2124,7 +2121,7 @@ impl Desktop {
                 .pt_2()
                 .child(conversion_ai_preference_row(
                     ConversionAiOption::Proofread,
-                    "修正识别错误和标点，保留原意",
+                    None,
                     coral_switch(
                         Switch::new("import-proofread")
                             .checked(conversion_ai_option_enabled(
@@ -2144,7 +2141,7 @@ impl Desktop {
                 .child(vision_disclosure)
                 .child(conversion_ai_preference_row(
                     ConversionAiOption::Summary,
-                    "提炼课程要点，正文继续保留",
+                    None,
                     coral_switch(
                         Switch::new("import-summary")
                             .checked(conversion_ai_option_enabled(
@@ -2175,18 +2172,17 @@ impl Desktop {
                     }
                 }
                 None => {
+                    // The service picker directly below is the recovery.
                     ai_options = ai_options.child(
-                        v_flex()
-                            .gap_2()
+                        div()
                             .p_3()
                             .rounded(RADIUS_CARD)
                             .bg(color(WARNING_BG))
                             .child(
-                                accessible_text("ai-service-missing", "AI 服务尚未设置。")
+                                accessible_text("ai-service-missing", "AI 服务尚未设置")
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(color(WARNING)),
-                            )
-                            .child(help("选择用于校对和摘要的服务")),
+                            ),
                     );
                 }
             }
@@ -2197,7 +2193,7 @@ impl Desktop {
                     .as_ref()
                     .is_some_and(|prompt| !prompt.trim().is_empty())
                 {
-                    ai_options = ai_options.child(help("本次校对使用已保存的自定义规则。"));
+                    ai_options = ai_options.child(help("使用自定义校对规则"));
                 }
             }
         }
@@ -2291,10 +2287,6 @@ impl Desktop {
                     ))
                     .child(self.task_service_picker(ServicePurpose::Speech, cx))));
         }
-        view = view.child(
-            // 共享 ⓘ 辅助信息，不再用对象图标冒充信息图标（review4#2）
-            theme::supporting_info("import-local-note", "音频在这台电脑上处理"),
-        );
         let engine_options = v_flex()
             .gap_2()
             .child(
@@ -2561,20 +2553,10 @@ impl Desktop {
             .gap_3()
             .p_4()
             .rounded(RADIUS_CARD)
-            .bg(color(INSET))
-            .child(help("可同时导出到其他应用使用，也可以生成后再导出。"));
-        for (index, (label, description)) in [
-            ("Markdown 包", "便于在笔记软件中编辑，包含文稿和图片"),
-            ("网页文件", "单个文件，便于阅读与分享"),
-            ("JSON 数据", "供其他程序读取和处理"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            // The icon, indicator and title share a first-line height. The
-            // description lives in the title's column, independent of the
-            // Checkbox component's own indicator/label spacing.
-            let first_line_height = rems(32. / 14.);
+            .bg(color(INSET));
+        for (index, label) in labels.into_iter().enumerate() {
+            // Icon, indicator and label share one line; the label is a sibling
+            // click target so the Checkbox keeps its own keyboard toggle.
             let icon = match index {
                 0 => Icon::new(IconName::File),
                 1 => icons::web(),
@@ -2584,23 +2566,12 @@ impl Desktop {
                 h_flex()
                     .min_w_0()
                     .gap_2()
-                    .items_start()
-                    .child(
-                        h_flex()
-                            .debug_selector(move || format!("import-export-icon-{index}"))
-                            .h(first_line_height)
-                            .flex_shrink_0()
-                            .child(icon.size(px(20.)).text_color(color(GRAY))),
-                    )
+                    .items_center()
+                    .child(icon.size(px(20.)).flex_shrink_0().text_color(color(GRAY)))
                     .child(
                         Checkbox::new(("import-export", index))
-                            .debug_selector(move || {
-                                format!("import-export-checkbox-{index}")
-                            })
                             .accessibility_label(label)
                             .checked(self.task_options.formats[index])
-                            .h(first_line_height)
-                            .items_center()
                             .flex_shrink_0()
                             .on_click(cx.listener(move |this, value, _, cx| {
                                 this.task_options.formats[index] = *value;
@@ -2609,9 +2580,7 @@ impl Desktop {
                             })),
                     )
                     .child(
-                        v_flex()
-                            .id(("import-export-text", index))
-                            .gap_1()
+                        accessible_text(("import-export-label", index), label)
                             .flex_1()
                             .min_w_0()
                             .cursor_pointer()
@@ -2620,18 +2589,6 @@ impl Desktop {
                                     !this.task_options.formats[index];
                                 this.save_current_draft(cx);
                                 cx.notify();
-                            }))
-                            .child(
-                                h_flex()
-                                    .debug_selector(move || {
-                                        format!("import-export-title-{index}")
-                                    })
-                                    .min_w_0()
-                                    .min_h(first_line_height)
-                                    .child(accessible_text(("import-export-label", index), label)),
-                            )
-                            .child(help(description).debug_selector(move || {
-                                format!("import-export-description-{index}")
                             })),
                     ),
             );
@@ -2653,7 +2610,7 @@ impl Desktop {
                         crate::settings_ui::preference(
                             Some(icons::movie()),
                             "保留视频供离线播放",
-                            "生成后保留下载的视频，会占用额外空间",
+                            "占用额外磁盘空间",
                             coral_switch(
                                 Switch::new("import-keep-video")
                                     .checked(self.task_options.keep_video)
@@ -2813,7 +2770,7 @@ impl Desktop {
             }
             Err(error) => {
                 self.workspace_error = Some(format!(
-                    "新的视频输入尚未建立：{error:#}。原输入和任务仍保留。"
+                    "新的视频输入尚未建立：{error:#}"
                 ));
                 cx.notify();
                 false
@@ -2848,7 +2805,7 @@ impl Desktop {
             .map(|task| {
                 (
                     task.id.clone(),
-                    crate::task_ui::task_attention_summary(task),
+                    "任务已取消".to_owned(),
                 )
             });
         let show_source_input = self.source_preview.is_none() || self.source_editor_open;
@@ -3032,7 +2989,7 @@ impl Desktop {
             });
         let checking_components = !preferences_blocked
             && self.environment.is_none()
-            && submission_error.as_deref() == Some("正在检查生成笔记需要的组件，请稍候");
+            && submission_error.as_deref() == Some("正在检查所需组件…");
         let mut inset = v_flex().w_full().min_w_0().gap_3();
         let mut actions = h_flex().gap_2().flex_wrap();
         if self.environment.as_ref().is_some_and(|environment| {
@@ -3108,15 +3065,10 @@ impl Desktop {
                 .task_library(&task)
                 .map(|library| library.name.clone())
                 .unwrap_or_else(|| "原保存位置".into());
-            inset = inset
-                .child(conversion_fact(
-                    format!("已有相同处理任务：《{}》（{location}）", task.plan.title),
-                    true,
-                ))
-                .child(conversion_fact(
-                    "查看现有任务；当前输入与选项尚未应用。",
-                    false,
-                ));
+            inset = inset.child(conversion_fact(
+                format!("已有相同处理任务：《{}》（{location}）", task.plan.title),
+                true,
+            ));
             actions = actions.child(
                 primary_pill("show-matching-task")
                     .track_focus(&self.import_submit_focus)
@@ -3137,7 +3089,7 @@ impl Desktop {
                 .unwrap_or_else(|| "课程库".into());
             inset = inset.child(info_callout(
                 "existing-note-notice",
-                format!("这个视频已有笔记，保存在「{location}」。生成新版会保留原笔记。"),
+                format!("已有笔记，保存在「{location}」"),
             ));
             actions = actions.child(
                 h_flex()
@@ -3167,7 +3119,7 @@ impl Desktop {
             );
             if busy {
                 inset = inset.child(conversion_fact(
-                    "新版笔记会加入队列，等待当前任务完成。",
+                    "将排在当前任务之后",
                     false,
                 ));
             }

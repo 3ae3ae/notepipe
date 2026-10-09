@@ -95,6 +95,7 @@ fn failure_kind(message: &str) -> FailureKind {
     } else if lower.contains("timed out")
         || lower.contains("timeout")
         || lower.contains("超过 45 秒")
+        || lower.contains("读取超时")
         || lower.contains("连接超时")
     {
         FailureKind::Timeout
@@ -149,21 +150,24 @@ fn preview_command_error(program: &str, code: Option<i32>, stderr: &str) -> anyh
     let summary = match failure_kind(stderr) {
         FailureKind::NotFound => "无法找到这个视频，请检查链接或确认视频仍可访问。".to_owned(),
         FailureKind::Forbidden => {
-            "视频平台拒绝了这次访问。请确认该视频的访问权限，也可以选择本地视频。".to_owned()
+"视频平台拒绝访问，请确认访问权限".to_owned()
         }
         FailureKind::Timeout => "读取视频信息超时，请检查网络后重新读取。".to_owned(),
         FailureKind::RateLimited => {
-            "视频平台暂时限制了读取请求，请稍后重新读取，也可以选择本地视频。".to_owned()
+"平台暂时限制读取，请稍后重试".to_owned()
         }
         FailureKind::LoginRequired => "视频平台要求登录后读取，请登录对应账号后重试。".to_owned(),
         FailureKind::Other if !cause.is_empty() => {
             cause.trim_start_matches("ERROR:").trim().to_owned()
         }
-        FailureKind::Other => format!(
-            "{program} 未能完成读取（退出码 {}），请重新读取。",
-            code.map(|code| code.to_string())
-                .unwrap_or_else(|| "未提供".into())
-        ),
+        // No stderr at all: the program and exit code are technical details.
+        FailureKind::Other => {
+            return anyhow::anyhow!(
+                "读取失败，请重试\n{program} 退出码 {}",
+                code.map(|code| code.to_string())
+                    .unwrap_or_else(|| "未提供".into())
+            );
+        }
     };
     let details = lines
         .iter()
@@ -239,7 +243,7 @@ fn check_preview_deadline(cancel: &AtomicBool, start: Instant) -> Result<()> {
     ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
     ensure!(
         start.elapsed() < PREVIEW_TIMEOUT,
-        "读取超过 45 秒，请重新读取；也可以选择本地视频"
+        "读取超时，请重试"
     );
     Ok(())
 }
@@ -663,7 +667,7 @@ fn local_subtitle_evidence(
         }
     } else if image_tracks > 0 {
         SubtitleEvidence::Unsupported {
-            message: "只发现目前无法读取的内嵌字幕。可以选择 SRT/VTT 字幕，或识别视频声音。".into(),
+            message: "内嵌字幕无法读取".into(),
         }
     } else {
         SubtitleEvidence::NoneFound
@@ -932,7 +936,7 @@ mod tests {
         let forbidden =
             preview_command_error("yt-dlp", Some(1), "ERROR: HTTP Error 403: Forbidden")
                 .to_string();
-        assert!(forbidden.starts_with("视频平台拒绝了这次访问"));
+        assert!(forbidden.starts_with("视频平台拒绝访问"));
         assert!(!is_login_failure(&forbidden));
         let timeout =
             preview_command_error("yt-dlp", Some(1), "ERROR: Connection timed out").to_string();

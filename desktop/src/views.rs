@@ -388,7 +388,10 @@ impl Render for Desktop {
                 |v| v.h_full().min_h_0(),
             )
             .when(
-                self.reading && !matches!(self.page, Page::Library | Page::Result),
+                // The workbench card already shows a followed result opening.
+                self.reading
+                    && !matches!(self.page, Page::Library | Page::Result)
+                    && !(self.page == Page::New && self.following_conversion.is_some()),
                 |v| {
                     v.child(
                         h_flex()

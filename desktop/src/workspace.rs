@@ -288,7 +288,7 @@ impl TaskState {
             Self::NeedsAttention => "需要处理",
             Self::Uncertain => "结果尚未确认",
             Self::Complete => "笔记已生成",
-            Self::Partial => "笔记已保存，部分处理未完成",
+            Self::Partial => "部分未完成",
             Self::Cancelled => "已取消",
         }
     }
@@ -892,7 +892,7 @@ impl State {
             };
             ensure!(
                 failed,
-                "这部分已经完成或没有要求处理，无需补做；可以重新导入视频并生成新版"
+                "这部分无需补做"
             );
         }
         if !resend.is_empty() {
@@ -1114,10 +1114,10 @@ fn failed_outcome(value: &serde_json::Value) -> bool {
 pub fn check_library(location: &LibraryLocation) -> Result<()> {
     ensure!(
         location.root.is_dir(),
-        "保存位置暂时不可访问。请连接对应磁盘，原任务与当前输入仍保留。"
+        "保存位置不可访问，请连接对应磁盘"
     );
     let identity = std::fs::read_to_string(location.root.join(".course2md-library-id")).context(
-        "这个保存位置尚未重新关联，请在设置的存储中选择“重新关联此保存位置”。原任务和文件仍保留。",
+        "保存位置需要重新关联",
     )?;
     ensure!(
         identity.trim() == location.id,
@@ -1236,14 +1236,14 @@ pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
             description: receipt.description.clone(),
             message: if receipt.description.trim().is_empty() {
                 receipt.message.unwrap_or_else(|| {
-                    "请求已发送，尚未确认服务是否完成。已保存其他进度，没有自动重新发送。".into()
+                    "请求已发送，结果未确认".into()
                 })
             } else {
                 format!(
                     "{}：{}",
                     receipt.description,
                     receipt.message.unwrap_or_else(|| {
-                        "请求结果尚未确认；其他进度已保留，没有自动重新发送。".into()
+                        "请求结果未确认".into()
                     })
                 )
             },
@@ -1436,7 +1436,7 @@ impl Workspace {
                 task.intent = Intent::Pause;
                 task.state = TaskState::Paused;
                 task.error =
-                    Some("任务记录已重建，已保存的材料仍保留。确认任务后可以继续。".into());
+                    Some("任务记录已重建".into());
                 task.unread = true;
             }
             if let Some(library) = state.library(&task.plan.library_id)

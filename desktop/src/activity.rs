@@ -237,7 +237,7 @@ pub fn component_failure_message(label: &str, message: Option<&str>) -> String {
                 | "部分校对未完成，原始文字已保留"
         )
     {
-        return format!("{label}尚未完成，正文已保存。可以仅补{label}。");
+        return format!("{label}尚未完成");
     }
     let prefix = format!("{label}尚未完成");
     if chinese.starts_with(&prefix) {
@@ -485,7 +485,7 @@ mod tests {
                 "摘要",
                 Some("摘要尚未完成，已保留正文 / Summary incomplete; body retained")
             ),
-            "摘要尚未完成，正文已保存。可以仅补摘要。"
+            "摘要尚未完成"
         );
         assert_eq!(
             component_failure_message("摘要", Some("服务拒绝了请求（HTTP 400）。")),

@@ -130,8 +130,6 @@ enum WorkerWait {
     Starting,
     BetweenStages,
     Finishing,
-    Pausing,
-    Cancelling,
 }
 
 impl WorkerWait {
@@ -140,8 +138,6 @@ impl WorkerWait {
             Self::Starting => "正在启动任务…",
             Self::BetweenStages => "正在继续处理…",
             Self::Finishing => "正在完成笔记…",
-            Self::Pausing => "正在保存进度，随后暂停…",
-            Self::Cancelling => "正在保存进度并取消任务…",
         }
     }
 }
@@ -149,13 +145,15 @@ impl WorkerWait {
 /// A closed stage is not a completed task: later stages may not have started.
 /// Only the final render event or worker result identifies the finishing phase;
 /// the task itself is still completed by the existing Exit/manifest path.
+/// Pause and cancel are already shown by the status badge and the busy stop
+/// button, so a stopping worker reports no separate waiting line.
 fn worker_wait_state<'a>(
     active: bool,
     result_received: bool,
     intent: Intent,
     stages: impl IntoIterator<Item = (&'a str, bool)>,
 ) -> Option<WorkerWait> {
-    if !active {
+    if !active || intent != Intent::Run {
         return None;
     }
     let mut has_stage = false;
@@ -167,11 +165,7 @@ fn worker_wait_state<'a>(
         }
         render_done |= stage == "render";
     }
-    Some(if matches!(intent, Intent::Pause | Intent::Quit) {
-        WorkerWait::Pausing
-    } else if intent == Intent::Cancel {
-        WorkerWait::Cancelling
-    } else if render_done || result_received {
+    Some(if render_done || result_received {
         WorkerWait::Finishing
     } else if has_stage {
         WorkerWait::BetweenStages
@@ -299,37 +293,32 @@ fn ai_stage_outcome(name: &str, outcomes: Option<&serde_json::Value>) -> Option<
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum TaskFeedback {
-    Information(&'static str),
-    Failure(String),
-}
-
-/// User-initiated stops are normal states. Keep worker diagnostics in raw logs,
-/// and retain only a short, actionable localized failure summary in the task.
-fn task_feedback(state: TaskState, error: Option<&str>) -> Option<TaskFeedback> {
-    match state {
-        TaskState::Paused => Some(TaskFeedback::Information("转换已暂停，进度已保留")),
-        TaskState::Cancelled => Some(TaskFeedback::Information("任务已取消，已保存的内容仍保留")),
-        _ => error.map(|error| {
-            let summary = error
-                .lines()
-                .find(|line| !line.trim().is_empty())
-                .unwrap_or_default()
-                .split(" / ")
-                .next()
-                .unwrap_or_default()
-                .trim();
-            let localized = summary
-                .chars()
-                .any(|c| ('\u{3400}'..='\u{9fff}').contains(&c));
-            TaskFeedback::Failure(if localized && summary.chars().count() <= 140 {
-                summary.into()
-            } else {
-                "转换未完成，已保存的进度仍保留。可以继续任务，或查看技术详情。".into()
-            })
-        }),
+/// User-initiated stops are normal states shown by the status badge, and a
+/// partial result names each unfinished component beside its retry action.
+/// Keep worker diagnostics in raw logs, and retain only a short, actionable
+/// localized failure summary in the task.
+fn task_failure_summary(state: TaskState, error: Option<&str>) -> Option<String> {
+    if matches!(state, TaskState::Paused | TaskState::Cancelled | TaskState::Partial) {
+        return None;
     }
+    error.map(|error| {
+        let summary = error
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or_default()
+            .split(" / ")
+            .next()
+            .unwrap_or_default()
+            .trim();
+        let localized = summary
+            .chars()
+            .any(|c| ('\u{3400}'..='\u{9fff}').contains(&c));
+        if localized && summary.chars().count() <= 140 {
+            summary.into()
+        } else {
+            "转换未完成".into()
+        }
+    })
 }
 
 pub(crate) fn task_attention_summary(task: &TaskRecord) -> String {
@@ -340,11 +329,8 @@ pub(crate) fn task_attention_summary(task: &TaskRecord) -> String {
     if let Some(reason) = task_service_repair_reason(task) {
         return reason.into();
     }
-    match task_feedback(task.state, task.error.as_deref()) {
-        Some(TaskFeedback::Information(message)) => message.into(),
-        Some(TaskFeedback::Failure(message)) => message,
-        None => task_status_label(task),
-    }
+    task_failure_summary(task.state, task.error.as_deref())
+        .unwrap_or_else(|| task_status_label(task))
 }
 
 /// Only concrete configuration rejections change recovery from Retry to Repair.
@@ -365,19 +351,19 @@ fn service_configuration_issue(message: &str) -> Option<&'static str> {
             .iter()
             .any(|hint| message.contains(hint))
     {
-        Some("AI 服务未接受此任务的凭据或权限，请修复服务后补做。")
+        Some("AI 服务未接受凭据或权限")
     } else if ["http 404", "model not found", "unknown model"]
         .iter()
         .any(|hint| lower.contains(hint))
         || message.contains("服务未找到此任务指定的接口或模型")
     {
-        Some("AI 服务未找到此任务使用的接口或模型，请修复服务后补做。")
+        Some("AI 服务找不到接口或模型")
     } else if ["http 400", "http 422"]
         .iter()
         .any(|hint| lower.contains(hint))
         || message.contains("服务拒绝了请求参数")
     {
-        Some("AI 服务拒绝了此任务的请求设置，请修复服务后补做。")
+        Some("AI 服务拒绝了请求设置")
     } else {
         None
     }
@@ -677,11 +663,11 @@ fn validate_plan_storage(
             let check = cached.context("正在检查保存位置，请稍候")?;
             ensure!(
                 check.available,
-                "保存位置暂时不可访问。请连接对应磁盘，或在设置的存储中选择其他位置。当前输入和已有任务仍保留。"
+                "保存位置不可访问，请连接磁盘或选择其他位置"
             );
             ensure!(
                 !check.needs_reassociation,
-                "这个保存位置尚未重新关联，请在设置的存储中选择“重新关联此保存位置”。原任务和文件仍保留。"
+                "保存位置需要重新关联"
             );
             if let Some(problem) = &check.problem {
                 anyhow::bail!("{problem}");
@@ -697,7 +683,7 @@ fn validate_plan_storage(
         PlanValidation::Submission => {
             ensure!(
                 library.root.is_dir(),
-                "保存位置暂时不可访问。请连接对应磁盘，或在设置的存储中选择其他位置。当前输入和已有任务仍保留。"
+                "保存位置不可访问，请连接磁盘或选择其他位置"
             );
             workspace::check_library(library)?;
             match folder {
@@ -929,7 +915,7 @@ impl Desktop {
             return false;
         };
         let Some(mut next) = workspace.state.draft().cloned() else {
-            self.workspace_error = Some("当前输入记录暂时不可用，窗口中的内容仍保留。".into());
+            self.workspace_error = Some("当前输入记录暂时不可用".into());
             return false;
         };
         self.draft_deadline = None;
@@ -942,7 +928,7 @@ impl Desktop {
         });
         if let Err(error) = result {
             self.workspace_error =
-                Some(format!("当前输入尚未保存：{error:#}。内容仍保留在窗口中。"));
+                Some(format!("当前输入尚未保存：{error:#}"));
             cx.notify();
             return false;
         }
@@ -1035,18 +1021,18 @@ impl Desktop {
         let environment = self
             .environment
             .as_ref()
-            .context("正在检查生成笔记需要的组件，请稍候")?;
+            .context("正在检查所需组件…")?;
         ensure!(
             environment.engine,
-            "生成引擎无法启动。请在设置的应用与诊断中检查应用组件。"
+            "生成引擎无法启动"
         );
         ensure!(
             environment.ffmpeg && environment.ffprobe,
-            "视频读取组件不可用。请在设置的应用与诊断中查看 FFmpeg 的安装方法。"
+            "缺少 FFmpeg"
         );
         ensure!(
             !online || environment.ytdlp,
-            "在线视频读取组件不可用。请在设置的应用与诊断中查看 yt-dlp 的安装方法。"
+            "缺少 yt-dlp"
         );
         Ok(environment)
     }
@@ -1141,7 +1127,7 @@ impl Desktop {
             if let Some(subtitle) = &source.selected_subtitle {
                 ensure!(
                     subtitle.source_identity == source.identity,
-                    "所选字幕与当前视频不匹配。请重新读取字幕，已填写的内容会保留。"
+                    "所选字幕与当前视频不匹配，请重新读取字幕"
                 );
             }
             config.defaults.transcript_source = Some(course2md::config::TranscriptSource::Subtitle);
@@ -1347,7 +1333,7 @@ impl Desktop {
             }
             Err(error) => {
                 self.workspace_error =
-                    Some(format!("任务尚未加入队列：{error:#}。选中的视频仍保留。"))
+                    Some(format!("任务尚未加入队列：{error:#}"))
             }
         }
         cx.notify();
@@ -1450,7 +1436,7 @@ impl Desktop {
                 self.pending_conversion = None;
                 self.source_validation = None;
                 self.message = (!created).then(|| {
-                    "已有相同处理任务。该任务采用原来的名称和保存位置；当前输入与选项仍保留。"
+                    "已有相同任务，未重复加入"
                         .into()
                 });
                 if created {
@@ -1469,7 +1455,7 @@ impl Desktop {
             }
             Err(error) => {
                 self.workspace_error =
-                    Some(format!("任务尚未加入队列：{error:#}。来源和选项已保留。"))
+                    Some(format!("任务尚未加入队列：{error:#}"))
             }
         }
         cx.notify();
@@ -1654,7 +1640,7 @@ impl Desktop {
             let secrets = secrets_rx
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("凭据读取线程意外结束")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("凭据读取意外中断")));
             let _ = this.update(cx, |this, cx| {
                 this.start_pending = false;
                 match secrets {
@@ -2188,9 +2174,9 @@ impl Desktop {
                 if task.error.is_none() && !cancelled && task.intent == Intent::Run {
                     task.error = Some(
                         if success {
-                            "处理已结束，但尚未发布可读笔记。任务材料和进度已保留。"
+                            "未生成可读笔记"
                         } else {
-                            "生成中断，已保存的进度仍保留。可以继续任务，或查看技术详情。"
+                            "生成中断"
                         }
                         .into(),
                     );
@@ -2350,14 +2336,8 @@ impl Desktop {
             self.queue_list.remeasure();
             self.queue_rem = rem;
         }
-        let header = (!tasks.is_empty()).then(|| {
-            let current_count = tasks
-                .iter()
-                .filter(|task| task.handled_by.is_none())
-                .count();
-            let pending = actionable_task_count(&tasks);
-            self.queue_page_header(current_count, pending)
-        });
+        // Group headings carry the counts; the page heading stays a heading.
+        let header = (!tasks.is_empty()).then(|| self.queue_page_header());
         let focus: Rc<Vec<FocusHandle>> = Rc::new(self.queue_focus.clone());
         let state = self.queue_list.clone();
         let items = Rc::new(items);
@@ -2390,30 +2370,12 @@ impl Desktop {
             .into_any_element()
     }
 
-    fn queue_page_header(&self, current_count: usize, pending: usize) -> Div {
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .gap_3()
-            .items_center()
-            .flex_wrap()
-            .child(theme::page_heading(
-                "tasks-page-title",
-                icons::task().size(px(24.)).text_color(color(ACCENT_STRONG)),
-                "任务",
-            ))
-            .child(
-                accessible_text(
-                    "tasks-page-summary",
-                    if pending == 0 {
-                        format!("{current_count} 个任务 · 全部已结束")
-                    } else {
-                        format!("{current_count} 个任务 · {pending} 个进行中或待处理")
-                    },
-                )
-                .text_sm()
-                .text_color(color(MUTED)),
-            )
+    fn queue_page_header(&self) -> Div {
+        h_flex().w_full().min_w_0().items_center().child(theme::page_heading(
+            "tasks-page-title",
+            icons::task().size(px(24.)).text_color(color(ACCENT_STRONG)),
+            "任务",
+        ))
     }
 
     /// One row of the virtualized queue: every row keeps the spacing the old
@@ -2432,7 +2394,7 @@ impl Desktop {
             QueueItem::Unavailable => v_flex()
                 .gap_3()
                 .child(icons::warning().size_8().text_color(color(WARNING)))
-                .child("任务记录暂时无法读取，已保存的笔记仍可打开。")
+                .child("任务记录暂时无法读取")
                 .child(
                     outline_pill("task-records-open-library")
                         .icon(icons::book_open())
@@ -2452,10 +2414,6 @@ impl Desktop {
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(accessible_text(
-                    "task-empty-description",
-                    "开始生成后，可以在这里查看处理进度和生成结果",
-                ))
                 .child(
                     primary_pill("task-new")
                         .icon(icons::plus())
@@ -2828,7 +2786,10 @@ impl Desktop {
             }
             if task.artifact.is_some() {
                 let requires_repair = task_requires_service_repair(task);
-                if let Some(reason) = task_service_repair_reason(task) {
+                // Outside a partial result the feedback line already carries the reason.
+                if let Some(reason) = task_service_repair_reason(task)
+                    .filter(|_| task.state == TaskState::Partial)
+                {
                     details = details.child(
                         accessible_text(
                             SharedString::from(format!("service-repair-reason-{id}")),
@@ -2950,7 +2911,7 @@ impl Desktop {
                             accessible_text(
                                 SharedString::from(format!("task-partial-summary-{id}")),
                                 format!(
-                                    "正文已保存，{}尚未完成",
+                                    "{}未完成",
                                     failures
                                         .iter()
                                         .map(|(_, label, _)| label.as_str())
@@ -3133,15 +3094,19 @@ impl Desktop {
             return None;
         }
         let id = SharedString::from(format!("task-feedback-{}", task.id));
-        task_feedback(task.state, task.error.as_deref()).map(|feedback| match feedback {
-            TaskFeedback::Information(message) => info_callout(id, message).into_any_element(),
-            TaskFeedback::Failure(message) => accessible_text(id, message)
-                .role(Role::Alert)
-                .text_size(TEXT_BODY)
-                .whitespace_normal()
-                .text_color(color(DANGER))
-                .into_any_element(),
-        })
+        // A concrete service rejection replaces the generic failure line: one
+        // reason per task, beside its repair action.
+        task_service_repair_reason(task)
+            .map(str::to_owned)
+            .or_else(|| task_failure_summary(task.state, task.error.as_deref()))
+            .map(|message| {
+                accessible_text(id, message)
+                    .role(Role::Alert)
+                    .text_size(TEXT_BODY)
+                    .whitespace_normal()
+                    .text_color(color(DANGER))
+                    .into_any_element()
+            })
     }
 
     /// Uncertain-outcome block with the explicit resend action; shared by the
@@ -3172,12 +3137,12 @@ impl Desktop {
                 }))
                 .child(accessible_text(
                     SharedString::from(format!("unknown-effect-{id}")),
-                    "服务可能已处理这些内容，再次提交可能产生额外费用。其他进度已保留。",
+                    "服务可能已处理这些内容，重新发送可能产生额外费用",
                 ))
                 .when(active, |view| {
                     view.child(accessible_text(
                         SharedString::from(format!("unknown-saving-{id}")),
-                        "正在保存当前结果，完成后可以选择重新发送。",
+                        "正在保存当前结果…",
                     ))
                 })
                 .child(
@@ -3265,11 +3230,11 @@ impl Desktop {
     fn task_processing_facts(&self, task: &TaskRecord) -> Div {
         let source =
             if task.plan.options.source_mode != 2 && task.plan.source.selected_subtitle.is_some() {
-                "使用视频字幕"
+                "视频字幕"
             } else if task.plan.options.uses_cloud_provider() {
-                "通过所选服务识别视频声音"
+                "识别服务"
             } else {
-                "在这台电脑上识别视频声音"
+                "本机识别"
             };
         let mut facts = v_flex().w_full().min_w_0().gap_1().child(detail_row(
             SharedString::from(format!("task-text-source-{}", task.id)),
@@ -3319,7 +3284,7 @@ impl Desktop {
                 SharedString::from(format!("task-opening-result-{}", task.id)),
                 semantic_label(
                     SharedString::from(format!("task-opening-result-label-{}", task.id)),
-                    "笔记已生成，正在打开",
+                    "正在打开…",
                     crate::motion::spinner(
                         SharedString::from(format!("task-opening-result-spinner-{}", task.id)),
                         cx,
@@ -3351,10 +3316,11 @@ impl Desktop {
         {
             card = card.child(info_callout(
                 SharedString::from(format!("task-subtitle-fallback-{id}")),
-                "字幕暂时不可用，已按默认设置识别视频声音",
+                "字幕不可用，已改为识别视频声音",
             ));
         }
         if task.state == TaskState::Queued && !active {
+            // The 等待处理 badge covers the next-in-line case; only a real wait is stated.
             let waiting = self
                 .workspace
                 .as_ref()
@@ -3370,14 +3336,12 @@ impl Desktop {
                         .count()
                 })
                 .unwrap_or(0);
-            card = card.child(info_callout(
-                SharedString::from(format!("task-queued-{id}")),
-                if waiting > 0 {
-                    format!("前面还有 {waiting} 个任务，轮到后会自动开始")
-                } else {
-                    "即将开始处理".into()
-                },
-            ));
+            if waiting > 0 {
+                card = card.child(info_callout(
+                    SharedString::from(format!("task-queued-{id}")),
+                    format!("前面还有 {waiting} 个任务"),
+                ));
+            }
         }
         let (progress, _) = self.task_progress_sections(task, cx);
         card = card.when_some(progress, |view, progress| view.child(progress));
@@ -3395,45 +3359,7 @@ impl Desktop {
             quiet,
             cx,
         );
-        card = card.child(actions).child(
-            theme::supporting_info(
-                SharedString::from(format!("task-hint-{id}")),
-                if task.state == TaskState::Pausing {
-                    if task.intent == Intent::Cancel {
-                        "取消后已生成的内容仍会保留。"
-                    } else {
-                        "暂停后可以继续，已完成的步骤会保留。"
-                    }
-                } else {
-                    "关闭窗口后任务会继续；退出应用会暂停任务。"
-                },
-            )
-            .text_size(TEXT_AUX),
-        );
-        let more = self
-            .workspace
-            .as_ref()
-            .map(|w| {
-                w.state
-                    .tasks
-                    .iter()
-                    .filter(|other| {
-                        other.id != id
-                            && other.handled_by.is_none()
-                            && other.state == TaskState::Queued
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
-        if active && more > 0 {
-            card = card.child(
-                div()
-                    .text_size(TEXT_AUX)
-                    .text_color(color(GRAY))
-                    .child(format!("队列中还有 {more} 个任务等待处理。")),
-            );
-        }
-        card
+        card.child(actions)
     }
 
     /// Workbench box card for a task that needs the user: paused, failed or
@@ -3474,12 +3400,14 @@ impl Desktop {
         {
             card = card.child(message);
         }
-        if let Some(reason) = task_service_repair_reason(task) {
-            let missing = partial_failures
-                .iter()
-                .map(|(_, label, _)| label.as_str())
-                .collect::<Vec<_>>()
-                .join("、");
+        // Without partial failures the feedback line above already names the reason.
+        let missing = partial_failures
+            .iter()
+            .filter(|(component, _, _)| matches!(component.as_str(), "proofreading" | "summary"))
+            .map(|(_, label, _)| label.as_str())
+            .collect::<Vec<_>>()
+            .join("、");
+        if let Some(reason) = task_service_repair_reason(task).filter(|_| !missing.is_empty()) {
             card = card.child(
                 accessible_text(
                     SharedString::from(format!("box-service-repair-reason-{id}")),
@@ -3717,7 +3645,8 @@ fn task_status_label(task: &TaskRecord) -> String {
             .filter(|request| request.is_uncertain())
             .filter_map(|request| request.purpose.as_deref())
             .collect();
-        let description = if !purpose.is_empty()
+        // The 阅读笔记 action shows whether the note is readable.
+        return if !purpose.is_empty()
             && purpose.iter().all(|purpose| purpose.contains("proof"))
         {
             "AI 校对结果未确认"
@@ -3730,12 +3659,8 @@ fn task_status_label(task: &TaskRecord) -> String {
             "语音识别结果未确认"
         } else {
             "部分处理结果未确认"
-        };
-        return if task.artifact.is_some() {
-            format!("笔记可读，{description}")
-        } else {
-            description.into()
-        };
+        }
+        .into();
     }
     if task.exports_only() && task.state == TaskState::Complete {
         "文件已导出".into()
@@ -3758,7 +3683,7 @@ fn request_scope(request: &workspace::BlockedRequest) -> String {
         } else {
             "外部处理"
         };
-        format!("{name}：此历史请求未保存具体内容范围，可在技术详情中查看请求记录。")
+        format!("{name}：范围未记录")
     }
 }
 
@@ -3771,7 +3696,7 @@ fn ensure_asr_capability(
     match provider {
         AsrProvider::Coreml => ensure!(
             environment.apple,
-            "Apple 原生识别组件不可用。请选择其他本机识别方式，或在设置中检查应用组件。"
+            "Apple 识别组件不可用，请选择其他识别方式"
         ),
         AsrProvider::Gpu => ensure!(
             environment.llama && environment.gpu.is_some(),
@@ -3825,8 +3750,8 @@ fn validate_plan_config(source: &str, config: &course2md::settings::ConfigFile) 
 #[cfg(test)]
 mod tests {
     use super::{
-        PlanValidation, QueueItem, StageStatus, TaskFeedback, TaskGroup, WorkerWait,
-        ai_stage_outcome, batch_note_title, task_feedback, task_stage_progress,
+        PlanValidation, QueueItem, StageStatus, TaskGroup, WorkerWait,
+        ai_stage_outcome, batch_note_title, task_failure_summary, task_stage_progress,
         update_draft_source_title, update_input_form, validate_plan_config,
         validate_plan_storage, worker_wait_state,
     };
@@ -4091,20 +4016,9 @@ mod tests {
     #[test]
     fn pause_and_cancel_intents_do_not_report_continued_generation() {
         for intent in [Intent::Pause, Intent::Quit, Intent::Cancel] {
-            let expected = if intent == Intent::Cancel {
-                WorkerWait::Cancelling
-            } else {
-                WorkerWait::Pausing
-            };
-            assert_eq!(worker_wait_state(true, false, intent, []), Some(expected));
-            assert_eq!(
-                worker_wait_state(true, false, intent, [("llm", true)]),
-                Some(expected),
-            );
-            assert_eq!(
-                worker_wait_state(true, true, intent, [("render", true)]),
-                Some(expected),
-            );
+            assert_eq!(worker_wait_state(true, false, intent, []), None);
+            assert_eq!(worker_wait_state(true, false, intent, [("llm", true)]), None);
+            assert_eq!(worker_wait_state(true, true, intent, [("render", true)]), None);
             assert_eq!(worker_wait_state(false, false, intent, []), None);
         }
     }
@@ -4141,24 +4055,21 @@ mod tests {
     }
 
     #[test]
-    fn user_pause_is_information_and_worker_failures_have_a_localized_summary() {
+    fn user_stops_have_no_feedback_and_worker_failures_have_a_localized_summary() {
         let paused = "生成已暂停，进度已保留 / Generation paused; progress retained";
-        assert!(matches!(
-            task_feedback(TaskState::Paused, Some(paused)),
-            Some(TaskFeedback::Information(_))
-        ));
-        assert!(matches!(
-            task_feedback(TaskState::Cancelled, Some("任务已取消 / Task cancelled")),
-            Some(TaskFeedback::Information(_))
-        ));
+        assert_eq!(task_failure_summary(TaskState::Paused, Some(paused)), None);
         assert_eq!(
-            task_feedback(
+            task_failure_summary(TaskState::Cancelled, Some("任务已取消 / Task cancelled")),
+            None
+        );
+        assert_eq!(
+            task_failure_summary(
                 TaskState::NeedsAttention,
                 Some("服务拒绝凭据，请检查 API Key / Unauthorized: provider response\nraw details")
             ),
-            Some(TaskFeedback::Failure("服务拒绝凭据，请检查 API Key".into())),
+            Some("服务拒绝凭据，请检查 API Key".into()),
         );
-        let Some(TaskFeedback::Failure(message)) = task_feedback(
+        let Some(message) = task_failure_summary(
             TaskState::NeedsAttention,
             Some("ERROR: request failed\nTraceback: provider transport details"),
         ) else {
