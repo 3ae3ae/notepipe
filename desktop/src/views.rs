@@ -168,9 +168,11 @@ impl Desktop {
         if shown.elapsed() >= std::time::Duration::from_secs(8) {
             return None;
         }
-        let visible_task = (self.page == Page::New)
-            .then(|| self.current_input_task(cx).map(|task| task.id.as_str()))
-            .flatten();
+        let visible_task = if self.page == Page::New {
+            self.current_input_task(cx).map(|task| task.id.as_str())
+        } else {
+            None
+        };
         let task = self
             .workspace
             .as_ref()?
@@ -192,18 +194,18 @@ impl Desktop {
         let id = task.id.clone();
         let dismiss_id = id.clone();
         let exports_only = task.exports_only() && task.state == workspace::TaskState::Complete;
-        let result = matches!(
+        let result = if matches!(
             task.state,
             workspace::TaskState::Complete | workspace::TaskState::Partial
-        )
-        .then(|| {
+        ) {
             task.artifact.clone().map(|out_dir| Completed {
                 out_dir,
                 title: task.plan.title.clone(),
                 ..Default::default()
             })
-        })
-        .flatten();
+        } else {
+            None
+        };
         let action = match task.state {
             workspace::TaskState::Complete if exports_only => "打开导出位置",
             workspace::TaskState::Complete => "阅读笔记",

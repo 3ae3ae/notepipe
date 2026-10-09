@@ -2561,6 +2561,7 @@ impl Desktop {
     ) -> AnyElement {
         let id = task.id.clone();
         let cover = self.task_cover(task);
+        let has_cover = cover.is_some();
         let heading = control(SharedString::from(format!("select-{id}")))
             .ghost()
             .accessibility_label(format!(
@@ -2591,7 +2592,7 @@ impl Desktop {
                         .flex_shrink_0(),
                 )
             })
-            .when(self.task_cover(task).is_none(), |heading| {
+            .when(!has_cover, |heading| {
                 heading.child(
                     icons::task()
                         .size(rems(20. / 14.))
@@ -2963,7 +2964,7 @@ impl Desktop {
             names.extend(self.progress.keys().cloned());
         }
         let mut names: Vec<_> = names.into_iter().collect();
-        names.sort_by_key(|name| task_stage_order(name));
+        names.sort_by_key(|name| activity::stage_order(name));
         names
             .into_iter()
             .map(|name| {
@@ -3735,10 +3736,6 @@ fn request_scope(request: &workspace::BlockedRequest) -> String {
         };
         format!("{name}：此历史请求未保存具体内容范围，可在技术详情中查看请求记录。")
     }
-}
-
-fn task_stage_order(stage: &str) -> usize {
-    activity::stage_order(stage)
 }
 
 /// 本机识别能力检查：build_plan/build_batch_plan 的错误文案逐字一致，合一处维护。

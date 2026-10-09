@@ -238,10 +238,6 @@ impl State {
     }
 }
 
-fn provider_label(provider: Option<AsrProvider>) -> &'static str {
-    crate::provider_label(provider)
-}
-
 #[derive(Clone, Copy)]
 enum ProviderChoice {
     Local,
@@ -310,7 +306,7 @@ fn apply_provider_choice(
     let previous = std::mem::replace(model, course2md::config::DEFAULT_ASR_MODEL.into());
     Some(format!(
         "{} 不支持“{}”，已改用 Qwen3 1.7B。",
-        provider_label(Some(resolved)),
+        crate::provider_label(Some(resolved)),
         previous
     ))
 }
@@ -1364,7 +1360,7 @@ impl Desktop {
                         } else {
                             "固定引擎"
                         },
-                        provider_label(Some(selected.unwrap_or(recommended)))
+                        crate::provider_label(Some(selected.unwrap_or(recommended)))
                     ),
                 ))
                 .child(
@@ -2245,7 +2241,7 @@ impl Desktop {
                                         .font_weight(FontWeight::SEMIBOLD),
                                 )
                                 .child(
-                                    help("setup-model-engine", provider_label(Some(provider)))
+                                    help("setup-model-engine", crate::provider_label(Some(provider)))
                                         .text_size(TEXT_AUX),
                                 ),
                         ),
