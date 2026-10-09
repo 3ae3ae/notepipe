@@ -42,6 +42,14 @@ struct Entry {
     result: Option<Result<LocalModelStatus, String>>,
     cache_directories: std::collections::BTreeSet<PathBuf>,
 }
+impl Entry {
+    fn result(&self) -> Option<&Result<LocalModelStatus, String>> {
+        self.result.as_ref()
+    }
+    fn checking(&self) -> bool {
+        self.checking
+    }
+}
 #[derive(Default)]
 pub(super) struct State {
     entries: BTreeMap<String, Entry>,
@@ -76,6 +84,32 @@ pub(crate) fn model_display_name(model: &str) -> String {
         _ => model.to_owned(),
     }
 }
+/// Single classification of the device facts behind a chosen recognition
+/// provider. `model_device_issue` (message) and `model_runtime_repair` (repair
+/// UI) must stay in sync; classifying once keeps both derived from one tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeviceIssue {
+    Engine,
+    AppleRuntime,
+    LlamaMissing,
+    GpuAbsent,
+    NpuDevice,
+    NpuRuntime,
+}
+fn device_issue(provider: AsrProvider, environment: &crate::backend::Environment) -> Option<DeviceIssue> {
+    if !environment.engine {
+        return Some(DeviceIssue::Engine);
+    }
+    match provider {
+        AsrProvider::Coreml if !environment.apple => Some(DeviceIssue::AppleRuntime),
+        AsrProvider::Gpu if !environment.llama => Some(DeviceIssue::LlamaMissing),
+        AsrProvider::Gpu if environment.gpu.is_none() => Some(DeviceIssue::GpuAbsent),
+        AsrProvider::Cpu if !environment.llama => Some(DeviceIssue::LlamaMissing),
+        AsrProvider::Npu if !environment.npu_device => Some(DeviceIssue::NpuDevice),
+        AsrProvider::Npu if !environment.npu_runtime => Some(DeviceIssue::NpuRuntime),
+        _ => None,
+    }
+}
 impl Desktop {
     pub(crate) fn setup_model_snapshot(
         &self,
@@ -91,7 +125,7 @@ impl Desktop {
             .as_ref()
             .is_some_and(|active| active.key() == request.key());
         ModelSetupSnapshot {
-            checking: entry.is_none_or(|entry| entry.checking),
+            checking: entry.is_none_or(Entry::checking),
             result: entry.and_then(|entry| entry.result.clone()),
             device_issue: self.model_device_issue(provider),
             preparing: matching && self.kind == Kind::Models && self.job.is_some(),
@@ -307,30 +341,30 @@ impl Desktop {
     }
     fn model_device_issue(&self, provider: AsrProvider) -> Option<String> {
         let environment = self.environment.as_ref()?;
-        if !environment.engine {
-            return Some("转换程序无法运行，请先恢复应用内的转换程序。".into());
-        }
-        match provider {
-            AsrProvider::Coreml if !environment.apple && !cfg!(all(target_os = "macos", target_arch = "aarch64")) => Some("已选择 Apple 原生，但当前系统无法使用这套识别方式。选择仍保留，请选择本机可用的识别方式。".into()),
-            AsrProvider::Coreml if !environment.apple => Some("已选择 Apple 原生，但本机没有检测到完整的 Apple 识别运行时。选择仍保留；安装完整应用可以恢复组件，也可以明确选择其他可用方式。".into()),
-            AsrProvider::Gpu if !environment.llama => Some("已选择 GPU，但未检测到 llama-server 识别运行时。选择仍保留；安装运行时后重新检查。".into()),
-            AsrProvider::Gpu if environment.gpu.is_none() => Some("已选择 GPU，但识别运行时没有报告可用的 GPU。选择仍保留；可以明确改用 CPU。".into()),
-            AsrProvider::Cpu if !environment.llama => Some("已选择 CPU，但未检测到 llama-server 识别运行时。安装完成后可以使用已缓存的模型。".into()),
-            AsrProvider::Npu if !environment.npu_device => Some("已选择 Intel NPU，但本机未检测到可用的 Intel NPU 设备。选择仍保留，请选择本机可用的识别方式。".into()),
-            AsrProvider::Npu if !environment.npu_runtime => Some("已选择 Intel NPU，已检测到设备，但缺少 uv 或 Python 启动器。安装完成后重新检查；选择仍保留。".into()),
-            _ => None,
-        }
+        Some(match device_issue(provider, environment)? {
+            DeviceIssue::Engine => "转换程序无法运行，请先恢复应用内的转换程序。".into(),
+            DeviceIssue::AppleRuntime if !cfg!(all(target_os = "macos", target_arch = "aarch64")) => "已选择 Apple 原生，但当前系统无法使用这套识别方式。选择仍保留，请选择本机可用的识别方式。".into(),
+            DeviceIssue::AppleRuntime => "已选择 Apple 原生，但本机没有检测到完整的 Apple 识别运行时。选择仍保留；安装完整应用可以恢复组件，也可以明确选择其他可用方式。".into(),
+            DeviceIssue::LlamaMissing if provider == AsrProvider::Gpu => "已选择 GPU，但未检测到 llama-server 识别运行时。选择仍保留；安装运行时后重新检查。".into(),
+            DeviceIssue::LlamaMissing => "已选择 CPU，但未检测到 llama-server 识别运行时。安装完成后可以使用已缓存的模型。".into(),
+            DeviceIssue::GpuAbsent => "已选择 GPU，但识别运行时没有报告可用的 GPU。选择仍保留；可以明确改用 CPU。".into(),
+            DeviceIssue::NpuDevice => "已选择 Intel NPU，但本机未检测到可用的 Intel NPU 设备。选择仍保留，请选择本机可用的识别方式。".into(),
+            DeviceIssue::NpuRuntime => "已选择 Intel NPU，已检测到设备，但缺少 uv 或 Python 启动器。安装完成后重新检查；选择仍保留。".into(),
+        })
     }
     fn model_runtime_repair(&self, provider: AsrProvider, key: &str) -> Div {
         let mut view = v_flex().w_full().min_w_0().gap_2();
         let Some(environment) = &self.environment else {
             return view;
         };
-        if !environment.engine
-            || (provider == AsrProvider::Coreml
-                && !environment.apple
-                && cfg!(all(target_os = "macos", target_arch = "aarch64")))
-        {
+        let reinstall = match device_issue(provider, environment) {
+            Some(DeviceIssue::Engine) => true,
+            Some(DeviceIssue::AppleRuntime) => {
+                cfg!(all(target_os = "macos", target_arch = "aarch64"))
+            }
+            _ => false,
+        };
+        if reinstall {
             return view
                 .child(
                     settings_value(
@@ -349,7 +383,7 @@ impl Desktop {
                         }),
                 );
         }
-        if matches!(provider, AsrProvider::Cpu | AsrProvider::Gpu) && !environment.llama {
+        if device_issue(provider, environment) == Some(DeviceIssue::LlamaMissing) {
             view = view.child(
                 control(SharedString::from(format!(
                     "model-llama-install-help-{key}"
@@ -378,7 +412,7 @@ impl Desktop {
                 ).text_sm());
             }
         }
-        if provider == AsrProvider::Npu && environment.npu_device && !environment.npu_runtime {
+        if device_issue(provider, environment) == Some(DeviceIssue::NpuRuntime) {
             view = view.child(
                 control(SharedString::from(format!(
                     "model-python-install-help-{key}"
@@ -418,6 +452,42 @@ impl Desktop {
         let key = request.key();
         let entry = self.settings_ui.model_diagnostics.entries.get(&key);
         let device_issue = self.model_device_issue(provider);
+        let checking = entry.is_none_or(Entry::checking);
+        let status = entry
+            .and_then(Entry::result)
+            .and_then(|result| result.as_ref().ok());
+        let (mut view, cache_details) =
+            self.model_status_section(provider, &request, provider_row, window, cx);
+        let (actions, extras) = self.model_prepare_actions(
+            provider,
+            &request,
+            &key,
+            checking,
+            status,
+            &device_issue,
+            window,
+            cx,
+        );
+        for extra in extras {
+            view = view.child(extra);
+        }
+        view.child(actions)
+            .when_some(cache_details, |view, details| view.child(details))
+    }
+
+    /// Status rows: engine, model name, device issue with repair guidance,
+    /// check progress, cache state summary and expandable cache details.
+    fn model_status_section(
+        &self,
+        provider: AsrProvider,
+        request: &Request,
+        provider_row: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Div, Option<Div>) {
+        let key = request.key();
+        let entry = self.settings_ui.model_diagnostics.entries.get(&key);
+        let device_issue = self.model_device_issue(provider);
         let mut cache_details = None;
         let mut view = v_flex().w_full().min_w_0().gap_3();
         if provider_row {
@@ -453,9 +523,9 @@ impl Desktop {
                 ))
                 .child(self.model_runtime_repair(provider, &key));
         }
-        let checking = entry.is_none_or(|entry| entry.checking);
+        let checking = entry.is_none_or(Entry::checking);
         let status = entry
-            .and_then(|entry| entry.result.as_ref())
+            .and_then(Entry::result)
             .and_then(|result| result.as_ref().ok());
         if checking {
             view = view.child(settings_status_row(
@@ -478,7 +548,7 @@ impl Desktop {
                     ),
             ));
         }
-        if let Some(Err(error)) = entry.and_then(|entry| entry.result.as_ref()) {
+        if let Some(Err(error)) = entry.and_then(Entry::result) {
             view = view.child(settings_detail_row(
                 SharedString::from(format!("model-check-error-label-{key}")),
                 "检查结果",
@@ -667,6 +737,24 @@ impl Desktop {
                 ));
             }
         }
+        (view, cache_details)
+    }
+
+    /// Action row (recheck / pause / prepare) and the transient rows it owns:
+    /// prepare progress, download transfers, and queue/network-scope notes.
+    fn model_prepare_actions(
+        &self,
+        provider: AsrProvider,
+        request: &Request,
+        key: &str,
+        checking: bool,
+        status: Option<&LocalModelStatus>,
+        device_issue: &Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Div, Vec<AnyElement>) {
+        let mut extras: Vec<AnyElement> = Vec::new();
+        let request = request.clone();
         let active = self.kind == Kind::Models
             && self.job.is_some()
             && self
@@ -689,7 +777,7 @@ impl Desktop {
             && device_issue.is_none()
             && status.is_some_and(|status| status.can_prepare);
         if active {
-            view = view.child(
+            extras.push(
                 h_flex()
                     .gap_2()
                     .items_center()
@@ -701,7 +789,8 @@ impl Desktop {
                             format!("正在准备 {}", model_display_name(&request.model)),
                         )
                         .role(Role::Status),
-                    ),
+                    )
+                    .into_any_element(),
             );
             for (index, (stage, progress)) in self
                 .progress
@@ -713,14 +802,17 @@ impl Desktop {
                 })
                 .enumerate()
             {
-                view = view.child(crate::motion::transfer_status(
-                    ("model-download-progress", index),
-                    crate::activity::model_transfer_phase(stage, &progress.message),
-                    &progress.transfer_metrics(stage, true),
-                    progress.fraction(),
-                    window,
-                    cx,
-                ));
+                extras.push(
+                    crate::motion::transfer_status(
+                        ("model-download-progress", index),
+                        crate::activity::model_transfer_phase(stage, &progress.message),
+                        &progress.transfer_metrics(stage, true),
+                        progress.fraction(),
+                        window,
+                        cx,
+                    )
+                    .into_any_element(),
+                );
             }
             actions = actions.child(
                 control("stop-model-preparation")
@@ -773,27 +865,29 @@ impl Desktop {
                     })),
             );
             if self.job.is_some() && !loaded {
-                view = view.child(
+                extras.push(
                     settings_value(
                         SharedString::from(format!("model-waits-for-job-{key}")),
                         "当前处理结束后可准备模型；本次已保存的任务不受影响。",
                     )
-                    .text_sm(),
+                    .text_sm()
+                    .into_any_element(),
                 );
             }
             if !loaded {
-                view = view.child(
+                extras.push(
                     theme::supporting_info(
                         SharedString::from(format!("model-network-scope-{key}")),
                         "准备时可能下载模型，课程内容不会上传。",
                     )
-                    .text_size(TEXT_AUX),
+                    .text_size(TEXT_AUX)
+                    .into_any_element(),
                 );
             }
         }
-        view.child(actions)
-            .when_some(cache_details, |view, details| view.child(details))
+        (actions, extras)
     }
+
     pub(super) fn model_diagnostics_panel(
         &self,
         window: &mut Window,
@@ -1030,11 +1124,11 @@ impl Desktop {
             .model_diagnostics
             .entries
             .get(&request.key());
-        if entry.is_none_or(|entry| entry.checking) {
+        if entry.is_none_or(Entry::checking) {
             return (true, "正在检查识别模型…".into());
         }
         if entry
-            .and_then(|entry| entry.result.as_ref())
+            .and_then(Entry::result)
             .is_some_and(Result::is_err)
         {
             return (
@@ -1043,7 +1137,7 @@ impl Desktop {
             );
         }
         match entry
-            .and_then(|entry| entry.result.as_ref())
+            .and_then(Entry::result)
             .and_then(|result| result.as_ref().ok())
             .map(|status| &status.state)
         {
