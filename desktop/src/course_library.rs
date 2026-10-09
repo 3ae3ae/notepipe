@@ -1375,31 +1375,29 @@ impl Desktop {
             .iter()
             .map(|option| (option.value.clone(), option.label.clone()))
             .collect();
-        let mut group = SingleChoiceGroup::new("folder-filter", "文件夹筛选")
-            .options(choices)
-            .selected(selected);
-        // 真实文件夹用对象图标，与「全部/未分类」的集合过滤分开（review2#5）
-        for option in &options {
-            if option.folder.is_some_and(|id| id != 0) {
-                group = group.icon(option.value.clone(), icons::folder());
-            }
-        }
-        group
-            .on_change(cx.listener({
-                let options = options.clone();
-                move |this, value: &SharedString, _, cx| {
-                    let Some(option) = options.iter().find(|option| option.value == value.as_ref())
-                    else {
-                        return;
-                    };
-                    this.library_root = option.root.clone();
-                    if let Some(organization) = this.library_indexes.get(&option.root) {
-                        this.library = organization.clone();
-                    }
-                    this.folder_filter = option.folder;
-                    this.scrolls[Page::Library as usize].set_offset(point(px(0.), px(0.)));
-                    cx.notify();
-                }
+        // M3 filter chips, one per scope; real folders carry the folder icon.
+        h_flex()
+            .id("folder-filter")
+            .role(Role::RadioGroup)
+            .aria_label("文件夹筛选")
+            .gap_2()
+            .flex_wrap()
+            .items_center()
+            .children(options.into_iter().map(|option| {
+                let checked = option.value == selected;
+                let is_folder = option.folder.is_some_and(|id| id != 0);
+                filter_chip(SharedString::from(format!("folder-filter-{}", option.value)), checked, cx)
+                    .label(option.label.clone())
+                    .when(is_folder && !checked, |chip| chip.icon(icons::folder()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.library_root = option.root.clone();
+                        if let Some(organization) = this.library_indexes.get(&option.root) {
+                            this.library = organization.clone();
+                        }
+                        this.folder_filter = option.folder;
+                        this.scrolls[Page::Library as usize].set_offset(point(px(0.), px(0.)));
+                        cx.notify();
+                    }))
             }))
     }
 
@@ -1420,22 +1418,58 @@ impl Desktop {
         let group_on = self.desktop_settings.library_group_folders;
         let cards_on = self.desktop_settings.library_cards;
         let can_group = self.folder_filter.is_none() && self.library_error.is_none();
-        let controls = h_flex()
-            .gap_2()
-            .flex_wrap()
+        let entity = cx.entity().downgrade();
+        // Presentation choices are infrequent: one menu instead of two
+        // segmented controls competing with the filters.
+        let display = control("library-display")
+            .ghost()
+            .icon(if cards_on { icons::dashboard() } else { icons::task() })
+            .label("显示")
+            .text_color(color(GRAY))
+            .dropdown_menu(move |menu, _, _| {
+                let set_cards = |cards: bool| {
+                    let entity = entity.clone();
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.desktop_settings.library_cards = cards;
+                            this.save_library_presentation(cx);
+                        });
+                    }
+                };
+                let set_group = |group: bool| {
+                    let entity = entity.clone();
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.desktop_settings.library_group_folders = group;
+                            this.save_library_presentation(cx);
+                        });
+                    }
+                };
+                let menu = menu
+                    .item(PopupMenuItem::new("卡片").checked(cards_on).on_click(set_cards(true)))
+                    .item(PopupMenuItem::new("列表").checked(!cards_on).on_click(set_cards(false)));
+                if can_group {
+                    menu.separator()
+                        .item(PopupMenuItem::new("平铺").checked(!group_on).on_click(set_group(false)))
+                        .item(PopupMenuItem::new("按文件夹分组").checked(group_on).on_click(set_group(true)))
+                } else {
+                    menu
+                }
+            });
+        let filters = h_flex()
+            .w_full()
             .min_w_0()
-            .max_w_full()
-            .flex_shrink_0()
+            .gap_2()
             .items_center()
-            .child(self.folder_filter_control(cx))
+            .child(div().flex_1().min_w_0().child(self.folder_filter_control(cx)))
             .when_some(self.folder_filter.filter(|id| *id != 0), |row, id| {
                 let entity = cx.entity().downgrade();
                 row.child(
                     control("manage-folder")
-                        .rounded(RADIUS_PILL)
-                        .px(px(12.))
+                        .ghost()
                         .icon(icons::edit())
                         .label("管理文件夹")
+                        .text_color(color(GRAY))
                         .dropdown_menu(move |menu, _, _| {
                             let rename = entity.clone();
                             let remove = entity.clone();
@@ -1458,57 +1492,37 @@ impl Desktop {
                         }),
                 )
             })
-            .child(
-                SingleChoiceGroup::new("library-layout", "笔记显示方式")
-                    .options([("list", "列表"), ("cards", "卡片")])
-                    .selected(library_layout_choice(cards_on))
-                    .on_change(cx.listener(|this, value: &SharedString, _, cx| {
-                        this.desktop_settings.library_cards = value.as_ref() == "cards";
-                        this.save_library_presentation(cx);
-                    })),
-            )
-            .when(can_group, |row| {
-                // 与「列表/卡片」拉开：两组选择不读成一段多选（review2#5）
-                row.child(
-                    div().ml_4().child(
-                        SingleChoiceGroup::new("library-grouping", "笔记分组方式")
-                        .options([("flat", "平铺"), ("group", "分组")])
-                        .selected(if group_on { "group" } else { "flat" })
-                        .on_change(cx.listener(|this, value: &SharedString, _, cx| {
-                            this.desktop_settings.library_group_folders =
-                                value.as_ref() == "group";
-                            this.save_library_presentation(cx);
-                        })),
-                    ),
-                )
-            });
-        h_flex()
+            .child(display);
+        v_flex()
             .w_full()
             .min_w_0()
-            .flex_wrap()
-            .gap_2()
+            .gap_4()
             .pb_4()
             .child(
-                div()
-                    .flex_1()
-                    .flex_basis(rems(10.))
+                // M3 search bar: a filled, borderless pill.
+                h_flex()
+                    .w_full()
                     .min_w_0()
-                    .max_w_full()
+                    .h(rems(52. / 14.))
+                    .px(rems(18. / 14.))
+                    .gap_3()
+                    .items_center()
+                    .rounded(RADIUS_PILL)
+                    .bg(color(SURFACE_HIGH))
+                    .child(icons::search().size(rems(20. / 14.)).text_color(color(GRAY)))
                     .child(
-                        text_input(&self.inputs[&Field::Search])
-                            .aria_label("搜索笔记标题")
-                            .w_full()
-                            .border_color(color(CONTROL))
-                            .text_size(TEXT_BODY)
-                            .prefix(
-                                icons::search()
-                                    .size(rems(18. / 14.))
-                                    .text_color(color(GRAY)),
-                            )
-                            .cleanable(true),
+                        div().flex_1().min_w_0().child(
+                            text_input(&self.inputs[&Field::Search])
+                                .appearance(false)
+                                .aria_label("搜索笔记标题")
+                                .w_full()
+                                .px_0()
+                                .text_size(TEXT_BODY)
+                                .cleanable(true),
+                        ),
                     ),
             )
-            .child(controls)
+            .child(filters)
     }
 
     /// Source identity helps readers recognize a note; routine revision numbers
@@ -1670,139 +1684,127 @@ impl Desktop {
         layout: LibraryLayout,
         cx: &mut Context<Self>,
     ) -> Div {
+        let spacers = layout.columns.saturating_sub(row.len());
         h_flex()
             .gap_4()
             .items_stretch()
             .children(row.iter().map(|(index, course)| {
-                let mut card = v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .bg(color(SURFACE))
-                    .border_1()
-                    .border_color(color(CARD_LINE))
-                    .rounded(RADIUS_CARD)
-                    .overflow_hidden();
-                if let Some(thumbnail) = &course.thumbnail {
-                    card = card.child(
-                        control(("read-course", *index))
-                            .ghost()
-                            .w_full()
-                            .h_auto()
-                            .p_0()
-                            .rounded_t(RADIUS_CARD)
-                            .rounded_b(px(0.))
-                            .aspect_ratio(16. / 9.)
-                            .accessibility_label(format!("阅读 {}", course.title))
-                            .child(
-                                img(thumbnail.clone())
-                                    .size_full()
-                                    .rounded_t(RADIUS_CARD)
-                                    .object_fit(ObjectFit::Cover),
-                            )
-                            .on_click({
-                                let course = course.clone();
-                                cx.listener(move |this, _, _, cx| {
-                                    this.open_course(course.clone(), cx)
-                                })
-                            }),
-                    );
-                }
-                card.child(
-                    v_flex()
-                        .flex_1()
-                        .w_full()
-                        .min_w_0()
-                        .p_4()
-                        .gap_2()
-                        .child(
-                            control(("read-title", *index))
-                                .accessibility_label(format!("阅读 {}", course.title))
-                                .ghost()
-                                .w_full()
-                                .h_auto()
-                                .p_0()
-                                .justify_start()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .whitespace_normal()
-                                        .when(!layout.stacked, |title| {
-                                            title.text_ellipsis().line_clamp(2)
-                                        })
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(course.title.clone()),
-                                )
-                                .on_click({
-                                    let course = course.clone();
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.open_course(course.clone(), cx)
-                                    })
-                                }),
-                        )
-                        .child(
-                            v_flex()
-                                .w_full()
-                                .min_w_0()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .whitespace_normal()
-                                        .text_size(TEXT_AUX)
-                                        .font_weight(FontWeight::NORMAL)
-                                        .text_color(color(GRAY))
-                                        .child(self.course_meta(course)),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .whitespace_normal()
-                                        .text_size(TEXT_AUX)
-                                        .font_weight(FontWeight::NORMAL)
-                                        .text_color(color(GRAY))
-                                        .child(course.content_description()),
-                                )
-                                .when(course.incomplete(), |view| {
-                                    view.child(badge(BadgeKind::Warning).child("部分内容待补全"))
-                                })
-                                .child(
-                                    h_flex()
-                                        .w_full()
-                                        .min_w_0()
-                                        .mt_auto()
-                                        .gap_2()
-                                        .items_center()
-                                        .flex_wrap()
-                                        .child(div().flex_1())
-                                        .child(self.course_actions(course.clone(), *index, cx))
-                                        .child(
-                                            outline_pill(("read-card-action", *index))
-                                                .icon(IconName::BookOpen)
-                                                .label(if self.course_has_reading_position(course) {
-                                                    "继续阅读"
-                                                } else {
-                                                    "阅读笔记"
-                                                })
-                                                .loading(self.opening_course.as_ref() == Some(&course.dir))
-                                                .disabled(self.opening_course.as_ref() == Some(&course.dir))
-                                                .on_click({
-                                                    let course = course.clone();
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        this.open_course(course.clone(), cx)
-                                                    })
-                                                }),
-                                        ),
-                                ),
-                        )
-                        .children(self.course_read_error(course, *index, cx))
-                        .children(self.course_export_feedback(course, cx)),
-                )
+                self.note_card(course, *index, "library", true, cx)
             }))
-            .children((row.len()..layout.columns).map(|_| div().flex_1()))
+            .children((0..spacers).map(|_| div().flex_1().min_w_0()))
     }
 
-    /// 16:9 row thumbnail at the shared course-row size; the card cover is a
-    /// different full-width variant and keeps its own sizing.
+    /// The one note card used by the library grid and the workbench's recent
+    /// notes: a 16:9 cover (or a tonal placeholder), the title and one meta line.
+    /// Cover and title both open the note; the card needs no separate read button.
+    pub(crate) fn note_card(
+        &self,
+        course: &Course,
+        index: usize,
+        scope: &'static str,
+        with_actions: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let open = |course: &Course| {
+            let course = course.clone();
+            cx.listener(move |this: &mut Self, _, _, cx| this.open_course(course.clone(), cx))
+        };
+        let cover = control(SharedString::from(format!("{scope}-cover-{index}")))
+            .ghost()
+            .w_full()
+            .h_auto()
+            .p_0()
+            .rounded_t(RADIUS_CARD)
+            .rounded_b(px(0.))
+            .aspect_ratio(16. / 9.)
+            .tab_stop(false)
+            .accessibility_label(format!("阅读 {}", course.title))
+            .bg(color(SECONDARY_CONTAINER))
+            .map(|cover| match &course.thumbnail {
+                Some(thumbnail) => cover.child(
+                    img(thumbnail.clone())
+                        .size_full()
+                        .rounded_t(RADIUS_CARD)
+                        .object_fit(ObjectFit::Cover),
+                ),
+                None => cover.child(
+                    icons::movie()
+                        .size(rems(32. / 14.))
+                        .text_color(color(ON_SECONDARY_CONTAINER)),
+                ),
+            })
+            .on_click(open(course));
+        let title = control(SharedString::from(format!("{scope}-title-{index}")))
+            .ghost()
+            .flex_1()
+            .min_w_0()
+            .h_auto()
+            .min_h(px(0.))
+            .p_0()
+            .justify_start()
+            .rounded(px(4.))
+            .accessibility_label(format!("阅读 {}", course.title))
+            .child(
+                div()
+                    .w_full()
+                    .whitespace_normal()
+                    .text_ellipsis()
+                    .line_clamp(2)
+                    .text_size(TEXT_BODY)
+                    .line_height(rems(20. / 14.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(color(INK))
+                    .child(course.title.clone()),
+            )
+            .on_click(open(course));
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .bg(color(SURFACE))
+            .border_1()
+            .border_color(color(CARD_LINE))
+            .rounded(RADIUS_CARD)
+            .shadow(shadow_card())
+            .child(cover)
+            .child(
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .px(rems(14. / 14.))
+                    .pt(rems(10. / 14.))
+                    .pb(rems(14. / 14.))
+                    .gap(px(2.))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_1()
+                            .items_start()
+                            .child(title)
+                            .when(with_actions, |row| {
+                                row.child(self.course_actions(course.clone(), index, cx))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(TEXT_AUX)
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(color(GRAY))
+                            .child(self.course_meta(course)),
+                    )
+                    .when(course.incomplete(), |view| {
+                        view.child(div().pt_1().child(badge(BadgeKind::Warning).child("部分内容待补全")))
+                    })
+                    .when(with_actions, |view| {
+                        view.children(self.course_read_error(course, index, cx))
+                            .children(self.course_export_feedback(course, cx))
+                    }),
+            )
+    }
+
     fn course_row_thumbnail(thumbnail: &std::path::Path) -> gpui::Img {
         img(thumbnail.to_path_buf())
             .w(rems(6.857))
@@ -1934,7 +1936,7 @@ impl Desktop {
 
     /// Workbench "最近笔记": attention tasks first, then recent readable notes.
     /// An empty library renders nothing at all (the hero plus box are the empty state).
-    pub fn recent_notes_section(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub fn recent_notes_section(&self, columns: usize, cx: &mut Context<Self>) -> Option<Div> {
         let linked = self.current_input_task(cx).map(|task| task.id.clone());
         let mut attention: Vec<_> = self
             .workspace
@@ -1965,33 +1967,29 @@ impl Desktop {
                     .iter()
                     .any(|task| task.artifact.as_ref() == Some(&course.dir))
             })
-            .take(5)
+            .take(columns.max(1))
             .cloned()
             .collect();
         if attention.is_empty() && notes.is_empty() {
             return None;
         }
-        let mut section = v_flex().w_full().min_w_0().gap_2();
+        let mut section = v_flex().w_full().min_w_0().gap_3();
         section = section.child(
             h_flex()
                 .w_full()
                 .items_center()
                 .gap_2()
                 .child(
-                    icons::history()
-                        .size(px(20.))
-                        .text_color(color(ACCENT_STRONG)),
-                )
-                .child(
-                    accessible_text("recent-title", "最近笔记")
+                    accessible_text("recent-title", "最近的笔记")
+                        .role(Role::Heading)
+                        .flex_1()
                         .text_size(TEXT_TITLE)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
-                .child(div().flex_1())
                 .child(
                     quiet("recent-all")
-                        .label("查看全部")
-                        .icon(icons::arrow_forward())
+                        .label("全部")
+                        .text_color(color(ACCENT_STRONG))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.folder_filter = None;
                             this.navigate(Page::Library, cx);
@@ -2125,67 +2123,22 @@ impl Desktop {
                     .child(actions),
             );
         }
-        for (index, course) in notes.into_iter().enumerate() {
-            section = section.child(self.recent_note_row(course, index, cx));
+        if !notes.is_empty() {
+            let spacers = columns.saturating_sub(notes.len());
+            section = section.child(
+                h_flex()
+                    .w_full()
+                    .gap_3()
+                    .items_stretch()
+                    .children(notes.iter().enumerate().map(|(index, course)| {
+                        self.note_card(course, index, "recent", false, cx)
+                    }))
+                    .children((0..spacers).map(|_| div().flex_1().min_w_0())),
+            );
         }
         Some(section)
     }
 
-    fn recent_note_row(&self, course: Course, index: usize, cx: &mut Context<Self>) -> Div {
-        let mut content = h_flex().w_full().min_w_0().gap_3().items_center();
-        if let Some(thumbnail) = &course.thumbnail {
-            content = content.child(Self::course_row_thumbnail(thumbnail));
-        }
-        content = content.child(self.course_row_text(
-            &course,
-            true,
-            div()
-                .w_full()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(TEXT_AUX)
-                .text_color(color(GRAY))
-                .child(format!(
-                    "{} · {}",
-                    course.content_description(),
-                    self.course_meta(&course)
-                )),
-        ));
-        let open = course.clone();
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .p_4()
-            .gap_4()
-            .items_center()
-            .bg(color(SURFACE))
-            .border_1()
-            .border_color(color(CARD_LINE))
-            .rounded(RADIUS_CARD)
-            .child(
-                control(("recent-note-content", index))
-                    .ghost()
-                    .flex_1()
-                    .min_w_0()
-                    .h_auto()
-                    .p_0()
-                    .justify_start()
-                    .accessibility_label(format!("阅读 {}", course.title))
-                    .tooltip("阅读笔记")
-                    .child(content)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.open_course(open.clone(), cx)),
-                    ),
-            )
-            .child(
-                outline_pill(("recent-read", index))
-                    .icon(IconName::BookOpen)
-                    .label("阅读笔记")
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.open_course(course.clone(), cx)),
-                    ),
-            )
-    }
 }
 
 #[cfg(test)]

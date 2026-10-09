@@ -77,7 +77,7 @@ impl Default for AsrApi {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct DesktopSettings {
     pub library_cards: bool,
@@ -85,6 +85,19 @@ pub struct DesktopSettings {
     pub setup_completed: bool,
     pub system_titlebar: bool,
     pub reduce_motion: bool,
+}
+
+/// New libraries open as a card grid; a saved choice is kept as written.
+impl Default for DesktopSettings {
+    fn default() -> Self {
+        Self {
+            library_cards: true,
+            library_group_folders: false,
+            setup_completed: false,
+            system_titlebar: false,
+            reduce_motion: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
