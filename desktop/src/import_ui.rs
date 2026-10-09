@@ -985,7 +985,7 @@ impl Desktop {
 
     /// Source navigation is separate from the editable surface.
     fn source_kind_tabs(&self, cx: &mut Context<Self>) -> Div {
-        div().w_full().child(
+        div().w_full().flex().justify_center().child(
             SingleChoiceGroup::new("source-kind", "视频来源")
                 .options([("online", "视频链接"), ("local", "本地文件")])
                 .icon("online", icons::link())
@@ -1027,27 +1027,37 @@ impl Desktop {
                     .gap_2()
                     // 字段 label 与选中 tab 重复（workbench#10）：placeholder 已说明用途，
                     // 去除后两个 tab 的内容区起点一致
+                    // M3 hero search: one elevated pill owns the field and its
+                    // forward action, so the start button reads as part of the input.
                     .child(
                         h_flex()
                             .w_full()
                             .min_w_0()
+                            .h(rems(64. / 14.))
+                            .pl(rems(20. / 14.))
+                            .pr(rems(10. / 14.))
                             .gap(px(12.))
                             .items_center()
+                            .rounded(RADIUS_PILL)
+                            .bg(color(SURFACE))
+                            .border_1()
+                            .border_color(color(if validation.is_some() { DANGER } else { CARD_LINE }))
+                            .shadow(shadow_hero())
+                            .child(
+                                icons::link()
+                                    .size(rems(22. / 14.))
+                                    .flex_shrink_0()
+                                    .text_color(color(GRAY)),
+                            )
                             .child(
                                 div().flex_1().min_w_0().child(
                                     text_input(&self.inputs[&Field::Source])
+                                        .appearance(false)
                                         .aria_label("视频链接")
                                         .w_full()
                                         .min_w_0()
-                                        .text_size(TEXT_BODY)
-                                        .prefix(
-                                            icons::link()
-                                                .size(rems(18. / 14.))
-                                                .text_color(color(GRAY)),
-                                        )
-                                        .when(validation.is_some(), |input| {
-                                            input.border_color(color(DANGER))
-                                        }),
+                                        .px_0()
+                                        .text_size(TEXT_TITLE),
                                 ),
                             )
                             .when(self.can_start_input(cx), |row| {
@@ -1090,6 +1100,7 @@ impl Desktop {
                         h_flex()
                             .gap_4()
                             .flex_wrap()
+                            .justify_center()
                             .items_center()
                             .child(platform_mark(
                                 "YouTube",
@@ -2716,6 +2727,9 @@ impl Desktop {
     fn box_bottom_row(&self, cx: &mut Context<Self>) -> Div {
         h_flex().items_center().child(
             primary_pill("start-conversion")
+                .h(rems(48. / 14.))
+                .min_h(rems(48. / 14.))
+                .px(rems(22. / 14.))
                 .track_focus(&self.import_submit_focus)
                 .icon(icons::arrow_forward())
                 .label("开始转换")
@@ -2858,11 +2872,13 @@ impl Desktop {
             .gap_6()
             .w_full()
             .min_w_0()
-            .child(theme::page_heading(
+            // The workbench is the product's landing task: a centered hero
+            // heading above the source pill, as in the M3 redesign canvas.
+            .child(h_flex().w_full().justify_center().pt(px(32.)).child(theme::page_heading(
                 "workbench-title",
-                icons::dashboard().size(px(24.)).text_color(color(ACCENT_STRONG)),
+                icons::dashboard().size(px(28.)).text_color(color(ACCENT_STRONG)),
                 "把视频整理成笔记",
-            ))
+            )))
             .when(show_source_input, |view| view.child(input));
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
