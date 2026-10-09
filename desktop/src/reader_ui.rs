@@ -2555,15 +2555,6 @@ impl Desktop {
         // Short windows reserve fixed space for reading controls. Document
         // identity scrolls with the content instead of consuming a second header.
         let controls_scroll = self.reader_ui.controls_scroll.clone();
-        let reveal = |id: &'static str, child: AnyElement| {
-            if compact {
-                child
-            } else {
-                crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone())
-                    .inline()
-                    .into_any_element()
-            }
-        };
         let mut page = v_flex()
             .id("reader-controls")
             .w_full()
@@ -2594,6 +2585,310 @@ impl Desktop {
             })
             .unwrap_or_default();
         let headings = reader_outline(&preview);
+        let header = self.reader_metadata_row(&preview, compact, short_reader, &controls_scroll, cx);
+        let mut compact_metadata = None;
+        let (short_back, scrolling_title) = if short_reader {
+            (Some(header.back), Some(header.title))
+        } else {
+            page = page.child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .items_start()
+                    .gap_3()
+                    .child(header.back)
+                    .child(header.title),
+            );
+            (None, None)
+        };
+        if let Some(meta) = header.meta {
+            if compact {
+                compact_metadata = Some(meta);
+            } else {
+                page = page.child(meta);
+            }
+        }
+        let toolbar = self.reader_toolbar(
+            &preview,
+            &headings,
+            short_back,
+            compact,
+            short_reader,
+            toc_fits_beside,
+            cx,
+        );
+
+        page = page.child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .py_2()
+                .border_b_1()
+                .border_color(color(HAIRLINE))
+                .child(toolbar.bar)
+                .children(toolbar.compact_search)
+                .children(toolbar.short_matches),
+        );
+        let (fixed_header, mut page) = if compact {
+            (
+                Some(page.into_any_element()),
+                v_flex()
+                    .id("reader-extra-controls")
+                    .w_full()
+                    .min_w_0()
+                    .min_h_0()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .max_h(px(available_height * 0.28))
+                    .overflow_y_scroll()
+                    .track_scroll(&controls_scroll),
+            )
+        } else {
+            (None, page)
+        };
+        page = page.children(self.course_export_feedback(&preview.course, cx));
+        let reveal = |id: &'static str, child: AnyElement| {
+            crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone()).inline()
+        };
+        if self.reading {
+            page = page.child(crate::motion::enter(
+                "reader-version-loading",
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(crate::motion::spinner("reader-version-spinner", cx))
+                    .child(theme::accessible_text(
+                        "reader-version-loading-label",
+                        "正在打开笔记…",
+                    ))));
+        }
+        let information_panel = self.reader_info_panel(
+            &preview,
+            compact,
+            compact_metadata,
+            available_height,
+            rem_size,
+            window,
+            cx,
+        );
+        page = page.children(self.reader_notices(&preview, &controls_scroll, window, cx));
+        let reading_note = self.result_tab == 0;
+        let items = note_items(&preview.blocks, short_reader);
+        // The note flow's persistent list state follows the loaded note and the
+        // item sequence derived from it; text-scale changes only re-measure.
+        let items_key = (
+            preview.course.dir.clone(),
+            short_reader,
+            preview.blocks.len(),
+        );
+        if self.reader_ui.note_items_key.as_ref() != Some(&items_key) {
+            let focus: Vec<FocusHandle> = (0..items.len()).map(|_| cx.focus_handle()).collect();
+            self.reader_ui.note_list.reset(items.len());
+            self.reader_ui
+                .note_list
+                .splice_focusable(0..items.len(), focus.iter().cloned().map(Some));
+            self.reader_ui.note_focus = Rc::new(focus);
+            self.reader_ui.note_items_key = Some(items_key);
+            self.reader_ui.note_list_rem = rem_size;
+        } else if self.reader_ui.note_list_rem != rem_size {
+            self.reader_ui.note_list.remeasure();
+            self.reader_ui.note_list_rem = rem_size;
+        }
+        self.reader_ui.note_items = Rc::new(items);
+        let top_index = if reading_note {
+            let top = self.reader_ui.note_list.logical_scroll_top();
+            note_top_block(&self.reader_ui.note_items, top.item_ix).unwrap_or(0)
+        } else {
+            self.reader_ui
+                .item_layout
+                .borrow()
+                .top_item(f32::from(self.reader_scroll.offset().y))
+                .map(|(index, _, _)| index)
+                .unwrap_or(0)
+        };
+        self.reader_ui.item_layout = Rc::default();
+        let item_layout = self.reader_ui.item_layout.clone();
+        let current_chapter = headings
+            .iter()
+            .filter(|(index, _, _)| *index <= top_index)
+            .last()
+            .map(|(index, _, _)| *index);
+        // Match the exported HTML's continuous article: one text measure,
+        // regular 1.7-line body copy, and spacing between sections. The note
+        // tab's blocks form a variable-height list: only the visible window
+        // and its overdraw are built each frame.
+        let gallery_query = self.reader_ui.gallery_find.read(cx).value().to_string();
+        let article: AnyElement = if reading_note {
+            // One pass over the frames up front; the item closure queries per
+            // image path and per body anchor instead of rescanning the frames.
+            let frame_index_by_path: HashMap<PathBuf, usize> = self
+                .reader_ui
+                .frames
+                .iter()
+                .enumerate()
+                .filter_map(|(index, frame)| frame.path.clone().map(|path| (path, index)))
+                .fold(HashMap::new(), |mut map, (path, index)| {
+                    map.entry(path).or_insert(index);
+                    map
+                });
+            let mut missing_by_anchor: HashMap<String, Vec<usize>> = HashMap::new();
+            for (index, frame) in self.reader_ui.frames.iter().enumerate() {
+                if frame.path.is_none()
+                    && let Some(anchor) = frame.body_anchor.clone()
+                {
+                    missing_by_anchor.entry(anchor).or_default().push(index);
+                }
+            }
+            let flow = NoteFlow {
+                items: self.reader_ui.note_items.clone(),
+                focus: self.reader_ui.note_focus.clone(),
+                preview: preview.clone(),
+                frames: self.reader_ui.frames.clone(),
+                source: self.reader_source(),
+                outline,
+                frame_index_by_path,
+                missing_by_anchor,
+                matches: self.reader_ui.matches.clone(),
+                match_index: self.reader_ui.match_index,
+                find_open: self.reader_ui.find_open,
+                data_loading: self.reader_ui.data_loading,
+                item_layout,
+                note_list: self.reader_ui.note_list.clone(),
+                desktop: cx.weak_entity(),
+            };
+            div()
+                .id("note-reader")
+                .role(Role::Document)
+                .aria_label(preview.course.title.clone())
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .w_full()
+                .h_full()
+                .max_w(READER_MEASURE)
+                .child(
+                    list(
+                        self.reader_ui.note_list.clone(),
+                        move |index, window, _cx| render_note_item(&flow, index, window),
+                    )
+                    .w_full()
+                    .h_full()
+                    .py_3(),
+                )
+                // 正文滚动容器也兑现「始终显示滚动条」偏好（review4#4）
+                .child(crate::backend::vertical_scrollbar_for(&self.reader_ui.note_list))
+                .into_any_element()
+        } else {
+            self.reader_gallery(
+                &preview,
+                &gallery_query,
+                reader_width,
+                rem_size,
+                item_layout,
+                scrolling_title,
+                window,
+                cx,
+            )
+        };
+        // Wide reading opens the contents automatically. Manual choices are retained
+        // across tab changes, note changes and subsequent window resizing.
+        let toc_open = self.reader_ui.toc_open.unwrap_or(toc_fits_beside)
+            && !headings.is_empty()
+            && self.result_tab == 0;
+        let toc_side = toc_open && toc_fits_beside;
+        let body = if toc_side {
+            h_flex()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .gap(px(24.))
+                .items_stretch()
+                .child(article)
+                .child(self.reader_toc_panel(&headings, current_chapter, true, cx))
+                .into_any_element()
+        } else if toc_open {
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .h_full()
+                .child(article)
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(color(SURFACE))
+                        .child(self.reader_toc_panel(&headings, current_chapter, false, cx)),
+                )
+                .into_any_element()
+        } else {
+            article
+        };
+        let controls = if let Some(header) = fixed_header {
+            v_flex()
+                .w_full()
+                .min_h_0()
+                .flex_shrink_0()
+                .child(header)
+                .child(page)
+                .into_any_element()
+        } else {
+            page.into_any_element()
+        };
+        let controls = if self.reader_ui.info_open {
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .flex_shrink_0()
+                .gap_2()
+                .child(controls)
+                .children(information_panel)
+                .into_any_element()
+        } else {
+            controls
+        };
+        crate::motion::state_enter(
+            SharedString::from(format!("reader-open:{}", preview.course.dir.display())),
+            root.child(controls)
+                .child(v_flex().flex_1().min_h_0().w_full().child(body)))
+    }
+}
+
+struct ReaderHeaderParts {
+    back: AnyElement,
+    title: AnyElement,
+    meta: Option<AnyElement>,
+}
+
+struct ReaderToolbarParts {
+    bar: Div,
+    compact_search: Option<Div>,
+    short_matches: Option<Div>,
+}
+
+impl Desktop {
+    /// Return row, title and the meta facts line. Compact layouts get the meta
+    /// line back for the information panel instead of an inline row.
+    fn reader_metadata_row(
+        &mut self,
+        preview: &Rc<notes::Preview>,
+        compact: bool,
+        short_reader: bool,
+        controls_scroll: &ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> ReaderHeaderParts {
+        let reveal = |id: &'static str, child: AnyElement| {
+            if compact {
+                child
+            } else {
+                crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone())
+                    .inline()
+                    .into_any_element()
+            }
+        };
         let return_label = match self.result_origin {
             Page::New => "工作台",
             Page::Task => "任务",
@@ -2641,20 +2936,6 @@ impl Desktop {
                 .on_click(cx.listener(|this, _, _, cx| this.navigate(this.result_origin, cx)))
                 .into_any_element(),
         );
-        let (short_back, scrolling_title) = if short_reader {
-            (Some(back), Some(title))
-        } else {
-            page = page.child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .items_start()
-                    .gap_3()
-                    .child(back)
-                    .child(title),
-            );
-            (None, None)
-        };
         // Meta line 1: 作者 · 时长 · 平台 BV 号 · 打开原视频；无数据的字段省略。
         let mut facts: Vec<String> = Vec::new();
         for (label, value) in &preview.metadata {
@@ -2834,18 +3115,34 @@ impl Desktop {
                 ));
             }
         }
-        let mut compact_metadata = None;
-        if !facts.is_empty()
+        let meta = if !facts.is_empty()
             || self.reader_source().is_some()
             || self.reader_ui.offline_video != OfflineVideo::NotRequested
             || preview.course.manifest.is_some()
         {
-            if compact {
-                compact_metadata = Some(meta_facts.into_any_element());
-            } else {
-                page = page.child(meta_facts);
-            }
+            Some(meta_facts.into_any_element())
+        } else {
+            None
+        };
+        ReaderHeaderParts {
+            back,
+            title,
+            meta,
         }
+    }
+
+    /// Find field, match navigation, view switcher, contents toggle, export
+    /// menu and the overflow menu.
+    fn reader_toolbar(
+        &mut self,
+        preview: &Rc<notes::Preview>,
+        headings: &[(usize, String, Option<f64>)],
+        short_back: Option<AnyElement>,
+        compact: bool,
+        short_reader: bool,
+        toc_fits_beside: bool,
+        cx: &mut Context<Self>,
+    ) -> ReaderToolbarParts {
         let note_query = self.reader_ui.find.read(cx).value().to_string();
         let gallery_query = self.reader_ui.gallery_find.read(cx).value().to_string();
         let gallery_indices = matching_frames(&self.reader_ui.frames, &gallery_query);
@@ -3166,51 +3463,24 @@ impl Desktop {
                     }),
             )
             .children(short_search);
-        page = page.child(
-            v_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .py_2()
-                .border_b_1()
-                .border_color(color(HAIRLINE))
-                .child(toolbar)
-                .children(compact_search)
-                .children(short_matches),
-        );
-        let (fixed_header, mut page) = if compact {
-            (
-                Some(page.into_any_element()),
-                v_flex()
-                    .id("reader-extra-controls")
-                    .w_full()
-                    .min_w_0()
-                    .min_h_0()
-                    .flex_shrink_0()
-                    .gap_2()
-                    .max_h(px(available_height * 0.28))
-                    .overflow_y_scroll()
-                    .track_scroll(&controls_scroll),
-            )
-        } else {
-            (None, page)
-        };
-        page = page.children(self.course_export_feedback(&preview.course, cx));
-        let reveal = |id: &'static str, child: AnyElement| {
-            crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone()).inline()
-        };
-        if self.reading {
-            page = page.child(crate::motion::enter(
-                "reader-version-loading",
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(crate::motion::spinner("reader-version-spinner", cx))
-                    .child(theme::accessible_text(
-                        "reader-version-loading-label",
-                        "正在打开笔记…",
-                    ))));
+        ReaderToolbarParts {
+            bar: toolbar,
+            compact_search,
+            short_matches,
         }
+    }
+
+    /// Collapsible note details: revision, source video, subtitle and model facts.
+    fn reader_info_panel(
+        &mut self,
+        preview: &Rc<notes::Preview>,
+        compact: bool,
+        compact_metadata: Option<AnyElement>,
+        available_height: f32,
+        rem_size: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let mut details = vec![("标题", icons::article(), preview.course.title.clone())];
         let local_source = self.reader_source().and_then(|source| match source {
             nav::SourceTarget::Local(path) => Some(path),
@@ -3265,7 +3535,7 @@ impl Desktop {
                 }
             }
         }
-        let information_panel = if !details.is_empty() || compact_metadata.is_some() {
+        if !details.is_empty() || compact_metadata.is_some() {
             let information_scroll = self.reader_ui.information_scroll.clone();
             let frame_height = (available_height * 0.42).min(rem_size * 16.);
             let padding = if compact {
@@ -3380,10 +3650,24 @@ impl Desktop {
                     ),
                 window,
                 cx,
-            ))
+            ).into_any_element())
         } else {
             None
+        }
+    }
+
+    /// New-version, incomplete-processing and file-reload notices.
+    fn reader_notices(
+        &mut self,
+        preview: &Rc<notes::Preview>,
+        controls_scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let reveal = |id: &'static str, child: AnyElement| {
+            crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone()).inline()
         };
+        let mut notices = Vec::new();
         if let Some(current) = &preview.course.manifest {
             if let Some(newer) = self
                 .courses
@@ -3395,7 +3679,7 @@ impl Desktop {
                 })
                 .cloned()
             {
-                page = page.child(crate::motion::enter(
+                notices.push(crate::motion::enter(
                     "reader-new-version-notice",
                     h_flex()
                         .gap_2()
@@ -3610,7 +3894,7 @@ impl Desktop {
                 window,
                 cx,
             ));
-            page = page.child(crate::motion::enter(
+            notices.push(crate::motion::enter(
                 "reader-processing-notice",
                 problem));
         }
@@ -3640,7 +3924,7 @@ impl Desktop {
                         .text_sm()
                         .text_color(color(WARNING))
                 }));
-            page = page.child(crate::motion::enter(
+            notices.push(crate::motion::enter(
                 "reader-file-notice",
                 h_flex()
                     .w_full()
@@ -3671,42 +3955,22 @@ impl Desktop {
                         .into_any_element(),
                     ))));
         }
-        let reading_note = self.result_tab == 0;
-        let items = note_items(&preview.blocks, short_reader);
-        // The note flow's persistent list state follows the loaded note and the
-        // item sequence derived from it; text-scale changes only re-measure.
-        let items_key = (
-            preview.course.dir.clone(),
-            short_reader,
-            preview.blocks.len(),
-        );
-        if self.reader_ui.note_items_key.as_ref() != Some(&items_key) {
-            let focus: Vec<FocusHandle> = (0..items.len()).map(|_| cx.focus_handle()).collect();
-            self.reader_ui.note_list.reset(items.len());
-            self.reader_ui
-                .note_list
-                .splice_focusable(0..items.len(), focus.iter().cloned().map(Some));
-            self.reader_ui.note_focus = Rc::new(focus);
-            self.reader_ui.note_items_key = Some(items_key);
-            self.reader_ui.note_list_rem = rem_size;
-        } else if self.reader_ui.note_list_rem != rem_size {
-            self.reader_ui.note_list.remeasure();
-            self.reader_ui.note_list_rem = rem_size;
-        }
-        self.reader_ui.note_items = Rc::new(items);
-        let top_index = if reading_note {
-            let top = self.reader_ui.note_list.logical_scroll_top();
-            note_top_block(&self.reader_ui.note_items, top.item_ix).unwrap_or(0)
-        } else {
-            self.reader_ui
-                .item_layout
-                .borrow()
-                .top_item(f32::from(self.reader_scroll.offset().y))
-                .map(|(index, _, _)| index)
-                .unwrap_or(0)
-        };
-        self.reader_ui.item_layout = Rc::default();
-        let item_layout = self.reader_ui.item_layout.clone();
+        notices
+    }
+
+    /// Screenshot grid: loading, empty and no-match states plus measured cards.
+    fn reader_gallery(
+        &mut self,
+        preview: &Rc<notes::Preview>,
+        gallery_query: &str,
+        reader_width: f32,
+        rem_size: f32,
+        item_layout: Rc<std::cell::RefCell<nav::ReadingLayout>>,
+        scrolling_title: Option<AnyElement>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let gallery_indices = matching_frames(&self.reader_ui.frames, gallery_query);
         let measured_scroll = self.reader_scroll.clone();
         let measured = |index: usize, child: AnyElement| {
             let positions = item_layout.clone();
@@ -3726,413 +3990,280 @@ impl Desktop {
                 })
                 .child(child)
         };
-        let current_chapter = headings
-            .iter()
-            .filter(|(index, _, _)| *index <= top_index)
-            .last()
-            .map(|(index, _, _)| *index);
-        // Match the exported HTML's continuous article: one text measure,
-        // regular 1.7-line body copy, and spacing between sections. The note
-        // tab's blocks form a variable-height list: only the visible window
-        // and its overdraw are built each frame.
-        let article: AnyElement = if reading_note {
-            // One pass over the frames up front; the item closure queries per
-            // image path and per body anchor instead of rescanning the frames.
-            let frame_index_by_path: HashMap<PathBuf, usize> = self
-                .reader_ui
-                .frames
-                .iter()
-                .enumerate()
-                .filter_map(|(index, frame)| frame.path.clone().map(|path| (path, index)))
-                .fold(HashMap::new(), |mut map, (path, index)| {
-                    map.entry(path).or_insert(index);
-                    map
-                });
-            let mut missing_by_anchor: HashMap<String, Vec<usize>> = HashMap::new();
-            for (index, frame) in self.reader_ui.frames.iter().enumerate() {
-                if frame.path.is_none()
-                    && let Some(anchor) = frame.body_anchor.clone()
-                {
-                    missing_by_anchor.entry(anchor).or_default().push(index);
-                }
-            }
-            let flow = NoteFlow {
-                items: self.reader_ui.note_items.clone(),
-                focus: self.reader_ui.note_focus.clone(),
-                preview: preview.clone(),
-                frames: self.reader_ui.frames.clone(),
-                source: self.reader_source(),
-                outline,
-                frame_index_by_path,
-                missing_by_anchor,
-                matches: self.reader_ui.matches.clone(),
-                match_index: self.reader_ui.match_index,
-                find_open: self.reader_ui.find_open,
-                data_loading: self.reader_ui.data_loading,
-                item_layout,
-                note_list: self.reader_ui.note_list.clone(),
-                desktop: cx.weak_entity(),
-            };
-            div()
-                .id("note-reader")
-                .role(Role::Document)
-                .aria_label(preview.course.title.clone())
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .w_full()
-                .h_full()
-                .max_w(READER_MEASURE)
-                .child(
-                    list(
-                        self.reader_ui.note_list.clone(),
-                        move |index, window, _cx| render_note_item(&flow, index, window),
-                    )
+        let mut article = v_flex()
+            .id("note-reader")
+            .role(Role::Document)
+            .aria_label(preview.course.title.clone())
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .w_full()
+            .h_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.reader_scroll)
+            .gap_3()
+            .py_3()
+            .children(scrolling_title);
+        let article_scroll = self.reader_scroll.clone();
+        let reveal_article = |id: ElementId, child: AnyElement, full_width: bool| {
+            let view = crate::focus_scroll::RevealFocus::new(id, child, article_scroll.clone());
+            if full_width { view } else { view.inline() }
+        };
+        if self.reader_ui.data_loading && self.reader_ui.frames.is_empty() {
+            article = article.child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .py_6()
+                    .child(crate::motion::spinner("reader-images-spinner", cx))
+                    .child(theme::accessible_text("loading-images", "正在读取截图…")),
+            );
+        } else if self.reader_ui.frames.is_empty() {
+            article = article.child(crate::motion::enter(
+                "reader-images-empty",
+                v_flex()
                     .w_full()
-                    .h_full()
-                    .py_3(),
-                )
-                // 正文滚动容器也兑现「始终显示滚动条」偏好（review4#4）
-                .child(crate::backend::vertical_scrollbar_for(&self.reader_ui.note_list))
-                .into_any_element()
-        } else {
-            let mut article = v_flex()
-                .id("note-reader")
-                .role(Role::Document)
-                .aria_label(preview.course.title.clone())
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
+                    .py_8()
+                    .px_6()
+                    .gap_4()
+                    .items_center()
+                    .bg(color(INSET))
+                    .rounded(RADIUS_CARD)
+                    .child(icons::image().size(px(32.)).text_color(color(MUTED)))
+                    .child(
+                        theme::accessible_text("no-note-images", "这份笔记没有截图")
+                            .text_size(TEXT_TITLE)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        theme::accessible_text(
+                            "no-note-images-reason",
+                            if preview.processing_issues.iter().any(|issue| {
+                                matches!(issue.stage, notes::ProcessingStage::Screenshots)
+                            }) {
+                                "截图生成未完成，文字内容仍可阅读。"
+                            } else {
+                                "本次没有生成截图，文字内容已保存在笔记中。"
+                            },
+                        )
+                        .text_color(color(MUTED)),
+                    )
+                    .child(
+                        outline_pill("empty-images-to-note")
+                            .icon(icons::article())
+                            .label("阅读笔记")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.select_reader_view(0, window, cx)
+                            })),
+                    )));
+        }
+        if !self.reader_ui.frames.is_empty() && gallery_indices.is_empty() {
+            article = article.child(
+                v_flex()
+                    .w_full()
+                    .py_8()
+                    .gap_3()
+                    .items_center()
+                    .child(semantic_label(
+                        "gallery-no-matches",
+                        "没有对应的截图",
+                        icons::search(),
+                    ))
+                    .child(
+                        theme::accessible_text(
+                            "gallery-no-matches-help",
+                            "搜索范围是截图说明和对应文字。试试更短的关键词。",
+                        )
+                        .text_color(color(MUTED)),
+                    )
+                    .child(
+                        quiet("clear-gallery-search")
+                            .icon(icons::close())
+                            .label("清除搜索")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.reader_ui
+                                    .gallery_find
+                                    .update(cx, |input, cx| input.set_value("", window, cx));
+                            })),
+                    ),
+            );
+        }
+        // Each screenshot needs enough width for both the slide and a readable
+        // text excerpt. The final row keeps the same column widths as the rest.
+        let gallery_columns = ((reader_width + 16.) / (rem_size * 20. + 16.))
+            .floor()
+            .clamp(1., 3.) as u16;
+        // GPUI rounds each rendered line to whole pixels. Reserve that same
+        // three-line height so enlarged text cannot run into the action row.
+        let excerpt_line_height =
+            px((f32::from(TEXT_BODY.to_pixels(window.rem_size())) * 1.6).round());
+        let mut grid = div()
+            .grid()
+            .grid_cols(gallery_columns)
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .gap(px(16.));
+        for index in gallery_indices.iter().copied() {
+            let frame = &self.reader_ui.frames[index];
+            let label = frame_label(&preview.course.title, frame, index);
+            let mut card = v_flex()
+                .id(SharedString::from(frame.anchor.clone()))
                 .w_full()
                 .h_full()
-                .overflow_y_scroll()
-                .track_scroll(&self.reader_scroll)
-                .gap_3()
-                .py_3()
-                .children(scrolling_title);
-            let article_scroll = self.reader_scroll.clone();
-            let reveal_article = |id: ElementId, child: AnyElement, full_width: bool| {
-                let view = crate::focus_scroll::RevealFocus::new(id, child, article_scroll.clone());
-                if full_width { view } else { view.inline() }
-            };
-            if self.reader_ui.data_loading && self.reader_ui.frames.is_empty() {
-                article = article.child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .py_6()
-                        .child(crate::motion::spinner("reader-images-spinner", cx))
-                        .child(theme::accessible_text("loading-images", "正在读取截图…")),
-                );
-            } else if self.reader_ui.frames.is_empty() {
-                article = article.child(crate::motion::enter(
-                    "reader-images-empty",
+                .min_w_0()
+                .bg(color(SURFACE))
+                .border_1()
+                .border_color(color(CARD_LINE))
+                .rounded(RADIUS_CARD)
+                .overflow_hidden();
+            if let Some(path) = &frame.path {
+                card = card.child(reveal_article(
+                    ("reveal-screenshot", index).into(),
+                    (control(("screenshot", index))
+                        .ghost()
+                        .p_0()
+                        .w_full()
+                        .h_auto()
+                        .min_h(px(0.))
+                        .rounded_t(RADIUS_CARD)
+                        .rounded_b(px(0.))
+                        .aspect_ratio(16. / 9.)
+                        .accessibility_label(format!("放大{label}"))
+                        .child(
+                            img(path.clone())
+                                .size_full()
+                                .rounded_t(RADIUS_CARD)
+                                .object_fit(ObjectFit::Contain)
+                                .with_fallback(move || {
+                                    theme::accessible_text(
+                                        ("failed-reader-image", index),
+                                        "这张截图无法读取；对应正文仍可阅读。",
+                                    )
+                                    .into_any_element()
+                                }),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_reader_image(index, window, cx)
+                        })))
+                    .into_any_element(),
+                    true,
+                ));
+            } else {
+                card = card.child(
                     v_flex()
                         .w_full()
-                        .py_8()
-                        .px_6()
-                        .gap_4()
-                        .items_center()
+                        .aspect_ratio(16. / 9.)
+                        .justify_center()
+                        .p_4()
                         .bg(color(INSET))
-                        .rounded(RADIUS_CARD)
-                        .child(icons::image().size(px(32.)).text_color(color(MUTED)))
-                        .child(
-                            theme::accessible_text("no-note-images", "这份笔记没有截图")
-                                .text_size(TEXT_TITLE)
-                                .font_weight(FontWeight::SEMIBOLD),
-                        )
                         .child(
                             theme::accessible_text(
-                                "no-note-images-reason",
-                                if preview.processing_issues.iter().any(|issue| {
-                                    matches!(issue.stage, notes::ProcessingStage::Screenshots)
-                                }) {
-                                    "截图生成未完成，文字内容仍可阅读。"
-                                } else {
-                                    "本次没有生成截图，文字内容已保存在笔记中。"
-                                },
+                                ("missing-frame", index),
+                                "这张图片无法读取；可继续阅读对应正文。",
                             )
-                            .text_color(color(MUTED)),
-                        )
-                        .child(
-                            outline_pill("empty-images-to-note")
-                                .icon(icons::article())
-                                .label("阅读笔记")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.select_reader_view(0, window, cx)
-                                })),
-                        )));
-            }
-            if !self.reader_ui.frames.is_empty() && gallery_indices.is_empty() {
-                article = article.child(
-                    v_flex()
-                        .w_full()
-                        .py_8()
-                        .gap_3()
-                        .items_center()
-                        .child(semantic_label(
-                            "gallery-no-matches",
-                            "没有对应的截图",
-                            icons::search(),
-                        ))
-                        .child(
-                            theme::accessible_text(
-                                "gallery-no-matches-help",
-                                "搜索范围是截图说明和对应文字。试试更短的关键词。",
-                            )
-                            .text_color(color(MUTED)),
-                        )
-                        .child(
-                            quiet("clear-gallery-search")
-                                .icon(icons::close())
-                                .label("清除搜索")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.reader_ui
-                                        .gallery_find
-                                        .update(cx, |input, cx| input.set_value("", window, cx));
-                                })),
+                            .text_size(TEXT_AUX)
+                            .text_color(color(WARNING)),
                         ),
                 );
             }
-            // Each screenshot needs enough width for both the slide and a readable
-            // text excerpt. The final row keeps the same column widths as the rest.
-            let gallery_columns = ((reader_width + 16.) / (rem_size * 20. + 16.))
-                .floor()
-                .clamp(1., 3.) as u16;
-            // GPUI rounds each rendered line to whole pixels. Reserve that same
-            // three-line height so enlarged text cannot run into the action row.
-            let excerpt_line_height =
-                px((f32::from(TEXT_BODY.to_pixels(window.rem_size())) * 1.6).round());
-            let mut grid = div()
-                .grid()
-                .grid_cols(gallery_columns)
-                .w_full()
-                .min_w_0()
-                .flex_shrink_0()
-                .gap(px(16.));
-            for index in gallery_indices.iter().copied() {
-                let frame = &self.reader_ui.frames[index];
-                let label = frame_label(&preview.course.title, frame, index);
-                let mut card = v_flex()
-                    .id(SharedString::from(frame.anchor.clone()))
-                    .w_full()
-                    .h_full()
-                    .min_w_0()
-                    .bg(color(SURFACE))
-                    .border_1()
-                    .border_color(color(CARD_LINE))
-                    .rounded(RADIUS_CARD)
-                    .overflow_hidden();
-                if let Some(path) = &frame.path {
-                    card = card.child(reveal_article(
-                        ("reveal-screenshot", index).into(),
-                        (control(("screenshot", index))
-                            .ghost()
-                            .p_0()
-                            .w_full()
-                            .h_auto()
-                            .min_h(px(0.))
-                            .rounded_t(RADIUS_CARD)
-                            .rounded_b(px(0.))
-                            .aspect_ratio(16. / 9.)
-                            .accessibility_label(format!("放大{label}"))
-                            .child(
-                                img(path.clone())
-                                    .size_full()
-                                    .rounded_t(RADIUS_CARD)
-                                    .object_fit(ObjectFit::Contain)
-                                    .with_fallback(move || {
-                                        theme::accessible_text(
-                                            ("failed-reader-image", index),
-                                            "这张截图无法读取；对应正文仍可阅读。",
-                                        )
-                                        .into_any_element()
-                                    }),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_reader_image(index, window, cx)
-                            })))
-                        .into_any_element(),
-                        true,
-                    ));
-                } else {
-                    card = card.child(
-                        v_flex()
-                            .w_full()
-                            .aspect_ratio(16. / 9.)
-                            .justify_center()
-                            .p_4()
-                            .bg(color(INSET))
-                            .child(
-                                theme::accessible_text(
-                                    ("missing-frame", index),
-                                    "这张图片无法读取；可继续阅读对应正文。",
-                                )
-                                .text_size(TEXT_AUX)
-                                .text_color(color(WARNING)),
-                            ),
-                    );
-                }
-                let body_index = frame.body_anchor.as_ref().and_then(|anchor| {
-                    preview
-                        .blocks
-                        .iter()
-                        .enumerate()
-                        .position(|(i, block)| block_anchor(block, i) == *anchor)
-                });
-                let mut card_body = v_flex().flex_1().min_w_0().p_3().gap_2().child(
-                    h_flex()
-                        .items_center()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(
-                            theme::accessible_text(
-                                ("frame-title", index),
-                                frame
-                                    .seconds
-                                    .map(course2md::render::fmt_ts)
-                                    .unwrap_or_else(|| format!("第 {} 张图片", index + 1)),
-                            )
-                            .role(Role::Heading)
-                            .flex_1()
-                            .text_size(TEXT_BODY)
-                            .font_weight(FontWeight::SEMIBOLD),
+            let body_index = frame.body_anchor.as_ref().and_then(|anchor| {
+                preview
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .position(|(i, block)| block_anchor(block, i) == *anchor)
+            });
+            let mut card_body = v_flex().flex_1().min_w_0().p_3().gap_2().child(
+                h_flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(
+                        theme::accessible_text(
+                            ("frame-title", index),
+                            frame
+                                .seconds
+                                .map(course2md::render::fmt_ts)
+                                .unwrap_or_else(|| format!("第 {} 张图片", index + 1)),
                         )
-                        .when_some(body_index, |row, body_index| {
-                            row.child(reveal_article(
-                                ("reveal-frame-to-body", index).into(),
-                                quiet(("frame-to-body", index))
-                                    .icon(icons::article())
-                                    .label("正文")
-                                    .tooltip("在笔记中查看")
-                                    .accessibility_label("在笔记中查看")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.jump_reader_block(body_index, 0., cx)
-                                    }))
-                                    .into_any_element(),
-                                false,
-                            ))
-                        }),
-                );
-                let excerpt = frame_excerpt(frame, &gallery_query);
-                let excerpt_marks = nav::text_matches(&excerpt, &gallery_query)
-                    .into_iter()
-                    .map(|range| {
-                        (
-                            range,
-                            HighlightStyle {
-                                background_color: Some(color(FIND_HIGHLIGHT).into()),
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                // The three-line preview is a defined content slot. Full captions
-                // and transcripts remain readable in the image viewer and article.
-                // 无搜索高亮时用原生省略渲染（StyledText 不产出「…」，静默裁切像断句错误，M9）
-                card_body = card_body.child(
-                    div()
-                        .id(("frame-excerpt", index))
-                        .role(Role::Paragraph)
-                        .aria_label(excerpt.clone())
-                        .w_full()
-                        .min_w_0()
-                        .max_h(excerpt_line_height * 3.)
-                        .flex_shrink_0()
-                        .whitespace_normal()
+                        .role(Role::Heading)
+                        .flex_1()
                         .text_size(TEXT_BODY)
-                        .font_weight(FontWeight::NORMAL)
-                        .line_height(excerpt_line_height)
-                        .text_color(color(GRAY))
-                        .when(excerpt_marks.is_empty(), |view| {
-                            view.text_ellipsis()
-                                .line_clamp(3)
-                                .child(excerpt.clone())
-                        })
-                        .when(!excerpt_marks.is_empty(), |view| {
-                            view.child(StyledText::new(excerpt).with_highlights(excerpt_marks))
-                        }),
-                );
-                grid =
-                    grid.child(measured(index, card.child(card_body).into_any_element()).h_full());
-            }
-            article = article.child(grid);
-            // 正文滚动容器也兑现「始终显示滚动条」偏好（review4#4）
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .w_full()
-                .h_full()
-                .child(article)
-                .child(crate::backend::vertical_scrollbar(&self.reader_scroll))
-                .into_any_element()
-        };
-        // Wide reading opens the contents automatically. Manual choices are retained
-        // across tab changes, note changes and subsequent window resizing.
-        let toc_open = self.reader_ui.toc_open.unwrap_or(toc_fits_beside)
-            && !headings.is_empty()
-            && self.result_tab == 0;
-        let toc_side = toc_open && toc_fits_beside;
-        let body = if toc_side {
-            h_flex()
-                .flex_1()
-                .min_h_0()
-                .w_full()
-                .gap(px(24.))
-                .items_stretch()
-                .child(article)
-                .child(self.reader_toc_panel(&headings, current_chapter, true, cx))
-                .into_any_element()
-        } else if toc_open {
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .w_full()
-                .h_full()
-                .child(article)
-                .child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .bg(color(SURFACE))
-                        .child(self.reader_toc_panel(&headings, current_chapter, false, cx)),
-                )
-                .into_any_element()
-        } else {
-            article
-        };
-        let controls = if let Some(header) = fixed_header {
-            v_flex()
-                .w_full()
-                .min_h_0()
-                .flex_shrink_0()
-                .child(header)
-                .child(page)
-                .into_any_element()
-        } else {
-            page.into_any_element()
-        };
-        let controls = if self.reader_ui.info_open {
-            v_flex()
-                .w_full()
-                .min_w_0()
-                .flex_shrink_0()
-                .gap_2()
-                .child(controls)
-                .children(information_panel)
-                .into_any_element()
-        } else {
-            controls
-        };
-        crate::motion::state_enter(
-            SharedString::from(format!("reader-open:{}", preview.course.dir.display())),
-            root.child(controls)
-                .child(v_flex().flex_1().min_h_0().w_full().child(body)))
+                        .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .when_some(body_index, |row, body_index| {
+                        row.child(reveal_article(
+                            ("reveal-frame-to-body", index).into(),
+                            quiet(("frame-to-body", index))
+                                .icon(icons::article())
+                                .label("正文")
+                                .tooltip("在笔记中查看")
+                                .accessibility_label("在笔记中查看")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.jump_reader_block(body_index, 0., cx)
+                                }))
+                                .into_any_element(),
+                            false,
+                        ))
+                    }),
+            );
+            let excerpt = frame_excerpt(frame, &gallery_query);
+            let excerpt_marks = nav::text_matches(&excerpt, &gallery_query)
+                .into_iter()
+                .map(|range| {
+                    (
+                        range,
+                        HighlightStyle {
+                            background_color: Some(color(FIND_HIGHLIGHT).into()),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            // The three-line preview is a defined content slot. Full captions
+            // and transcripts remain readable in the image viewer and article.
+            // 无搜索高亮时用原生省略渲染（StyledText 不产出「…」，静默裁切像断句错误，M9）
+            card_body = card_body.child(
+                div()
+                    .id(("frame-excerpt", index))
+                    .role(Role::Paragraph)
+                    .aria_label(excerpt.clone())
+                    .w_full()
+                    .min_w_0()
+                    .max_h(excerpt_line_height * 3.)
+                    .flex_shrink_0()
+                    .whitespace_normal()
+                    .text_size(TEXT_BODY)
+                    .font_weight(FontWeight::NORMAL)
+                    .line_height(excerpt_line_height)
+                    .text_color(color(GRAY))
+                    .when(excerpt_marks.is_empty(), |view| {
+                        view.text_ellipsis()
+                            .line_clamp(3)
+                            .child(excerpt.clone())
+                    })
+                    .when(!excerpt_marks.is_empty(), |view| {
+                        view.child(StyledText::new(excerpt).with_highlights(excerpt_marks))
+                    }),
+            );
+            grid =
+                grid.child(measured(index, card.child(card_body).into_any_element()).h_full());
+        }
+        article = article.child(grid);
+        // 正文滚动容器也兑现「始终显示滚动条」偏好（review4#4）
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .w_full()
+            .h_full()
+            .child(article)
+            .child(crate::backend::vertical_scrollbar(&self.reader_scroll))
+            .into_any_element()
     }
+
     /// Contents are a reading rail; persistent selection belongs to the row
     /// surface so pointer feedback cannot erase the current chapter.
     fn reader_toc_panel(
