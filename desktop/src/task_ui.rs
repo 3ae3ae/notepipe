@@ -512,6 +512,23 @@ impl RenderOnce for TaskStages {
     }
 }
 
+/// Disclosure rows on a task card: the chevron sits on the card's content edge
+/// (cancelling the quiet button's inline padding) and the compact height keeps
+/// stacked disclosures at the card's ordinary row rhythm.
+fn disclosure_toggle(id: SharedString) -> Button {
+    quiet(id)
+        .self_start()
+        .h(DISCLOSURE_ROW)
+        .min_h(DISCLOSURE_ROW)
+        .ml(-QUIET_INLINE_PADDING)
+}
+
+/// gpui-component's medium button padding (`px_2p5`), used to align a quiet
+/// button's icon with neighbouring content.
+const QUIET_INLINE_PADDING: Rems = rems(0.625);
+/// Same minimum height as the card's `detail_row`.
+const DISCLOSURE_ROW: Rems = rems(32. / 14.);
+
 #[derive(IntoElement)]
 struct TaskProcessingDetails {
     task_id: String,
@@ -528,17 +545,20 @@ impl RenderOnce for TaskProcessingDetails {
         let open = self.open;
         let task_id = self.task_id.clone();
         let desktop = self.desktop.clone();
-        let details = v_flex().child(TaskStages { rows: self.rows });
+        let details = v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_3()
+            .child(TaskStages { rows: self.rows });
         v_flex()
             .w_full()
             .min_w_0()
             .gap_3()
             .child(
-                quiet(SharedString::from(format!(
+                disclosure_toggle(SharedString::from(format!(
                     "task-stage-details-toggle-{}",
                     self.task_id
                 )))
-                .self_start()
                 .icon(if open {
                     icons::chevron_up()
                 } else {
@@ -621,11 +641,10 @@ impl RenderOnce for TaskRawLogs {
             .min_w_0()
             .gap_2()
             .child(
-                quiet(SharedString::from(format!(
+                disclosure_toggle(SharedString::from(format!(
                     "task-raw-log-toggle-{}",
                     self.task_id
                 )))
-                .self_start()
                 .icon(if open {
                     icons::chevron_up()
                 } else {
@@ -2890,9 +2909,17 @@ impl Desktop {
                 task.state,
                 TaskState::NeedsAttention | TaskState::Partial | TaskState::Uncertain
             ) {
-                details = details.when_some(history, |view, history| view.child(history));
-                if let Some(logs) = self.task_log_view(task, cx) {
-                    details = details.child(logs);
+                // 两个展开行是同一组，沿用 detail_row 的行高与行距（gap_1），而不是区块间距
+                let logs = self.task_log_view(task, cx);
+                if history.is_some() || logs.is_some() {
+                    details = details.child(
+                        v_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_1()
+                            .when_some(history, |view, history| view.child(history))
+                            .when_some(logs, |view, logs| view.child(logs)),
+                    );
                 }
             }
             let detail_id = format!("task-detail-{id}");
