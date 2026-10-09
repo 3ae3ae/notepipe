@@ -465,10 +465,13 @@ impl Desktop {
                     .min_w_0()
                     .gap(px(16.))
                     .child(
+                        // Same primary-colored heading as settings_section.
                         h_flex()
                             .gap(px(8.))
+                            .px(rems(4. / 14.))
                             .items_center()
-                            .child(icons::palette().size(px(18.)).text_color(color(MUTED)))
+                            .text_color(color(ACCENT_STRONG))
+                            .child(icons::palette().size_5())
                             .child(
                                 accessible_text("palette-presets-heading", "主题配色")
                                     .role(Role::Heading)
