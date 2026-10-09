@@ -1729,7 +1729,7 @@ impl Desktop {
                             }),
                     )
                     .when(course.incomplete(), |view| {
-                        view.child(div().pt_1().child(badge(BadgeKind::Warning).child("部分内容待补全")))
+                        view.child(h_flex().pt_1().child(badge(BadgeKind::Warning).child("部分内容待补全")))
                     })
                     .when(with_actions, |view| {
                         view.children(self.course_read_error(course, index, cx))
@@ -1769,7 +1769,7 @@ impl Desktop {
             )
             .child(meta)
             .when(course.incomplete(), |view| {
-                view.child(badge(BadgeKind::Warning).child("部分内容待补全"))
+                view.child(h_flex().child(badge(BadgeKind::Warning).child("部分内容待补全")))
             })
     }
 
@@ -1782,9 +1782,26 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> Div {
         let mut read = h_flex().w_full().min_w_0().items_center().gap(px(12.));
-        if !layout.stacked && let Some(thumbnail) = &course.thumbnail {
-            read = read.child(Self::course_row_thumbnail(thumbnail));
-        }
+        // Every row reserves the cover slot so titles share one left edge.
+        read = read.child(
+            div()
+                .w(rems(6.857))
+                .h(rems(3.857))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(RADIUS_SMALL)
+                .bg(color(SECONDARY_CONTAINER))
+                .map(|cover| match &course.thumbnail {
+                    Some(thumbnail) => cover.child(Self::course_row_thumbnail(thumbnail)),
+                    None => cover.child(
+                        icons::movie()
+                            .size(rems(20. / 14.))
+                            .text_color(color(ON_SECONDARY_CONTAINER)),
+                    ),
+                }),
+        );
         read = read.child(self.course_row_text(
             course,
             !layout.stacked,
@@ -1820,7 +1837,6 @@ impl Desktop {
             .items_center()
             .gap_2()
             .when(layout.stacked, |row| row.w_full().flex_wrap())
-            .when(layout.stacked, |row| row.child(div().flex_1()))
             .child(
                 outline_pill(("read-course-action", *index))
                     .icon(IconName::BookOpen)
@@ -1855,7 +1871,7 @@ impl Desktop {
                     .items_center()
                     .p_4()
                     .gap_4()
-                    .when(layout.stacked, |row| row.flex_col().items_start())
+                    .when(layout.stacked, |row| row.flex_col().items_start().gap_3())
                     .child(read)
                     .child(actions),
             )
