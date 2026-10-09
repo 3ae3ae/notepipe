@@ -125,7 +125,13 @@ impl Desktop {
             }
             choices.push(version);
         }
-        let mut controls = h_flex().w_full().min_w_0().items_start().gap_2();
+        // With no saved service the add action alone sits at the trailing edge.
+        let mut controls = h_flex()
+            .w_full()
+            .min_w_0()
+            .items_start()
+            .gap_2()
+            .when(choices.is_empty(), |row| row.justify_end());
         if !choices.is_empty() {
             let index = purpose as usize * 2 + current_task as usize;
             let name = current_version

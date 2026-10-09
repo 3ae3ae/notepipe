@@ -16,76 +16,85 @@ impl Desktop {
                 icons::subtitles(),
                 "字幕语言",
                 "",
-                v_flex()
+                self.setting_choices("default-subtitle-language", "字幕语言")
+                    .options([
+                        ("", "自动"),
+                        ("zh-Hans", "简体"),
+                        ("zh-Hant", "繁體"),
+                        ("en", "英语"),
+                        ("ja", "日语"),
+                    ])
+                    .full_width()
+                    .selected(language.to_owned())
+                    .on_change(cx.listener(|this, selected: &SharedString, window, cx| {
+                        let mut next = this.generation_edit_base();
+                        next.preferred_subtitle_languages = if selected.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![selected.to_string()]
+                        };
+                        next.subtitle_languages_draft = None;
+                        if this.commit_generation(next, cx) {
+                            this.settings_ui.language_details_open = false;
+                            this.settings_ui.inputs[&EditField::Languages]
+                                .update(cx, |input, cx| {
+                                    input.set_value(selected.clone(), window, cx)
+                                });
+                        }
+                    })),
+            ))
+            // The custom order and its editor stay inside the 字幕语言 item.
+            .detail(
+                h_flex()
                     .w_full()
                     .min_w_0()
-                    .gap_2()
+                    .px(rems(20. / 14.))
+                    .pb(rems(10. / 14.))
+                    .gap_3()
+                    .items_center()
+                    .flex_wrap()
                     .child(
-                        self.setting_choices("default-subtitle-language", "字幕语言")
-                            .options([
-                                ("", "自动"),
-                                ("zh-Hans", "简体"),
-                                ("zh-Hant", "繁體"),
-                                ("en", "英语"),
-                                ("ja", "日语"),
-                            ])
-                            .full_width()
-                            .selected(language.to_owned())
-                            .on_change(cx.listener(|this, selected: &SharedString, window, cx| {
-                                let mut next = this.generation_edit_base();
-                                next.preferred_subtitle_languages = if selected.is_empty() {
-                                    Vec::new()
-                                } else {
-                                    vec![selected.to_string()]
-                                };
-                                next.subtitle_languages_draft = None;
-                                if this.commit_generation(next, cx) {
-                                    this.settings_ui.language_details_open = false;
-                                    this.settings_ui.inputs[&EditField::Languages]
-                                        .update(cx, |input, cx| {
-                                            input.set_value(selected.clone(), window, cx)
-                                        });
-                                }
-                            })),
+                        div().flex_1().min_w_0().when(language == "custom", |slot| {
+                            slot.child(
+                                text(
+                                    "subtitle-custom-summary",
+                                    format!(
+                                        "优先顺序：{}",
+                                        value.preferred_subtitle_languages.join(" → ")
+                                    ),
+                                )
+                                .text_size(TEXT_AUX)
+                                .text_color(color(MUTED)),
+                            )
+                        }),
                     )
                     .child(
                         quiet("toggle-language-details")
-                            .icon(icons::subtitles())
+                            .icon(if self.settings_ui.language_details_open {
+                                icons::chevron_up()
+                            } else {
+                                icons::chevron_down()
+                            })
                             .label("自定义语言优先级")
-                            .self_end()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.settings_ui.language_details_open =
                                     !this.settings_ui.language_details_open;
                                 cx.notify();
                             })),
                     ),
-            ))
-            .when(language == "custom", |view| {
-                view.child(
-                    text(
-                        "subtitle-custom-summary",
-                        format!(
-                            "优先顺序：{}",
-                            value.preferred_subtitle_languages.join(" → ")
-                        ),
-                    )
-                    .text_sm()
-                    .text_color(color(MUTED)),
-                )
-            })
-            .child(crate::motion::disclosure(
+            )
+            .detail(crate::motion::disclosure(
                 "subtitle-language-details",
                 self.settings_ui.language_details_open || value.subtitle_languages_draft.is_some(),
                 v_flex()
+                    .px(rems(20. / 14.))
+                    .pb(rems(16. / 14.))
                     .gap_3()
                     .child(self.setting_field(EditField::Languages, "语言优先级", cx))
                     .child(
-                        text(
-                            "subtitle-language-help",
-                            "逗号分隔，例如 zh-Hans, en",
-                        )
-                        .text_size(TEXT_AUX)
-                        .text_color(color(MUTED)),
+                        text("subtitle-language-help", "逗号分隔，例如 zh-Hans, en")
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED)),
                     )
                     .child(
                         outline_pill("apply-languages")
@@ -124,7 +133,7 @@ impl Desktop {
             recognition =
                 recognition
                     .child(self.local_model_picker(cx))
-                    .child(crate::motion::disclosure(
+                    .detail(crate::motion::disclosure(
                         "asr-advanced-settings",
                         self.settings_ui.asr_details_open,
                         settings_row(
@@ -170,7 +179,7 @@ impl Desktop {
                         cx,
                     ));
             let model_panel = self.default_model_readiness_panel(window, cx);
-            recognition = recognition.child(crate::motion::disclosure(
+            recognition = recognition.detail(crate::motion::disclosure(
                 "default-model-management",
                 self.settings_ui.model_details_open,
                 model_panel,
@@ -184,7 +193,7 @@ impl Desktop {
                 self.setting_preference(
                     icons::auto_fix(),
                     "AI 校对",
-                    "转录文字会发送到所选 AI 服务",
+                    "",
                     Switch::new("default-ai-proofread")
                         .checked(value.ai_proofread)
                         .on_click(cx.listener(|this, enabled, _, cx| {
@@ -226,31 +235,37 @@ impl Desktop {
             );
         }
         ai = ai
-            .child(crate::motion::disclosure(
+            .detail(crate::motion::disclosure(
                 "ai-default-options",
                 value.needs_ai(),
                 ai_options,
                 window,
                 cx,
             ))
-            .child(
+            // As on the canvas, the rule is a list item showing its current value.
+            .child(settings_row(
+                "proofread-rules-label",
+                icons::edit(),
+                "自定义校对规则",
+                "",
                 quiet("show-proofread-rules")
-                    .icon(icons::edit())
-                    .label(if value.prompt.is_some() {
-                        "编辑自定义校对规则"
+                    .label(if value.prompt.is_some() { "已自定义" } else { "使用标准规则" })
+                    .icon(if self.settings_ui.show_prompt {
+                        icons::chevron_up()
                     } else {
-                        "自定义校对规则"
+                        icons::chevron_down()
                     })
-                    .self_start()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.settings_ui.show_prompt = !this.settings_ui.show_prompt;
                         cx.notify();
                     })),
-            )
-            .child(crate::motion::disclosure(
+            ))
+            .detail(crate::motion::disclosure(
                 "proofread-rules-content",
                 self.settings_ui.show_prompt,
                 v_flex()
+                    .px(rems(20. / 14.))
+                    .pb(rems(16. / 14.))
                     .gap_3()
                     .child(
                         text("standard-proofread-rule", course2md::llm::DEFAULT_PROMPT)
@@ -450,13 +465,20 @@ impl Desktop {
                 .into_any_element()
         };
         let (settled, conclusion) = self.default_model_conclusion();
-        let model_control = v_flex()
+        // Status and its actions span the item below the label/control row,
+        // starting on the label ruler like every other setting's help.
+        let model_footer = h_flex()
             .w_full()
             .min_w_0()
-            .gap_2()
-            .child(picker)
+            .px(rems(20. / 14.))
+            .pb(rems(12. / 14.))
+            .gap_3()
+            .items_center()
+            .flex_wrap()
             .child(
                 h_flex()
+                    .flex_1()
+                    .min_w(rems(12.))
                     .gap_2()
                     .items_center()
                     .child(
@@ -471,52 +493,40 @@ impl Desktop {
                     ),
             )
             .child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(
-                        quiet("toggle-model-details")
-                            // 图标随动作语义切换：展开是下载管理，收起是折叠（review4 可选）
-                            .icon(if self.settings_ui.model_details_open {
-                                icons::chevron_up()
-                            } else {
-                                icons::download()
-                            })
-                            .label(if self.settings_ui.model_details_open {
-                                "收起模型管理"
-                            } else {
-                                "管理模型与下载"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.settings_ui.model_details_open =
-                                    !this.settings_ui.model_details_open;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        quiet("toggle-asr-advanced")
-                            .icon(icons::tune())
-                            .label(if self.settings_ui.asr_details_open {
-                                "收起高级设置"
-                            } else {
-                                "高级识别设置"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.settings_ui.asr_details_open =
-                                    !this.settings_ui.asr_details_open;
-                                cx.notify();
-                            })),
-                    ),
+                quiet("toggle-model-details")
+                    .icon(if self.settings_ui.model_details_open {
+                        icons::chevron_up()
+                    } else {
+                        icons::download()
+                    })
+                    .label(if self.settings_ui.model_details_open {
+                        "收起模型管理"
+                    } else {
+                        "管理模型与下载"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_ui.model_details_open = !this.settings_ui.model_details_open;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                quiet("toggle-asr-advanced")
+                    .icon(icons::tune())
+                    .label(if self.settings_ui.asr_details_open {
+                        "收起高级设置"
+                    } else {
+                        "高级识别设置"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_ui.asr_details_open = !this.settings_ui.asr_details_open;
+                        cx.notify();
+                    })),
             );
-        let mut view = v_flex().w_full().min_w_0().gap_2().child(settings_row(
-            "local-model-heading",
-            icons::storage(),
-            "识别模型",
-            "",
-            model_control,
-        ));
+        let mut view = v_flex()
+            .w_full()
+            .min_w_0()
+            .child(settings_row("local-model-heading", icons::storage(), "识别模型", "", picker))
+            .child(model_footer);
         if !known && provider != Some(AsrProvider::Npu) {
             view = view.child(text("unavailable-fixed-model", format!("{selected} 不适用于当前识别方式，请重新选择")).text_sm().text_color(color(DANGER)));
         }

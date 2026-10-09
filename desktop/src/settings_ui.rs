@@ -488,12 +488,22 @@ pub(crate) struct SettingsGroup {
     id: &'static str,
     title: &'static str,
     action: Option<AnyElement>,
-    items: Vec<AnyElement>,
+    items: Vec<Vec<AnyElement>>,
 }
 
 impl SettingsGroup {
     pub(crate) fn new(id: &'static str, title: &'static str) -> Self {
         Self { id, title, action: None, items: Vec::new() }
+    }
+
+    /// Content that belongs to the previous item (a disclosure, a summary
+    /// line): it shares that item's boundary instead of adding a divider.
+    pub(crate) fn detail(mut self, element: impl IntoElement) -> Self {
+        match self.items.last_mut() {
+            Some(item) => item.push(element.into_any_element()),
+            None => self.items.push(vec![element.into_any_element()]),
+        }
+        self
     }
 
     /// A quiet action that applies to the whole group, trailing its title.
@@ -505,7 +515,7 @@ impl SettingsGroup {
 
 impl ParentElement for SettingsGroup {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.items.extend(elements);
+        self.items.extend(elements.into_iter().map(|element| vec![element]));
     }
 }
 
@@ -522,7 +532,7 @@ impl RenderOnce for SettingsGroup {
                         .bg(color(HAIRLINE)),
                 );
             }
-            card = card.child(item);
+            card = card.child(v_flex().w_full().min_w_0().children(item));
         }
         v_flex()
             .w_full()
