@@ -309,15 +309,6 @@ impl Desktop {
             )
             .when(self.library_controls_visible(cx), |row| {
                 row.child(
-                    quiet("refresh-library")
-                        .icon(icons::refresh())
-                        .accessibility_label("刷新笔记库")
-                        .tooltip("刷新")
-                        .loading(self.loading)
-                        .disabled(self.loading)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
-                )
-                .child(
                     primary_pill("library-new-note")
                         .icon(icons::plus())
                         .label("新笔记")
@@ -328,7 +319,7 @@ impl Desktop {
                         })),
                 )
             });
-        v_flex().pt(px(24.)).gap_2().child(row)
+        v_flex().pt(px(24.)).child(row)
     }
 }
 

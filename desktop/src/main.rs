@@ -1091,7 +1091,7 @@ impl Desktop {
             self.event_repaint_pending = true;
         }
     }
-    fn refresh_library(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_library(&mut self, cx: &mut Context<Self>) {
         let locations = self.registered_storage_locations();
         self.library_generation = self.library_generation.wrapping_add(1);
         let generation = self.library_generation;

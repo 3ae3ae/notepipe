@@ -1363,6 +1363,7 @@ impl Desktop {
         let cards_on = self.desktop_settings.library_cards;
         let can_group = self.folder_filter.is_none() && self.library_error.is_none();
         let entity = cx.entity().downgrade();
+        let loading = self.loading;
         // Presentation choices are infrequent: one menu instead of two
         // segmented controls competing with the filters.
         let display = control("library-display")
@@ -1392,13 +1393,23 @@ impl Desktop {
                 let menu = menu
                     .item(PopupMenuItem::new("卡片").checked(cards_on).on_click(set_cards(true)))
                     .item(PopupMenuItem::new("列表").checked(!cards_on).on_click(set_cards(false)));
-                if can_group {
+                let menu = if can_group {
                     menu.separator()
                         .item(PopupMenuItem::new("平铺").checked(!group_on).on_click(set_group(false)))
                         .item(PopupMenuItem::new("按文件夹分组").checked(group_on).on_click(set_group(true)))
                 } else {
                     menu
-                }
+                };
+                // The library refreshes itself; a manual rescan is a rare menu command.
+                let refresh = entity.clone();
+                menu.separator().item(
+                    PopupMenuItem::new("重新扫描笔记库")
+                        .icon(icons::refresh())
+                        .disabled(loading)
+                        .on_click(move |_, _, cx| {
+                            let _ = refresh.update(cx, |this, cx| this.refresh_library(cx));
+                        }),
+                )
             });
         let filters = h_flex()
             .w_full()
@@ -1441,6 +1452,7 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .gap_4()
+            .pt_2()
             .pb_4()
             .child(theme::search_field(
                 &self.inputs[&Field::Search],
