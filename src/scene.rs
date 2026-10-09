@@ -267,9 +267,13 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     for (i, r) in results {
         let (onset_t, _) = times[i];
         r.with_context(|| {
+            // 中文只写具体原因：界面已用「截图未生成」命名这项失败
+            let secs = onset_t.max(0.) as u64;
             format!(
-                "无法提取截图 / Could not extract slide {} (t={onset_t:.1}s)",
-                i + 1
+                "第 {n} 张截图（{}:{:02}）提取失败 / Could not extract slide {n} (t={onset_t:.1}s)",
+                secs / 60,
+                secs % 60,
+                n = i + 1
             )
         })?;
         let name = slide_name(i + 1);

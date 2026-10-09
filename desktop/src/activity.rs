@@ -222,28 +222,49 @@ pub fn quantity(stage: &str, current: u64, total: u64) -> String {
 
 /// Older saved outcomes combined a stage label, retention message and English
 /// diagnostics. Keep these records readable without rewriting their evidence.
+///
+/// One term names what is missing; a cause follows only when it says more than
+/// the term (the retry button beside it already names the next step).
 pub fn component_failure_message(label: &str, message: Option<&str>) -> String {
+    let term = match label {
+        "截图" | "摘要" => format!("{label}未生成"),
+        _ => format!("{label}未完成"),
+    };
     let chinese = message
         .unwrap_or_default()
         .split(" / ")
         .next()
         .unwrap_or_default()
         .trim();
-    if chinese.is_empty()
+    let mut cause = chinese;
+    for prefix in [
+        format!("{label}尚未完成"),
+        format!("{label}未完成"),
+        term.clone(),
+    ] {
+        if let Some(rest) = cause.strip_prefix(prefix.as_str()) {
+            cause = rest;
+            break;
+        }
+    }
+    let cause = cause.trim_matches(|c: char| {
+        c.is_whitespace() || matches!(c, '：' | ':' | '，' | ',' | '；' | ';' | '。')
+    });
+    let restates = cause.is_empty()
         || matches!(
-            chinese,
-            "摘要尚未完成，已保留正文"
+            cause,
+            "已保留正文"
+                | "正文已保存"
                 | "校对未全部完成，原文已保留"
                 | "部分校对未完成，原始文字已保留"
-        )
-    {
-        return format!("{label}尚未完成");
-    }
-    let prefix = format!("{label}尚未完成");
-    if chinese.starts_with(&prefix) {
-        chinese.into()
+                | "无法提取截图"
+                | "没有提取到截图"
+                | "未提取到截图"
+        );
+    if restates {
+        term
     } else {
-        format!("{label}尚未完成：{chinese}")
+        format!("{term}：{cause}")
     }
 }
 
@@ -485,11 +506,30 @@ mod tests {
                 "摘要",
                 Some("摘要尚未完成，已保留正文 / Summary incomplete; body retained")
             ),
-            "摘要尚未完成"
+            "摘要未生成"
         );
         assert_eq!(
             component_failure_message("摘要", Some("服务拒绝了请求（HTTP 400）。")),
-            "摘要尚未完成：服务拒绝了请求（HTTP 400）。"
+            "摘要未生成：服务拒绝了请求（HTTP 400）"
+        );
+        // 截图失败只说一次：旧记录里的「无法提取截图」与术语重复，不再作为原因
+        assert_eq!(
+            component_failure_message(
+                "截图",
+                Some("无法提取截图 / Could not extract slide 2 (t=4.0s): ffmpeg")
+            ),
+            "截图未生成"
+        );
+        assert_eq!(
+            component_failure_message(
+                "截图",
+                Some("第 2 张截图（0:04）提取失败 / Could not extract slide 2")
+            ),
+            "截图未生成：第 2 张截图（0:04）提取失败"
+        );
+        assert_eq!(
+            component_failure_message("校对", Some("校对未全部完成，原文已保留")),
+            "校对未完成"
         );
     }
     #[test]
