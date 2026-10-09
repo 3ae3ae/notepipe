@@ -1,5 +1,8 @@
 //! One start intent continues source preparation through to a readable note.
 use super::*;
+
+/// The workbench's single content column, as in the redesign canvas.
+const WORKBENCH_WIDTH: f32 = 720.;
 use crate::{motion, preferences::ServicePurpose, theme::*};
 use anyhow::Context as _;
 use course2md::subtitle::{SubtitleEvidence, SubtitleReadError, SubtitleTrack};
@@ -1016,6 +1019,10 @@ impl Desktop {
     /// Visible field, local file target, and status belonging to this source.
     pub fn box_source_input(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let mut view = v_flex().w_full().min_w_0().gap_4();
+        let focused = self.inputs[&Field::Source]
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window);
         if self.online {
             let validation = self
                 .source_preview
@@ -1040,8 +1047,16 @@ impl Desktop {
                             .items_center()
                             .rounded(RADIUS_PILL)
                             .bg(color(SURFACE))
-                            .border_1()
-                            .border_color(color(if validation.is_some() { DANGER } else { CARD_LINE }))
+                            // The field's own ring is off inside the pill, so the pill
+                            // carries focus: a 2px accent outline, as on other fields.
+                            .border_2()
+                            .border_color(color(if validation.is_some() {
+                                DANGER
+                            } else if focused {
+                                ACCENT
+                            } else {
+                                CARD_LINE
+                            }))
                             .shadow(shadow_hero())
                             .child(
                                 icons::link()
@@ -1066,54 +1081,30 @@ impl Desktop {
                     )
                     .when_some(validation, |view, message| view.child(issue(message))),
             );
-            // 平台识别反馈：输入可识别链接时给出「已识别」的 supporting 证据；
-            // 空输入或暂不可识别时保持两个品牌位（M4 反馈闭环）
-            let input = self.value(Field::Source, cx);
-            let recognized = (!input.trim().is_empty()).then(|| {
-                course2md::config::platform_from(&input, "")
-            });
-            match recognized.as_deref() {
-                Some("bilibili") | Some("youtube") => {
-                    let (name, icon) = if recognized.as_deref() == Some("bilibili") {
-                        ("Bilibili", icons::bilibili().text_color(rgb(0x00a1d6)))
-                    } else {
-                        ("YouTube", icons::youtube().text_color(rgb(0xff0000)))
-                    };
-                    // 品牌图标 + 一句识别反馈，不再品牌名/句中重复（review2#7）
-                    view = view.child(
-                        h_flex()
-                            .gap_2()
-                            .justify_center()
-                            .items_center()
-                            .child(icon.size(px(16.)).flex_shrink_0())
-                            .child(
-                                accessible_text(
-                                    "source-platform-recognized",
-                                    format!("已识别 {name} 链接"),
-                                )
-                                .text_size(TEXT_AUX)
-                                .text_color(color(MUTED)),
-                            ),
-                    );
-                }
-                _ => {
-                    view = view.child(
-                        h_flex()
-                            .gap_4()
-                            .flex_wrap()
-                            .justify_center()
-                            .items_center()
-                            .child(platform_mark(
-                                "YouTube",
-                                icons::youtube().text_color(rgb(0xff0033)),
-                            ))
-                            .child(platform_mark(
-                                "Bilibili",
-                                icons::bilibili().text_color(rgb(0x00a1d6)),
-                            )),
-                    );
-                }
-            }
+            // The pill's placeholder names the supported sites; the only extra
+            // line offers the other source route, as in the redesign canvas.
+            view = view.child(
+                h_flex()
+                    .w_full()
+                    .justify_center()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(
+                        accessible_text("import-drop-hint", "也可以把本地视频拖到窗口任意位置")
+                            .text_size(TEXT_BODY)
+                            .text_color(color(GRAY)),
+                    )
+                    .child(
+                        quiet("choose-local-video")
+                            .label("选择文件")
+                            .text_color(color(ACCENT_STRONG))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.switch_source_kind(false, window, cx);
+                                this.pick(false, window, cx);
+                            })),
+                    ),
+            );
         } else {
             view = self.local_source_input(view, cx);
         }
@@ -2726,22 +2717,21 @@ impl Desktop {
 
     /// The single start command owns source preparation and conversion.
     fn box_bottom_row(&self, cx: &mut Context<Self>) -> Div {
+        let disabled =
+            self.pending_conversion.is_some() || self.value(Field::Source, cx).is_empty();
         h_flex().items_center().child(
-            primary_pill("start-conversion")
+            theme::disabled_when(primary_pill("start-conversion"), disabled, cx)
                 .h(rems(48. / 14.))
                 .min_h(rems(48. / 14.))
                 .px(rems(22. / 14.))
                 .track_focus(&self.import_submit_focus)
                 .icon(icons::arrow_forward())
                 .label("开始转换")
-                // 空输入即不可执行：disabled 外观 + 已有字段级错误提示双保险
-                .disabled(
-                    self.pending_conversion.is_some()
-                        || self.value(Field::Source, cx).is_empty(),
-                )
+                .disabled(disabled)
                 .on_click(cx.listener(|this, _, window, cx| this.start_conversion(window, cx))),
         )
     }
+
 
     fn generation_options_toggle(&self, cx: &mut Context<Self>) -> Div {
         h_flex().child(
@@ -2869,18 +2859,34 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .gap_4()
-            .child(self.source_kind_tabs(cx))
+            .when(!self.online, |input| input.child(self.source_kind_tabs(cx)))
             .child(self.box_source_input(window, cx));
         let mut view = v_flex()
             .pt(px(24.))
-            .gap_6()
+            .gap(px(if hero { 32. } else { 24. }))
             .w_full()
             .min_w_0()
-            .child(h_flex().w_full().when(hero, |row| row.justify_center().pt(px(32.))).child(theme::page_heading(
-                "workbench-title",
-                icons::dashboard().size(px(28.)).text_color(color(ACCENT_STRONG)),
-                "把视频整理成笔记",
-            )))
+            .max_w(rems(WORKBENCH_WIDTH / 14.))
+            .mx_auto()
+            .map(|view| {
+                if hero {
+                    view.child(
+                        h_flex().w_full().justify_center().pt(px(56.)).child(
+                            accessible_text("workbench-title", "把视频整理成笔记")
+                                .role(Role::Heading)
+                                .text_size(rems(36. / 14.))
+                                .line_height(rems(44. / 14.))
+                                .font_weight(FontWeight::MEDIUM),
+                        ),
+                    )
+                } else {
+                    view.child(theme::page_heading(
+                        "workbench-title",
+                        icons::dashboard().size(rems(24. / 14.)).text_color(color(ACCENT_STRONG)),
+                        "把视频整理成笔记",
+                    ))
+                }
+            })
             .when(show_source_input, |view| view.child(input));
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
@@ -2948,7 +2954,10 @@ impl Desktop {
             } else if text_required {
                 view = view.child(box_section(icons::subtitles(), "文字来源").child(self.text_source_view(window, cx)));
             }
-            if self.preview_cancel.is_none() && self.source_candidates.is_empty() {
+            if self.source_preview.is_some()
+                && self.preview_cancel.is_none()
+                && self.source_candidates.is_empty()
+            {
                 let options_open = self.generation_options_open;
                 let mut recognition_box = box_section(icons::microphone(), "识别方式");
                 if self.source_preview.is_some() && !text_required {
@@ -2975,7 +2984,9 @@ impl Desktop {
                 ));
             }
         }
-        if let Some(recent) = self.recent_notes_section(cx) {
+        let column = (f32::from(window.bounds().size.width) - 48.).min(WORKBENCH_WIDTH * f32::from(window.rem_size()) / 14.);
+        let columns = if column >= 520. * f32::from(window.rem_size()) / 14. { 3 } else { 2 };
+        if let Some(recent) = self.recent_notes_section(columns, cx) {
             view = view.child(recent);
         }
         if let Some(error) = &self.workspace_error {
@@ -2987,7 +2998,11 @@ impl Desktop {
                     .bg(color(DANGER_BG))
                     .child(issue(error.clone()))));
         }
-        view.into_any_element()
+        // The whole workbench accepts a dropped video, not just the local tab.
+        view.on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+            this.drop_source_files(paths.paths(), window, cx)
+        }))
+        .into_any_element()
     }
 
     /// Only unresolved choices interrupt a submitted conversion.
