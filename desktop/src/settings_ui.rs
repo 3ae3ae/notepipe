@@ -722,6 +722,16 @@ impl Desktop {
         )
     }
     fn setting_field(&self, field: EditField, label: &'static str, _cx: &App) -> Div {
+        self.setting_field_with_action(field, label, None)
+    }
+    /// A field whose input carries a trailing quiet action on the same line
+    /// (the key's 显示/隐藏), as the onboarding key field does.
+    fn setting_field_with_action(
+        &self,
+        field: EditField,
+        label: &'static str,
+        action: Option<AnyElement>,
+    ) -> Div {
         let error = self
             .settings_ui
             .editor
@@ -753,8 +763,8 @@ impl Desktop {
                 v_flex()
                     .w_full()
                     .gap_2()
-                    .child(
-                        text_input(&self.settings_ui.inputs[&field])
+                    .child({
+                        let input = text_input(&self.settings_ui.inputs[&field])
                             .w_full()
                             .when(field == EditField::Key, |input| {
                                 input.content_type(InputContentType::Password)
@@ -771,8 +781,19 @@ impl Desktop {
                                     .as_ref()
                                     .is_some_and(|editor| editor.pending_binding.is_some()),
                             )
-                            .when(error.is_some(), |input| input.border_color(color(DANGER))),
-                    )
+                            .when(error.is_some(), |input| input.border_color(color(DANGER)));
+                        match action {
+                            Some(action) => h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .gap_2()
+                                .items_center()
+                                .child(div().flex_1().min_w_0().child(input))
+                                .child(action)
+                                .into_any_element(),
+                            None => input.into_any_element(),
+                        }
+                    })
                     .when_some(error, |view, error| {
                         view.child(
                             text(("setting-error", field as usize), error)

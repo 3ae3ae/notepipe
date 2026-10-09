@@ -8,15 +8,13 @@ impl Desktop {
             return v_flex();
         };
         let purpose = editor.draft.protocol.purpose();
-        let kind = if purpose == ServicePurpose::Speech {
-            "语音服务"
-        } else {
-            "AI 服务"
-        };
-        let title = if editor.draft.based_on.is_some() {
-            format!("编辑 {kind}")
-        } else {
-            format!("添加 {kind}")
+        // 纯文字标题，与打开它的「添加语音服务」/「添加 AI 服务」同一写法
+        let editing = editor.draft.based_on.is_some();
+        let title = match (purpose == ServicePurpose::Speech, editing) {
+            (true, false) => "添加语音服务",
+            (true, true) => "编辑语音服务",
+            (false, false) => "添加 AI 服务",
+            (false, true) => "编辑 AI 服务",
         };
         v_flex()
             .w_full()
@@ -24,24 +22,11 @@ impl Desktop {
             .min_h_0()
             .gap_3()
             .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
+                text("service-editor-inline-title", title)
                     .flex_shrink_0()
-                    .child(
-                        (if purpose == ServicePurpose::Speech {
-                            icons::microphone()
-                        } else {
-                            icons::science()
-                        })
-                        .size(px(20.))
-                        .text_color(color(ACCENT_STRONG)),
-                    )
-                    .child(
-                        text("service-editor-inline-title", title)
-                            .text_size(TEXT_TITLE)
-                            .font_weight(FontWeight::SEMIBOLD),
-                    ),
+                    .role(Role::Heading)
+                    .text_size(TEXT_TITLE)
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .child(self.service_editor_content(true, window, cx))
     }
@@ -691,25 +676,17 @@ impl Desktop {
             } else {
                 "设置 AI 服务"
             })
-            .gap_4()
+            .gap_6()
             .px_1()
-            // 滚动容器为末行字段的边框/焦点外绘留出空间（system.md：clipped container 需预留 outward paint）
+            // 滚动容器为首末卡片的阴影与焦点外绘留出空间（system.md：clipped container 需预留 outward paint）
+            .pt_1()
             .pb_3();
-        if editor.repair_task.is_none() && editor.target.is_none() {
-            view = view.child(
-                text("service-editor-scope", "保存后设为默认服务")
-                    .text_sm()
-                    .text_color(color(MUTED)),
-            );
-        }
-        view = view
+        use crate::settings_ui::{SettingsGroup, setting_surface};
+        // 连接字段与其他设置页同一组卡片：每个字段一项，项间内缩分隔线
+        let mut connection = SettingsGroup::new("service-connection-heading", "连接信息")
+            .child(setting_surface().child(self.setting_field(EditField::Name, "服务名称", cx)))
             .child(
-                settings_detail_group("service-connection-heading", icons::cloud(), "连接信息")
-                    .child(self.setting_field(EditField::Name, "服务名称", cx)),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
+                setting_surface()
                     .child(setting_label(
                         "service-protocol-heading",
                         icons::cloud(),
@@ -760,29 +737,30 @@ impl Desktop {
             );
         // Codex 端点固定、凭据由登录态持有：不展示地址与认证编辑
         if protocol != ServiceProtocol::CodexResponses {
-            view = view.child(self.setting_field(EditField::Address, "服务地址", cx));
-        }
-        let address = self.setting_value(EditField::Address, cx);
-        if protocol != ServiceProtocol::CodexResponses
-            && let Ok(endpoint) = preferences::normalize_endpoint(&address, protocol)
-            && endpoint != address.trim()
-        {
-            view = view.child(
-                text("service-actual-endpoint", format!("将请求 {endpoint}"))
-                    .text_sm()
-                    .text_color(color(MUTED)),
+            let address = self.setting_value(EditField::Address, cx);
+            let endpoint = preferences::normalize_endpoint(&address, protocol)
+                .ok()
+                .filter(|endpoint| endpoint != address.trim());
+            connection = connection.child(
+                setting_surface()
+                    .child(self.setting_field(EditField::Address, "服务地址", cx))
+                    .when_some(endpoint, |item, endpoint| {
+                        item.child(
+                            text("service-actual-endpoint", format!("将请求 {endpoint}"))
+                                .text_size(TEXT_AUX)
+                                .text_color(color(MUTED)),
+                        )
+                    }),
             );
         }
         if !protocol.keyless() {
-            view = view.child(
-            v_flex()
-                .gap_2()
-                .child(setting_label("service-auth-heading", icons::shield(), "认证方式"))
-                .child(
-                    div().w_full().max_w(rems(560. / 14.)).min_w_0().child(
+            connection = connection.child(
+                setting_surface()
+                    .child(setting_label("service-auth-heading", icons::shield(), "认证方式"))
+                    .child(
+                        // 分段控件按内容宽度左对齐，不拉满整行
                         self.setting_choices("service-auth-mode", "服务认证方式")
                             .options([("api_key", "API Key"), ("none", "无需认证")])
-                            .full_width()
                             .selected(if auth == Authentication::ApiKey {
                                 "api_key"
                             } else {
@@ -805,102 +783,110 @@ impl Desktop {
                                 cx.notify();
                             })),
                     ),
-                ),
-        );
-        if auth == Authentication::ApiKey {
-            view = view.child(self.setting_field(EditField::Key, "API Key", cx));
-            for (index, name) in
-                preferences::Store::available_environment_credentials(protocol.purpose())
-                    .into_iter()
-                    .enumerate()
-            {
-                view = view.child(
-                    control(("capture-environment-key", index))
-                        .icon(icons::content_copy())
-                        .label(format!("使用环境变量 {name}"))
-                        .disabled(awaiting_binding)
-                        .self_start()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let Some(draft) = this
-                                .settings_ui
-                                .editor
-                                .as_ref()
-                                .map(|editor| editor.draft.clone())
-                            else {
-                                return;
-                            };
-                            match this.preferences.capture_environment_credential(draft, name) {
-                                Ok(draft) => {
-                                    if let Some(editor) = &mut this.settings_ui.editor {
-                                        editor.draft = draft;
-                                        editor.models.invalidate();
-                                        editor.evidence = None;
-                                        editor.saved_configuration = None;
-                                        editor.save_failed = false;
-                                        editor.status =
-                                            Some("已使用环境变量中的密钥，点击保存后生效".into());
-                                    }
-                                    this.settings_ui.inputs[&EditField::Key]
-                                        .update(cx, |input, cx| input.set_value("", window, cx));
-                                }
-                                Err(error) => {
-                                    if let Some(editor) = &mut this.settings_ui.editor {
-                                        editor.status = Some(format!("凭据尚未保存：{error:#}"));
-                                    }
-                                }
-                            }
-                            cx.notify();
-                        })),
-                );
-            }
-            if editor.draft.credential.is_some() {
-                view = view.child(
-                    text(
-                        "service-key-existing",
-                        "已保存密钥，留空则保留",
-                    )
-                    .text_sm()
-                    .text_color(color(MUTED)),
-                );
-            }
-            view = view.child(preference(
-                None,
-                "显示输入的密钥",
-                "",
-                Switch::new("toggle-service-key")
-                    .checked(editor.show_key)
-                    .on_click(cx.listener(|this, value, window, cx| {
+            );
+            if auth == Authentication::ApiKey {
+                // 显示/隐藏是输入框尾部的安静按钮（与首次引导的密钥字段一致），不再单列开关行
+                let visibility = quiet("toggle-service-key")
+                    .icon(if editor.show_key {
+                        icons::eye_off()
+                    } else {
+                        icons::eye()
+                    })
+                    .label(if editor.show_key { "隐藏" } else { "显示" })
+                    .tooltip(if editor.show_key {
+                        "隐藏密钥"
+                    } else {
+                        "显示密钥"
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = &mut this.settings_ui.editor {
-                            editor.show_key = *value;
+                            editor.show_key = !editor.show_key;
                             let masked = !editor.show_key;
                             this.settings_ui.inputs[&EditField::Key]
                                 .update(cx, |input, cx| input.set_masked(masked, window, cx));
                         }
                         cx.notify();
-                    })),
-            ));
-        }
-        if let Some(source) = &editor.draft.credential_source {
-            view = view.child(
-                text(
-                    "service-credential-source",
-                    format!("密钥来源：{source}"),
-                )
-                .text_sm(),
-            );
-        }
+                    }))
+                    .into_any_element();
+                let mut key = setting_surface().child(self.setting_field_with_action(
+                    EditField::Key,
+                    "API Key",
+                    Some(visibility),
+                ));
+                if editor.draft.credential.is_some() {
+                    key = key.child(
+                        text("service-key-existing", "已保存密钥，留空则保留")
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED)),
+                    );
+                }
+                for (index, name) in
+                    preferences::Store::available_environment_credentials(protocol.purpose())
+                        .into_iter()
+                        .enumerate()
+                {
+                    key = key.child(
+                        control(("capture-environment-key", index))
+                            .icon(icons::content_copy())
+                            .label(format!("使用环境变量 {name}"))
+                            .disabled(awaiting_binding)
+                            .self_start()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                let Some(draft) = this
+                                    .settings_ui
+                                    .editor
+                                    .as_ref()
+                                    .map(|editor| editor.draft.clone())
+                                else {
+                                    return;
+                                };
+                                match this.preferences.capture_environment_credential(draft, name) {
+                                    Ok(draft) => {
+                                        if let Some(editor) = &mut this.settings_ui.editor {
+                                            editor.draft = draft;
+                                            editor.models.invalidate();
+                                            editor.evidence = None;
+                                            editor.saved_configuration = None;
+                                            editor.save_failed = false;
+                                            editor.status =
+                                                Some("已使用环境变量中的密钥，点击保存后生效".into());
+                                        }
+                                        this.settings_ui.inputs[&EditField::Key]
+                                            .update(cx, |input, cx| input.set_value("", window, cx));
+                                    }
+                                    Err(error) => {
+                                        if let Some(editor) = &mut this.settings_ui.editor {
+                                            editor.status = Some(format!("凭据尚未保存：{error:#}"));
+                                        }
+                                    }
+                                }
+                                cx.notify();
+                            })),
+                    );
+                }
+                connection = connection.child(key);
+            }
+            if let Some(source) = &editor.draft.credential_source {
+                connection = connection.detail(
+                    div().px(rems(20. / 14.)).pb(rems(14. / 14.)).child(
+                        text("service-credential-source", format!("密钥来源：{source}"))
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED)),
+                    ),
+                );
+            }
         }
         // Codex 账号连接：登录态决定模型目录与可用性
         if protocol == ServiceProtocol::CodexResponses {
-            view = view.child(self.codex_account_section(
+            connection = connection.child(setting_surface().child(self.codex_account_section(
                 crate::codex_ui::CodexSurface::Editor,
                 awaiting_binding,
                 cx,
-            ));
+            )));
         }
         let model_error = editor.errors.iter().find(|error| error.field == "model");
-        view = view.child(
-            self.reveal_setting(
+        connection = connection.child(
+            setting_surface().child(self.reveal_setting(
                 ("setting-field-reveal", EditField::Model as usize),
                 v_flex()
                     .w_full()
@@ -920,10 +906,10 @@ impl Desktop {
                         cx.listener(|this, _, _, cx| this.fetch_service_models(cx)),
                         cx,
                     )),
-            ),
+            )),
         );
         if editor.target.is_some() {
-            view = view.child(
+            connection = connection.child(
                 self.setting_preference(
                     icons::check_circle(),
                     "同时设为默认服务",
@@ -940,7 +926,10 @@ impl Desktop {
                 ),
             );
         }
-        view = view.child(self.service_test_section(window, cx));
+        view = view.child(connection);
+        if let Some(testing) = self.service_test_section(window, cx) {
+            view = view.child(testing);
+        }
         if let Some(status) = &editor.status
             && !busy
         {
@@ -1061,30 +1050,30 @@ impl Desktop {
     }
 
     /// Test-kind choice, busy state, result card and expandable details.
+    /// None when there is nothing to show yet (speech services before a test),
+    /// so an empty 「检查服务」 heading never appears.
     fn service_test_section(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let Some(editor) = &self.settings_ui.editor else {
-            return div();
-        };
+    ) -> Option<AnyElement> {
+        let editor = self.settings_ui.editor.as_ref()?;
         let protocol = editor.draft.protocol;
         let busy = editor.test_running.is_some();
         let awaiting_binding = editor.pending_binding.is_some();
-        let mut testing = settings_detail_group("service-test-heading", icons::science(), "检查服务")
-            .flex_shrink_0()
-            .pt_2();
+        if protocol.purpose() != ServicePurpose::Ai && !busy && editor.evidence.is_none() {
+            return None;
+        }
+        let mut testing = crate::settings_ui::setting_surface();
         if protocol.purpose() == ServicePurpose::Ai {
             testing = testing.child(
-                div().w_full().max_w(rems(560. / 14.)).min_w_0().child(
+                div().self_start().max_w_full().child(
                     self.setting_choices("service-test-purpose", "要测试的服务能力")
                         .options(
                             [TestKind::Proofread, TestKind::Summary, TestKind::Vision]
                                 .into_iter()
                                 .map(|kind| (kind.contract(), kind.label())),
                         )
-                        .full_width()
                         .selected(editor.test_kind.contract())
                         .disabled(busy)
                         .on_change(cx.listener(move |this, selected: &SharedString, _, cx| {
@@ -1224,7 +1213,11 @@ impl Desktop {
                 )),
                 result));
         }
-        testing
+        Some(
+            crate::settings_ui::SettingsGroup::new("service-test-heading", "检查服务")
+                .child(testing)
+                .into_any_element(),
+        )
     }
 
 
@@ -1255,6 +1248,8 @@ impl Desktop {
             .flex_shrink_0()
             .gap_2()
             .pt_3()
+            // 底部按钮不贴窗口下缘
+            .pb_4()
             .border_t_1()
             .border_color(color(CARD_LINE))
             .when_some(fixed_test_failure, |footer, (kind, evidence)| {
