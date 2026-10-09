@@ -1,5 +1,10 @@
 //! Durable external-request receipts. A lost response is never permission to resend.
 
+/// Receipt「结果不确定」阻断原因的写入权威：block() 写入 receipt 的 reason、
+/// Failure.uncertain 的判定，都以这一处常量为准（桌面端续跑 UI 亦引用它），
+/// 不再散落字面量。
+pub const REASON_UNCERTAIN: &str = "uncertain";
+
 use crate::{checkpoint::atomic_write, execution};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -284,7 +289,7 @@ impl Ledger {
         Failure {
             status: None,
             retryable: false,
-            uncertain: reason == "uncertain",
+            uncertain: reason == REASON_UNCERTAIN,
             message,
             unsupported_response_format: false,
         }
@@ -402,7 +407,7 @@ impl Ledger {
                 let mut uncertain = old.clone();
                 uncertain.state = State::Uncertain;
                 self.save(&uncertain)?;
-                return Err(self.block("uncertain", Some(old), "未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges"));
+                return Err(self.block(REASON_UNCERTAIN, Some(old), "未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges"));
             }
             if old.state == State::Failed && !authorized {
                 return Err(Failure {
@@ -443,7 +448,7 @@ impl Ledger {
                     .cloned()
                     .is_some_and(|lock| lock.try_lock().is_err());
                 if unresolved.state == State::Uncertain || !live {
-                    return Err(self.block("uncertain", Some(&unresolved), "前一步请求结果尚不确定；已保留进度，没有继续发送 / A previous request is unresolved; progress retained"));
+                    return Err(self.block(REASON_UNCERTAIN, Some(&unresolved), "前一步请求结果尚不确定；已保留进度，没有继续发送 / A previous request is unresolved; progress retained"));
                 }
             }
         }
@@ -483,7 +488,7 @@ impl Ledger {
                 receipt.state = State::Uncertain;
                 receipt.message = Some(error.message);
                 self.save(&receipt)?;
-                return Err(self.block("uncertain", Some(&receipt), "未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges"));
+                return Err(self.block(REASON_UNCERTAIN, Some(&receipt), "未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges"));
             }
         };
         receipt.http_status = Some(response.status);
@@ -508,7 +513,7 @@ impl Ledger {
         if !(200..300).contains(&response.status) {
             receipt.state = State::Uncertain;
             self.save(&receipt)?;
-            return Err(self.block("uncertain", Some(&receipt), "服务返回错误，无法确认是否已处理。再次提交可能产生额外费用 / Service processing is uncertain"));
+            return Err(self.block(REASON_UNCERTAIN, Some(&receipt), "服务返回错误，无法确认是否已处理。再次提交可能产生额外费用 / Service processing is uncertain"));
         }
         let value = match value {
             Ok(value) => value,
