@@ -2598,24 +2598,32 @@ impl Desktop {
             .cursor_pointer()
             .rounded(RADIUS_SMALL)
             .p_0()
-            .when_some(cover, |heading, cover| {
-                heading.child(
-                    img(cover)
-                        .w(rems(6.))
-                        .h(rems(3.375))
-                        .object_fit(ObjectFit::Cover)
-                        .rounded(RADIUS_SMALL)
-                        .flex_shrink_0(),
-                )
-            })
-            .when(!has_cover, |heading| {
-                heading.child(
-                    icons::task()
-                        .size(rems(20. / 14.))
-                        .flex_shrink_0()
-                        .text_color(color(MUTED)),
-                )
-            })
+            .child(
+                div()
+                    .w(rems(6.))
+                    .h(rems(3.375))
+                    .flex_shrink_0()
+                    .rounded(RADIUS_SMALL)
+                    .overflow_hidden()
+                    .bg(color(SECONDARY_CONTAINER))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when_some(cover, |slot, cover| {
+                        slot.child(
+                            img(cover)
+                                .size_full()
+                                .object_fit(ObjectFit::Cover),
+                        )
+                    })
+                    .when(!has_cover, |slot| {
+                        slot.child(
+                            icons::movie()
+                                .size(rems(20. / 14.))
+                                .text_color(color(ON_SECONDARY_CONTAINER)),
+                        )
+                    }),
+            )
             .child(
                 v_flex()
                     .flex_1()
