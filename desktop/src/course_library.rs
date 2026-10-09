@@ -723,7 +723,7 @@ impl Desktop {
         let layout = LibraryLayout {
             columns,
             compact: content < 336. * scale,
-            stacked: content < 56. * rem + 24.,
+            stacked: content < 36. * rem + 24.,
         };
         let query = self.value(Field::Search, cx).to_lowercase();
         let mut items = Vec::new();
