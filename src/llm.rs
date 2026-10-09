@@ -454,7 +454,7 @@ fn polish_chunk_refs(
 
 /// 记录首个失败原因（后续失败不覆盖），截断避免超长错误刷屏。
 fn record_first_error(slot: &std::sync::Mutex<Option<String>>, msg: String) {
-    let mut guard = crate::runtime::lock_recover(&slot);
+    let mut guard = crate::runtime::lock_recover(slot);
     if guard.is_none() {
         *guard = Some(brief(&msg));
     }
