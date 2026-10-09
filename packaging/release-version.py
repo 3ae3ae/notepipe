@@ -5,7 +5,29 @@ import os
 import re
 import urllib.request
 
-VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.([1-9]\d*))?")
+# 与 packaging/homebrew/update.py、packaging/aur/update-aur.sh 同一校验口径：
+# semver.org 官方文法（核心版本拒绝前导零，如 01.2.3；预发布标识符按官方
+# 规范，如 1.2.3-rc.1）。发布版本不使用 build 元数据（+build 段），三方统一
+# 拒绝。预发布通道仅限 alpha/beta/rc.N（N ≥ 1），与发布矩阵一致。
+PRERELEASE_CHANNELS = ("alpha", "beta", "rc")
+SEMVER = re.compile(
+    r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+)
+
+
+def parse_release(version):
+    """Return (channel, number) for a release version, or None if invalid."""
+    match = SEMVER.fullmatch(version)
+    if match is None:
+        return None
+    prerelease = match[4]
+    if prerelease is None:
+        return "stable", None
+    channel, dot, number = prerelease.partition(".")
+    if channel not in PRERELEASE_CHANNELS or not dot or not number.isdigit() or int(number) < 1:
+        return None
+    return channel, number
 
 
 def api(path):
@@ -22,7 +44,7 @@ def main():
     version = os.environ.get("REQUESTED_VERSION", "")
     if not version:
         branch = os.environ.get("RELEASE_BRANCH", "")
-        if branch.startswith("v") and VERSION.fullmatch(branch[1:]):
+        if branch.startswith("v") and parse_release(branch[1:]):
             version = branch
         else:
             sha = os.environ.get("RELEASE_SHA", "")
@@ -33,10 +55,10 @@ def main():
                 raise SystemExit("Cannot identify one published release for the triggering commit")
             version = matches[0]["tag_name"]
     version = version.removeprefix("v")
-    match = VERSION.fullmatch(version)
+    match = parse_release(version)
     if not match:
         raise SystemExit("Expected a version such as 1.7.0 or 2.0.0-alpha.1")
-    channel = match[4] or "stable"
+    channel = match[0]
     release = api(f"releases/tags/v{version}")
     if release["draft"]:
         raise SystemExit("Package channels cannot publish draft releases")

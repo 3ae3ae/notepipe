@@ -19,6 +19,31 @@ ASSETS = {
 }
 
 
+# 与 packaging/release-version.py、packaging/aur/update-aur.sh 同一校验口径：
+# semver.org 官方文法（核心版本拒绝前导零，如 01.2.3；预发布标识符按官方
+# 规范，如 1.2.3-rc.1）。发布版本不使用 build 元数据（+build 段），三方统一
+# 拒绝。预发布通道仅限 alpha/beta/rc.N（N ≥ 1），与发布矩阵一致。
+PRERELEASE_CHANNELS = ("alpha", "beta", "rc")
+SEMVER = re.compile(
+    r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+)
+
+
+def parse_release(version):
+    """Return (channel, number) for a release version, or None if invalid."""
+    match = SEMVER.fullmatch(version)
+    if match is None:
+        return None
+    prerelease = match[4]
+    if prerelease is None:
+        return "stable", None
+    channel, dot, number = prerelease.partition(".")
+    if channel not in PRERELEASE_CHANNELS or not dot or not number.isdigit() or int(number) < 1:
+        return None
+    return channel, number
+
+
 def checksum(url):
     digest = hashlib.sha256()
     size = 0
@@ -33,10 +58,10 @@ def checksum(url):
 
 
 def render(tap, version, fetch_checksum=checksum):
-    match = re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(alpha|beta|rc)\.[1-9]\d*)?", version)
+    match = parse_release(version)
     if not match:
         raise ValueError("Expected a stable version or alpha/beta/rc.N prerelease")
-    channel = match[1] or "stable"
+    channel = match[0]
     suffix = "" if channel == "stable" else f"@{channel}"
     # Homebrew only translates numeric @ suffixes into valid Ruby class names.
     # Keep named prerelease channels as hyphenated formulae.

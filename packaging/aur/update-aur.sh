@@ -3,7 +3,11 @@
 # Usage: update-aur.sh <version> [--dry-run]
 set -euo pipefail
 VERSION="${1:?usage: update-aur.sh <version> [--dry-run]}"
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid version' >&2; exit 1; }
+# 与 packaging/release-version.py、packaging/homebrew/update.py 同一校验口径：
+# semver.org 官方文法（核心版本拒绝前导零，如 01.2.3；接受预发布，如
+# 1.2.3-rc.1）。发布版本不使用 build 元数据（+build 段），三方统一拒绝。
+SEMVER='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*)?$'
+[[ "$VERSION" =~ $SEMVER ]] || { echo 'Invalid version' >&2; exit 1; }
 MODE="${2:-}"
 [[ -z "$MODE" || "$MODE" == '--dry-run' ]] || { echo 'Unknown option' >&2; exit 1; }
 REPO="${COURSE2MD_REPO:-mizorewww/course2md}"
