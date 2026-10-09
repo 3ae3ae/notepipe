@@ -1307,19 +1307,16 @@ impl Desktop {
                         window,
                         cx,
                     )
+                    // Readiness is status, not a label: the shared badge, regular weight.
                     .child(
-                        semantic_label(
-                            ("setup-engine-capability", index),
-                            status,
-                            if ready == Some(true) {
-                                icons::check_circle().text_color(color(SUCCESS))
+                        div().pl(rems(28. / 14.)).child(
+                            badge(if ready == Some(true) {
+                                BadgeKind::Success
                             } else {
-                                icons::info().text_color(color(GRAY))
-                            },
-                        )
-                        .w_full()
-                        .justify_start()
-                        .text_left(),
+                                BadgeKind::Neutral
+                            })
+                            .child(status),
+                        ),
                     )
                     .disabled(provider.is_some() && ready == Some(false))
                     .on_click(cx.listener(move |this, _, _, cx| {

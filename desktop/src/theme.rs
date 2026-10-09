@@ -394,11 +394,10 @@ pub fn info_callout(
         .min_w_0()
         .items_start()
         .gap(rems(10. / 14.))
-        .p(rems(12. / 14.))
-        .rounded(RADIUS_SMALL)
-        .bg(color(SURFACE))
-        .border_1()
-        .border_color(color(HAIRLINE))
+        .px(rems(16. / 14.))
+        .py(rems(12. / 14.))
+        .rounded(RADIUS_CARD)
+        .bg(color(SURFACE_HIGH))
         .child(
             crate::icons::info()
                 .size(rems(18. / 14.))
@@ -595,13 +594,15 @@ pub fn selection_card(
         .min_h(px(0.))
         .min_w_0()
         .rounded(RADIUS_CARD)
+        // M3 selection is tonal: the chosen card fills with the secondary
+        // container; the 2px outline is reserved for keyboard focus.
         .border_2()
-        .border_color(blend(color(HAIRLINE), color(ACCENT), amount))
-        .bg(color(SURFACE))
+        .border_color(blend(color(CARD_LINE), color(SECONDARY_CONTAINER), amount))
+        .bg(blend(color(SURFACE), color(SECONDARY_CONTAINER), amount))
         .cursor_pointer()
-        .hover(|style| style.border_color(color(ACCENT_STRONG)).shadow_sm())
-        .active(|style| style.opacity(0.8).shadow_none())
-        .focus(|style| style.border_color(color(INK)).shadow_sm())
+        .hover(|style| style.shadow_sm())
+        .active(|style| style.opacity(0.9).shadow_none())
+        .focus(|style| style.border_color(color(ACCENT)))
 }
 
 /// A choice that needs a short explanation stays visible as one interactive
@@ -633,7 +634,6 @@ pub fn described_choice(
         .items_stretch()
         .p(rems(12. / 14.))
         .gap(rems(8. / 14.))
-        .bg(blend(color(SURFACE), color(ACCENT_SOFT), amount))
         .text_color(color(INK))
         .child(
             div()
