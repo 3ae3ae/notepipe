@@ -2516,7 +2516,6 @@ impl Desktop {
         mut actions: Div,
         task: &TaskRecord,
         visible: bool,
-        pause_label: &'static str,
         id_prefix: &'static str,
         primary: fn(SharedString) -> Button,
         secondary: fn(SharedString) -> Button,
@@ -2525,14 +2524,16 @@ impl Desktop {
         if visible {
             let id = task.id.clone();
             let cancelling = task.state == TaskState::Pausing && task.intent == Intent::Cancel;
+            // 排队中的任务还没有生成任何内容，暂停没有可保留的进度；只提供取消
+            let queued = task.state == TaskState::Queued && !self.is_running_task(&task.id);
             actions = actions
-                .when(!cancelling, |actions| {
+                .when(!cancelling && !queued, |actions| {
                     actions.child(
                         primary(SharedString::from(format!("{id_prefix}pause-{id}")))
                             .label(if task.state == TaskState::Pausing {
                                 "正在暂停…"
                             } else {
-                                pause_label
+                                "暂停"
                             })
                             .icon(icons::pause())
                             .loading(task.state == TaskState::Pausing)
@@ -2546,7 +2547,10 @@ impl Desktop {
                     )
                 })
                 .child(
-                    secondary(SharedString::from(format!("{id_prefix}cancel-{id}")))
+                    // 排队时取消是唯一的操作，沿用主操作的按钮形式
+                    (if queued { primary } else { secondary })(SharedString::from(format!(
+                        "{id_prefix}cancel-{id}"
+                    )))
                         .icon(icons::close())
                         .label(if cancelling { "正在取消…" } else { "取消任务" })
                         .loading(cancelling)
@@ -2804,7 +2808,6 @@ impl Desktop {
                 task,
                 matches!(task.state, TaskState::Running | TaskState::Queued)
                     || self.is_running_task(&id),
-                "暂停",
                 "",
                 control,
                 control,
@@ -3402,7 +3405,6 @@ impl Desktop {
                 task.state,
                 TaskState::Running | TaskState::Queued | TaskState::Pausing
             ) || active,
-            "暂停生成",
             "box-",
             outline_pill,
             quiet,
