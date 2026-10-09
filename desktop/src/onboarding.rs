@@ -448,8 +448,8 @@ fn evidence_covers(
     })
 }
 
-fn help(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Div {
-    // 与设置页同一辅助信息处理：共享 ⓘ 图标 + 常规字重（review4#2）
+/// 共享 ⓘ 辅助信息：设置/引导/导入页同一处理（共享图标 + 常规字重，review4#2）。
+pub(crate) fn help(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Div {
     theme::supporting_info(id, value)
 }
 
@@ -2504,6 +2504,20 @@ impl Desktop {
         }
     }
 
+    /// footer 的服务动作落在哪个服务上：Engine 步选了云端识别时按 Speech
+    /// 服务检查，AI 步按 AI 服务；其余步骤没有服务动作。
+    fn footer_service_purpose(&self) -> Option<ServicePurpose> {
+        if self.onboarding.step == Step::Engine
+            && self.onboarding.provider == Some(AsrProvider::Api)
+        {
+            Some(ServicePurpose::Speech)
+        } else if self.onboarding.step == Step::Ai {
+            Some(ServicePurpose::Ai)
+        } else {
+            None
+        }
+    }
+
     fn setup_footer(&self, _compact: bool, cx: &mut Context<Self>) -> Div {
         if self.onboarding.finish_failed {
             return v_flex()
@@ -2563,30 +2577,25 @@ impl Desktop {
         } else {
             false
         };
-        let busy = match step {
-            Step::Engine if self.onboarding.provider == Some(AsrProvider::Api) => {
-                self.onboarding.speech.running.is_some()
-            }
-            Step::Ai => self.onboarding.ai.running.is_some(),
-            _ => false,
-        };
-        let label = match step {
-            Step::Engine if self.onboarding.provider == Some(AsrProvider::Api) => {
-                self.setup_service_action_label(ServicePurpose::Speech, cx)
-            }
-            Step::Engine => "保存并继续",
-            Step::Ai => self.setup_service_action_label(ServicePurpose::Ai, cx),
-            Step::Account => {
-                if self.account_connected() {
-                    "继续"
-                } else {
-                    "跳过登录"
+        let busy = self
+            .footer_service_purpose()
+            .is_some_and(|purpose| self.onboarding.service(purpose).running.is_some());
+        let label = match self.footer_service_purpose() {
+            Some(purpose) => self.setup_service_action_label(purpose, cx),
+            None => match step {
+                Step::Account => {
+                    if self.account_connected() {
+                        "继续"
+                    } else {
+                        "跳过登录"
+                    }
                 }
-            }
-            Step::Model if model_review => "返回应用",
-            Step::Model if model_running => "继续使用",
-            Step::Model if emphasize_model_preparation => "稍后准备",
-            Step::Model => "开始使用",
+                Step::Model if model_review => "返回应用",
+                Step::Model if model_running => "继续使用",
+                Step::Model if emphasize_model_preparation => "稍后准备",
+                Step::Model => "开始使用",
+                _ => "保存并继续",
+            },
         };
         let mut row = h_flex()
             .w_full()
@@ -2655,16 +2664,12 @@ impl Desktop {
             .flex_shrink_0()
             .gap_2()
             .when(
-                (step == Step::Ai
-                    && matches!(
-                        self.setup_service_action_label(ServicePurpose::Ai, cx),
+                self.footer_service_purpose().is_some_and(|purpose| {
+                    matches!(
+                        self.setup_service_action_label(purpose, cx),
                         "检查配置" | "重新检查" | "重试保存"
-                    ))
-                    || (step == Step::Engine && self.onboarding.provider == Some(AsrProvider::Api)
-                        && matches!(
-                            self.setup_service_action_label(ServicePurpose::Speech, cx),
-                            "检查配置" | "重新检查" | "重试保存"
-                        )),
+                    )
+                }),
                 |v| {
                     // 后果说明与发起它的检查动作同现同隐（review4#6）：
                     // 服务已通过检查、动作是「保留并继续」时不展示

@@ -14,9 +14,10 @@ use std::sync::{
 };
 
 fn help(text: impl Into<SharedString>) -> Div {
-    // 与设置页同一辅助信息处理：共享 ⓘ 图标 + 常规字重（review5 Note）
+    // 与设置/引导页同一辅助信息处理：共享 ⓘ 图标 + 常规字重（共享实现在
+    // onboarding::help，review5 Note / review4#2）。
     let text = text.into();
-    theme::supporting_info(text_id("help", &text), text).text_sm()
+    crate::onboarding::help(text_id("help", &text), text).text_sm()
 }
 fn issue(message: impl Into<SharedString>) -> Stateful<Div> {
     let message = message.into();
