@@ -1526,39 +1526,22 @@ impl Desktop {
     /// Storage locations listed in the settings page; per-location operations
     /// live in this module alongside the migration flow.
     pub(super) fn storage_settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut view = v_flex().w_full().min_w_0().flex_shrink_0().gap_6().child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_3()
-                .items_start()
-                .flex_wrap()
-                .child(
-                    v_flex()
-                        .min_w_0()
-                        .gap_2()
-                        .child(semantic_label(
-                            "storage-locations-heading",
-                            "保存位置",
-                            icons::folder_open(),
-                        ))
-                        .child(theme::supporting_info(
-                            "storage-policy",
-                            "更改默认位置只影响后续生成的笔记。",
-                        ))
-                        .flex_1(),
-                )
-                .child(
-                    // 与笔记库同一模式：页标题行尾的有标签刷新动作（review2-settings#4）
-                    quiet("refresh-storage-locations")
-                        .icon(icons::refresh())
-                        .label("刷新")
-                        .loading(self.loading)
-                        .disabled(self.loading)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
-                ),
-        );
-        view = view.child(self.storage_status_panel(cx));
+        let view = v_flex()
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .gap_6()
+            .child(self.storage_status_panel(cx));
+        let mut locations = crate::settings_ui::SettingsGroup::new("storage-locations-heading", "保存位置")
+            .action(
+                quiet("refresh-storage-locations")
+                    .icon(icons::refresh())
+                    .label("刷新")
+                    .loading(self.loading)
+                    .disabled(self.loading)
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
+            );
+
         if let Some(workspace) = &self.workspace {
             for (index, library) in workspace.state.libraries.iter().enumerate() {
                 let root = library.root.clone();
@@ -1572,8 +1555,8 @@ impl Desktop {
                 let needs_relocation =
                     check.is_some_and(|check| !check.available || check.problem.is_some());
                 let needs_reassociation = check.is_some_and(|check| check.needs_reassociation);
-                view = view.child(
-                    card_surface()
+                locations = locations.child(
+                    crate::settings_ui::setting_surface()
                         .min_w_0()
                         .gap_3()
                         .child(
@@ -1625,16 +1608,29 @@ impl Desktop {
                 );
             }
         }
-        view = view.child(
-            outline_pill("register-storage-location")
-                .icon(icons::add())
-                .label("添加课程库位置")
-                .self_start()
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.register_storage_location(window, cx)),
-                ),
+        locations = locations.child(
+            crate::settings_ui::setting_surface().child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_4()
+                    .items_center()
+                    .flex_wrap()
+                    .child(div().flex_1().min_w(rems(12.)).child(theme::supporting_info(
+                        "storage-policy",
+                        "更改默认位置只影响后续生成的笔记",
+                    )))
+                    .child(
+                        outline_pill("register-storage-location")
+                            .icon(icons::add())
+                            .label("添加课程库位置")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.register_storage_location(window, cx)
+                            })),
+                    ),
+            ),
         );
-        view.into_any_element()
+        view.child(locations).into_any_element()
     }
 
 

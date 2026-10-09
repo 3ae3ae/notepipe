@@ -871,7 +871,7 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> Div {
         let request = self.default_model_request();
-        let mut current = settings_detail_group("model-diagnostic-default", icons::storage(), "默认识别模型");
+        let mut current = crate::settings_ui::SettingsGroup::new("model-diagnostic-default", "默认识别模型");
         if request.provider == AsrProvider::Api {
             current = current.child(crate::settings_ui::setting_surface().child(
                 settings_detail_row(

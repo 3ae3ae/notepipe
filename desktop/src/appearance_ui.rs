@@ -453,41 +453,30 @@ impl Desktop {
         // Both stored values remain in place in every appearance mode. Measure
         // against every supported name so selecting a longer one cannot move
         // the preference rows below these two fields.
-        let columns = palette_columns(width, palette_minimum_width(&ALL, window), 2);
+        // The palette grid sits inside the group's card padding.
+        let columns = palette_columns(
+            (width - 42. * f32::from(window.rem_size()) / 14.).max(0.),
+            palette_minimum_width(&ALL, window),
+            2,
+        );
         v_flex()
             .w_full()
             .min_w_0()
-            .gap(px(24.))
-            .child(settings_row("appearance-mode-row", icons::palette(), "外观模式", "", modes))
+            .gap(px(28.))
             .child(
-                v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap(px(16.))
+                crate::settings_ui::SettingsGroup::new("appearance-theme", "外观")
+                    .child(settings_row("appearance-mode-row", icons::palette(), "外观模式", "", modes))
                     .child(
-                        // Same primary-colored heading as settings_section.
-                        h_flex()
-                            .gap(px(8.))
-                            .px(rems(4. / 14.))
-                            .items_center()
-                            .text_color(color(ACCENT_STRONG))
-                            .child(icons::palette().size_5())
-                            .child(
-                                accessible_text("palette-presets-heading", "主题配色")
-                                    .role(Role::Heading)
-                                    .text_size(TEXT_TITLE)
-                                    .font_weight(FontWeight::SEMIBOLD),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .grid()
-                            .grid_cols(columns)
-                            .w_full()
-                            .min_w_0()
-                            .gap(px(PALETTE_GAP))
-                            .child(self.palette_preset(false, preference.light, cx))
-                            .child(self.palette_preset(true, preference.dark, cx)),
+                        crate::settings_ui::setting_surface().gap(px(12.)).child(
+                            div()
+                                .grid()
+                                .grid_cols(columns)
+                                .w_full()
+                                .min_w_0()
+                                .gap(px(PALETTE_GAP))
+                                .child(self.palette_preset(false, preference.light, cx))
+                                .child(self.palette_preset(true, preference.dark, cx)),
+                        ),
                     ),
             )
             .child(self.appearance_controls(cx))

@@ -22,11 +22,6 @@ impl Desktop {
                     .min_w_0()
                     .items_center()
                     .gap_4()
-                    .p_4()
-                    .bg(color(SURFACE))
-                    .border_1()
-                    .border_color(color(CARD_LINE))
-                    .rounded(RADIUS_CARD)
                     .child(img("images/course2md.png").size(rems(64. / 14.)).flex_shrink_0())
                     .child(
                         v_flex()
@@ -40,7 +35,7 @@ impl Desktop {
                                     .child(
                                         accessible_text("about-name", "course2md")
                                             .role(Role::Heading)
-                                            .text_size(TEXT_DISPLAY)
+                                            .text_size(TEXT_TITLE)
                                             .font_weight(FontWeight::SEMIBOLD),
                                     )
                                     .child(

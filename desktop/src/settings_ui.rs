@@ -300,44 +300,15 @@ pub(super) fn settings_status_row(
         )
 }
 
-/// One setting's tonal block. Peer settings in a section stack with a
-/// narrow gap, forming an M3 connected list rather than separate cards.
+/// One setting's content box inside a settings card; the card owns the surface.
 pub(super) fn setting_surface() -> Div {
     v_flex()
         .w_full()
         .min_w_0()
         .flex_shrink_0()
         .px(rems(20. / 14.))
-        .py(rems(16. / 14.))
+        .py(rems(14. / 14.))
         .gap_2()
-        .bg(color(SURFACE))
-        .rounded(px(12.))
-        .border_1()
-        .border_color(color(CARD_LINE))
-}
-
-/// Section boundaries use hierarchy and space, without a second card outline.
-pub(super) fn settings_section(id: impl Into<ElementId>, title: &'static str, icon: Icon) -> Div {
-    // The scroll viewport owns height limits. A section must keep its natural
-    // height, including the fixed-height actions at its end, as details change.
-    // M3 list sections: a primary-colored heading, then peer settings joined
-    // by a narrow gap so the section reads as one list.
-    v_flex().w_full().min_w_0().flex_shrink_0().gap(px(3.)).child(
-        h_flex()
-            .flex_shrink_0()
-            .gap_2()
-            .px(rems(4. / 14.))
-            .pb(rems(9. / 14.))
-            .items_center()
-            .text_color(color(ACCENT_STRONG))
-            .child(icon.size_5().flex_shrink_0())
-            .child(
-                text(id, title)
-                    .role(Role::Heading)
-                    .text_size(TEXT_TITLE)
-                    .font_weight(FontWeight::SEMIBOLD),
-            ),
-    )
 }
 
 pub(super) fn settings_detail_group(id: impl Into<ElementId>, icon: Icon, title: &'static str) -> Div {
@@ -506,19 +477,92 @@ fn settings_tab_label(index: usize) -> &'static str {
     ["生成笔记", "服务与账号", "存储", "应用", "外观"][index.min(4)]
 }
 
-fn group(id: &'static str, title: &'static str) -> Div {
-    let icon = match id {
-        "language-settings" => icons::subtitles(),
-        "asr-default-settings" | "speech-services-heading" => icons::microphone(),
-        "ai-default-settings" | "ai-services-heading" => icons::science(),
-        "export-default-settings" => icons::download(),
-        "account-settings-heading" => icons::login(),
-        "ai-accounts-heading" => icons::shield(),
-        "appearance-motion" => icons::tune(),
-        "diagnostics-heading" => icons::settings(),
-        _ => icons::info(),
-    };
-    settings_section(id, title, icon)
+fn group(id: &'static str, title: &'static str) -> SettingsGroup {
+    SettingsGroup::new(id, title)
+}
+
+/// One settings section as in the M3 canvas: a primary-colored title above a
+/// single card whose items are separated by inset dividers.
+#[derive(IntoElement)]
+pub(crate) struct SettingsGroup {
+    id: &'static str,
+    title: &'static str,
+    action: Option<AnyElement>,
+    items: Vec<AnyElement>,
+}
+
+impl SettingsGroup {
+    pub(crate) fn new(id: &'static str, title: &'static str) -> Self {
+        Self { id, title, action: None, items: Vec::new() }
+    }
+
+    /// A quiet action that applies to the whole group, trailing its title.
+    pub(crate) fn action(mut self, action: impl IntoElement) -> Self {
+        self.action = Some(action.into_any_element());
+        self
+    }
+}
+
+impl ParentElement for SettingsGroup {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.items.extend(elements);
+    }
+}
+
+impl RenderOnce for SettingsGroup {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let mut card = settings_card();
+        for (index, item) in self.items.into_iter().enumerate() {
+            if index > 0 {
+                card = card.child(
+                    div()
+                        .h(px(1.))
+                        .mx(rems(20. / 14.))
+                        .flex_shrink_0()
+                        .bg(color(HAIRLINE)),
+                );
+            }
+            card = card.child(item);
+        }
+        v_flex()
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .gap(rems(10. / 14.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .min_h(rems(24. / 14.))
+                    .items_center()
+                    .child(
+                        text(self.id, self.title)
+                            .role(Role::Heading)
+                            .flex_1()
+                            .px(rems(4. / 14.))
+                            .text_size(rems(15. / 14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(color(ACCENT_STRONG)),
+                    )
+                    .children(self.action),
+            )
+            .child(card)
+    }
+}
+
+/// The settings card shared by groups and standalone settings: tonal surface,
+/// faint outline, M3 level-1 elevation.
+pub(crate) fn settings_card() -> Div {
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
+        .bg(color(SURFACE))
+        .rounded(RADIUS_CARD)
+        .border_1()
+        .border_color(color(CARD_LINE))
+        .shadow(shadow_card())
+        .overflow_hidden()
 }
 pub(super) fn preference(
     icon: Option<Icon>,
@@ -1104,33 +1148,19 @@ impl Desktop {
         }
         view = view.child(
             group("account-settings-heading", "来源账号").child(
-                card_surface()
-                    .gap_3()
-                    .child(self.account_settings_page(cx)),
+                setting_surface().gap_3().child(self.account_settings_page(cx)),
             ),
         );
         // AI 账号：Codex 订阅登录与 Ollama 本地发现的入口与状态（与服务列表平级可见，
         // 不再只藏在服务编辑器里）。卡片与「来源账号」同一边界处理。
         view = view.child(
-            group("ai-accounts-heading", "AI 账号").child(
-                v_flex()
-                    .w_full()
-                    .gap_3()
-                    .child(
-                        card_surface()
-                            .gap_3()
-                            .child(self.codex_account_section(
-                                crate::codex_ui::CodexSurface::Settings,
-                                false,
-                                cx,
-                            )),
-                    )
-                    .child(
-                        card_surface()
-                            .gap_3()
-                            .child(self.ollama_account_section(cx)),
-                    ),
-            ),
+            group("ai-accounts-heading", "AI 账号")
+                .child(setting_surface().gap_3().child(self.codex_account_section(
+                    crate::codex_ui::CodexSurface::Settings,
+                    false,
+                    cx,
+                )))
+                .child(setting_surface().gap_3().child(self.ollama_account_section(cx))),
         );
         let latest = self.preferences.latest_versions();
         for (purpose, heading_id, heading, add_label) in [
@@ -1148,13 +1178,6 @@ impl Desktop {
             ),
         ] {
             let mut section = group(heading_id, heading);
-            if purpose == ServicePurpose::Speech {
-                // 空分区先说明用途：何时需要在线语音服务（与「生成笔记·识别方式」呼应）
-                section = section.child(theme::supporting_info(
-                    "speech-services-purpose",
-                    "音频会发送到所选服务",
-                ));
-            }
             for version in latest.values().filter(|version| {
                 version.config.protocol.purpose() == purpose
                     && !self
@@ -1163,14 +1186,34 @@ impl Desktop {
             }) {
                 section = section.child(self.service_card(version, cx));
             }
+            // The add action is the list's last item; the speech consequence
+            // sits beside it because adding is where the choice is made.
             section = section.child(
-                outline_pill(("add-service", purpose as usize))
-                    .icon(icons::add())
-                    .label(add_label)
-                    .self_start()
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_settings_service_editor(purpose, None, window, cx);
-                    })),
+                setting_surface().child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_4()
+                        .items_center()
+                        .flex_wrap()
+                        .child(div().flex_1().min_w(rems(12.)).when(
+                            purpose == ServicePurpose::Speech,
+                            |slot| {
+                                slot.child(theme::supporting_info(
+                                    "speech-services-purpose",
+                                    "音频会发送到所选服务",
+                                ))
+                            },
+                        ))
+                        .child(
+                            outline_pill(("add-service", purpose as usize))
+                                .icon(icons::add())
+                                .label(add_label)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_settings_service_editor(purpose, None, window, cx);
+                                })),
+                        ),
+                ),
             );
             view = view.child(section);
         }
@@ -1257,8 +1300,7 @@ impl Desktop {
         let edit_id = id.clone();
         let test_id = id.clone();
         let default_id = id.clone();
-        card_surface()
-            .gap_2()
+        setting_surface()
             .child(
                 h_flex()
                     .gap_2()
@@ -1802,7 +1844,7 @@ impl Desktop {
         .detach();
     }
     pub(crate) fn appearance_controls(&self, cx: &mut Context<Self>) -> Div {
-        group("appearance-motion", "界面偏好")
+        div().w_full().child(group("appearance-motion", "界面偏好")
             .child(settings_row(
                 "app-font-scale-label",
                 icons::zoom_in(),
@@ -1848,7 +1890,7 @@ impl Desktop {
                             this.commit_application(next, cx);
                         })),
                 ),
-            )
+            ))
     }
     fn application_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
@@ -1856,7 +1898,10 @@ impl Desktop {
             .min_w_0()
             .gap_6()
             .child(self.environment_page(window, cx))
-            .child(settings_row(
+            .child(
+                group("about-heading", "关于")
+                    .child(setting_surface().child(self.about_page(cx)))
+                    .child(settings_row(
                 "restart-onboarding-label",
                 icons::book_open(),
                 "用户引导",
@@ -1867,8 +1912,8 @@ impl Desktop {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.start_onboarding(window, cx);
                     })),
-            ))
-            .child(group("about-heading", "关于").child(self.about_page(cx)))
+            )),
+            )
             .into_any_element()
     }
     pub(crate) fn commit_application(
@@ -2064,14 +2109,20 @@ impl Desktop {
             details = details.child(programs);
         }
         details = details.child(self.model_hardware_details(cx));
-        group("diagnostics-heading", "运行检查")
-            .child(card)
-            .child(crate::motion::disclosure(
-                "diagnostics-detail-content",
-                open,
-                details,
-                window,
-                cx,
+        // Expanded details belong to the status item, not a divided item of
+        // their own; the model panel follows as its own section.
+        v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_6()
+            .child(group("diagnostics-heading", "运行检查").child(
+                v_flex().w_full().min_w_0().child(card).child(crate::motion::disclosure(
+                    "diagnostics-detail-content",
+                    open,
+                    details.px(rems(20. / 14.)).pb(rems(16. / 14.)),
+                    window,
+                    cx,
+                )),
             ))
             .child(self.model_diagnostics_panel(window, cx))
     }
