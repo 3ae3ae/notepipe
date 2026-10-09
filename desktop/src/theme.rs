@@ -50,7 +50,12 @@ tokens!(
     SEGMENT_TRACK,
     SWITCH_TRACK_OFF,
     HOVER_WARM,
-    SELECTION
+    SELECTION,
+    PRIMARY_CONTAINER,
+    ON_PRIMARY_CONTAINER,
+    SECONDARY_CONTAINER,
+    ON_SECONDARY_CONTAINER,
+    SURFACE_HIGH
 );
 const COLOR_COUNT: usize = ALL_TOKENS.len();
 
@@ -79,13 +84,21 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
         INK => rgb(p.text),
         GRAY => rgb(p.muted),
         FAINT => rgb(p.subtle),
-        HAIRLINE | CARD_LINE => rgb(p.border),
+        HAIRLINE => rgb(p.border),
+        // M3 cards are separated by tone rather than a full-strength outline.
+        CARD_LINE => blend(rgb(p.surface), rgb(p.border), 0.55),
         CONTROL => rgb(p.control),
         ACCENT | ACCENT_STRONG | PRIMARY | PROGRESS_FILL => rgb(p.accent),
         ON_PRIMARY => rgb(p.on_accent),
         PRIMARY_HOVER => blend(rgb(p.accent), rgb(p.text), 0.10),
         PRIMARY_ACTIVE => blend(rgb(p.accent), rgb(p.text), 0.20),
-        ACCENT_SOFT => tint(p.accent, if id.is_dark() { 0.16 } else { 0.10 }),
+        // M3 container roles derived from each palette's own accent and text, so
+        // every preset keeps its identity (assets/themes/SOURCES.md).
+        ACCENT_SOFT | SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.24 } else { 0.14 }),
+        ON_SECONDARY_CONTAINER => blend(rgb(p.text), rgb(p.accent), if id.is_dark() { 0.30 } else { 0.40 }),
+        PRIMARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.38 } else { 0.24 }),
+        ON_PRIMARY_CONTAINER => blend(rgb(p.text), rgb(p.accent), 0.20),
+        SURFACE_HIGH => blend(rgb(p.canvas), rgb(p.text), if id.is_dark() { 0.07 } else { 0.05 }),
         SUCCESS => rgb(p.success),
         SUCCESS_BG => tint(p.success, 0.12),
         WARNING => rgb(p.warning),
@@ -214,8 +227,8 @@ fn sync_component_theme(dark: bool, cx: &mut App) {
 
 /* ---------- 几何（px，不随字号缩放） ---------- */
 pub const RADIUS_PILL: Pixels = px(999.);
-pub const RADIUS_CARD: Pixels = px(12.);
-pub const RADIUS_HERO: Pixels = px(16.);
+pub const RADIUS_CARD: Pixels = px(16.);
+pub const RADIUS_HERO: Pixels = px(28.);
 pub const RADIUS_SMALL: Pixels = px(8.);
 /// Ordinary controls share this height, including padding, at every text scale.
 pub const CONTROL_HEIGHT: Rems = rems(40. / 14.);
@@ -272,6 +285,10 @@ pub fn shadow_hero() -> Vec<gpui::BoxShadow> {
 /// Selected segment pill: 0/1/2 @12%.
 pub fn shadow_segment_selected() -> Vec<gpui::BoxShadow> {
     vec![gpui::BoxShadow::new(px(0.), px(1.), shadow_color(0.12)).blur_radius(px(2.))]
+}
+/// M3 level-1 card elevation: 0/1/2 @6%, kept faint so tone carries the layer.
+pub fn shadow_card() -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow::new(px(0.), px(1.), shadow_color(0.06)).blur_radius(px(2.))]
 }
 /// Overlay panels and dialogs: 0/12/32 @16%.
 pub fn shadow_popover() -> Vec<gpui::BoxShadow> {
@@ -494,6 +511,7 @@ pub fn card_surface() -> gpui::Div {
         .border_1()
         .border_color(color(CARD_LINE))
         .rounded(RADIUS_CARD)
+        .shadow(shadow_card())
 }
 
 /// A selectable preview surface. Its opaque contents cannot conceal pointer

@@ -319,14 +319,9 @@ impl RenderOnce for SingleChoiceGroup {
                 div()
                     .absolute()
                     .rounded_full()
-                    .bg(super::color(super::SURFACE))
-                    .border_1()
-                    .border_color(super::blend(
-                        super::color(super::SURFACE),
-                        super::color(super::ACCENT),
-                        0.45,
-                    ))
-                    .shadow(super::shadow_segment_selected())
+                    // M3 segmented buttons and navigation share the tonal
+                    // secondary container as the selected surface.
+                    .bg(super::color(super::SECONDARY_CONTAINER))
                     .when(!vertical, |fill| {
                         fill.top_0()
                             .bottom_0()
@@ -358,7 +353,7 @@ impl RenderOnce for SingleChoiceGroup {
             };
             let text_color = super::blend(
                 super::color(super::GRAY),
-                super::color(super::ACCENT_STRONG),
+                super::color(super::ON_SECONDARY_CONTAINER),
                 coverage,
             );
             let debug_kind = if self.full_width { "full" } else { "content" };
@@ -439,10 +434,7 @@ impl RenderOnce for SingleChoiceGroup {
             .min_w_0()
             .max_w_full()
             .p(px(inset))
-            // 轨道用内嵌面色（与输入框同一 recessed 语义）：4.5% 混合在深色下与卡片底无法区分，
-            // 导致「选中段跳出轨道」的错觉（system.md：角色映射失败应在共享层修正）。
-            // 页面底色与 INSET 几乎相同，单靠填充在页面背景上轨道会消失（reader 页签、
-            // 笔记库筛选、工作台高级选项），补一道发丝边让轨道在任何底上都有定义。
+            // M3 分段按钮：透明轨道 + 发丝外框，选中段为 secondary container。
             // 竖向导航没有轨道概念（settings.md：复用胶囊选中即可），轨道近乎方形时
             // rounded_full 会把发丝边画成一个完整圆圈，因此竖向不画轨道外框。
             .when(!vertical, |group| {
@@ -451,11 +443,7 @@ impl RenderOnce for SingleChoiceGroup {
                     .border_1()
                     .border_color(super::color(super::HAIRLINE))
             })
-            .bg(if vertical {
-                gpui::transparent_black()
-            } else {
-                super::color(super::INSET).into()
-            })
+            .bg(gpui::transparent_black())
             .when(self.full_width, |group| group.w_full())
             .when(!self.full_width, |group| {
                 // 边框占入声明宽度：lane 可用宽度不被发丝边吃掉
