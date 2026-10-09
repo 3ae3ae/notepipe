@@ -333,10 +333,7 @@ fn task_feedback(state: TaskState, error: Option<&str>) -> Option<TaskFeedback> 
 }
 
 pub(crate) fn task_attention_summary(task: &TaskRecord) -> String {
-    if task
-        .blocked
-        .iter()
-        .any(|request| request.reason == "uncertain")
+    if task.has_uncertain()
     {
         return task_status_label(task);
     }
@@ -388,10 +385,7 @@ fn service_configuration_issue(message: &str) -> Option<&'static str> {
 
 fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
     if task.handled_by.is_some()
-        || task
-            .blocked
-            .iter()
-            .any(|request| request.reason == "uncertain")
+        || task.has_uncertain()
     {
         return None;
     }
@@ -1840,7 +1834,7 @@ impl Desktop {
         let requests: Vec<_> = task
             .blocked
             .iter()
-            .filter(|b| b.reason == "uncertain")
+            .filter(|b| b.is_uncertain())
             .filter_map(|b| b.request_id.clone())
             .collect();
         if requests.is_empty() {
@@ -1850,7 +1844,7 @@ impl Desktop {
             let components = task
                 .blocked
                 .iter()
-                .filter(|b| b.reason == "uncertain")
+                .filter(|b| b.is_uncertain())
                 .filter_map(|b| b.purpose.as_deref())
                 .map(|purpose| {
                     if purpose.contains("summary") {
@@ -1920,10 +1914,7 @@ impl Desktop {
                 self.navigate(Page::Task, cx);
                 return;
             }
-            if task
-                .blocked
-                .iter()
-                .any(|request| request.reason == "uncertain")
+            if task.has_uncertain()
             {
                 self.select_task(&id, cx);
                 self.navigate(Page::Task, cx);
@@ -2089,7 +2080,7 @@ impl Desktop {
                 message,
             } => {
                 task.updated = workspace::now();
-                if reason == "uncertain" {
+                if reason == course2md::dispatch::REASON_UNCERTAIN {
                     task.state = TaskState::Uncertain;
                 }
                 let blocked = workspace::BlockedRequest {
@@ -2142,7 +2133,7 @@ impl Desktop {
             if let (Some(done), Some(manifest)) = (&done, &manifest) {
                 task.artifact = Some(done.out_dir.clone());
                 let partial = done.partial.unwrap_or(manifest.partial);
-                task.state = if task.blocked.iter().any(|b| b.reason == "uncertain") {
+                task.state = if task.has_uncertain() {
                     TaskState::Uncertain
                 } else if partial {
                     TaskState::Partial
@@ -2156,7 +2147,7 @@ impl Desktop {
                 task.state = match task.intent {
                     Intent::Cancel => TaskState::Cancelled,
                     Intent::Pause | Intent::Quit => TaskState::Paused,
-                    Intent::Run if task.blocked.iter().any(|b| b.reason == "uncertain") => {
+                    Intent::Run if task.has_uncertain() => {
                         TaskState::Uncertain
                     }
                     Intent::Run => TaskState::NeedsAttention,
@@ -2697,7 +2688,7 @@ impl Desktop {
             let uncertain: Vec<_> = task
                 .blocked
                 .iter()
-                .filter(|b| b.reason == "uncertain")
+                .filter(|b| b.is_uncertain())
                 .collect();
             if let Some(message) = self
                 .task_feedback_view(task)
@@ -3094,10 +3085,7 @@ impl Desktop {
     }
 
     fn task_feedback_view(&self, task: &TaskRecord) -> Option<AnyElement> {
-        if task
-            .blocked
-            .iter()
-            .any(|request| request.reason == "uncertain")
+        if task.has_uncertain()
         {
             return None;
         }
@@ -3120,7 +3108,7 @@ impl Desktop {
         let uncertain: Vec<_> = task
             .blocked
             .iter()
-            .filter(|b| b.reason == "uncertain")
+            .filter(|b| b.is_uncertain())
             .collect();
         if uncertain.is_empty() || task.handled_by.is_some() {
             return None;
@@ -3440,10 +3428,7 @@ impl Desktop {
     /// uncertain outcomes, each with its real recovery action.
     pub fn box_task_attention(&mut self, task: &TaskRecord, cx: &mut Context<Self>) -> Div {
         let id = task.id.clone();
-        let uncertain = task
-            .blocked
-            .iter()
-            .any(|request| request.reason == "uncertain")
+        let uncertain = task.has_uncertain()
             && task.handled_by.is_none();
         // 部分完成：正文已发布，逐项标明未完成的附加处理并可只补做该项。
         let partial_failures: Vec<(String, String, String)> = if task.state == TaskState::Partial {
@@ -3715,15 +3700,12 @@ fn task_status_label(task: &TaskRecord) -> String {
     if task.handled_by.is_some() {
         return "已有后续处理任务".into();
     }
-    if task
-        .blocked
-        .iter()
-        .any(|request| request.reason == "uncertain")
+    if task.has_uncertain()
     {
         let purpose: std::collections::BTreeSet<_> = task
             .blocked
             .iter()
-            .filter(|request| request.reason == "uncertain")
+            .filter(|request| request.is_uncertain())
             .filter_map(|request| request.purpose.as_deref())
             .collect();
         let description = if !purpose.is_empty()
@@ -4539,7 +4521,7 @@ mod tests {
         outcomes.proofreading.message = Some("服务拒绝凭据".into());
         task.outcomes = serde_json::to_value(&outcomes).unwrap();
         task.blocked.push(crate::workspace::BlockedRequest {
-            reason: "uncertain".into(),
+            reason: course2md::dispatch::REASON_UNCERTAIN.into(),
             request_id: Some("pending".into()),
             purpose: Some("summary".into()),
             description: "摘要".into(),

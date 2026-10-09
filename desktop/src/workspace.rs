@@ -341,6 +341,11 @@ pub struct TaskRecord {
 }
 
 impl TaskRecord {
+    /// 是否有结果尚未确认的请求（BlockedRequest::is_uncertain 的任务级汇总）。
+    pub fn has_uncertain(&self) -> bool {
+        self.blocked.iter().any(BlockedRequest::is_uncertain)
+    }
+
     pub fn exports_only(&self) -> bool {
         matches!(
             &self.plan.operation,
@@ -432,6 +437,13 @@ pub struct BlockedRequest {
     #[serde(default)]
     pub description: String,
     pub message: String,
+}
+
+impl BlockedRequest {
+    /// 结果尚未确认的请求：reason 与 dispatch::REASON_UNCERTAIN 对齐的唯一判断点。
+    pub fn is_uncertain(&self) -> bool {
+        self.reason == course2md::dispatch::REASON_UNCERTAIN
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -759,10 +771,7 @@ impl State {
         );
         ensure!(
             intent != Intent::Run
-                || !task
-                    .blocked
-                    .iter()
-                    .any(|request| request.reason == "uncertain"),
+                || !task.has_uncertain(),
             "仍有请求结果尚未确认，请查看请求范围后选择是否重新发送"
         );
         task.intent = intent;
@@ -803,7 +812,7 @@ impl State {
         let current: BTreeSet<_> = task
             .blocked
             .iter()
-            .filter(|request| request.reason == "uncertain")
+            .filter(|request| request.is_uncertain())
             .filter_map(|request| request.request_id.as_ref())
             .collect();
         let selected: BTreeSet<_> = requests.iter().collect();
@@ -891,7 +900,7 @@ impl State {
             let unknown: BTreeSet<_> = original
                 .blocked
                 .iter()
-                .filter(|request| request.reason == "uncertain")
+                .filter(|request| request.is_uncertain())
                 .filter_map(|request| request.request_id.as_ref())
                 .collect();
             ensure!(
@@ -907,7 +916,7 @@ impl State {
                 && original.plan.config.llm.summarize
                 && value.get("summary").is_some_and(failed_outcome)
                 && original.blocked.iter().any(|request| {
-                    request.reason == "uncertain"
+                    request.is_uncertain()
                         && request.purpose.as_deref() == Some("proofreading")
                 })
                 && !course2md::dispatch::receipts(&original.work_dir)?
@@ -919,7 +928,7 @@ impl State {
             }
         } else {
             ensure!(
-                !original.blocked.iter().any(|r| r.reason == "uncertain"),
+                !original.has_uncertain(),
                 "仍有请求结果尚未确认，请先查看请求范围"
             );
         }
@@ -1213,7 +1222,7 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
 
 pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
     let receipts = course2md::dispatch::receipts(&task.work_dir)?;
-    task.blocked.retain(|request| request.reason != "uncertain");
+    task.blocked.retain(|request| !request.is_uncertain());
     for receipt in receipts.into_iter().filter(|r| {
         matches!(
             r.state,
@@ -1221,7 +1230,7 @@ pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
         )
     }) {
         task.blocked.push(BlockedRequest {
-            reason: "uncertain".into(),
+            reason: course2md::dispatch::REASON_UNCERTAIN.into(),
             request_id: Some(receipt.request_id),
             purpose: Some(receipt.purpose),
             description: receipt.description.clone(),
@@ -1241,10 +1250,7 @@ pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
         });
     }
     if !task.blocked.is_empty()
-        && task
-            .blocked
-            .iter()
-            .any(|request| request.reason == "uncertain")
+        && task.has_uncertain()
         && task.intent == Intent::Run
     {
         task.state = TaskState::Uncertain;

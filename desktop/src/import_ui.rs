@@ -276,10 +276,7 @@ fn retired_input_task<'a>(
 ) -> Option<&'a workspace::TaskRecord> {
     let task = submitted_input_task(draft, tasks, input)?;
     if !task.state.finished()
-        || task
-            .blocked
-            .iter()
-            .any(|request| request.reason == "uncertain")
+        || task.has_uncertain()
         || (task.state != workspace::TaskState::Cancelled && task.artifact.is_none())
     {
         return None;
@@ -3696,7 +3693,7 @@ mod tests {
         draft = unchanged;
         assert!(super::retired_input_task(&draft, &tasks, "新视频").is_none());
         tasks[1].blocked.push(workspace::BlockedRequest {
-            reason: "uncertain".into(),
+            reason: course2md::dispatch::REASON_UNCERTAIN.into(),
             request_id: Some("pending-summary".into()),
             purpose: Some("summary".into()),
             description: "摘要".into(),
