@@ -2363,20 +2363,11 @@ impl Desktop {
     }
 
     fn import_model_request(&self) -> (course2md::config::AsrProvider, String, PathBuf) {
-        use course2md::config::AsrProvider;
         let provider = self.actual_local_provider();
-        let config = self.import_base_config();
-        let model = config
-            .defaults
-            .asr_model
-            .filter(|model| !model.trim().is_empty())
-            .unwrap_or_else(|| {
-                if provider == AsrProvider::Npu {
-                    course2md::npu::resolve_npu_model(None)
-                } else {
-                    course2md::config::DEFAULT_ASR_MODEL.into()
-                }
-            });
+        let mut config = self.import_base_config();
+        // 与计划构造同一回填规则：空白时按识别方式补默认模型（NPU 专属解析）。
+        crate::task_ui::fill_default_asr_model(&mut config, provider);
+        let model = config.defaults.asr_model.unwrap_or_default();
         let root = course2md::config::model_dir_from(config.defaults.model_dir.as_deref());
         (provider, model, root)
     }

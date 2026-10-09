@@ -989,14 +989,85 @@ impl Desktop {
         }
     }
 
+    /// 计划构造函数共享的输入序言：工作区与草稿快照的同一组前置条件。
+    fn plan_draft(&self) -> Result<(&workspace::Workspace, &workspace::Draft)> {
+        let workspace = self.workspace.as_ref().context("输入与任务记录尚未恢复")?;
+        let draft = workspace.state.draft().context("当前输入尚未准备好")?;
+        Ok((workspace, draft))
+    }
+
+    /// 计划构造共享的组件检查：引擎与 FFmpeg 必备；`online` 来源另需 yt-dlp
+    /// （批量计划恒为在线来源，单条计划按已确认来源的 online 标记）。
+    fn ensure_plan_environment(&self, online: bool) -> Result<&crate::backend::Environment> {
+        let environment = self
+            .environment
+            .as_ref()
+            .context("正在检查生成笔记需要的组件，请稍候")?;
+        ensure!(
+            environment.engine,
+            "生成引擎无法启动。请在设置的应用与诊断中检查应用组件。"
+        );
+        ensure!(
+            environment.ffmpeg && environment.ffprobe,
+            "视频读取组件不可用。请在设置的应用与诊断中查看 FFmpeg 的安装方法。"
+        );
+        ensure!(
+            !online || environment.ytdlp,
+            "在线视频读取组件不可用。请在设置的应用与诊断中查看 yt-dlp 的安装方法。"
+        );
+        Ok(environment)
+    }
+
+    /// 保存位置仍在课程库中且当前可写；两个计划构造函数同一组校验与错误文案。
+    fn ensure_plan_storage(
+        &self,
+        workspace: &workspace::Workspace,
+        draft: &workspace::Draft,
+        validation: PlanValidation,
+    ) -> Result<()> {
+        let library = workspace
+            .state
+            .library(&draft.library_id)
+            .context("保存位置已不在课程库中，请选择保存位置")?;
+        validate_plan_storage(
+            validation,
+            library,
+            draft.folder,
+            self.cached_location_check(library),
+            self.library_indexes.get(&library.root),
+        )?;
+        Ok(())
+    }
+
+    /// 草稿选项覆写基础配置并规整模型目录；两个计划构造函数同一构建序列。
+    fn plan_config(&self, draft: &workspace::Draft) -> course2md::settings::ConfigFile {
+        let mut config = draft
+            .base_config
+            .clone()
+            .unwrap_or_else(|| self.preferences.defaults_config());
+        draft.options.apply_to(&mut config);
+        config.defaults.model_dir = Some(course2md::config::model_dir_from(
+            config.defaults.model_dir.as_deref(),
+        ));
+        config
+    }
+
+    /// 草稿上的服务引用，缺省回落到默认服务。
+    fn plan_refs(&self, draft: &workspace::Draft) -> ServiceRefs {
+        let defaults = self.preferences.default_refs();
+        ServiceRefs {
+            asr: draft.asr_service.clone().or(defaults.asr),
+            llm: draft.ai_service.clone().or(defaults.llm),
+        }
+    }
+
     fn build_plan(&self, validation: PlanValidation) -> Result<TaskPlan> {
         self.ordinary_preferences_ready_for_submit()?;
         ensure!(
             !self.preference_defaults_pending,
             "默认设置已保存，当前视频的选项尚未同步。请重试保存输入记录。"
         );
-        let workspace = self.workspace.as_ref().context("输入与任务记录尚未恢复")?;
-        let draft = workspace.state.draft().context("当前输入尚未准备好")?;
+        let (workspace, draft) = self.plan_draft()?;
         ensure!(
             !draft.input.is_empty(),
             if draft.online {
@@ -1018,22 +1089,7 @@ impl Desktop {
             "当前字幕尚未确认，请重新读取字幕，或明确选择其他文字来源"
         );
         let source = draft.source.clone().context("请先读取并确认视频")?;
-        let environment = self
-            .environment
-            .as_ref()
-            .context("正在检查生成笔记需要的组件，请稍候")?;
-        ensure!(
-            environment.engine,
-            "生成引擎无法启动。请在设置的应用与诊断中检查应用组件。"
-        );
-        ensure!(
-            environment.ffmpeg && environment.ffprobe,
-            "视频读取组件不可用。请在设置的应用与诊断中查看 FFmpeg 的安装方法。"
-        );
-        ensure!(
-            !source.online || environment.ytdlp,
-            "在线视频读取组件不可用。请在设置的应用与诊断中查看 yt-dlp 的安装方法。"
-        );
+        let environment = self.ensure_plan_environment(source.online)?;
         ensure!(
             draft.options.source_mode == 2
                 || (source.subtitle_request.is_none() && source.subtitle_read_error.is_none()),
@@ -1044,25 +1100,8 @@ impl Desktop {
             "视频身份尚未确认，请重新读取视频"
         );
         ensure!(!draft.title.trim().is_empty(), "请填写笔记名称");
-        let library = workspace
-            .state
-            .library(&draft.library_id)
-            .context("保存位置已不在课程库中，请选择保存位置")?;
-        validate_plan_storage(
-            validation,
-            library,
-            draft.folder,
-            self.cached_location_check(library),
-            self.library_indexes.get(&library.root),
-        )?;
-        let mut config = draft
-            .base_config
-            .clone()
-            .unwrap_or_else(|| self.preferences.defaults_config());
-        draft.options.apply_to(&mut config);
-        config.defaults.model_dir = Some(course2md::config::model_dir_from(
-            config.defaults.model_dir.as_deref(),
-        ));
+        self.ensure_plan_storage(workspace, draft, validation)?;
+        let mut config = self.plan_config(draft);
         let using_subtitle = draft.options.source_mode != 2
             && (source.selected_subtitle.is_some() || draft.subtitle.is_some());
         if using_subtitle {
@@ -1087,54 +1126,15 @@ impl Desktop {
                 "字幕还未确认。请读取字幕，或明确选择识别视频声音。"
             );
             config.defaults.transcript_source = Some(course2md::config::TranscriptSource::Asr);
-            let environment = self
-                .environment
-                .as_ref()
-                .context("正在检查本机识别能力，请稍候")?;
             let provider = config
                 .defaults
                 .provider
                 .unwrap_or_else(|| self.recommended_local_provider());
-            use course2md::config::AsrProvider;
-            match provider {
-                AsrProvider::Coreml => ensure!(
-                    environment.apple,
-                    "Apple 原生识别组件不可用。请选择其他本机识别方式，或在设置中检查应用组件。"
-                ),
-                AsrProvider::Gpu => ensure!(
-                    environment.llama && environment.gpu.is_some(),
-                    "没有检测到可用的 GPU 识别引擎。请选择 CPU 或其他本机识别方式。"
-                ),
-                AsrProvider::Cpu => ensure!(
-                    environment.llama,
-                    "CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。"
-                ),
-                AsrProvider::Npu => ensure!(
-                    environment.npu,
-                    "没有检测到可用的 Intel NPU 识别环境。请选择其他本机识别方式。"
-                ),
-                AsrProvider::Api => (),
-            }
+            ensure_asr_capability(environment, provider)?;
             config.defaults.provider = Some(provider);
-            if provider != AsrProvider::Api
-                && config
-                    .defaults
-                    .asr_model
-                    .as_deref()
-                    .is_none_or(|model| model.trim().is_empty())
-            {
-                config.defaults.asr_model = Some(if provider == AsrProvider::Npu {
-                    course2md::npu::resolve_npu_model(None)
-                } else {
-                    course2md::config::DEFAULT_ASR_MODEL.into()
-                });
-            }
+            fill_default_asr_model(&mut config, provider);
         }
-        let defaults = self.preferences.default_refs();
-        let refs = ServiceRefs {
-            asr: draft.asr_service.clone().or(defaults.asr),
-            llm: draft.ai_service.clone().or(defaults.llm),
-        };
+        let refs = self.plan_refs(draft);
         let config = match validation {
             PlanValidation::Preview => self.preferences.config_for_preview(&config, &refs)?,
             PlanValidation::Submission => self.preferences.config_for_refs(&config, &refs)?,
@@ -1179,104 +1179,29 @@ impl Desktop {
             !self.preference_defaults_pending,
             "默认设置已保存，当前选项尚未同步。请重试。"
         );
-        let workspace = self.workspace.as_ref().context("输入与任务记录尚未恢复")?;
-        let draft = workspace.state.draft().context("当前输入尚未准备好")?;
+        let (workspace, draft) = self.plan_draft()?;
         let identity = course2md::fetch::candidate_identity(candidate)
             .context("还无法确认这个视频的身份，请单独打开后转换")?;
-        let environment = self
-            .environment
-            .as_ref()
-            .context("正在检查生成笔记需要的组件，请稍候")?;
-        ensure!(
-            environment.engine,
-            "生成引擎无法启动。请在设置的应用与诊断中检查应用组件。"
-        );
-        ensure!(
-            environment.ffmpeg && environment.ffprobe,
-            "视频读取组件不可用。请在设置的应用与诊断中查看 FFmpeg 的安装方法。"
-        );
-        ensure!(
-            environment.ytdlp,
-            "在线视频读取组件不可用。请在设置的应用与诊断中查看 yt-dlp 的安装方法。"
-        );
-        let library = workspace
-            .state
-            .library(&draft.library_id)
-            .context("保存位置已不在课程库中，请选择保存位置")?;
-        validate_plan_storage(
-            PlanValidation::Submission,
-            library,
-            draft.folder,
-            self.cached_location_check(library),
-            self.library_indexes.get(&library.root),
-        )?;
-        let mut config = draft
-            .base_config
-            .clone()
-            .unwrap_or_else(|| self.preferences.defaults_config());
-        draft.options.apply_to(&mut config);
-        config.defaults.model_dir = Some(course2md::config::model_dir_from(
-            config.defaults.model_dir.as_deref(),
-        ));
+        let environment = self.ensure_plan_environment(true)?;
+        self.ensure_plan_storage(workspace, draft, PlanValidation::Submission)?;
+        let mut config = self.plan_config(draft);
         // 强制字幕（source_mode 1）不会走到语音识别；其余模式运行时可能退回 ASR，
         // 与 build_plan 一样先确认本机识别能力并补默认模型。
         if draft.options.source_mode != 1 {
-            use course2md::config::AsrProvider;
-            let environment = self
-                .environment
-                .as_ref()
-                .context("正在检查本机识别能力，请稍候")?;
             let provider = config
                 .defaults
                 .provider
                 .unwrap_or_else(|| self.recommended_local_provider());
-            let capability = || -> Result<()> {
-                match provider {
-                    AsrProvider::Coreml => ensure!(
-                        environment.apple,
-                        "Apple 原生识别组件不可用。请选择其他本机识别方式，或在设置中检查应用组件。"
-                    ),
-                    AsrProvider::Gpu => ensure!(
-                        environment.llama && environment.gpu.is_some(),
-                        "没有检测到可用的 GPU 识别引擎。请选择 CPU 或其他本机识别方式。"
-                    ),
-                    AsrProvider::Cpu => ensure!(
-                        environment.llama,
-                        "CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。"
-                    ),
-                    AsrProvider::Npu => ensure!(
-                        environment.npu,
-                        "没有检测到可用的 Intel NPU 识别环境。请选择其他本机识别方式。"
-                    ),
-                    AsrProvider::Api => (),
-                }
-                Ok(())
-            };
+            let capability = ensure_asr_capability(environment, provider);
             if draft.options.source_mode == 0 {
-                capability().context("部分视频可能没有字幕，需要语音识别能力作为后备")?;
+                capability.context("部分视频可能没有字幕，需要语音识别能力作为后备")?;
             } else {
-                capability()?;
+                capability?;
             }
             config.defaults.provider = Some(provider);
-            if provider != AsrProvider::Api
-                && config
-                    .defaults
-                    .asr_model
-                    .as_deref()
-                    .is_none_or(|model| model.trim().is_empty())
-            {
-                config.defaults.asr_model = Some(if provider == AsrProvider::Npu {
-                    course2md::npu::resolve_npu_model(None)
-                } else {
-                    course2md::config::DEFAULT_ASR_MODEL.into()
-                });
-            }
+            fill_default_asr_model(&mut config, provider);
         }
-        let defaults = self.preferences.default_refs();
-        let refs = ServiceRefs {
-            asr: draft.asr_service.clone().or(defaults.asr),
-            llm: draft.ai_service.clone().or(defaults.llm),
-        };
+        let refs = self.plan_refs(draft);
         let config = self.preferences.config_for_refs(&config, &refs)?;
         let mut validation_config = config.clone();
         validation_config
@@ -3848,6 +3773,56 @@ fn request_scope(request: &workspace::BlockedRequest) -> String {
 
 fn task_stage_order(stage: &str) -> usize {
     activity::stage_order(stage)
+}
+
+/// 本机识别能力检查：build_plan/build_batch_plan 的错误文案逐字一致，合一处维护。
+fn ensure_asr_capability(
+    environment: &crate::backend::Environment,
+    provider: course2md::config::AsrProvider,
+) -> Result<()> {
+    use course2md::config::AsrProvider;
+    match provider {
+        AsrProvider::Coreml => ensure!(
+            environment.apple,
+            "Apple 原生识别组件不可用。请选择其他本机识别方式，或在设置中检查应用组件。"
+        ),
+        AsrProvider::Gpu => ensure!(
+            environment.llama && environment.gpu.is_some(),
+            "没有检测到可用的 GPU 识别引擎。请选择 CPU 或其他本机识别方式。"
+        ),
+        AsrProvider::Cpu => ensure!(
+            environment.llama,
+            "CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。"
+        ),
+        AsrProvider::Npu => ensure!(
+            environment.npu,
+            "没有检测到可用的 Intel NPU 识别环境。请选择其他本机识别方式。"
+        ),
+        AsrProvider::Api => (),
+    }
+    Ok(())
+}
+
+/// 未显式选择模型时按识别方式补默认模型（NPU 走专属解析）。import_ui 的
+/// import_model_request 与两个计划构造函数共用同一回填规则。
+pub(crate) fn fill_default_asr_model(
+    config: &mut course2md::settings::ConfigFile,
+    provider: course2md::config::AsrProvider,
+) {
+    use course2md::config::AsrProvider;
+    if provider != AsrProvider::Api
+        && config
+            .defaults
+            .asr_model
+            .as_deref()
+            .is_none_or(|model| model.trim().is_empty())
+    {
+        config.defaults.asr_model = Some(if provider == AsrProvider::Npu {
+            course2md::npu::resolve_npu_model(None)
+        } else {
+            course2md::config::DEFAULT_ASR_MODEL.into()
+        });
+    }
 }
 
 fn validate_plan_config(source: &str, config: &course2md::settings::ConfigFile) -> Result<()> {
