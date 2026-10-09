@@ -11,8 +11,8 @@ const SETTINGS_SHELL_WIDTH: f32 =
     SETTINGS_SIDEBAR_WIDTH + SETTINGS_COLUMN_GAP + SETTINGS_CONTENT_MAX_WIDTH + SHELL_GUTTER * 2.;
 const SETTINGS_SIDEBAR_BREAKPOINT: f32 = 1100.;
 
-/// Capsule tabs already mark the current page. TitleBar's default bottom
-/// hairline would be unused chrome under 工作台 / 我的笔记 / 任务 / 设置.
+/// The app bar marks the current destination with a tonal pill; TitleBar's
+/// default bottom hairline would be unused chrome.
 pub(crate) fn apply_shell_title_bar_chrome(bar: TitleBar) -> TitleBar {
     bar.pl_0().bg(color(CANVAS)).border_b_0()
 }
@@ -82,82 +82,76 @@ impl Desktop {
         let task_count = self.workspace.as_ref().map_or(0, |workspace| {
             crate::task_ui::actionable_task_count(&workspace.state.tasks)
         });
-        let current = match self.page {
-            Page::Library | Page::Result => "library",
-            Page::Task => "tasks",
-            Page::Settings => "settings",
-            _ => "import",
-        };
         let scale = self.preferences.application().font_scale;
-        let side_width = 96.;
-        let available = (f32::from(window.bounds().size.width) - side_width * 2.).max(0.);
-        let nav_width = (464. * scale).min(available);
-        let compact = nav_width < 464. * scale;
-        let task_label = if task_count == 0 || compact {
-            "任务".to_owned()
-        } else {
-            format!("任务 · {task_count}")
-        };
-        let nav = div().w(px(nav_width)).child(
-            SingleChoiceGroup::new("main-navigation", "主导航")
-                .tabs()
-                .activate_selected()
-                .full_width()
-                .options([
-                    ("import", if compact { "导入" } else { "工作台" }.to_owned()),
-                    (
-                        "library",
-                        if compact { "笔记" } else { "我的笔记" }.to_owned(),
-                    ),
-                    ("tasks", task_label),
-                    ("settings", "设置".to_owned()),
-                ])
-                .icon("import", icons::dashboard())
-                .icon("library", icons::book_open())
-                .icon(
-                    "tasks",
-                    if compact && tasks_need_attention {
-                        icons::warning()
-                    } else {
-                        icons::task()
-                    },
-                )
-                .icon(
-                    "settings",
-                    if self.settings_have_problem() {
-                        icons::warning()
-                    } else {
-                        icons::settings()
-                    },
-                )
-                .selected(current)
-                .on_change(cx.listener(|this, value: &SharedString, window, cx| {
-                    if value.as_ref() == "settings" {
-                        this.open_settings(window, cx);
-                        return;
-                    }
-                    let page = match value.as_ref() {
-                        "library" => Page::Library,
-                        "tasks" => Page::Task,
-                        _ => Page::New,
-                    };
-                    if page == Page::Library {
-                        this.folder_filter = None;
-                    }
-                    if page == Page::New && !this.prepare_workbench_input(window, cx) {
-                        return;
-                    }
-                    this.navigate(page, cx);
-                })),
-        );
+        // macOS draws the traffic lights inside the title bar's leading edge.
+        let leading = if cfg!(target_os = "macos") { 80. } else { 12. };
+        let page = self.page;
+        let brand = div()
+            .id("brand-home")
+            .flex()
+            .items_center()
+            .gap(rems(10. / 14.))
+            .px(rems(6. / 14.))
+            .h(CONTROL_HEIGHT)
+            .rounded(RADIUS_PILL)
+            .cursor_pointer()
+            .hover(|style| style.bg(color(INK).opacity(0.08)))
+            .role(Role::Link)
+            .aria_label("course2md 工作台")
+            .child(
+                div()
+                    .size(rems(28. / 14.))
+                    .rounded(px(8.))
+                    .bg(color(PRIMARY))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icons::book_open().size(rems(18. / 14.)).text_color(color(ON_PRIMARY))),
+            )
+            .child(
+                div()
+                    .text_size(TEXT_TITLE)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(color(INK))
+                    .child("course2md"),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                if this.prepare_workbench_input(window, cx) {
+                    this.navigate(Page::New, cx);
+                }
+            }));
+        let library = nav_action("nav-library", matches!(page, Page::Library | Page::Result), cx)
+            .icon(icons::book_open())
+            .label("笔记库")
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.folder_filter = None;
+                this.navigate(Page::Library, cx);
+            }));
+        // Tasks stay reachable, but only claim space once there is work to show.
+        let tasks = (task_count > 0 || tasks_need_attention || page == Page::Task).then(|| {
+            nav_action("nav-tasks", page == Page::Task, cx)
+                .icon(if tasks_need_attention { icons::warning() } else { icons::task() })
+                .label(if task_count > 0 { format!("任务 · {task_count}") } else { "任务".to_owned() })
+                .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Task, cx)))
+        });
+        let settings = nav_action("nav-settings", page == Page::Settings, cx)
+            .icon(if self.settings_have_problem() { icons::warning() } else { icons::settings() })
+            .accessibility_label("设置")
+            .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)));
         apply_shell_title_bar_chrome(TitleBar::new().h(px(40. * scale + 16.))).child(
             h_flex()
                 .w_full()
                 .min_w_0()
                 .h_full()
-                .child(div().w(px(side_width)).flex_shrink_0())
-                .child(h_flex().flex_1().min_w_0().justify_center().child(nav))
-                .child(div().w(px(side_width)).flex_shrink_0()),
+                .pl(px(leading))
+                .pr(px(16.))
+                .gap(px(4.))
+                .items_center()
+                .child(brand)
+                .child(div().flex_1())
+                .child(library)
+                .children(tasks)
+                .child(settings),
         )
     }
 
@@ -285,7 +279,7 @@ impl Desktop {
     fn page_title(&self) -> String {
         match self.page {
             Page::New => "生成笔记".into(),
-            Page::Library => "我的笔记".into(),
+            Page::Library => "笔记库".into(),
             Page::Task => "任务".into(),
             Page::Settings => "设置".into(),
             Page::Result => self
@@ -317,10 +311,21 @@ impl Desktop {
                 row.child(
                     quiet("refresh-library")
                         .icon(icons::refresh())
-                        .label("刷新")
+                        .accessibility_label("刷新笔记库")
+                        .tooltip("刷新")
                         .loading(self.loading)
                         .disabled(self.loading)
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
+                )
+                .child(
+                    primary_pill("library-new-note")
+                        .icon(icons::plus())
+                        .label("新笔记")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if this.prepare_workbench_input(window, cx) {
+                                this.navigate(Page::New, cx);
+                            }
+                        })),
                 )
             });
         v_flex().pt(px(24.)).gap_2().child(row)
