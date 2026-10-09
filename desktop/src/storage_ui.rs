@@ -607,9 +607,13 @@ impl Desktop {
                         }
                         this.read_generation = this.read_generation.wrapping_add(1);
                         this.reading = false;
-                        if let Some(preview) = &mut this.preview {
+                        if let Some(preview) = this.preview.as_mut() {
                             let was_inside = preview.course.dir.starts_with(&located.previous_root);
-                            relocate_preview(preview, &located.previous_root, &located.destination);
+                            relocate_preview(
+                                std::rc::Rc::make_mut(preview),
+                                &located.previous_root,
+                                &located.destination,
+                            );
                             if was_inside {
                                 this.restore_reading_position(cx);
                             }

@@ -49,6 +49,7 @@ use gpui_component::{
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     path::PathBuf,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -301,7 +302,7 @@ struct Desktop {
     completed: Option<Completed>,
     courses: Vec<Course>,
     loading: bool,
-    preview: Option<backend::Preview>,
+    preview: Option<Rc<backend::Preview>>,
     read_generation: u64,
     reading: bool,
     opening_course: Option<PathBuf>,
@@ -1336,7 +1337,7 @@ impl Desktop {
                             this.result_tab = 0;
                             this.sync_reader_tab_stops();
                         }
-                        this.preview = Some(preview);
+                        this.preview = Some(Rc::new(preview));
                         // 事件路径触发阅读页数据加载（渲染不再负责）
                         this.ensure_reader_data(cx);
                         this.apply_course_title_aliases();

@@ -410,8 +410,8 @@ impl Desktop {
             .preview
             .as_ref()
             .map(|preview| self.course_display_title(&preview.course));
-        if let (Some(preview), Some(title)) = (&mut self.preview, title) {
-            preview.course.title = title;
+        if let (Some(preview), Some(title)) = (self.preview.as_mut(), title) {
+            Rc::make_mut(preview).course.title = title;
         }
     }
 

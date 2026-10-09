@@ -3,7 +3,7 @@ use super::*;
 
 impl Desktop {
     pub(super) fn generation_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let value = self.preferences.generation().clone();
+        let value = self.preferences.generation();
         let provider = value.options.provider.map(|p| p.as_str()).unwrap_or("");
         let language = match value.preferred_subtitle_languages.as_slice() {
             [] => "",

@@ -324,7 +324,7 @@ pub(crate) struct State {
     // None follows the available reading width; an explicit choice survives resizing.
     toc_open: Option<bool>,
     find_return_focus: Option<FocusHandle>,
-    matches: Vec<Match>,
+    matches: Rc<Vec<Match>>,
     match_index: usize,
     clear_find: bool,
     loaded: Option<PathBuf>,
@@ -441,7 +441,7 @@ impl State {
             processing_details_open: false,
             toc_open: None,
             find_return_focus: None,
-            matches: Vec::new(),
+            matches: Rc::new(Vec::new()),
             match_index: 0,
             clear_find: false,
             loaded: None,
@@ -1062,7 +1062,7 @@ struct NoteFlow {
     outline: Vec<(f64, String)>,
     frame_index_by_path: HashMap<PathBuf, usize>,
     missing_by_anchor: HashMap<String, Vec<usize>>,
-    matches: Vec<Match>,
+    matches: Rc<Vec<Match>>,
     match_index: usize,
     find_open: bool,
     data_loading: bool,
@@ -1727,7 +1727,7 @@ impl Desktop {
         self.reader_ui.export_folder = None;
         self.reader_ui.offline_video = OfflineVideo::NotRequested;
         self.reader_ui.offline_opening = false;
-        self.reader_ui.matches.clear();
+        Rc::make_mut(&mut self.reader_ui.matches).clear();
         self.reader_ui.gallery_search_position = None;
         self.reader_ui.find_open = false;
         self.reader_ui.info_open = false;
@@ -1738,7 +1738,13 @@ impl Desktop {
         self.refresh_reader_data(cx);
     }
     fn refresh_reader_data(&mut self, cx: &mut Context<Self>) {
-        let Some(preview) = self.preview.clone() else {
+        // The blocking closure below needs an owned, Send preview; data loads
+        // are per open/reload, not per frame, so this clone is not the hot path.
+        let Some(preview) = self
+            .preview
+            .as_ref()
+            .map(|preview| preview.as_ref().clone())
+        else {
             return;
         };
         let path = preview.course.dir.clone();
@@ -2041,18 +2047,20 @@ impl Desktop {
             .preview
             .as_ref()
             .map(|preview| {
-                preview
-                    .blocks
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(block, value)| {
-                        block_text(value)
-                            .map(|text| nav::text_matches(text, &query))
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(move |range| Match { block, range })
-                    })
-                    .collect()
+                Rc::new(
+                    preview
+                        .blocks
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(block, value)| {
+                            block_text(value)
+                                .map(|text| nav::text_matches(text, &query))
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(move |range| Match { block, range })
+                        })
+                        .collect::<Vec<_>>(),
+                )
             })
             .unwrap_or_default();
         self.reader_ui.match_index = 0;
@@ -2138,7 +2146,7 @@ impl Desktop {
                 match result {
                     Ok(mut preview) => {
                         preview.course.title = this.course_display_title(&preview.course);
-                        this.preview = Some(preview);
+                        this.preview = Some(Rc::new(preview));
                         this.result_tab = tab;
                         this.sync_reader_tab_stops();
                         if refresh {
@@ -2449,7 +2457,7 @@ impl Desktop {
         cx.notify();
     }
     pub fn reader_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(preview) = self.preview.clone().map(Rc::new) else {
+        let Some(preview) = self.preview.clone() else {
             return crate::motion::enter(
                 "reader-opening",
                 h_flex()
