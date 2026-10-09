@@ -126,8 +126,7 @@ fn run_wizard(
                     )?;
                     match dl {
                         0 => {
-                            let rt = tokio::runtime::Runtime::new()?;
-                            rt.block_on(crate::models::download_models(&root))?;
+                            crate::runtime::block_on(crate::models::download_models(&root))??;
                             provider = Some(p);
                         }
                         1 => use_cloud = true,

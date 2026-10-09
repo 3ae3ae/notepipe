@@ -125,7 +125,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Some(Command::RunTask) => {
             init_logging(0, false, true);
             let request = course2md::execution::Request::read(std::io::stdin().lock())?;
-            tokio::runtime::Runtime::new()?.block_on(course2md::execution::run(request))
+            Ok(course2md::runtime::block_on(course2md::execution::run(request))??)
         }
         Some(Command::Models { cmd }) => match cmd {
             ModelsCmd::Inspect {
@@ -152,8 +152,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             } => {
                 init_logging(0, false, json);
                 let root = config::model_dir_from(dir.as_deref());
-                let status = tokio::runtime::Runtime::new()?
-                    .block_on(models::prepare(provider, &model, &root))?;
+                let status = course2md::runtime::block_on(models::prepare(provider, &model, &root))??;
                 progress::emit(
                     serde_json::json!({"type":"done", "out_dir":root, "title":model, "slides":0, "segments":0, "model_status":status}),
                 );
@@ -171,7 +170,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 let file = settings::load()?;
                 let root =
                     config::model_dir_from(dir.as_deref().or(file.defaults.model_dir.as_deref()));
-                tokio::runtime::Runtime::new()?.block_on(models::download_models(&root))?;
+                course2md::runtime::block_on(models::download_models(&root))??;
                 progress::emit(
                     serde_json::json!({"type":"done", "model_dir": root.display().to_string()}),
                 );
@@ -264,7 +263,6 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             progress::set_quiet(args.quiet);
             let file = settings::load()?;
             llm::validate(&file.llm)?;
-            let rt = tokio::runtime::Runtime::new()?;
             let mut targets: Vec<std::path::PathBuf> = vec![];
             for dir in &args.dirs {
                 collect_targets(dir, &mut targets, 0)?;
@@ -280,7 +278,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 );
             }
             for dir in &targets {
-                summarize_dir(&file, dir, args.force, args.out.as_deref(), &rt)?;
+                summarize_dir(&file, dir, args.force, args.out.as_deref())?;
             }
             Ok(())
         }
@@ -370,7 +368,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             let cfg = course2md::options::resolve(source, &cli.opts, &file)?;
             // 全量预检在 pipeline::run 开头做（下载/抽帧/模型加载之前，毫秒级失败）
             tracing::info!(out = %cfg.out_dir.display(), provider = %cfg.provider, "start");
-            tokio::runtime::Runtime::new()?.block_on(pipeline::run(&cfg))
+            Ok(course2md::runtime::block_on(pipeline::run(&cfg))??)
         }
     }
 }
@@ -414,7 +412,6 @@ fn summarize_version(
     dir: &std::path::Path,
     force: bool,
     out: Option<&std::path::Path>,
-    rt: &tokio::runtime::Runtime,
 ) -> anyhow::Result<()> {
     use course2md::{artifact, execution};
     let base = artifact::read_manifest(&dir.join("manifest.json"))?;
@@ -475,15 +472,15 @@ fn summarize_version(
         return Ok(());
     }
     let speech = pipeline::all_speech(&document.sections);
-    let summary = rt.block_on(course2md::summarize::summarize(
+    let summary = course2md::runtime::block_on(course2md::summarize::summarize(
         &file.llm,
         &speech,
         &document.meta,
-    ))?;
+    ))??;
     let mut outcomes = base.outcomes;
     outcomes.summary = artifact::Outcome::succeeded();
     outcomes.exports.clear();
-    rt.block_on(artifact::publish(
+    course2md::runtime::block_on(artifact::publish(
         &target,
         dir,
         &document.meta,
@@ -491,7 +488,7 @@ fn summarize_version(
         Some(&summary),
         &[],
         outcomes,
-    ))?;
+    ))??;
     if let Some(out) = out {
         std::fs::create_dir_all(out)?;
         let file = out.join(format!(
@@ -515,10 +512,9 @@ fn summarize_dir(
     dir: &std::path::Path,
     force: bool,
     out: Option<&std::path::Path>,
-    rt: &tokio::runtime::Runtime,
 ) -> anyhow::Result<()> {
     if dir.join("manifest.json").is_file() {
-        return summarize_version(file, dir, force, out, rt);
+        return summarize_version(file, dir, force, out);
     }
     use course2md::timeline::TimelineEvent;
     let timeline_path = dir.join("timeline.jsonl");
@@ -565,7 +561,7 @@ fn summarize_dir(
         extractor: String::new(),
         id: String::new(),
     };
-    let sm = rt.block_on(course2md::summarize::summarize(&file.llm, &events, &meta))?;
+    let sm = course2md::runtime::block_on(course2md::summarize::summarize(&file.llm, &events, &meta))??;
 
     if md_path.is_file() {
         let md = std::fs::read_to_string(&md_path)?;

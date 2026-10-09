@@ -19,6 +19,13 @@ pub fn lock_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+/// 在临时 Tokio runtime 上同步执行一个 async 块。
+/// CLI 的同步入口（main / wizard）多处需要跑单个 async 函数，
+/// 统一在此 `Runtime::new()?.block_on(...)`，避免每个调用点重复建 runtime 样板。
+pub fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
+    Ok(tokio::runtime::Runtime::new()?.block_on(f))
+}
+
 /// kill-on-drop 的子进程句柄。
 pub struct ManagedChild {
     child: Child,
