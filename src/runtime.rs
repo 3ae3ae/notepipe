@@ -247,30 +247,11 @@ pub fn http_agent(timeout: Duration) -> ureq::Agent {
         .build()
 }
 
-/// 在 PATH 上查找可执行文件（Windows 自动尝试 .exe 后缀）。
+/// 在 PATH 上查找可执行文件。
+/// 用 `which` crate 而非手写 PATH 遍历：正确处理 Windows PATHEXT
+/// （旧实现只试 `.exe`，`.bat`/`.cmd` 会漏检）。
 pub fn which(cmd: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    let names: Vec<String> = if cfg!(windows) {
-        vec![cmd.to_string(), format!("{cmd}.exe")]
-    } else {
-        vec![cmd.to_string()]
-    };
-    std::env::split_paths(&path)
-        .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
-        .find(|p| is_executable(p))
-}
-
-#[cfg(unix)]
-fn is_executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    p.metadata()
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable(p: &Path) -> bool {
-    p.is_file()
+    which::which(cmd).ok()
 }
 
 /// Own an OS lock separately from the lifetime of duplicated file descriptors.
