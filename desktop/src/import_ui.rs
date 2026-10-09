@@ -1005,6 +1005,14 @@ impl Desktop {
             })
     }
 
+    /// 选项监听器共享的收尾：草稿落盘成功后推进转换就绪，随后刷新界面。
+    fn persist_task_options(&mut self, cx: &mut Context<Self>) {
+        if self.save_current_draft(cx) {
+            self.advance_conversion_when_ready(cx);
+        }
+        cx.notify();
+    }
+
     /// Visible field, local file target, and status belonging to this source.
     pub fn box_source_input(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let mut view = v_flex().w_full().min_w_0().gap_4();
@@ -1194,7 +1202,7 @@ impl Desktop {
             } else {
                 candidate.title.clone()
             };
-            let (preview, text) = self.candidate_row_parts(candidate, index, &title, untitled);
+            let (preview, text) = self.candidate_row_parts(candidate, &title, untitled);
             let batchable = batch && identities[index].is_some();
             if batch {
                 // 与导出行同一多选模式：Checkbox 自身可点（键盘 Tab+空格可切换），
@@ -1278,7 +1286,7 @@ impl Desktop {
             v_flex()
                 .gap_3()
                 .child(
-                    accessible_text("import-collection-title", title.clone())
+                    accessible_text("import-collection-title", title)
                         .font_weight(FontWeight::SEMIBOLD),
                 )
                 .child(help(if batch {
@@ -1356,7 +1364,6 @@ impl Desktop {
     fn candidate_row_parts(
         &self,
         candidate: &source::SourceCandidate,
-        index: usize,
         title: &str,
         untitled: bool,
     ) -> (Div, Div) {
@@ -2089,10 +2096,7 @@ impl Desktop {
                             ConversionAiOption::Vision,
                             *value,
                         );
-                        if this.save_current_draft(cx) {
-                            this.advance_conversion_when_ready(cx);
-                        }
-                        cx.notify();
+                        this.persist_task_options(cx);
                     })),
             ),
         );
@@ -2130,10 +2134,7 @@ impl Desktop {
                                     ConversionAiOption::Proofread,
                                     *value,
                                 );
-                                if this.save_current_draft(cx) {
-                                    this.advance_conversion_when_ready(cx);
-                                }
-                                cx.notify();
+                                this.persist_task_options(cx);
                             })),
                     ),
                 ))
@@ -2153,10 +2154,7 @@ impl Desktop {
                                     ConversionAiOption::Summary,
                                     *value,
                                 );
-                                if this.save_current_draft(cx) {
-                                    this.advance_conversion_when_ready(cx);
-                                }
-                                cx.notify();
+                                this.persist_task_options(cx);
                             })),
                     ),
                 )),
@@ -2276,10 +2274,7 @@ impl Desktop {
                             value.as_ref() == "cloud",
                             local,
                         );
-                        if this.save_current_draft(cx) {
-                            this.advance_conversion_when_ready(cx);
-                        }
-                        cx.notify();
+                        this.persist_task_options(cx);
                     })),
             );
         if cloud {
@@ -2330,10 +2325,7 @@ impl Desktop {
                     .on_change(cx.listener(|this, value: &SharedString, _, cx| {
                         if let Ok(index) = value.parse::<usize>() {
                             apply_local_engine(&mut this.task_options, index);
-                            if this.save_current_draft(cx) {
-                                this.advance_conversion_when_ready(cx);
-                            }
-                            cx.notify();
+                            this.persist_task_options(cx);
                         }
                     })),
             );

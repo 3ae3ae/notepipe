@@ -2395,10 +2395,7 @@ impl Desktop {
                 details = details.child(settings_detail_row(
                     "setup-model-size-label",
                     "已下载",
-                    settings_value(
-                        "setup-model-size",
-                        format!("{:.1} MB", status.bytes as f64 / 1024. / 1024.),
-                    ),
+                    settings_value("setup-model-size", crate::activity::bytes(status.bytes)),
                 ));
             }
             for (index, part) in status.parts.iter().enumerate() {

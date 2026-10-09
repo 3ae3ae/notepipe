@@ -354,15 +354,13 @@ fn count(value: u64) -> String {
 }
 
 fn throughput(bytes_per_sec: f64) -> String {
-    if bytes_per_sec >= 1024. * 1024. * 1024. {
-        format!("{:.2} GB", bytes_per_sec / (1024. * 1024. * 1024.))
-    } else if bytes_per_sec >= 1024. * 1024. {
-        format!("{:.1} MB", bytes_per_sec / (1024. * 1024.))
-    } else if bytes_per_sec >= 1024. {
-        format!("{:.0} KB", bytes_per_sec / 1024.)
-    } else {
-        format!("{:.0} 字节", bytes_per_sec.max(0.))
+    // 复用 bytes 的阈值与格式化；sub-KB 保留原有的 "{:.0}" 舍入语义
+    // （bytes 只接 u64，无法表达小数舍入）。
+    let value = bytes_per_sec.max(0.);
+    if value < 1024. {
+        return format!("{value:.0} 字节");
     }
+    bytes(value as u64)
 }
 fn duration(seconds: f64) -> String {
     let seconds = seconds.ceil() as u64;
