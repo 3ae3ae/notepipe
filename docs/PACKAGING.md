@@ -18,18 +18,16 @@ GUI packages contain a matching private CLI engine. They do not install a termin
 
 Recipes are sourced from `packaging/aur/` and `packaging/homebrew/`. Change these templates, not only the external package repositories; future releases render them again. No release binaries are rebuilt by these synchronization jobs.
 
-Previously, both synchronization workflows updated only CLI packages. The GUI Cask remained at 1.5.0; GUI AUR packaging was absent. The 1.7.0 CLI AUR update did succeed. This change adds both GUI channels and backfills the current release.
-
 ## Manual retry and validation
 
-In GitHub Actions, run `brew-tap` or `aur` with `version: 1.7.0` (or the intended stable release). The AUR workflow supports `dry_run: true` to build and validate without pushing. Normal manual runs publish both packages. Jobs serialize per channel to avoid concurrent pushes.
+In GitHub Actions, run `brew-tap` or `aur` with `version: <stable release>`. The AUR workflow supports `dry_run: true` to build and validate without pushing. Normal manual runs publish both packages. Jobs serialize per channel to avoid concurrent pushes.
 
 The workflows use the existing `AUR_SSH_PRIVATE_KEY` secret: the AUR job authenticates to AUR, while the Homebrew job uses the existing GitHub-authorized key configuration. `GITHUB_TOKEN` reads release metadata. Credentials are never written to package recipes.
 
 On Arch, with the runtime dependencies and `base-devel`, `git`, `curl`, `desktop-file-utils` installed, run as a non-root user:
 
 ```sh
-packaging/aur/update-aur.sh 1.7.0 --dry-run
+packaging/aur/update-aur.sh <version> --dry-run
 ```
 
 The GUI package installs its application and engine under `/usr/lib/course2md-desktop/`, an application launcher in `/usr/bin/course2md-desktop`, a desktop entry and a 512×512 icon. It does not own `/usr/bin/course2md`.

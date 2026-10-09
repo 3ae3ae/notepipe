@@ -5,6 +5,7 @@
 - 方法：7 路并行只读审查（引擎核心、引擎支撑、desktop 三大页面、desktop 页面二组、desktop 页面三组、desktop 共享原语、native/构建），每路完整通读负责区域；另有主代理在 macOS 真机（M3 Max）上对 GPU 识别链路做了运行态复现。
 - 分类约定：**[hack]** 权宜之计/硬编码/与文档不符；**[抽象不足]** 应共享未共享/魔法值散落；**[过度抽象]** 无谓分层/死参数化；**[工程化缺口]** 错误处理/取消/测试/IO 纪律缺失。
 - 处置列：**待处置** → 本报告发布时的初始状态；随修复推进更新为 **已修复（commit）** 或 **后续建议**。
+- 2026-09-27 抽查复核（当前 HEAD = v2.0.0-rc.6）：H10（a11y.rs 确不记录 panic payload）、asr.rs 超时统一走 `runtime::run_bounded`、`CLOUD_PROVIDER_INDEX`/`asr_provider_from_index` 单一映射、`crate::provider_label` 单一出处——均与代码一致，「已修复」标注可信。
 
 ## 统计
 

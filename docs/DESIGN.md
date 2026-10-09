@@ -1,6 +1,8 @@
-# course2md 设计
+# course2md 架构：转换引擎
 
-course2md 是单一用途的命令行工具：把 YouTube、Bilibili 或本地网课视频转换为按时间组织的截图与文字稿。
+本文是**转换引擎**的架构说明（管线、模块、非目标）。桌面端 UI 的设计权威是 [.agents/skills/course2md-design](../.agents/skills/course2md-design/SKILL.md)，UI 设计问题一律以该 skill 为准，本文不涉及。
+
+course2md 是单一用途的工具：把 YouTube、Bilibili 或本地网课视频转换为按时间组织的截图与文字稿。
 
 ## 管线
 

@@ -62,10 +62,10 @@ The prebuilt package is based on Ubuntu 24.04. **Intel Mac and Linux ARM64 do no
 ## First use
 
 1. Open **course2md** and follow the setup guide to choose a notes folder and speech recognition method.
-2. Check **Settings → Runtime environment**. `ffmpeg` (including `ffprobe`) processes video; `yt-dlp` handles online videos.
+2. Check **Settings → Runtime environment** to confirm the video tools are detected.
 3. Add a video URL or local file and start conversion. Open the finished notes in your library.
 
-Local recognition downloads models on first use. GPU / CPU recognition also needs `llama-server`; cloud recognition requires your own API configuration. The app provides setup controls; see the [first-launch guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#first-launch) for details.
+Local recognition downloads models on first use; the app provides setup controls for each backend. See the [first-launch guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#first-launch) for details.
 
 ## Install the CLI
 
@@ -123,4 +123,4 @@ The configuration file is `~/.config/course2md/config.toml` (`%APPDATA%\course2m
 
 [All documentation (GitHub Wiki)](https://github.com/mizorewww/course2md/wiki) · [CLI installation and usage](https://github.com/mizorewww/course2md/wiki/CLI-Guide) · [Upgrade and uninstall](https://github.com/mizorewww/course2md/wiki/GUI-Installation#upgrade-and-uninstall) · [Troubleshooting](https://github.com/mizorewww/course2md/wiki/Troubleshooting) · [Report a problem](https://github.com/mizorewww/course2md/issues)
 
-For developers: [desktop build guide](desktop/README.md) · [development discipline](docs/DEVELOPMENT.md) · [architecture](docs/DESIGN.md) · [benchmarks](docs/BENCHMARKS.md) · [packaging and releases](docs/PACKAGING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+For developers: [desktop build guide](desktop/README.md) · [development docs](docs/README.md) · [architecture](docs/DESIGN.md) · [benchmarks](docs/BENCHMARKS.md) · [packaging and releases](docs/PACKAGING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)

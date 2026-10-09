@@ -62,10 +62,10 @@ yay -S course2md-gui-bin
 ## 第一次使用
 
 1. 打开 **course2md**，按向导选择笔记保存目录和语音识别方式。
-2. 在「设置 → 运行环境」确认工具可用。`ffmpeg`（包含 `ffprobe`）用于处理视频；`yt-dlp` 用于在线视频。
+2. 在「设置 → 运行环境」确认视频工具已被检测到。
 3. 添加视频链接或本地文件，开始生成，完成后在课程库打开笔记。
 
-本地识别首次使用需要下载模型；选择 GPU / CPU 识别还需安装 `llama-server`；选择云端识别需要填写自己的 API 配置。应用提供设置入口，详细步骤见 [首次使用指南](https://github.com/mizorewww/course2md/wiki/%E5%AE%89%E8%A3%85%E6%A1%8C%E9%9D%A2%E5%BA%94%E7%94%A8#首次启动)。
+本地识别首次使用需要下载模型；应用为各识别后端提供设置入口，详细步骤见 [首次使用指南](https://github.com/mizorewww/course2md/wiki/%E5%AE%89%E8%A3%85%E6%A1%8C%E9%9D%A2%E5%BA%94%E7%94%A8#首次启动)。
 
 ## 安装 CLI
 
@@ -123,4 +123,4 @@ course2md ./lecture.mp4 -o ./notes             # 指定输出根目录
 
 [全部文档（GitHub Wiki）](https://github.com/mizorewww/course2md/wiki) · [CLI 安装与使用](https://github.com/mizorewww/course2md/wiki/CLI-%E6%8C%87%E5%8D%97) · [升级与卸载](https://github.com/mizorewww/course2md/wiki/%E5%AE%89%E8%A3%85%E6%A1%8C%E9%9D%A2%E5%BA%94%E7%94%A8#升级与卸载) · [故障排查](https://github.com/mizorewww/course2md/wiki/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5) · [反馈问题](https://github.com/mizorewww/course2md/issues)
 
-面向开发者：[桌面端构建指南](desktop/README.md) · [开发纪律](docs/DEVELOPMENT.md) · [架构](docs/DESIGN.md) · [性能基准](docs/BENCHMARKS.md) · [打包与发布](docs/PACKAGING.md) · [更新记录](CHANGELOG.md) · [MIT 许可证](LICENSE)
+面向开发者：[桌面端构建指南](desktop/README.md) · [开发文档](docs/README.md) · [架构](docs/DESIGN.md) · [性能基准](docs/BENCHMARKS.md) · [打包与发布](docs/PACKAGING.md) · [更新记录](CHANGELOG.md) · [MIT 许可证](LICENSE)

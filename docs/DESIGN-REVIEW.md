@@ -1,5 +1,7 @@
 # course2md 设计评审记录（2026-09-14）
 
+> 状态：历史评审记录（共六轮，2026-09-15 最终结论「通过」），留档备查、不再更新。当前设计权威为 [course2md-design skill](../.agents/skills/course2md-design/SKILL.md)，与其冲突时以 skill 为准。
+
 - 方法：4 路独立 subagent 评审，评审者先读 course2md-design 技能权威（SKILL.md + composition-review.md + system.md + layout-and-type.md + states-and-motion.md + interaction.md + settings.md），再逐张查看运行中原生应用（修复后构建，窗口 1122×806）截图 24 张；评审者未获得任何"已修复清单"，结论独立形成。
 - 原始评审全文：/tmp/course2md-design/review-{workbench-tasks,library-reader,settings,crosspage}.md（本文件为合并裁决）。
 - 证据缺口（评审者声明，转入最终验证）：hover/pressed/键盘焦点态、滚动条契约、窄/宽窗口、浅色主题的库/任务/服务/编辑器、任务展开态、服务列表滚动态。
