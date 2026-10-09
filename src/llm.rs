@@ -95,12 +95,7 @@ impl Default for LlmSettings {
 
 /// base_url -> 完整 chat/completions URL。
 pub fn endpoint(base_url: &str) -> String {
-    let b = base_url.trim().trim_end_matches('/');
-    if b.ends_with("/chat/completions") {
-        b.to_string()
-    } else {
-        format!("{b}/chat/completions")
-    }
+    crate::config::append_endpoint_suffix(base_url.trim(), "/chat/completions")
 }
 
 /// 校验配置可直接使用。

@@ -1754,27 +1754,28 @@ pub fn normalize_endpoint(address: &str, protocol: ServiceProtocol) -> Result<St
     }
     let path = url.path().trim_end_matches('/');
     let desired = protocol.endpoint_suffix();
-    for known in [
-        "/audio/transcriptions",
-        "/chat/completions",
-        "/responses",
-        "/completions",
-    ] {
-        if path.ends_with(known) && !path.ends_with(desired) {
-            bail!("此完整地址与所选接口类型不一致，请更换接口类型或填写对应的服务地址");
-        }
+    if course2md::config::conflicting_endpoint_suffix(
+        path,
+        desired,
+        &[
+            "/audio/transcriptions",
+            "/chat/completions",
+            "/responses",
+            "/completions",
+        ],
+    ) {
+        bail!("此完整地址与所选接口类型不一致，请更换接口类型或填写对应的服务地址");
     }
-    if !path.ends_with(desired) {
-        // Ollama 接受主机地址或 /v1 基础地址，统一补全到 OpenAI 兼容端点
-        if protocol == ServiceProtocol::OllamaChat && !path.ends_with("/v1") {
-            url.set_path(&format!("{path}/v1{desired}"));
-        } else {
-            url.set_path(&format!("{path}{desired}"));
-        }
+    // Ollama 接受主机地址或 /v1 基础地址，统一补全到 OpenAI 兼容端点
+    let base = if protocol == ServiceProtocol::OllamaChat
+        && !path.ends_with(desired)
+        && !path.ends_with("/v1")
+    {
+        format!("{path}/v1")
     } else {
-        let path = path.to_owned();
-        url.set_path(&path);
-    }
+        path.to_owned()
+    };
+    url.set_path(&course2md::config::append_endpoint_suffix(&base, desired));
     Ok(url.into())
 }
 

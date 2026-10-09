@@ -40,6 +40,24 @@ pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
     Ok(url)
 }
 
+/// Append `suffix` unless the path already ends with it — never double-append.
+/// 端点后缀策略的唯一事实源（core 的 asr/llm 与 desktop 的服务编辑器共用）。
+pub fn append_endpoint_suffix(base: &str, suffix: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if base.ends_with(suffix) {
+        base.to_string()
+    } else {
+        format!("{base}{suffix}")
+    }
+}
+
+/// `path` ends with a known endpoint suffix that conflicts with the desired one.
+/// 调用方应拒绝而不是静默改路由到另一个协议（凭据可能因此发到错误端点）。
+pub fn conflicting_endpoint_suffix(path: &str, desired: &str, known: &[&str]) -> bool {
+    let path = path.trim_end_matches('/');
+    !path.ends_with(desired) && known.iter().any(|k| path.ends_with(k))
+}
+
 /// Accept a service root or its exact supported endpoint, never double-append paths.
 pub fn asr_endpoint(api: &crate::settings::AsrApi) -> AnyhowResult<String> {
     let base = api.base_url.trim().trim_end_matches('/');
@@ -47,19 +65,11 @@ pub fn asr_endpoint(api: &crate::settings::AsrApi) -> AnyhowResult<String> {
         crate::settings::AsrApiMode::Transcriptions => "/audio/transcriptions",
         crate::settings::AsrApiMode::Chat => "/chat/completions",
     };
-    let other = match api.mode {
-        crate::settings::AsrApiMode::Transcriptions => "/chat/completions",
-        crate::settings::AsrApiMode::Chat => "/audio/transcriptions",
-    };
     anyhow::ensure!(
-        !base.ends_with(other),
+        !conflicting_endpoint_suffix(base, suffix, &["/audio/transcriptions", "/chat/completions"]),
         "服务地址与所选接口类型不一致 / Service endpoint and protocol do not match"
     );
-    Ok(if base.ends_with(suffix) {
-        base.to_string()
-    } else {
-        format!("{base}{suffix}")
-    })
+    Ok(append_endpoint_suffix(base, suffix))
 }
 
 /// 云端 STT API key 环境变量：`COURSE2MD_ASR_API_KEY`。
