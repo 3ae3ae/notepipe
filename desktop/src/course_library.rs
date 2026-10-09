@@ -1944,6 +1944,7 @@ impl Desktop {
                 )
                 .child(
                     quiet("recent-all")
+                        .mr(rems(-0.625))
                         .label("全部")
                         .text_color(color(ACCENT_STRONG))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -2056,19 +2057,24 @@ impl Desktop {
                     .border_1()
                     .border_color(color(CARD_LINE))
                     .rounded(RADIUS_CARD)
+                    // Same order as every task and note row: title, status, actions.
                     .child(
                         h_flex()
-                            .gap_2()
-                            .items_start()
-                            .child(badge(BadgeKind::Warning).child(task.state.label()))
+                            .w_full()
+                            .min_w_0()
+                            .gap_3()
+                            .items_center()
+                            .flex_wrap()
                             .child(
                                 div()
-                                    .min_w_0()
+                                    .min_w(rems(12.))
                                     .flex_1()
                                     .whitespace_normal()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(task.plan.title.clone()),
-                            ),
+                            )
+                            .child(badge(BadgeKind::Warning).child(task.state.label()))
+                            .child(actions),
                     )
                     .when(summary != task.state.label(), |card| {
                         card.child(
@@ -2078,8 +2084,7 @@ impl Desktop {
                                 .whitespace_normal()
                                 .child(summary),
                         )
-                    })
-                    .child(actions),
+                    }),
             );
         }
         if !notes.is_empty() {

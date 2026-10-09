@@ -506,7 +506,6 @@ pub fn section_title(
     use gpui::prelude::*;
     accessible_text(id, title)
         .role(gpui::Role::Heading)
-        .px(rems(4. / 14.))
         .text_size(rems(15. / 14.))
         .line_height(rems(22. / 14.))
         .font_weight(gpui::FontWeight::SEMIBOLD)

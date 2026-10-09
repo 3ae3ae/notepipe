@@ -2613,6 +2613,7 @@ impl Desktop {
                         slot.child(
                             img(cover)
                                 .size_full()
+                                .rounded(RADIUS_SMALL)
                                 .object_fit(ObjectFit::Cover),
                         )
                     })
@@ -3270,17 +3271,6 @@ impl Desktop {
                             .items_center()
                             .child(
                                 badge(task_badge_kind(task.state)).child(task_status_label(task)),
-                            )
-                            .child(
-                                accessible_text(
-                                    SharedString::from(format!(
-                                        "workbench-task-created-{}",
-                                        task.id
-                                    )),
-                                    crate::reader_navigation::timestamp_local(task.created * 1000),
-                                )
-                                .text_size(TEXT_AUX)
-                                .text_color(color(GRAY)),
                             ),
                     ),
             )

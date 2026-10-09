@@ -2872,6 +2872,7 @@ impl Desktop {
                 view = view.child(
                     quiet("convert-another-video")
                         .self_start()
+                        .ml(rems(-0.625))
                         .icon(icons::plus())
                         .label("转换其他视频")
                         .on_click(cx.listener(|this, _, window, cx| {
