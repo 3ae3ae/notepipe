@@ -428,7 +428,6 @@ impl Desktop {
             .icon("system", icons::computer())
             .icon("light", icons::sun())
             .icon("dark", icons::moon())
-            .full_width()
             .selected(match preference.mode {
                 Appearance::System => "system",
                 Appearance::Light => "light",
@@ -464,7 +463,7 @@ impl Desktop {
             .min_w_0()
             .gap(px(28.))
             .child(
-                crate::settings_ui::SettingsGroup::new("appearance-theme", "外观")
+                crate::settings_ui::SettingsGroup::new("appearance-theme", "主题")
                     .child(settings_row("appearance-mode-row", icons::palette(), "外观模式", "", modes))
                     .child(
                         crate::settings_ui::setting_surface().gap(px(12.)).child(
