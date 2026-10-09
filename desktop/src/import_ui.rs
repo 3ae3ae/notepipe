@@ -1097,102 +1097,7 @@ impl Desktop {
                 }
             }
         } else {
-            let input = self.value(Field::Source, cx);
-            if input.is_empty() {
-                view = view.child(
-                    v_flex()
-                        .id("video-drop-zone")
-                        .gap_4()
-                        .p_6()
-                        .items_center()
-                        .rounded(RADIUS_CARD)
-                        .bg(color(INSET))
-                        .border_1()
-                        .border_color(color(CONTROL))
-                        .child(
-                            icons::file_upload()
-                                .size(rems(32. / 14.))
-                                .text_color(color(ACCENT_STRONG)),
-                        )
-                        .child(
-                            accessible_text("import-drop-instruction", "拖入本地视频")
-                                .text_size(TEXT_BODY)
-                                .font_weight(FontWeight::MEDIUM),
-                        )
-                        .child(
-                            primary_pill("choose-video")
-                                .icon(IconName::FolderOpen)
-                                .label("选择视频")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.pick(false, window, cx)),
-                                ),
-                        )
-                        .on_drop(
-                            cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
-                                this.drop_source_files(paths.paths(), window, cx)
-                            }),
-                        ),
-                );
-            } else {
-                let filename = PathBuf::from(&input)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| input.clone());
-                view = view.child(
-                    h_flex()
-                        .id("selected-local-video")
-                        .w_full()
-                        .min_w_0()
-                        .items_center()
-                        .flex_wrap()
-                        .gap_3()
-                        .p_4()
-                        .rounded(RADIUS_CARD)
-                        .bg(color(SURFACE))
-                        .border_1()
-                        .border_color(color(HAIRLINE))
-                        .child(
-                            semantic_label(
-                                "selected-local-video-name",
-                                filename,
-                                icons::movie()
-                                    .size(rems(20. / 14.))
-                                    .text_color(color(ACCENT_STRONG)),
-                            )
-                            .flex_1()
-                            .min_w(rems(18.))
-                            .max_w_full(),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .flex_wrap()
-                                .items_center()
-                                .child(
-                                    outline_pill("choose-video")
-                                        .icon(IconName::FolderOpen)
-                                        .label("更换视频")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.pick(false, window, cx)
-                                        })),
-                                )
-                                .when(self.can_start_input(cx), |row| {
-                                    row.child(self.box_bottom_row(cx))
-                                }),
-                        )
-                        .on_drop(
-                            cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
-                                this.drop_source_files(paths.paths(), window, cx)
-                            }),
-                        ),
-                );
-                if self.source_preview.is_none()
-                    && let Some(error) = &self.source_validation
-                {
-                    view = view.child(issue(error.clone()));
-                }
-            }
+            view = self.local_source_input(view, cx);
         }
         if self.preview_cancel.is_some() {
             view = view.child(motion::enter(
@@ -1221,380 +1126,506 @@ impl Desktop {
                     )));
         }
         if let Some(title) = &self.source_collection_title {
-            // 在线列表走多选批量入队；本地多文件拖入保持单选（本地身份要做内容哈希，
-            // 逐个走原读取确认流程）。身份可确认的候选才可勾选；其余保持单条打开。
-            let batch = self.online;
-            let identities: Vec<Option<String>> = self
-                .source_candidates
-                .iter()
-                .map(course2md::fetch::candidate_identity)
-                .collect();
-            let noted: Vec<bool> = identities
-                .iter()
-                .map(|identity| {
-                    identity.as_ref().is_some_and(|identity| {
-                        self.courses.iter().any(|course| {
-                            course
-                                .manifest
-                                .as_ref()
-                                .is_some_and(|manifest| manifest.source_id == *identity)
-                        })
+            view = self.candidate_list_view(view, title, cx);
+        }
+        self.source_preview_error(view, window, cx)
+    }
+
+    /// 候选合集列表：在线来源走多选批量入队；本地多文件拖入保持单选。
+    /// 身份可确认的候选才可勾选；其余保持单条打开。
+    fn candidate_list_view(&self, view: Div, title: &str, cx: &mut Context<Self>) -> Div {
+        let mut view = view;
+        // 在线列表走多选批量入队；本地多文件拖入保持单选（本地身份要做内容哈希，
+        // 逐个走原读取确认流程）。身份可确认的候选才可勾选；其余保持单条打开。
+        let batch = self.online;
+        let identities: Vec<Option<String>> = self
+            .source_candidates
+            .iter()
+            .map(course2md::fetch::candidate_identity)
+            .collect();
+        let noted: Vec<bool> = identities
+            .iter()
+            .map(|identity| {
+                identity.as_ref().is_some_and(|identity| {
+                    self.courses.iter().any(|course| {
+                        course
+                            .manifest
+                            .as_ref()
+                            .is_some_and(|manifest| manifest.source_id == *identity)
                     })
                 })
-                .collect();
-            let selectable: Vec<String> = self
-                .source_candidates
-                .iter()
-                .zip(&identities)
-                .zip(&noted)
-                .filter(|((_, identity), noted)| batch && identity.is_some() && !**noted)
-                .map(|((candidate, _), _)| candidate.input.clone())
-                .collect();
-            let selected_count = self.selected_candidates.len();
-            let all_selected =
-                !selectable.is_empty() && selectable.iter().all(|input| self.selected_candidates.contains(input));
-            // 手动勾选了已有笔记的候选：入队会生成新版本，后果与操作同处可见
-            let noted_selected = self
-                .source_candidates
-                .iter()
-                .zip(&noted)
-                .filter(|(candidate, noted)| {
-                    **noted && self.selected_candidates.contains(&candidate.input)
-                })
-                .count();
-            let any_batchable = identities.iter().any(Option::is_some);
-            let mut list = v_flex()
-                .id("source-candidates")
-                // 视口按字号缩放（约 3 行 + 露出第 4 行一角）；内边距让
-                // 行的 hover/press 涂层不贴容器发丝边（review#3/#4）
-                .max_h(rems(20.))
-                .overflow_y_scroll()
-                .p_1()
-                .rounded(RADIUS_CARD)
-                .border_1()
-                .border_color(color(CARD_LINE));
-            for (index, candidate) in self.source_candidates.iter().enumerate() {
-                let input = candidate.input.clone();
-                let untitled = candidate.title.trim().is_empty()
-                    || candidate.title.trim() == candidate.input.trim();
-                let title = if untitled {
-                    format!("视频 {}", index + 1)
-                } else {
-                    candidate.title.clone()
-                };
-                let cover = self.source_candidate_covers.get(&candidate.input).cloned();
-                // 统一的 leading 预览槽：已缓存的首帧/封面，
-                // 未就绪或无预览时回退到影片图标，保证每行文字起点对齐
-                let preview = div()
-                    .w(rems(5.6))
-                    .h(rems(3.15))
-                    .flex_shrink_0()
-                    .rounded(RADIUS_SMALL)
-                    .overflow_hidden()
-                    .bg(color(INSET))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when_some(cover, |slot, cover| {
-                        slot.child(img(cover).w_full().h_full().object_fit(ObjectFit::Cover))
-                    })
-                    .when(
-                        !self.source_candidate_covers.contains_key(&candidate.input),
-                        |slot| {
-                            slot.child(icons::movie().size(px(18.)).text_color(color(MUTED)))
-                        },
-                    );
-                let text = v_flex()
+            })
+            .collect();
+        let selectable: Vec<String> = self
+            .source_candidates
+            .iter()
+            .zip(&identities)
+            .zip(&noted)
+            .filter(|((_, identity), noted)| batch && identity.is_some() && !**noted)
+            .map(|((candidate, _), _)| candidate.input.clone())
+            .collect();
+        let selected_count = self.selected_candidates.len();
+        let all_selected =
+            !selectable.is_empty() && selectable.iter().all(|input| self.selected_candidates.contains(input));
+        // 手动勾选了已有笔记的候选：入队会生成新版本，后果与操作同处可见
+        let noted_selected = self
+            .source_candidates
+            .iter()
+            .zip(&noted)
+            .filter(|(candidate, noted)| {
+                **noted && self.selected_candidates.contains(&candidate.input)
+            })
+            .count();
+        let any_batchable = identities.iter().any(Option::is_some);
+        let mut list = v_flex()
+            .id("source-candidates")
+            // 视口按字号缩放（约 3 行 + 露出第 4 行一角）；内边距让
+            // 行的 hover/press 涂层不贴容器发丝边（review#3/#4）
+            .max_h(rems(20.))
+            .overflow_y_scroll()
+            .p_1()
+            .rounded(RADIUS_CARD)
+            .border_1()
+            .border_color(color(CARD_LINE));
+        for (index, candidate) in self.source_candidates.iter().enumerate() {
+            let input = candidate.input.clone();
+            let untitled = candidate.title.trim().is_empty()
+                || candidate.title.trim() == candidate.input.trim();
+            let title = if untitled {
+                format!("视频 {}", index + 1)
+            } else {
+                candidate.title.clone()
+            };
+            let (preview, text) = self.candidate_row_parts(candidate, index, &title, untitled);
+            let batchable = batch && identities[index].is_some();
+            if batch {
+                // 与导出行同一多选模式：Checkbox 自身可点（键盘 Tab+空格可切换），
+                // 预览/标题区作为兄弟可点区域；行不再嵌套两层 on_click。
+                // 无身份候选不可勾选，同一行样式改为箭头、点击走单条读取确认流程。
+                let mut content = h_flex()
+                    .id(("source-candidate-text", index))
                     .flex_1()
                     .min_w_0()
-                    .items_start()
-                    .gap_1()
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .whitespace_normal()
-                            .text_ellipsis()
-                            .line_clamp(2)
-                            .font_weight(FontWeight::MEDIUM)
-                            // 标题是行的扫描锚点：主墨色（review#1）
-                            .text_color(color(INK))
-                            .child(title.clone()),
-                    )
-                    .when(untitled, |view| {
-                        view.child(
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .text_size(TEXT_AUX)
-                                .text_color(color(MUTED))
-                                .text_ellipsis()
-                                .child(candidate.input.clone()),
-                        )
-                    })
-                    .when_some(
-                        candidate
-                            .duration
-                            .filter(|value| *value > 0. && value.is_finite() && !untitled),
-                        |view, seconds| {
-                            view.child(
-                                div()
-                                    .w_full()
-                                    .min_w_0()
-                                    .text_size(TEXT_AUX)
-                                    .text_color(color(MUTED))
-                                    .text_ellipsis()
-                                    .child(course2md::render::fmt_ts(seconds)),
-                            )
-                        },
-                    );
-                let batchable = batch && identities[index].is_some();
-                if batch {
-                    // 与导出行同一多选模式：Checkbox 自身可点（键盘 Tab+空格可切换），
-                    // 预览/标题区作为兄弟可点区域；行不再嵌套两层 on_click。
-                    // 无身份候选不可勾选，同一行样式改为箭头、点击走单条读取确认流程。
-                    let mut content = h_flex()
-                        .id(("source-candidate-text", index))
-                        .flex_1()
-                        .min_w_0()
-                        .gap(px(12.))
-                        .items_center()
-                        .cursor_pointer();
-                    if batchable {
-                        let toggle_input = candidate.input.clone();
-                        content = content.on_click(cx.listener(move |this, _, _, cx| {
-                            this.toggle_candidate(&toggle_input, cx)
-                        }));
-                    } else {
-                        content = content.on_click(cx.listener(move |this, _, window, cx| {
-                            this.select_source_input(input.clone(), window, cx)
-                        }));
-                    }
-                    content = content.child(preview).child(text);
-                    if batchable {
-                        content = content.when(noted[index], |row| {
-                            row.child(badge(BadgeKind::Success).child("已有笔记"))
-                        });
-                    } else {
-                        content =
-                            content.child(icons::arrow_forward().size(px(18.)).flex_shrink_0());
-                    }
-                    let mut row = h_flex()
-                        .id(("source-candidate", index))
-                        .w_full()
-                        .min_w_0()
-                        .gap(px(12.))
-                        .items_center()
-                        .py_3()
-                        .px_2()
-                        .rounded(RADIUS_SMALL)
-                        .hover(|style| style.bg(color(INSET)));
-                    if batchable {
-                        let selected = self.selected_candidates.contains(&candidate.input);
-                        let check_input = candidate.input.clone();
-                        row = row.child(
-                            Checkbox::new(("source-candidate-check", index))
-                                .debug_selector(move || {
-                                    format!("source-candidate-checkbox-{index}")
-                                })
-                                .accessibility_label(format!("选择 {title}"))
-                                .checked(selected)
-                                .flex_shrink_0()
-                                .on_click(cx.listener(move |this, value: &bool, _, cx| {
-                                    this.set_candidate_selected(&check_input, *value, cx)
-                                })),
-                        );
-                    }
-                    list = list.child(row.child(content));
+                    .gap(px(12.))
+                    .items_center()
+                    .cursor_pointer();
+                if batchable {
+                    let toggle_input = candidate.input.clone();
+                    content = content.on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_candidate(&toggle_input, cx)
+                    }));
                 } else {
-                    list = list.child(
-                        quiet(("source-candidate", index))
-                            .w_full()
-                            .h_auto()
-                            .py_3()
-                            .rounded(RADIUS_SMALL)
-                            .justify_start()
-                            .tooltip(candidate.input.clone())
+                    content = content.on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_source_input(input.clone(), window, cx)
+                    }));
+                }
+                content = content.child(preview).child(text);
+                if batchable {
+                    content = content.when(noted[index], |row| {
+                        row.child(badge(BadgeKind::Success).child("已有笔记"))
+                    });
+                } else {
+                    content =
+                        content.child(icons::arrow_forward().size(px(18.)).flex_shrink_0());
+                }
+                let mut row = h_flex()
+                    .id(("source-candidate", index))
+                    .w_full()
+                    .min_w_0()
+                    .gap(px(12.))
+                    .items_center()
+                    .py_3()
+                    .px_2()
+                    .rounded(RADIUS_SMALL)
+                    .hover(|style| style.bg(color(INSET)));
+                if batchable {
+                    let selected = self.selected_candidates.contains(&candidate.input);
+                    let check_input = candidate.input.clone();
+                    row = row.child(
+                        Checkbox::new(("source-candidate-check", index))
+                            .debug_selector(move || {
+                                format!("source-candidate-checkbox-{index}")
+                            })
                             .accessibility_label(format!("选择 {title}"))
-                            .child(preview)
-                            .child(text)
-                            .child(icons::arrow_forward().size(px(18.)).flex_shrink_0())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.select_source_input(input.clone(), window, cx)
+                            .checked(selected)
+                            .flex_shrink_0()
+                            .on_click(cx.listener(move |this, value: &bool, _, cx| {
+                                this.set_candidate_selected(&check_input, *value, cx)
                             })),
                     );
                 }
+                list = list.child(row.child(content));
+            } else {
+                list = list.child(
+                    quiet(("source-candidate", index))
+                        .w_full()
+                        .h_auto()
+                        .py_3()
+                        .rounded(RADIUS_SMALL)
+                        .justify_start()
+                        .tooltip(candidate.input.clone())
+                        .accessibility_label(format!("选择 {title}"))
+                        .child(preview)
+                        .child(text)
+                        .child(icons::arrow_forward().size(px(18.)).flex_shrink_0())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_source_input(input.clone(), window, cx)
+                        })),
+                );
             }
-            let selectable_inputs = selectable.clone();
-            view = view.child(motion::enter(
-                text_id("source-candidates", title),
-                v_flex()
-                    .gap_3()
-                    .child(
-                        accessible_text("import-collection-title", title.clone())
-                            .font_weight(FontWeight::SEMIBOLD),
-                    )
-                    .child(help(if batch {
-                        "勾选本次要整理的视频，可以一次加入多个"
-                    } else {
-                        "选择本次要整理的视频"
-                    }))
-                    .child(list)
-                    .when(batch && any_batchable, |view| {
-                        view.child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .justify_between()
-                                .gap_3()
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .items_center()
-                                        .min_w_0()
-                                        .child(
-                                            quiet("toggle-all-candidates")
-                                                .label(if all_selected { "全不选" } else { "全选" })
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    if all_selected {
-                                                        this.selected_candidates.clear();
-                                                    } else {
-                                                        this.selected_candidates
-                                                            .extend(selectable_inputs.iter().cloned());
-                                                    }
-                                                    cx.notify();
-                                                })),
-                                        )
-                                        .child(
+        }
+        let selectable_inputs = selectable.clone();
+        view = view.child(motion::enter(
+            text_id("source-candidates", title),
+            v_flex()
+                .gap_3()
+                .child(
+                    accessible_text("import-collection-title", title.clone())
+                        .font_weight(FontWeight::SEMIBOLD),
+                )
+                .child(help(if batch {
+                    "勾选本次要整理的视频，可以一次加入多个"
+                } else {
+                    "选择本次要整理的视频"
+                }))
+                .child(list)
+                .when(batch && any_batchable, |view| {
+                    view.child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .min_w_0()
+                                    .child(
+                                        quiet("toggle-all-candidates")
+                                            .label(if all_selected { "全不选" } else { "全选" })
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if all_selected {
+                                                    this.selected_candidates.clear();
+                                                } else {
+                                                    this.selected_candidates
+                                                        .extend(selectable_inputs.iter().cloned());
+                                                }
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(TEXT_AUX)
+                                            .text_color(color(MUTED))
+                                            .whitespace_nowrap()
+                                            .child(format!("已选 {selected_count} 个")),
+                                    )
+                                    .when(noted_selected > 0, |row| {
+                                        row.child(
                                             div()
+                                                .min_w_0()
                                                 .text_size(TEXT_AUX)
-                                                .text_color(color(MUTED))
-                                                .whitespace_nowrap()
-                                                .child(format!("已选 {selected_count} 个")),
+                                                .text_color(color(WARNING))
+                                                .text_ellipsis()
+                                                .child(format!(
+                                                    "含 {noted_selected} 个已有笔记，将生成新版本"
+                                                )),
                                         )
-                                        .when(noted_selected > 0, |row| {
-                                            row.child(
-                                                div()
-                                                    .min_w_0()
-                                                    .text_size(TEXT_AUX)
-                                                    .text_color(color(WARNING))
-                                                    .text_ellipsis()
-                                                    .child(format!(
-                                                        "含 {noted_selected} 个已有笔记，将生成新版本"
-                                                    )),
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    primary_pill("start-batch-conversion")
-                                        .icon(icons::arrow_forward())
-                                        .label(if selected_count > 0 {
-                                            format!("整理选中的 {selected_count} 个视频")
-                                        } else {
-                                            "整理选中的视频".to_owned()
-                                        })
-                                        // 空选择即不可执行：与开始转换同一纪律
-                                        .disabled(selected_count == 0)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.enqueue_selected_candidates(window, cx)
-                                        })),
-                                ),
-                        )
-                    }),
-            ));
-        }
-        if let Some(error) = &self.preview_error
-            && !self.source_candidates.is_empty()
-        {
-            view = view.child(help(error.clone()));
-        }
-        if let Some(error) = &self.preview_error
-            && self.source_candidates.is_empty()
-        {
-            let details = motion::disclosure(
-                "source-error-disclosure",
-                self.show_preview_details,
-                v_flex().child(help(error.clone())),
-                window,
-                cx,
+                                    }),
+                            )
+                            .child(
+                                primary_pill("start-batch-conversion")
+                                    .icon(icons::arrow_forward())
+                                    .label(if selected_count > 0 {
+                                        format!("整理选中的 {selected_count} 个视频")
+                                    } else {
+                                        "整理选中的视频".to_owned()
+                                    })
+                                    // 空选择即不可执行：与开始转换同一纪律
+                                    .disabled(selected_count == 0)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.enqueue_selected_candidates(window, cx)
+                                    })),
+                            ),
+                    )
+                }),
+        ));
+        view
+    }
+
+    /// 候选行共享的 leading 预览槽与标题文本：批量行与单选行仅容器与点击行为不同。
+    fn candidate_row_parts(
+        &self,
+        candidate: &source::SourceCandidate,
+        index: usize,
+        title: &str,
+        untitled: bool,
+    ) -> (Div, Div) {
+        let cover = self.source_candidate_covers.get(&candidate.input).cloned();
+        // 统一的 leading 预览槽：已缓存的首帧/封面，
+        // 未就绪或无预览时回退到影片图标，保证每行文字起点对齐
+        let preview = div()
+            .w(rems(5.6))
+            .h(rems(3.15))
+            .flex_shrink_0()
+            .rounded(RADIUS_SMALL)
+            .overflow_hidden()
+            .bg(color(INSET))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when_some(cover, |slot, cover| {
+                slot.child(img(cover).w_full().h_full().object_fit(ObjectFit::Cover))
+            })
+            .when(
+                !self.source_candidate_covers.contains_key(&candidate.input),
+                |slot| slot.child(icons::movie().size(px(18.)).text_color(color(MUTED))),
             );
-            view = view.child(motion::enter(
-                text_id("source-error", error),
+        let text = v_flex()
+            .flex_1()
+            .min_w_0()
+            .items_start()
+            .gap_1()
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_ellipsis()
+                    .line_clamp(2)
+                    .font_weight(FontWeight::MEDIUM)
+                    // 标题是行的扫描锚点：主墨色（review#1）
+                    .text_color(color(INK))
+                    .child(title.to_owned()),
+            )
+            .when(untitled, |view| {
+                view.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .text_size(TEXT_AUX)
+                        .text_color(color(MUTED))
+                        .text_ellipsis()
+                        .child(candidate.input.clone()),
+                )
+            })
+            .when_some(
+                candidate
+                    .duration
+                    .filter(|value| *value > 0. && value.is_finite() && !untitled),
+                |view, seconds| {
+                    view.child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED))
+                            .text_ellipsis()
+                            .child(course2md::render::fmt_ts(seconds)),
+                    )
+                },
+            );
+        (preview, text)
+    }
+
+    /// 预览错误：候选已读出时行内提示；没有候选时给出错误卡与重试/登录/详情动作。
+    fn source_preview_error(&self, view: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let mut view = view;
+    if let Some(error) = &self.preview_error
+        && !self.source_candidates.is_empty()
+    {
+        view = view.child(help(error.clone()));
+    }
+    if let Some(error) = &self.preview_error
+        && self.source_candidates.is_empty()
+    {
+        let details = motion::disclosure(
+            "source-error-disclosure",
+            self.show_preview_details,
+            v_flex().child(help(error.clone())),
+            window,
+            cx,
+        );
+        view = view.child(motion::enter(
+            text_id("source-error", error),
+            v_flex()
+                .gap_3()
+                .p_4()
+                .rounded(RADIUS_CARD)
+                .bg(color(DANGER_BG))
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_start()
+                        .child(
+                            Icon::new(IconName::CircleX)
+                                .size(px(20.))
+                                .text_color(color(DANGER))
+                                .flex_shrink_0(),
+                        )
+                        .child(
+                            issue(if source::is_login_failure(error) {
+                                "视频需要登录后读取，请登录后重试转换".to_owned()
+                            } else if error.contains("WARNING:") || error.contains("ERROR:") {
+                                "暂时无法读取这个视频，请检查链接或稍后重试".to_owned()
+                            } else {
+                                error.lines().next().unwrap_or(error).to_owned()
+                            })
+                            .flex_1()
+                            .min_w_0(),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(
+                            outline_pill("retry-source")
+                                .icon(icons::refresh())
+                                .label("重试转换")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.start_conversion(window, cx)
+                                })),
+                        )
+                        .when(
+                            self.online
+                                && source::is_login_failure(error)
+                                && course2md::auth::is_bilibili_url(
+                                    &self.value(Field::Source, cx),
+                                ),
+                            |row| {
+                                row.child(
+                                    outline_pill("source-login-repair")
+                                        .icon(icons::bilibili())
+                                        .label("登录 Bilibili")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.open_account_dialog(window, cx)
+                                        })),
+                                )
+                            },
+                        )
+                        .child(
+                            quiet("source-error-details")
+                                .icon(if self.show_preview_details {
+                                    IconName::ChevronUp
+                                } else {
+                                    IconName::ChevronDown
+                                })
+                                .label(if self.show_preview_details {
+                                    "收起详情"
+                                } else {
+                                    "技术详情"
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.show_preview_details = !this.show_preview_details;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(details)));
+    }
+        view
+    }
+
+    /// 本地来源输入：空输入为拖放区，已选文件为文件名卡。
+    fn local_source_input(&self, view: Div, cx: &mut Context<Self>) -> Div {
+        let mut view = view;
+        let input = self.value(Field::Source, cx);
+        if input.is_empty() {
+            view = view.child(
                 v_flex()
+                    .id("video-drop-zone")
+                    .gap_4()
+                    .p_6()
+                    .items_center()
+                    .rounded(RADIUS_CARD)
+                    .bg(color(INSET))
+                    .border_1()
+                    .border_color(color(CONTROL))
+                    .child(
+                        icons::file_upload()
+                            .size(rems(32. / 14.))
+                            .text_color(color(ACCENT_STRONG)),
+                    )
+                    .child(
+                        accessible_text("import-drop-instruction", "拖入本地视频")
+                            .text_size(TEXT_BODY)
+                            .font_weight(FontWeight::MEDIUM),
+                    )
+                    .child(
+                        primary_pill("choose-video")
+                            .icon(IconName::FolderOpen)
+                            .label("选择视频")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.pick(false, window, cx)),
+                            ),
+                    )
+                    .on_drop(
+                        cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                            this.drop_source_files(paths.paths(), window, cx)
+                        }),
+                    ),
+            );
+        } else {
+            let filename = PathBuf::from(&input)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| input.clone());
+            view = view.child(
+                h_flex()
+                    .id("selected-local-video")
+                    .w_full()
+                    .min_w_0()
+                    .items_center()
+                    .flex_wrap()
                     .gap_3()
                     .p_4()
                     .rounded(RADIUS_CARD)
-                    .bg(color(DANGER_BG))
+                    .bg(color(SURFACE))
+                    .border_1()
+                    .border_color(color(HAIRLINE))
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .items_start()
-                            .child(
-                                Icon::new(IconName::CircleX)
-                                    .size(px(20.))
-                                    .text_color(color(DANGER))
-                                    .flex_shrink_0(),
-                            )
-                            .child(
-                                issue(if source::is_login_failure(error) {
-                                    "视频需要登录后读取，请登录后重试转换".to_owned()
-                                } else if error.contains("WARNING:") || error.contains("ERROR:") {
-                                    "暂时无法读取这个视频，请检查链接或稍后重试".to_owned()
-                                } else {
-                                    error.lines().next().unwrap_or(error).to_owned()
-                                })
-                                .flex_1()
-                                .min_w_0(),
-                            ),
+                        semantic_label(
+                            "selected-local-video-name",
+                            filename,
+                            icons::movie()
+                                .size(rems(20. / 14.))
+                                .text_color(color(ACCENT_STRONG)),
+                        )
+                        .flex_1()
+                        .min_w(rems(18.))
+                        .max_w_full(),
                     )
                     .child(
                         h_flex()
                             .gap_2()
                             .flex_wrap()
+                            .items_center()
                             .child(
-                                outline_pill("retry-source")
-                                    .icon(icons::refresh())
-                                    .label("重试转换")
+                                outline_pill("choose-video")
+                                    .icon(IconName::FolderOpen)
+                                    .label("更换视频")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.start_conversion(window, cx)
+                                        this.pick(false, window, cx)
                                     })),
                             )
-                            .when(
-                                self.online
-                                    && source::is_login_failure(error)
-                                    && course2md::auth::is_bilibili_url(
-                                        &self.value(Field::Source, cx),
-                                    ),
-                                |row| {
-                                    row.child(
-                                        outline_pill("source-login-repair")
-                                            .icon(icons::bilibili())
-                                            .label("登录 Bilibili")
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.open_account_dialog(window, cx)
-                                            })),
-                                    )
-                                },
-                            )
-                            .child(
-                                quiet("source-error-details")
-                                    .icon(if self.show_preview_details {
-                                        IconName::ChevronUp
-                                    } else {
-                                        IconName::ChevronDown
-                                    })
-                                    .label(if self.show_preview_details {
-                                        "收起详情"
-                                    } else {
-                                        "技术详情"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.show_preview_details = !this.show_preview_details;
-                                        cx.notify();
-                                    })),
-                            ),
+                            .when(self.can_start_input(cx), |row| {
+                                row.child(self.box_bottom_row(cx))
+                            }),
                     )
-                    .child(details)));
+                    .on_drop(
+                        cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                            this.drop_source_files(paths.paths(), window, cx)
+                        }),
+                    ),
+            );
+            if self.source_preview.is_none()
+                && let Some(error) = &self.source_validation
+            {
+                view = view.child(issue(error.clone()));
+            }
         }
         view
     }
