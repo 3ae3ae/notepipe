@@ -1084,7 +1084,7 @@ impl Desktop {
                     .flex_wrap()
                     .gap_1()
                     .child(
-                        accessible_text("import-drop-hint", "也可以把本地视频拖到窗口任意位置")
+                        accessible_text("import-drop-hint", "或把本地视频拖进窗口")
                             .text_size(TEXT_BODY)
                             .text_color(color(GRAY)),
                     )
