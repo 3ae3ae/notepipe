@@ -1532,15 +1532,8 @@ impl Desktop {
             .flex_shrink_0()
             .gap_6()
             .child(self.storage_status_panel(cx));
-        let mut locations = crate::settings_ui::SettingsGroup::new("storage-locations-heading", "保存位置")
-            .action(
-                quiet("refresh-storage-locations")
-                    .icon(icons::refresh())
-                    .label("刷新")
-                    .loading(self.loading)
-                    .disabled(self.loading)
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
-            );
+        let mut locations =
+            crate::settings_ui::SettingsGroup::new("storage-locations-heading", "保存位置");
 
         if let Some(workspace) = &self.workspace {
             for (index, library) in workspace.state.libraries.iter().enumerate() {
@@ -1555,56 +1548,60 @@ impl Desktop {
                 let needs_relocation =
                     check.is_some_and(|check| !check.available || check.problem.is_some());
                 let needs_reassociation = check.is_some_and(|check| check.needs_reassociation);
+                // 与账号卡片同一组合：徽章与动作是标题行尾部的一个槽位，窄时整体换行。
+                // 强调顺序与其他卡片一致：描边主动作在前，安静的「打开位置」在后。
+                let trailing = h_flex().gap_2().items_center().flex_wrap()
+                    .when(default, |row| row.child(badge(BadgeKind::Neutral).child("默认保存位置")))
+                    .when(offline, |row| row.child(badge(BadgeKind::Warning).child("暂时不可访问")))
+                    .when(!default, |row| {
+                        row.child(outline_pill(("default-storage-location", index)).icon(icons::check_circle()).label("设为默认").disabled(needs_relocation || needs_reassociation || self.storage_ui.busy)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(workspace) = &mut this.workspace {
+                                    let result = workspace.state.library(&id)
+                                        .ok_or_else(|| anyhow::anyhow!("此位置已不在课程库中"))
+                                        .and_then(|library| tempfile::NamedTempFile::new_in(&library.root).map(drop).context("此位置暂时不能写入，请重新连接磁盘或恢复文件夹访问权限"))
+                                        .and_then(|_| workspace.transaction(|state| { state.default_library = id.clone(); Ok(()) }));
+                                    if let Err(error) = result {
+                                        this.workspace_error = Some(format!("默认位置尚未更改：{error:#}"));
+                                    } else {
+                                        this.message = Some("已设为默认保存位置".into());
+                                    }
+                                }
+                                cx.notify();
+                            })))
+                    })
+                    .when(!needs_relocation && !needs_reassociation, |row| {
+                        row.child(outline_pill(("move-storage-location", index)).icon(icons::storage()).label("移动课程库…").disabled(self.storage_ui.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| this.begin_library_move(move_id.clone(), window, cx))))
+                    })
+                    .when(needs_reassociation, |row| {
+                        row.child(outline_pill(("reassociate-storage-location", index)).icon(icons::storage()).label("重新关联…").disabled(self.storage_ui.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| this.begin_library_reassociation(reassociate_id.clone(), window, cx))))
+                    })
+                    .when(needs_relocation, |row| {
+                        row.child(outline_pill(("relocate-storage-location", index)).icon(icons::folder_open()).label("重新定位…").disabled(self.storage_ui.busy)
+                            .on_click(cx.listener(move |this, _, window, cx| this.begin_library_relocation(relocate_id.clone(), window, cx))))
+                    })
+                    .child(quiet(("open-storage-location", index)).icon(icons::folder_open()).label("打开位置").disabled(offline).on_click({
+                        let root = root.clone();
+                        move |_, _, cx| cx.open_with_system(&root)
+                    }));
                 locations = locations.child(
                     crate::settings_ui::setting_surface()
                         .min_w_0()
-                        .gap_3()
-                        .child(
-                            h_flex().w_full().min_w_0().gap_2().items_center().flex_wrap()
-                                .child(semantic_label(("storage-location-name", index), library.name.clone(), icons::folder_open()).flex_1().min_w_0())
-                                .when(default, |row| row.child(badge(BadgeKind::Neutral).child("默认保存位置")))
-                                .when(offline, |row| row.child(badge(BadgeKind::Warning).child("暂时不可访问"))),
-                        )
+                        .child(crate::settings_ui::account_title_row(
+                            ("storage-location-name", index),
+                            icons::folder_open(),
+                            library.name.clone(),
+                            trailing,
+                        ))
                         .child(text(("storage-location-path", index), root.display().to_string()).w_full().min_w_0().whitespace_normal().text_size(TEXT_AUX).text_color(color(MUTED)))
                         .when_some(check.and_then(|check| check.problem.clone()), |card, problem| {
                             card.child(text(("storage-location-problem", index), problem).text_size(TEXT_AUX).text_color(color(DANGER)))
                         })
                         .when(needs_reassociation, |card| {
                             card.child(text(("storage-association-needed", index), "关联记录缺失").text_size(TEXT_AUX).text_color(color(WARNING)))
-                        })
-                        .child(
-                            h_flex().w_full().min_w_0().gap_2().justify_end().flex_wrap()
-                                .child(quiet(("open-storage-location", index)).icon(icons::folder_open()).label("打开位置").disabled(offline).on_click(move |_, _, cx| cx.open_with_system(&root)))
-                                .when(!default, |row| {
-                                    row.child(outline_pill(("default-storage-location", index)).icon(icons::check_circle()).label("设为默认").disabled(needs_relocation || needs_reassociation || self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(workspace) = &mut this.workspace {
-                                                let result = workspace.state.library(&id)
-                                                    .ok_or_else(|| anyhow::anyhow!("此位置已不在课程库中"))
-                                                    .and_then(|library| tempfile::NamedTempFile::new_in(&library.root).map(drop).context("此位置暂时不能写入，请重新连接磁盘或恢复文件夹访问权限"))
-                                                    .and_then(|_| workspace.transaction(|state| { state.default_library = id.clone(); Ok(()) }));
-                                                if let Err(error) = result {
-                                                    this.workspace_error = Some(format!("默认位置尚未更改：{error:#}"));
-                                                } else {
-                                                    this.message = Some("已设为默认保存位置".into());
-                                                }
-                                            }
-                                            cx.notify();
-                                        })))
-                                })
-                                .when(!needs_relocation && !needs_reassociation, |row| {
-                                    row.child(outline_pill(("move-storage-location", index)).icon(icons::storage()).label("移动课程库…").disabled(self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, window, cx| this.begin_library_move(move_id.clone(), window, cx))))
-                                })
-                                .when(needs_reassociation, |row| {
-                                    row.child(outline_pill(("reassociate-storage-location", index)).icon(icons::storage()).label("重新关联…").disabled(self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, window, cx| this.begin_library_reassociation(reassociate_id.clone(), window, cx))))
-                                })
-                                .when(needs_relocation, |row| {
-                                    row.child(outline_pill(("relocate-storage-location", index)).icon(icons::folder_open()).label("重新定位…").disabled(self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, window, cx| this.begin_library_relocation(relocate_id.clone(), window, cx))))
-                                }),
-                        ),
+                        }),
                 );
             }
         }

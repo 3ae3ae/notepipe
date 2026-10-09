@@ -535,6 +535,8 @@ impl SettingsGroup {
     }
 
     /// A quiet action that applies to the whole group, trailing its title.
+    /// Kept as the shared primitive for group-wide actions while no page uses it.
+    #[allow(dead_code)]
     pub(crate) fn action(mut self, action: impl IntoElement) -> Self {
         self.action = Some(action.into_any_element());
         self
