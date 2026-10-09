@@ -18,13 +18,9 @@ fn help(text: impl Into<SharedString>) -> Div {
     let text = text.into();
     theme::supporting_info(text_id("help", &text), text).text_sm()
 }
-fn issue(message: impl Into<SharedString>) -> Div {
+fn issue(message: impl Into<SharedString>) -> Stateful<Div> {
     let message = message.into();
-    div()
-        .text_sm()
-        .text_color(color(DANGER))
-        .whitespace_normal()
-        .child(accessible_text(text_id("issue", &message), message))
+    error_text(text_id("issue", &message), message).text_sm().whitespace_normal()
 }
 fn text_id(kind: &str, value: &str) -> SharedString {
     use std::hash::{Hash, Hasher};

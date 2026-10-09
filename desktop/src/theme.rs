@@ -293,6 +293,18 @@ pub fn accessible_text(
         .child(value)
 }
 
+/// Failure feedback uses one accessible alert form everywhere. Callers
+/// chain their own size and wrapping rules.
+pub fn error_text(
+    id: impl Into<gpui::ElementId>,
+    message: impl Into<gpui::SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    use gpui::*;
+    accessible_text(id, message)
+        .role(Role::Alert)
+        .text_color(color(DANGER))
+}
+
 /// Primary interface labels have one icon column and one text column. The
 /// slot also accepts a live spinner, keeping state changes on the same axis.
 pub fn semantic_label(
@@ -470,6 +482,19 @@ pub fn text_input(
 }
 
 /* ---------- 共享控件 ---------- */
+
+/// Standard card container: surface fill, card border and corner radius.
+/// Callers chain their own gap and contents on top of the shared frame.
+pub fn card_surface() -> gpui::Div {
+    use gpui::Styled;
+    gpui_component::v_flex()
+        .w_full()
+        .p_4()
+        .bg(color(SURFACE))
+        .border_1()
+        .border_color(color(CARD_LINE))
+        .rounded(RADIUS_CARD)
+}
 
 /// A selectable preview surface. Its opaque contents cannot conceal pointer
 /// feedback: hover changes the outline/shadow, and press dims the whole card.

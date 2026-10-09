@@ -1612,14 +1612,8 @@ impl Desktop {
                     .w_full()
                     .gap_3()
                     .child(
-                        v_flex()
-                            .w_full()
+                        card_surface()
                             .gap_3()
-                            .p_4()
-                            .bg(color(SURFACE))
-                            .border_1()
-                            .border_color(color(CARD_LINE))
-                            .rounded(RADIUS_CARD)
                             .child(self.codex_account_section(
                                 crate::codex_ui::CodexSurface::Settings,
                                 false,
@@ -1627,14 +1621,8 @@ impl Desktop {
                             )),
                     )
                     .child(
-                        v_flex()
-                            .w_full()
+                        card_surface()
                             .gap_3()
-                            .p_4()
-                            .bg(color(SURFACE))
-                            .border_1()
-                            .border_color(color(CARD_LINE))
-                            .rounded(RADIUS_CARD)
                             .child(self.ollama_account_section(cx)),
                     ),
             ),
