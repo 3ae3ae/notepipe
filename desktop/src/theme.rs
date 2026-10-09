@@ -94,7 +94,7 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
         PRIMARY_ACTIVE => blend(rgb(p.accent), rgb(p.text), 0.20),
         // M3 container roles derived from each palette's own accent and text, so
         // every preset keeps its identity (assets/themes/SOURCES.md).
-        ACCENT_SOFT | SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.24 } else { 0.14 }),
+        ACCENT_SOFT | SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.26 } else { 0.24 }),
         ON_SECONDARY_CONTAINER => blend(rgb(p.text), rgb(p.accent), if id.is_dark() { 0.30 } else { 0.40 }),
         PRIMARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.38 } else { 0.24 }),
         ON_PRIMARY_CONTAINER => blend(rgb(p.text), rgb(p.accent), 0.20),
@@ -675,6 +675,125 @@ pub fn primary_pill(id: impl Into<gpui::ElementId>) -> gpui_component::button::B
         .px(rems(16. / 14.))
         .gap(rems(8. / 14.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
+}
+
+/// Top-level destination in the app bar. The current destination sits on the
+/// tonal secondary container; others are quiet with an 8% M3 hover layer.
+pub fn nav_action(
+    id: impl Into<gpui::ElementId>,
+    selected: bool,
+    cx: &App,
+) -> gpui_component::button::Button {
+    use gpui::Styled;
+    use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
+    let (bg, fg) = if selected {
+        (color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER))
+    } else {
+        (gpui::Rgba { a: 0., ..color(CANVAS) }, color(GRAY))
+    };
+    let layer = |amount| blend(bg, gpui::Rgba { a: 1., ..fg }, amount);
+    control(id)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(bg.into())
+                .foreground(fg.into())
+                .hover(layer(0.08).into())
+                .active(layer(0.10).into())
+                .shadow(false),
+        )
+        // gpui-component dilutes a custom fill to 20%; paint the token itself.
+        .bg(bg)
+        .px(rems(14. / 14.))
+        .gap(rems(8. / 14.))
+}
+
+/// M3 filled tonal button: a secondary action that still carries weight,
+/// e.g. opening a finished note from a list row.
+pub fn tonal_pill(id: impl Into<gpui::ElementId>, cx: &App) -> gpui_component::button::Button {
+    use gpui::Styled;
+    use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
+    let bg = color(SECONDARY_CONTAINER);
+    let fg = color(ON_SECONDARY_CONTAINER);
+    control(id)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(bg.into())
+                .foreground(fg.into())
+                .hover(blend(bg, fg, 0.08).into())
+                .active(blend(bg, fg, 0.10).into())
+                .shadow(false),
+        )
+        .bg(bg)
+        .px(rems(16. / 14.))
+        .gap(rems(8. / 14.))
+}
+
+/// M3 disabled filled button: on-surface at 12% with 38% content, so an
+/// unavailable action never reads as a selected tonal surface.
+pub fn disabled_when(
+    button: gpui_component::button::Button,
+    disabled: bool,
+    cx: &App,
+) -> gpui_component::button::Button {
+    use gpui::Styled;
+    use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
+    if !disabled {
+        return button;
+    }
+    let ink = color(INK);
+    let fill = gpui::Rgba { a: 0.12, ..ink };
+    button.custom(
+        ButtonCustomVariant::new(cx)
+            .color(fill.into())
+            .foreground(gpui::Rgba { a: 0.38, ..ink }.into())
+            .hover(fill.into())
+            .active(fill.into())
+            .shadow(false),
+    )
+    .bg(fill)
+}
+
+/// M3 filter chip: 32px, 8px corners. Selected chips sit on the secondary
+/// container with a leading check; others are outlined.
+pub fn filter_chip(
+    id: impl Into<gpui::ElementId>,
+    selected: bool,
+    cx: &App,
+) -> gpui_component::button::Button {
+    use gpui::Styled;
+    use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
+    let size = rems(32. / 14.);
+    let (bg, fg) = if selected {
+        (color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER))
+    } else {
+        (gpui::Rgba { a: 0., ..color(CANVAS) }, color(INK))
+    };
+    let layer = |amount| blend(bg, gpui::Rgba { a: 1., ..fg }, amount);
+    let chip = gpui_component::button::Button::new(id)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .color(bg.into())
+                .foreground(fg.into())
+                .hover(layer(0.08).into())
+                .active(layer(0.10).into())
+                .shadow(false),
+        )
+        .bg(bg)
+        .h(size)
+        .min_h(size)
+        .px(rems(12. / 14.))
+        .gap(rems(6. / 14.))
+        .rounded(px(8.))
+        .flex_shrink_0()
+        .text_size(TEXT_BODY)
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .border_1()
+        .border_color(if selected { color(SECONDARY_CONTAINER) } else { color(CONTROL) });
+    if selected {
+        chip.icon(crate::icons::check())
+    } else {
+        chip
+    }
 }
 
 /// Meaningful secondary action with a control-strength border.
