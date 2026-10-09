@@ -536,13 +536,7 @@ impl RenderOnce for SettingsGroup {
                     .min_h(rems(24. / 14.))
                     .items_center()
                     .child(
-                        text(self.id, self.title)
-                            .role(Role::Heading)
-                            .flex_1()
-                            .px(rems(4. / 14.))
-                            .text_size(rems(15. / 14.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(color(ACCENT_STRONG)),
+                        theme::section_title(self.id, self.title).flex_1(),
                     )
                     .children(self.action),
             )
@@ -949,7 +943,6 @@ impl Desktop {
             };
         let header = theme::page_heading(
             "settings-page-title",
-            icons::settings().size(px(24.)).text_color(color(ACCENT_STRONG)),
             "设置",
         )
         .flex_shrink_0();

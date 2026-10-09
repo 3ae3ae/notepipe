@@ -301,7 +301,6 @@ impl Desktop {
             .child(
                 theme::page_heading(
                     "page-title",
-                    icons::book_open().size(px(24.)).text_color(color(ACCENT_STRONG)),
                     self.page_title(),
                 )
                 .flex_1()

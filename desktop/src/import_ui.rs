@@ -2824,7 +2824,6 @@ impl Desktop {
                 } else {
                     view.child(theme::page_heading(
                         "workbench-title",
-                        icons::dashboard().size(rems(24. / 14.)).text_color(color(ACCENT_STRONG)),
                         "把视频整理成笔记",
                     ))
                 }

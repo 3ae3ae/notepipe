@@ -2373,7 +2373,6 @@ impl Desktop {
     fn queue_page_header(&self) -> Div {
         h_flex().w_full().min_w_0().items_center().child(theme::page_heading(
             "tasks-page-title",
-            icons::task().size(px(24.)).text_color(color(ACCENT_STRONG)),
             "任务",
         ))
     }
@@ -2425,17 +2424,11 @@ impl Desktop {
                         })),
                 )
                 .into_any_element(),
-            QueueItem::GroupLabel { group, count } => semantic_label(
+            QueueItem::GroupLabel { group, count } => theme::section_title(
                 SharedString::from(format!("task-group-{group:?}")),
                 format!("{} · {count}", group.label()),
-                match group {
-                    TaskGroup::Attention => icons::warning(),
-                    TaskGroup::Processing => icons::play_arrow(),
-                    _ => icons::check_circle(),
-                },
             )
             .pt_4()
-            .text_size(TEXT_TITLE)
             .into_any_element(),
             QueueItem::HistoryToggle { count, open } => {
                 let toggle = open.clone();
@@ -2468,7 +2461,7 @@ impl Desktop {
         let mut wrapper = v_flex()
             .w_full()
             .min_w_0()
-            .when(!last, |view| view.mb_4())
+            .when(!last, |view| view.pb_3())
             .child(content)
             .id(("queue-item", index))
             .tab_stop(false);
@@ -2651,12 +2644,10 @@ impl Desktop {
             let path = path.clone();
             let title = task.plan.title.clone();
             row = row.child(
-                control(SharedString::from(format!("task-read-direct-{id}")))
+                // One filled action per screen: rows open their note tonally.
+                tonal_pill(SharedString::from(format!("task-read-direct-{id}")), cx)
                     .icon(icons::book_open())
                     .label("阅读笔记")
-                    .when(!(task.exports_only() && has_exports), |button| {
-                        button.primary()
-                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_course(
                             Course::from_completed(&Completed {

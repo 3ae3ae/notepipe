@@ -1706,21 +1706,27 @@ impl Desktop {
                             .w_full()
                             .min_w_0()
                             .gap_1()
-                            .items_start()
-                            .child(title)
+                            .items_center()
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap(px(2.))
+                                    .child(title)
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .whitespace_nowrap()
+                                            .text_ellipsis()
+                                            .text_size(TEXT_AUX)
+                                            .font_weight(FontWeight::NORMAL)
+                                            .text_color(color(GRAY))
+                                            .child(self.course_meta(course)),
+                                    ),
+                            )
                             .when(with_actions, |row| {
                                 row.child(self.course_actions(course.clone(), index, cx))
                             }),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_size(TEXT_AUX)
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(color(GRAY))
-                            .child(self.course_meta(course)),
                     )
                     .when(course.incomplete(), |view| {
                         view.child(div().pt_1().child(badge(BadgeKind::Warning).child("部分内容待补全")))
@@ -1906,11 +1912,7 @@ impl Desktop {
                 .items_center()
                 .gap_2()
                 .child(
-                    accessible_text("recent-title", "最近的笔记")
-                        .role(Role::Heading)
-                        .flex_1()
-                        .text_size(TEXT_TITLE)
-                        .font_weight(FontWeight::SEMIBOLD),
+                    theme::section_title("recent-title", "最近的笔记").flex_1(),
                 )
                 .child(
                     quiet("recent-all")

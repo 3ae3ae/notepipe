@@ -252,25 +252,21 @@ pub const TEXT_READER: Rems = rems(1.143);
 /// Main page headline.
 pub const TEXT_DISPLAY: Rems = rems(2.);
 
-/// 页标题共享槽位：有意义图标 + 强调标签（SKILL.md 主 UI 标题约定）。
+/// Page title shared by library, tasks, settings and a non-hero workbench.
+/// As on the M3 canvas, the title is text alone; the app bar already marks
+/// the destination with its icon.
 pub fn page_heading(
     id: impl Into<gpui::ElementId>,
-    icon: impl gpui::IntoElement,
     title: impl Into<gpui::SharedString>,
 ) -> gpui::Div {
     use gpui::{prelude::*, *};
-    div()
-        .flex()
-        .items_center()
-        .min_w_0()
-        .gap(rems(10. / 14.))
-        .child(icon)
-        .child(
-            accessible_text(id, title.into())
-                .role(Role::Heading)
-                .text_size(TEXT_DISPLAY)
-                .font_weight(FontWeight::SEMIBOLD),
-        )
+    div().flex().items_center().min_w_0().child(
+        accessible_text(id, title.into())
+            .role(Role::Heading)
+            .text_size(TEXT_DISPLAY)
+            .line_height(rems(36. / 14.))
+            .font_weight(FontWeight::SEMIBOLD),
+    )
 }
 
 /* ---------- 中性阴影 ---------- */
@@ -501,6 +497,22 @@ pub fn text_input(
 }
 
 /* ---------- 共享控件 ---------- */
+
+/// M3 list section title: primary-colored, semibold, above the list it names.
+/// Shared by settings groups, task groups and the workbench's recent notes.
+pub fn section_title(
+    id: impl Into<gpui::ElementId>,
+    title: impl Into<gpui::SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    use gpui::prelude::*;
+    accessible_text(id, title)
+        .role(gpui::Role::Heading)
+        .px(rems(4. / 14.))
+        .text_size(rems(15. / 14.))
+        .line_height(rems(22. / 14.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(color(ACCENT_STRONG))
+}
 
 /// M3 search bar: a filled, borderless pill with a leading search icon. The
 /// field's own frame is off, so the bar draws the focus outline itself.
