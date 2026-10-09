@@ -177,7 +177,7 @@ impl Render for ServiceDialog {
     }
 }
 
-fn text(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Stateful<Div> {
+pub(crate) fn text(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Stateful<Div> {
     theme::accessible_text(id, value)
 }
 pub(super) fn field_label(
@@ -4242,120 +4242,7 @@ impl Desktop {
         }
         view
     }
-    fn storage_settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut view = v_flex().w_full().min_w_0().flex_shrink_0().gap_6().child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_3()
-                .items_start()
-                .flex_wrap()
-                .child(
-                    v_flex()
-                        .min_w_0()
-                        .gap_2()
-                        .child(semantic_label(
-                            "storage-locations-heading",
-                            "保存位置",
-                            icons::folder_open(),
-                        ))
-                        .child(theme::supporting_info(
-                            "storage-policy",
-                            "更改默认位置只影响后续生成的笔记。",
-                        ))
-                        .flex_1(),
-                )
-                .child(
-                    // 与笔记库同一模式：页标题行尾的有标签刷新动作（review2-settings#4）
-                    quiet("refresh-storage-locations")
-                        .icon(icons::refresh())
-                        .label("刷新")
-                        .loading(self.loading)
-                        .disabled(self.loading)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
-                ),
-        );
-        view = view.child(self.storage_status_panel(cx));
-        if let Some(workspace) = &self.workspace {
-            for (index, library) in workspace.state.libraries.iter().enumerate() {
-                let root = library.root.clone();
-                let id = library.id.clone();
-                let move_id = id.clone();
-                let relocate_id = id.clone();
-                let reassociate_id = id.clone();
-                let default = workspace.state.default_library == id;
-                let check = self.cached_location_check(library);
-                let offline = check.is_some_and(|check| !check.available);
-                let needs_relocation =
-                    check.is_some_and(|check| !check.available || check.problem.is_some());
-                let needs_reassociation = check.is_some_and(|check| check.needs_reassociation);
-                view = view.child(
-                    v_flex().w_full().min_w_0().gap_3().p_4()
-                        .bg(color(SURFACE)).border_1().border_color(color(CARD_LINE)).rounded(RADIUS_CARD)
-                        .child(
-                            h_flex().w_full().min_w_0().gap_2().items_center().flex_wrap()
-                                .child(semantic_label(("storage-location-name", index), library.name.clone(), icons::folder_open()).flex_1().min_w_0())
-                                .when(default, |row| row.child(badge(BadgeKind::Neutral).child("默认保存位置")))
-                                .when(offline, |row| row.child(badge(BadgeKind::Warning).child("暂时不可访问"))),
-                        )
-                        .child(text(("storage-location-path", index), root.display().to_string()).w_full().min_w_0().whitespace_normal().text_size(TEXT_AUX).text_color(color(MUTED)))
-                        .when_some(check.and_then(|check| check.problem.clone()), |card, problem| {
-                            card.child(text(("storage-location-problem", index), problem).text_size(TEXT_AUX).text_color(color(DANGER)))
-                        })
-                        .when(needs_reassociation, |card| {
-                            card.child(text(("storage-association-needed", index), "关联记录缺失。重新关联后可继续使用，已有文件会保留。").text_size(TEXT_AUX).text_color(color(WARNING)))
-                        })
-                        .when(needs_relocation, |card| {
-                            card.child(text(("storage-relocation-help", index), "文件夹已移动时，请重新定位到它现在的位置。").text_size(TEXT_AUX).text_color(color(MUTED)))
-                        })
-                        .child(
-                            h_flex().w_full().min_w_0().gap_2().justify_end().flex_wrap()
-                                .child(quiet(("open-storage-location", index)).icon(icons::folder_open()).label("打开位置").disabled(offline).on_click(move |_, _, cx| cx.open_with_system(&root)))
-                                .when(!default, |row| {
-                                    row.child(outline_pill(("default-storage-location", index)).icon(icons::check_circle()).label("设为默认").disabled(needs_relocation || needs_reassociation || self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(workspace) = &mut this.workspace {
-                                                let result = workspace.state.library(&id)
-                                                    .ok_or_else(|| anyhow!("此位置已不在课程库中"))
-                                                    .and_then(|library| tempfile::NamedTempFile::new_in(&library.root).map(drop).context("此位置暂时不能写入，请重新连接磁盘或恢复文件夹访问权限"))
-                                                    .and_then(|_| workspace.transaction(|state| { state.default_library = id.clone(); Ok(()) }));
-                                                if let Err(error) = result {
-                                                    this.workspace_error = Some(format!("默认位置尚未更改：{error:#}"));
-                                                } else {
-                                                    this.message = Some("后续生成的笔记将保存在此位置，已有笔记和任务保持原位置".into());
-                                                }
-                                            }
-                                            cx.notify();
-                                        })))
-                                })
-                                .when(!needs_relocation && !needs_reassociation, |row| {
-                                    row.child(outline_pill(("move-storage-location", index)).icon(icons::storage()).label("移动课程库…").disabled(self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, window, cx| this.begin_library_move(move_id.clone(), window, cx))))
-                                })
-                                .when(needs_reassociation, |row| {
-                                    row.child(outline_pill(("reassociate-storage-location", index)).icon(icons::storage()).label("重新关联…").disabled(self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, window, cx| this.begin_library_reassociation(reassociate_id.clone(), window, cx))))
-                                })
-                                .when(needs_relocation, |row| {
-                                    row.child(outline_pill(("relocate-storage-location", index)).icon(icons::folder_open()).label("重新定位…").disabled(self.storage_ui.busy)
-                                        .on_click(cx.listener(move |this, _, window, cx| this.begin_library_relocation(relocate_id.clone(), window, cx))))
-                                }),
-                        ),
-                );
-            }
-        }
-        view = view.child(
-            outline_pill("register-storage-location")
-                .icon(icons::add())
-                .label("添加课程库位置")
-                .self_start()
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.register_storage_location(window, cx)),
-                ),
-        );
-        view.into_any_element()
-    }
-    fn register_storage_location(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn register_storage_location(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
