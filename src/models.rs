@@ -120,6 +120,8 @@ pub async fn prepare(
                 .await
                 .context("NPU 模型准备进程未完成 / NPU model preparation process did not complete")?
         }
+        // 依赖上游过滤不变量：inspect() 对 Api 返回 can_prepare=false，
+        // prepare 入口的 ensure!(can_prepare) 已拦截；若上游过滤改动此处会变成 panic。
         AsrProvider::Api => unreachable!(),
     };
     let after = status::inspect(provider, model, root).unwrap_or_else(|error| {

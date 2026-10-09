@@ -234,6 +234,8 @@ pub fn inspect_at(
             }
             parts.push(cache_part(&repo, path, missing)?);
         }
+        // 依赖上游过滤不变量：inspect() 对 Api 置 supported=false 并已提前返回，
+        // 走不到这里；若上游过滤改动此处会变成 panic。
         AsrProvider::Api => unreachable!(),
     }
     let bytes = parts.iter().map(|part| part.bytes).sum();
