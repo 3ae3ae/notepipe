@@ -826,7 +826,7 @@ impl Desktop {
     fn value(&self, field: Field, cx: &App) -> String {
         self.inputs[&field].read(cx).value().trim().to_string()
     }
-    fn input(&self, field: Field, label: &'static str, cx: &App) -> Div {
+    fn input(&self, field: Field, label: &'static str, _cx: &App) -> Div {
         v_flex()
             .gap_2()
             .w_full()
