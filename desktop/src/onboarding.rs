@@ -1440,7 +1440,7 @@ impl Desktop {
                             "识别模型",
                             icons::microphone(),
                         ))
-                        .child(settings_value("setup-current-model", current_model))
+                        .child(settings_value("setup-current-model", current_model).w_auto())
                         // Readiness reads as the model's status, next to its name.
                         .child(
                             h_flex().flex_1().min_w_0().child(
