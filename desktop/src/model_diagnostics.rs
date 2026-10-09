@@ -576,7 +576,7 @@ impl Desktop {
 (BadgeKind::Progress, "准备中", None)
             } else {
                 match status.state {
-                CacheState::Missing => (BadgeKind::Neutral, "待下载", Some("首次识别时自动下载。")),
+                CacheState::Missing => (BadgeKind::Neutral, "待下载", None),
                 CacheState::Partial => (BadgeKind::Warning, "待准备", None),
                 CacheState::Cached => (BadgeKind::Success, "已下载", None),
                 CacheState::Loaded => (BadgeKind::Success, "已验证可加载", None),
@@ -871,27 +871,22 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> Div {
         let request = self.default_model_request();
-        let mut current = crate::settings_ui::SettingsGroup::new("model-diagnostic-default", "默认识别模型");
-        if request.provider == AsrProvider::Api {
-            current = current.child(crate::settings_ui::setting_surface().child(
-                settings_detail_row(
-                    "default-asr-provider-label",
-                    "识别方式",
-                    settings_value("default-asr-is-service", "语音服务"),
-                ),
-            ));
-        } else {
-            current = current.child(crate::settings_ui::setting_surface().child(
-                self.model_readiness_panel(
-                    request.provider,
-                    Some(&request.model),
-                    &request.root,
-                    window,
-                    cx,
-                ),
-            ));
+        // 使用语音服务识别时没有本地模型可检查：整组省略，而不是重述识别方式
+        let mut view = v_flex().w_full().min_w_0().gap_6();
+        if request.provider != AsrProvider::Api {
+            view = view.child(
+                crate::settings_ui::SettingsGroup::new("model-diagnostic-default", "默认识别模型")
+                    .child(crate::settings_ui::setting_surface().child(
+                        self.model_readiness_panel(
+                            request.provider,
+                            Some(&request.model),
+                            &request.root,
+                            window,
+                            cx,
+                        ),
+                    )),
+            );
         }
-        let mut view = v_flex().w_full().min_w_0().gap_6().child(current);
         if self.kind == Kind::Models
             && self.job.is_some()
             && let Some(active) = &self.settings_ui.model_diagnostics.preparing
@@ -1093,7 +1088,7 @@ impl Desktop {
         if self.model_device_issue(request.provider).is_some() {
             return (
                 false,
-                "所选识别方式暂不可用，可在模型管理中查看原因。".into(),
+                "所选识别方式暂不可用，可在模型管理中查看原因".into(),
             );
         }
         let entry = self
@@ -1110,7 +1105,7 @@ impl Desktop {
         {
             return (
                 false,
-                "模型检查未完成，可在模型管理中查看原因并重试。".into(),
+                "模型检查未完成，可在模型管理中查看原因并重试".into(),
             );
         }
         match entry
@@ -1118,15 +1113,15 @@ impl Desktop {
             .and_then(|result| result.as_ref().ok())
             .map(|status| &status.state)
         {
-            Some(CacheState::Loaded) => (true, "识别模型已就绪。".into()),
-            Some(CacheState::Cached) => (true, "模型已下载。".into()),
+            Some(CacheState::Loaded) => (true, "识别模型已就绪".into()),
+            Some(CacheState::Cached) => (true, "模型已下载".into()),
             Some(CacheState::Missing | CacheState::Partial) => {
-                (true, "首次识别时会自动下载所选模型。".into())
+                (true, "首次识别时会自动下载所选模型".into())
             }
             Some(CacheState::Unsupported) => {
-                (false, "当前识别方式不支持所选模型，请选择其他模型。".into())
+                (false, "当前识别方式不支持所选模型，请选择其他模型".into())
             }
-            None => (true, "尚未检查识别模型。".into()),
+            None => (true, "尚未检查识别模型".into()),
         }
     }
 }

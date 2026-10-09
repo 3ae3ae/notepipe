@@ -430,14 +430,19 @@ pub fn model_field_with_error(
     let selected = input.read(cx).value().to_string();
     let field = input.clone();
     let status = match state.status() {
-        Status::Idle => "可手动填写模型 ID，或点击右侧获取候选。".into(),
-        Status::Loading => "正在获取候选模型，仍可手动填写。".into(),
-        Status::Ready(models) if models.is_empty() => "服务未返回模型，可手动填写模型 ID。".into(),
-        Status::Ready(models) => {
-            format!("服务返回 {} 个候选，可展开选择或手动填写。", models.len())
+        // 空闲时不加说明：输入框与右侧获取按钮已说明可做的事
+        Status::Idle => None,
+        Status::Loading => Some("正在获取候选模型，仍可手动填写".into()),
+        Status::Ready(models) if models.is_empty() => {
+            Some("服务未返回模型，可手动填写模型 ID".into())
         }
-        Status::Failed(error) => error.message(),
+        Status::Ready(models) => Some(format!(
+            "服务返回 {} 个候选，可展开选择或手动填写",
+            models.len()
+        )),
+        Status::Failed(error) => Some(error.message()),
     };
+    let failed = matches!(state.status(), Status::Failed(_));
     let suffix = h_flex()
         .flex_shrink_0()
         .items_center()
@@ -522,9 +527,9 @@ pub fn model_field_with_error(
                 .text_color(color(DANGER)),
             )
         })
-        .child(
-            // 非失败的常态说明走共享 ⓘ 辅助信息；失败仍用危险色错误文本（review4#2）
-            if matches!(state.status(), Status::Failed(_)) {
+        .when_some(status, |view, status: String| {
+            // 非失败的常态说明走共享 ⓘ 辅助信息；失败与字段错误同一危险色文本，紧贴字段下方
+            view.child(if failed {
                 accessible_text(SharedString::from(format!("{id}-status")), status)
                     .w_full()
                     .min_w_0()
@@ -536,8 +541,8 @@ pub fn model_field_with_error(
                 supporting_info(SharedString::from(format!("{id}-status")), status)
                     .text_size(TEXT_AUX)
                     .into_any_element()
-            },
-        )
+            })
+        })
 }
 
 #[cfg(test)]
