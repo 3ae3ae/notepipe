@@ -1083,6 +1083,7 @@ impl Desktop {
                     view = view.child(
                         h_flex()
                             .gap_2()
+                            .justify_center()
                             .items_center()
                             .child(icon.size(px(16.)).flex_shrink_0())
                             .child(
@@ -2861,6 +2862,9 @@ impl Desktop {
                 )
             });
         let show_source_input = self.source_preview.is_none() || self.source_editor_open;
+        // Only the empty source state is a centered hero; a read source and its
+        // decisions return to the page's leading ruler.
+        let hero = self.source_preview.is_none() && linked_task.is_none();
         let input = v_flex()
             .w_full()
             .min_w_0()
@@ -2872,9 +2876,7 @@ impl Desktop {
             .gap_6()
             .w_full()
             .min_w_0()
-            // The workbench is the product's landing task: a centered hero
-            // heading above the source pill, as in the M3 redesign canvas.
-            .child(h_flex().w_full().justify_center().pt(px(32.)).child(theme::page_heading(
+            .child(h_flex().w_full().when(hero, |row| row.justify_center().pt(px(32.))).child(theme::page_heading(
                 "workbench-title",
                 icons::dashboard().size(px(28.)).text_color(color(ACCENT_STRONG)),
                 "把视频整理成笔记",
