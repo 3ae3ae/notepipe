@@ -41,21 +41,6 @@ fn service_destination(config: &crate::preferences::ServiceConfiguration) -> Str
         format!("「{}」（{host}）", config.name)
     }
 }
-/// Platform marks are brand assets; they do not belong inside the editable field.
-fn platform_mark(name: &'static str, icon: Icon) -> Div {
-    // 品牌提示按 metadata 角色降级（workbench#12）：不再是正文级高饱和焦点
-    h_flex()
-        .gap_2()
-        .items_center()
-        .flex_shrink_0()
-        .child(icon.size(px(16.)).flex_shrink_0())
-        .child(
-            div()
-                .text_size(TEXT_AUX)
-                .text_color(color(MUTED))
-                .child(name),
-        )
-}
 
 /// Idle 工作台 conversion-options chrome. 高级选项 is the only disclosure;
 /// conversion defaults live there as real controls, not a standalone callout.

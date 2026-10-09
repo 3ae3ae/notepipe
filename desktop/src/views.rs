@@ -67,7 +67,7 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 
 impl Desktop {
     /// Keep task results reachable while the user is on another page.
-    fn shell_topbar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
+    fn shell_topbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
             workspace.state.tasks.iter().any(|task| {
                 task.handled_by.is_none()

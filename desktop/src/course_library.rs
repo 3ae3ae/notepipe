@@ -69,10 +69,6 @@ pub(crate) fn library_filter_selected(
         .unwrap_or_else(|| "all".into())
 }
 
-pub(crate) fn library_layout_choice(cards: bool) -> &'static str {
-    if cards { "cards" } else { "list" }
-}
-
 /// 文件夹分区：(保存位置根, 库名, [(文件夹 id, 名称)])。
 pub(crate) type LibrarySection = (std::path::PathBuf, String, Vec<(u64, String)>);
 
@@ -1323,10 +1319,6 @@ impl Desktop {
         }
         let options = library_filter_options(&sections, &self.library_root, multi);
         let selected = library_filter_selected(&options, &self.library_root, self.folder_filter);
-        let choices: Vec<(String, String)> = options
-            .iter()
-            .map(|option| (option.value.clone(), option.label.clone()))
-            .collect();
         // M3 filter chips, one per scope; real folders carry the folder icon.
         h_flex()
             .id("folder-filter")
@@ -2166,7 +2158,5 @@ mod tests {
             super::library_filter_selected(&options, &root, Some(2)),
             "f-0-2"
         );
-        assert_eq!(super::library_layout_choice(false), "list");
-        assert_eq!(super::library_layout_choice(true), "cards");
     }
 }
