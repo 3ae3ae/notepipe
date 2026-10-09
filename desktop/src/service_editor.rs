@@ -683,6 +683,8 @@ impl Desktop {
                 "设置 AI 服务"
             })
             .gap_6()
+            // The outward-paint allowance is cancelled outside so cards keep the pane edges.
+            .mx(rems(-0.25))
             .px_1()
             // 滚动容器为首末卡片的阴影与焦点外绘留出空间（system.md：clipped container 需预留 outward paint）
             .pt_1()
@@ -793,6 +795,7 @@ impl Desktop {
             if auth == Authentication::ApiKey {
                 // 显示/隐藏是输入框尾部的安静按钮（与首次引导的密钥字段一致），不再单列开关行
                 let visibility = quiet("toggle-service-key")
+                    .mr(rems(-0.625))
                     .icon(if editor.show_key {
                         icons::eye_off()
                     } else {
@@ -948,6 +951,7 @@ impl Desktop {
             .flex_wrap()
             .child(
                 quiet("close-service-editor")
+                    .ml(rems(-0.625))
                     .icon(icons::close())
                     .label(if configuration_saved {
                         "关闭"

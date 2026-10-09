@@ -1370,6 +1370,7 @@ impl Desktop {
             .ghost()
             .icon(if cards_on { icons::dashboard() } else { icons::task() })
             .label("显示")
+            .mr(rems(-0.625))
             .text_color(color(GRAY))
             .dropdown_menu(move |menu, _, _| {
                 let set_cards = |cards: bool| {
