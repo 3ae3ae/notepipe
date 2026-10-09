@@ -2969,14 +2969,13 @@ impl Desktop {
                         card = card.child(
                             accessible_text(
                                 SharedString::from(format!("task-partial-summary-{id}")),
-                                format!(
-                                    "{}未完成",
-                                    failures
-                                        .iter()
-                                        .map(|(_, label, _)| label.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join("、")
-                                ),
+                                failures
+                                    .iter()
+                                    .map(|(_, label, _)| {
+                                        crate::activity::component_failure_message(label, None)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("、"),
                             )
                             .text_size(TEXT_BODY)
                             .text_color(color(GRAY)),
