@@ -2310,12 +2310,9 @@ impl Desktop {
                                     || *index == 3
                                     || *index == self.task_options.provider
                                     || self.environment.as_ref().is_some_and(|environment| {
-                                        match index {
-                                            1 => environment.apple,
-                                            2 => environment.gpu.is_some(),
-                                            4 => environment.npu,
-                                            _ => false,
-                                        }
+                                        crate::asr_provider_from_index(*index).is_some_and(
+                                            |provider| environment.supports(provider),
+                                        )
                                     })
                             })
                             .map(|(index, (_, label))| {

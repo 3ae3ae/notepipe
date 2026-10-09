@@ -391,6 +391,20 @@ pub struct Environment {
     pub npu_runtime: bool,
 }
 impl Environment {
+    /// 本机环境是否支持指定的识别方式。NPU 要求设备与运行器同时可用——
+    /// `npu` 字段在 detect() 中即 `npu_device && npu_runtime` 的合一，
+    /// 两处写法等价，以此处为准。Api 不依赖本机组件。
+    pub fn supports(&self, provider: course2md::config::AsrProvider) -> bool {
+        use course2md::config::AsrProvider;
+        match provider {
+            AsrProvider::Coreml => self.apple,
+            AsrProvider::Gpu => self.llama && self.gpu.is_some(),
+            AsrProvider::Cpu => self.llama,
+            AsrProvider::Npu => self.npu,
+            AsrProvider::Api => true,
+        }
+    }
+
     pub fn detect() -> Self {
         let cli = resolve_cli().ok();
         // (字段名, 命令, 参数) 与回填写在一起：数组重排不会造成静默错配

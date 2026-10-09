@@ -854,9 +854,13 @@ impl Desktop {
     pub fn recommended_local_provider(&self) -> course2md::config::AsrProvider {
         use course2md::config::AsrProvider;
         match &self.environment {
-            Some(environment) if environment.apple => AsrProvider::Coreml,
-            Some(environment) if environment.gpu.is_some() && environment.llama => AsrProvider::Gpu,
-            Some(environment) if environment.npu && !environment.llama => AsrProvider::Npu,
+            Some(environment) if environment.supports(AsrProvider::Coreml) => AsrProvider::Coreml,
+            Some(environment) if environment.supports(AsrProvider::Gpu) => AsrProvider::Gpu,
+            Some(environment)
+                if environment.supports(AsrProvider::Npu) && !environment.llama =>
+            {
+                AsrProvider::Npu
+            }
             Some(_) => AsrProvider::Cpu,
             // Detection runs in the background. A temporary display hint must
             // not scan Linux devices or PATH while the interface is rendering.

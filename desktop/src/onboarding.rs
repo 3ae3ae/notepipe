@@ -1295,15 +1295,9 @@ impl Desktop {
         let mut choices = div().grid().grid_cols(columns).gap_3().w_full().min_w_0();
         for (index, (provider, label, description, icon)) in engines.into_iter().enumerate() {
             let capability = provider.unwrap_or(recommended);
+            // Api 不在本页提供；supports(Npu) 即 npu_device && npu_runtime（backend::detect 合一）。
             let ready = self.environment.as_ref().map(|e| {
-                e.engine
-                    && match capability {
-                        AsrProvider::Coreml => e.apple,
-                        AsrProvider::Gpu => e.llama && e.gpu.is_some(),
-                        AsrProvider::Cpu => e.llama,
-                        AsrProvider::Npu => e.npu_device && e.npu_runtime,
-                        AsrProvider::Api => false,
-                    }
+                e.engine && !matches!(capability, AsrProvider::Api) && e.supports(capability)
             });
             let status = match ready {
                 Some(true) => "运行环境已就绪",
