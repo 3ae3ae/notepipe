@@ -1280,8 +1280,17 @@ impl Desktop {
                 icons::computer(),
             ),
         ];
+        // Hardware this platform cannot have is not offered as a disabled choice.
+        let engines = engines.into_iter().filter(|(provider, ..)| {
+            *provider == selected
+                || match provider {
+                    Some(AsrProvider::Npu) => !cfg!(target_os = "macos"),
+                    Some(AsrProvider::Coreml) => cfg!(target_os = "macos"),
+                    _ => true,
+                }
+        });
         let mut choices = div().grid().grid_cols(columns).gap_3().w_full().min_w_0();
-        for (index, (provider, label, description, icon)) in engines.into_iter().enumerate() {
+        for (index, (provider, label, description, icon)) in engines.enumerate() {
             let capability = provider.unwrap_or(recommended);
             // Api 不在本页提供；supports(Npu) 即 npu_device && npu_runtime（backend::detect 合一）。
             let ready = self.environment.as_ref().map(|e| {
@@ -1309,7 +1318,7 @@ impl Desktop {
                     )
                     // Readiness is status, not a label: the shared badge, regular weight.
                     .child(
-                        div().pl(rems(28. / 14.)).child(
+                        h_flex().pl(rems(28. / 14.)).child(
                             badge(if ready == Some(true) {
                                 BadgeKind::Success
                             } else {
@@ -1330,17 +1339,11 @@ impl Desktop {
                 .w_full()
                 .min_w_0()
                 .gap_3()
-                .when(selected.is_none(), |view| {
-                    view.child(help(
-                        "setup-current-engine",
-                        format!("目前使用 {}", crate::provider_label(Some(recommended))),
-                    ))
-                })
                 .child(
                     described_choice(
                         "setup-engine-auto",
                         "自动选择引擎",
-                        "",
+                        format!("目前使用 {}", crate::provider_label(Some(recommended))),
                         icons::auto_fix(),
                         selected.is_none(),
                         window,
