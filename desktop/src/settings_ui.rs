@@ -117,6 +117,7 @@ impl State {
             let placeholder = match field {
                 EditField::Address => "https://api.example.com/v1",
                 EditField::Model => "",
+                EditField::Languages => "逗号分隔，例如 zh-Hans, en",
                 _ => "",
             };
             (
@@ -1493,6 +1494,10 @@ impl Desktop {
             .map(String::as_str)
             .unwrap_or("")
             == text
+            // The prefilled standard rule is not an unsaved edit.
+            || (next.prompt.is_none()
+                && next.prompt_draft.is_none()
+                && text.trim() == course2md::llm::DEFAULT_PROMPT.trim())
         {
             return;
         }

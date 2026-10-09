@@ -54,22 +54,9 @@ impl Desktop {
                     .items_center()
                     .flex_wrap()
                     .child(
-                        div().flex_1().min_w_0().when(language == "custom", |slot| {
-                            slot.child(
-                                text(
-                                    "subtitle-custom-summary",
-                                    format!(
-                                        "优先顺序：{}",
-                                        value.preferred_subtitle_languages.join(" → ")
-                                    ),
-                                )
-                                .text_size(TEXT_AUX)
-                                .text_color(color(MUTED)),
-                            )
-                        }),
-                    )
-                    .child(
                         quiet("toggle-language-details")
+                            // Optical alignment: the label starts on the row's text edge.
+                            .ml(rems(-12. / 14.))
                             .icon(if self.settings_ui.language_details_open {
                                 icons::chevron_up()
                             } else {
@@ -81,7 +68,17 @@ impl Desktop {
                                     !this.settings_ui.language_details_open;
                                 cx.notify();
                             })),
-                    ),
+                    )
+                    .when(language == "custom", |row| {
+                        row.child(
+                            text(
+                                "subtitle-custom-summary",
+                                value.preferred_subtitle_languages.join(" → "),
+                            )
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED)),
+                        )
+                    }),
             )
             .detail(crate::motion::disclosure(
                 "subtitle-language-details",
@@ -89,20 +86,26 @@ impl Desktop {
                 v_flex()
                     .px(rems(20. / 14.))
                     .pb(rems(16. / 14.))
-                    .gap_3()
-                    .child(self.setting_field(EditField::Languages, "语言优先级", cx))
                     .child(
-                        text("subtitle-language-help", "逗号分隔，例如 zh-Hans, en")
-                            .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
-                    )
-                    .child(
-                        outline_pill("apply-languages")
-                            .icon(icons::check_circle())
-                            .label("应用语言偏好")
-                            .self_start()
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.apply_language_preferences(cx)),
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_3()
+                            .flex_wrap()
+                            .child(
+                                div().flex_1().min_w(rems(16.)).child(
+                                    text_input(&self.settings_ui.inputs[&EditField::Languages])
+                                        .w_full()
+                                        .aria_label("语言优先级"),
+                                ),
+                            )
+                            .child(
+                                outline_pill("apply-languages")
+                                    .icon(icons::check_circle())
+                                    .label("应用")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.apply_language_preferences(cx)
+                                    })),
                             ),
                     ),
                 window,
@@ -113,9 +116,9 @@ impl Desktop {
             icons::microphone(),
             "识别方式",
             if provider == "api" {
-                "视频声音会发送到所选语音服务。"
+                "音频会发送到所选服务"
             } else {
-                "音频不会上传"
+                "音频不离开本机"
             },
             self.setting_choices("default-asr-device", "默认语音识别方式")
                 .options([("local", "本机识别"), ("api", "在线语音服务")])
@@ -162,6 +165,7 @@ impl Desktop {
                                             || provider == "npu"
                                     }),
                                 )
+                                .full_width()
                                 .selected(provider.to_owned())
                                 .on_change(cx.listener(|this, id: &SharedString, _, cx| {
                                     let mut next = this.generation_edit_base();
@@ -255,8 +259,16 @@ impl Desktop {
                     } else {
                         icons::chevron_down()
                     })
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.settings_ui.show_prompt = !this.settings_ui.show_prompt;
+                        // The standard rule is edited in place rather than printed beside an empty box.
+                        if this.settings_ui.show_prompt
+                            && this.settings_ui.prompt.read(cx).value().trim().is_empty()
+                        {
+                            this.settings_ui.prompt.update(cx, |input, cx| {
+                                input.set_value(course2md::llm::DEFAULT_PROMPT, window, cx)
+                            });
+                        }
                         cx.notify();
                     })),
             ))
@@ -267,11 +279,6 @@ impl Desktop {
                     .px(rems(20. / 14.))
                     .pb(rems(16. / 14.))
                     .gap_3()
-                    .child(
-                        text("standard-proofread-rule", course2md::llm::DEFAULT_PROMPT)
-                            .text_sm()
-                            .text_color(color(MUTED)),
-                    )
                     .child(
                         Textarea::new(&self.settings_ui.prompt)
                             .h(px(160.))
@@ -295,7 +302,9 @@ impl Desktop {
                                             .trim()
                                             .to_owned();
                                         let mut next = this.generation_edit_base();
-                                        next.prompt = (!prompt.is_empty()).then_some(prompt);
+                                        next.prompt = (!prompt.is_empty()
+                                            && prompt != course2md::llm::DEFAULT_PROMPT.trim())
+                                        .then_some(prompt);
                                         next.prompt_draft = None;
                                         this.commit_generation(next, cx);
                                     })),
@@ -304,13 +313,18 @@ impl Desktop {
                                 quiet("restore-proofread-rules")
                                     .icon(icons::refresh())
                                     .label("恢复标准规则")
+                                    .disabled(value.prompt.is_none())
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         let mut next = this.generation_edit_base();
                                         next.prompt = None;
                                         next.prompt_draft = None;
                                         if this.commit_generation(next, cx) {
                                             this.settings_ui.prompt.update(cx, |input, cx| {
-                                                input.set_value("", window, cx)
+                                                input.set_value(
+                                                    course2md::llm::DEFAULT_PROMPT,
+                                                    window,
+                                                    cx,
+                                                )
                                             });
                                         }
                                     })),
