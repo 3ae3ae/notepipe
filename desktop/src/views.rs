@@ -95,7 +95,8 @@ impl Desktop {
             .h(CONTROL_HEIGHT)
             .rounded(RADIUS_PILL)
             .cursor_pointer()
-            .hover(|style| style.bg(color(INK).opacity(0.08)))
+            // A brand link, not a destination: no pill, so it never reads as selected.
+            .hover(|style| style.opacity(0.8))
             .role(Role::Link)
             .aria_label("course2md 工作台")
             .child(
