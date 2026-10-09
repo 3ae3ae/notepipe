@@ -3188,7 +3188,8 @@ impl Desktop {
                     "find-status",
                     if reading_note && count > 0 {
                         format!("{}/{count}", self.reader_ui.match_index + 1)
-                    } else if reading_note {
+                    } else if count == 0 {
+                        // 笔记与图片搜索的零结果用同一说法
                         "无匹配".into()
                     } else {
                         format!("{count} 张")
