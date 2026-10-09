@@ -69,6 +69,57 @@ impl EmptyTripwire {
         )
     }
 }
+
+/// 空结果熔断 + 缓冲落账（run_chunks 串行路径与 run_api 并行路径共用一套语义）：
+/// 每个 chunk 结果先经 tripwire 计数，连续空结果熔断时**不落任何 checkpoint**
+/// （空记录会把分片标成「已完成静音」，掩盖真实的识别失败）；空结果先缓冲，
+/// 出现非空结果（或正常收尾）才批量落账。并行路径结果乱序到达也安全：
+/// 乱序只改变 pending 的相对顺序，批量落账全部写同一空文本，checkpoint 内容一致。
+#[derive(Default)]
+struct EmptyResultTracker {
+    tripwire: EmptyTripwire,
+    pending_empty: Vec<(f64, f64)>,
+}
+
+impl EmptyResultTracker {
+    /// 处理一个 chunk 的转写结果。返回 Ok(true) = 非空结果已落账；Ok(false) =
+    /// 空结果已缓冲（两条路径对进度条的推进语义不同，由调用方按返回值决定）；
+    /// Err = 需要中止（熔断触发或 checkpoint 写盘失败），错误原样上抛。
+    fn record_outcome(
+        &mut self,
+        cp: &mut crate::checkpoint::Checkpoint,
+        start: f64,
+        end: f64,
+        text: &str,
+    ) -> Result<bool> {
+        let empty = text.trim().is_empty();
+        if self.tripwire.record(empty) {
+            // 熔断不落账（见 struct 注释）
+            return Err(self.tripwire.tripped_error());
+        }
+        if empty {
+            self.pending_empty.push((start, end));
+            return Ok(false);
+        }
+        self.flush_pending(cp)?;
+        cp.record(start, end, text).map(|_| true)
+    }
+
+    /// 正常收尾：把缓冲的空结果（真实静音）落 checkpoint，避免静音 chunk 反复重跑。
+    /// 出错（含熔断）时调用方不得调用本方法——pending 必须随任务失败丢弃。
+    fn finish(self, cp: &mut crate::checkpoint::Checkpoint) -> Result<()> {
+        let mut this = self;
+        this.flush_pending(cp)
+    }
+
+    /// 批量落账缓冲的空结果；写盘失败即中断，剩余 pending 保留待重跑。
+    fn flush_pending(&mut self, cp: &mut crate::checkpoint::Checkpoint) -> Result<()> {
+        for (start, end) in std::mem::take(&mut self.pending_empty) {
+            cp.record(start, end, "")?;
+        }
+        Ok(())
+    }
+}
 /// HTTP 重试：最多 3 次（1 次首发 + 2 次重试），指数退避 1s → 2s；
 /// 4xx 是确定性错误（鉴权/参数）不重试，5xx 与网络错误重试
 const MAX_ATTEMPTS: u32 = 3;
@@ -328,8 +379,7 @@ pub(crate) fn run_chunks(
     ));
 
     let mut err: Option<anyhow::Error> = None;
-    let mut tripwire = EmptyTripwire::default();
-    let mut pending_empty: Vec<(f64, f64)> = Vec::new();
+    let mut tracker = EmptyResultTracker::default();
     std::thread::scope(|scope| {
         let mut prefetch: Option<(usize, std::thread::ScopedJoinHandle<'_, Result<()>>)> = None;
         for (i, seg) in segs.iter().copied().enumerate() {
@@ -371,31 +421,13 @@ pub(crate) fn run_chunks(
             match transcribe(i, seg, &chunk) {
                 Ok(text) => {
                     let text = text.as_deref().unwrap_or("");
-                    let empty = text.trim().is_empty();
-                    if tripwire.record(empty) {
-                        err = Some(tripwire.tripped_error());
+                    // 串行路径：空结果缓冲也推进进度（与原实现一致）
+                    if let Err(e) = tracker
+                        .record_outcome(cp, start, end, text)
+                        .map(|_| ())
+                    {
+                        err = Some(e);
                         break;
-                    }
-                    // 空结果先缓冲，出现非空结果（或正常收尾）才落 checkpoint；
-                    // 熔断时不落，避免空记录把分片标成"已完成静音"
-                    if empty {
-                        pending_empty.push((start, end));
-                    } else {
-                        for (s, e) in std::mem::take(&mut pending_empty) {
-                            if let Err(e) = cp.record(s, e, "") {
-                                err = Some(e);
-                                break;
-                            }
-                        }
-                        // 空结果也记录完成；写盘失败则中断且不标记完成
-                        if err.is_none()
-                            && let Err(e) = cp.record(start, end, text)
-                        {
-                            err = Some(e);
-                        }
-                        if err.is_some() {
-                            break;
-                        }
                     }
                 }
                 Err(e) => {
@@ -411,13 +443,10 @@ pub(crate) fn run_chunks(
     })?;
     pb.finish();
     // 正常收尾：缓冲的空结果（真实静音）落 checkpoint
-    if err.is_none() {
-        for (start, end) in pending_empty {
-            if let Err(e) = cp.record(start, end, "") {
-                err = Some(e);
-                break;
-            }
-        }
+    if err.is_none()
+        && let Err(e) = tracker.finish(cp)
+    {
+        err = Some(e);
     }
     if let Some(e) = err {
         return Err(e);
@@ -507,39 +536,20 @@ fn run_api(
         }
         drop(tx);
 
-        let mut tripwire = EmptyTripwire::default();
-        let mut pending_empty: Vec<(f64, f64)> = Vec::new();
+        let mut tracker = EmptyResultTracker::default();
         for (i, r) in rx {
             match r {
                 _ if err.is_some() => {} // 已熔断/已出错：丢弃迟到结果
                 Ok(text) => {
                     let text = text.as_deref().unwrap_or("");
-                    let empty = text.trim().is_empty();
-                    if tripwire.record(empty) {
-                        err = Some(tripwire.tripped_error());
-                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
-                        continue;
-                    }
-                    // 空结果先缓冲，出现非空结果（或正常收尾）才落 checkpoint
-                    if empty {
-                        pending_empty.push((segs[i].start, segs[i].end));
-                        continue;
-                    }
-                    let mut failed = None;
-                    for (start, end) in std::mem::take(&mut pending_empty) {
-                        if let Err(e) = cp.record(start, end, "") {
-                            failed = Some(e);
-                            break;
+                    // 并行路径：空结果缓冲与熔断都不推进进度（与原实现的 continue 一致）
+                    match tracker.record_outcome(cp, segs[i].start, segs[i].end, text) {
+                        Ok(true) => pb.inc(1),
+                        Ok(false) => {}
+                        Err(e) => {
+                            err = Some(e);
+                            abort.store(true, std::sync::atomic::Ordering::Relaxed);
                         }
-                    }
-                    if failed.is_none()
-                        && let Err(e) = cp.record(segs[i].start, segs[i].end, text)
-                    {
-                        failed = Some(e);
-                    }
-                    if let Some(e) = failed {
-                        err = Some(e);
-                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 Err(e) => {
@@ -552,13 +562,10 @@ fn run_api(
             pb.inc(1);
         }
         // 正常收尾：缓冲的空结果（真实静音）落 checkpoint，避免静音 chunk 反复重跑
-        if err.is_none() {
-            for (start, end) in pending_empty {
-                if let Err(e) = cp.record(start, end, "") {
-                    err = Some(e);
-                    break;
-                }
-            }
+        if err.is_none()
+            && let Err(e) = tracker.finish(cp)
+        {
+            err = Some(e);
         }
     });
     pb.finish();
