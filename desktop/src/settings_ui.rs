@@ -355,6 +355,80 @@ pub(super) fn settings_detail_group(id: impl Into<ElementId>, icon: Icon, title:
     )
 }
 
+/// Shared skeleton of the Codex/Ollama account sections: status row (badge,
+/// optional detail, optional spinner), policy note, an optional extra note,
+/// an optional failure/notice line, and a right-aligned action row. The
+/// connection state machines stay in each module; this is render-only.
+pub(crate) fn account_card(
+    id: &'static str,
+    kind: BadgeKind,
+    label: &'static str,
+    detail: Option<String>,
+    busy: bool,
+    policy: &'static str,
+    extra: Option<(&'static str, &'static str)>,
+    notice: Option<(&'static str, String, bool)>,
+    cx: &App,
+    actions: Vec<AnyElement>,
+) -> Vec<AnyElement> {
+    let row = h_flex()
+        .w_full()
+        .min_w_0()
+        .gap_2()
+        .items_center()
+        .flex_wrap()
+        .child(badge(kind).child(label))
+        .when_some(detail, |row, detail| {
+            row.child(
+                theme::accessible_text(SharedString::from(format!("{id}-detail")), detail)
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_size(TEXT_AUX)
+                    .text_color(color(MUTED)),
+            )
+        })
+        .when(busy, |row| {
+            row.child(crate::motion::spinner(
+                SharedString::from(format!("{id}-busy")),
+                cx,
+            ))
+        })
+        .into_any_element();
+    let policy = theme::supporting_info(SharedString::from(format!("{id}-policy")), policy)
+        .w_full()
+        .min_w_0()
+        .whitespace_normal()
+        .into_any_element();
+    let extra = extra.map(|(suffix, text)| {
+        theme::supporting_info(SharedString::from(format!("{id}-{suffix}")), text)
+            .w_full()
+            .min_w_0()
+            .whitespace_normal()
+            .into_any_element()
+    });
+    let notice = notice.map(|(suffix, message, is_error)| {
+        theme::accessible_text(SharedString::from(format!("{id}-{suffix}")), message)
+            .w_full()
+            .min_w_0()
+            .whitespace_normal()
+            .text_size(TEXT_AUX)
+            .text_color(color(if is_error { DANGER } else { MUTED }))
+            .into_any_element()
+    });
+    let actions = h_flex()
+        .w_full()
+        .min_w_0()
+        .gap_2()
+        .flex_wrap()
+        .justify_end()
+        .children(actions)
+        .into_any_element();
+    [Some(row), Some(policy), extra, notice, Some(actions)]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
 /// Diagnostic values begin on a common reading axis. They can wrap and grow
 /// vertically without moving short values to the far edge of the window.
 pub(super) fn settings_detail_row(

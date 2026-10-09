@@ -130,94 +130,65 @@ impl Desktop {
             icons::computer(),
             "Ollama 本地服务",
         )
-        .child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .items_center()
-                .flex_wrap()
-                .child(badge(kind).child(label))
-                .when_some(detail, |row, detail| {
-                    row.child(
-                        accessible_text(SharedString::from(format!("{id}-detail")), detail)
-                            .min_w_0()
-                            .whitespace_normal()
-                            .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
-                    )
-                })
-                .when(working, |row| {
-                    row.child(crate::motion::spinner(
-                        SharedString::from(format!("{id}-busy")),
-                        cx,
-                    ))
-                }),
-        )
-        .child(
-            supporting_info(
-                SharedString::from(format!("{id}-policy")),
-                "Ollama 在本机运行开源模型，无需账号与 API Key；检测到服务后可一键添加为 AI 服务。",
-            )
-            .w_full()
-            .min_w_0()
-            .whitespace_normal(),
-        )
-        .when_some(failure, |view, message| {
-            view.child(
-                accessible_text(SharedString::from(format!("{id}-failure")), message)
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(TEXT_AUX)
-                    .text_color(color(MUTED)),
-            )
-        })
-        .child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .flex_wrap()
-                .justify_end()
+        .children(crate::settings_ui::account_card(
+            id,
+            kind,
+            label,
+            detail,
+            working,
+            "Ollama 在本机运行开源模型，无需账号与 API Key；检测到服务后可一键添加为 AI 服务。",
+            None,
+            failure.map(|message| ("failure", message, false)),
+            cx,
+            {
+                let mut actions: Vec<AnyElement> = Vec::new();
                 // 已有对应服务条目时不再邀请重复添加：给状态与直达入口，
                 // 服务列表仍是唯一管理面（review#1）
-                .when_some(added_version, |row, version_id| {
-                    row.child(badge(BadgeKind::Success).child("已添加为 AI 服务"))
-                        .child(
-                            quiet(SharedString::from(format!("{id}-open-added")))
-                                .icon(icons::edit())
-                                .label("查看服务")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_settings_service_editor(
-                                        ServicePurpose::Ai,
-                                        Some(version_id.clone()),
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                })
-                .when(!added, |row| {
-                    row.child(
+                if let Some(version_id) = added_version {
+                    actions.push(
+                        badge(BadgeKind::Success)
+                            .child("已添加为 AI 服务")
+                            .into_any_element(),
+                    );
+                    actions.push(
+                        quiet(SharedString::from(format!("{id}-open-added")))
+                            .icon(icons::edit())
+                            .label("查看服务")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_settings_service_editor(
+                                    ServicePurpose::Ai,
+                                    Some(version_id.clone()),
+                                    window,
+                                    cx,
+                                );
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                if !added {
+                    actions.push(
                         outline_pill(SharedString::from(format!("{id}-add")))
                             .icon(icons::add())
                             .label("添加 Ollama 服务")
                             .disabled(working)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.ollama_add_service(window, cx);
-                            })),
-                    )
-                })
-                .child(
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                actions.push(
                     quiet(SharedString::from(format!("{id}-recheck")))
                         .icon(icons::refresh())
                         .label("重新检测")
                         .disabled(working)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.ollama_refresh(cx);
-                        })),
-                ),
-        )
+                        }))
+                        .into_any_element(),
+                );
+                actions
+            },
+        ))
     }
 }

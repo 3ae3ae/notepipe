@@ -370,112 +370,63 @@ impl Desktop {
             icons::shield(),
             "Codex 账号",
         )
-        .child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .items_center()
-                .flex_wrap()
-                .child(badge(kind).child(label))
-                .when_some(detail, |row, detail| {
-                    row.child(
-                        accessible_text(SharedString::from(format!("{id}-detail")), detail)
-                            .min_w_0()
-                            .whitespace_normal()
-                            .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
-                    )
-                })
-                .when(busy, |row| {
-                    row.child(crate::motion::spinner(
-                        SharedString::from(format!("{id}-busy")),
-                        cx,
-                    ))
-                }),
-        )
-        .child(
-            supporting_info(
-                SharedString::from(format!("{id}-policy")),
-                "Codex 使用 ChatGPT 订阅登录，请求固定发往 OpenAI Codex 后端；令牌保存在本机登录文件中，转换时自动刷新，无需 API Key。",
-            )
-            .w_full()
-            .min_w_0()
-            .whitespace_normal(),
-        )
-        .when(authorizing, |view| {
-            view.child(
-                supporting_info(
-                    SharedString::from(format!("{id}-authorizing")),
-                    "请在浏览器中完成 ChatGPT 授权，最长等待约 3 分钟。",
-                )
-                .w_full()
-                .min_w_0()
-                .whitespace_normal(),
-            )
-        })
-        .when_some(notice, |view, (message, is_error)| {
-            view.child(
-                accessible_text(SharedString::from(format!("{id}-notice")), message)
-                    .w_full()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(TEXT_AUX)
-                    .text_color(color(if is_error { DANGER } else { MUTED })),
-            )
-        })
-        .child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .flex_wrap()
-                .justify_end()
-                .when(!connected, |row| {
-                    row.child(
-                        outline_pill(SharedString::from(format!("{id}-import")))
-                            .icon(icons::login())
-                            .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
-                                "重新导入 Codex 登录"
-                            } else {
-                                "导入 Codex 登录"
-                            })
-                            .disabled(disabled || busy)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.codex_import(surface, cx)
-                            })),
-                    )
-                    .child(
-                        quiet(SharedString::from(format!("{id}-authorize")))
-                            .icon(icons::external_link())
-                            .label("浏览器授权…")
-                            .disabled(disabled || busy)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.codex_authorize(surface, cx)
-                            })),
-                    )
-                })
-                .when(connected, |row| {
-                    row.child(
-                        quiet(SharedString::from(format!("{id}-logout")))
-                            .icon(icons::logout())
-                            .label("退出登录")
-                            .disabled(disabled || busy)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.codex_logout(surface, cx)
-                            })),
-                    )
-                    .child(
-                        control(SharedString::from(format!("{id}-recheck")))
-                            .ghost()
-                            .icon(icons::refresh())
-                            .label("重新检查")
-                            .disabled(disabled || busy)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.codex_refresh_status(surface, cx)
-                            })),
-                    )
-                }),
-        )
+        .children(crate::settings_ui::account_card(
+            id,
+            kind,
+            label,
+            detail,
+            busy,
+            "Codex 使用 ChatGPT 订阅登录，请求固定发往 OpenAI Codex 后端；令牌保存在本机登录文件中，转换时自动刷新，无需 API Key。",
+            authorizing.then_some((
+                "authorizing",
+                "请在浏览器中完成 ChatGPT 授权，最长等待约 3 分钟。",
+            )),
+            notice.map(|(message, is_error)| ("notice", message, is_error)),
+            cx,
+            if !connected {
+                vec![
+                    outline_pill(SharedString::from(format!("{id}-import")))
+                        .icon(icons::login())
+                        .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
+                            "重新导入 Codex 登录"
+                        } else {
+                            "导入 Codex 登录"
+                        })
+                        .disabled(disabled || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.codex_import(surface, cx)
+                        }))
+                        .into_any_element(),
+                    quiet(SharedString::from(format!("{id}-authorize")))
+                        .icon(icons::external_link())
+                        .label("浏览器授权…")
+                        .disabled(disabled || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.codex_authorize(surface, cx)
+                        }))
+                        .into_any_element(),
+                ]
+            } else {
+                vec![
+                    quiet(SharedString::from(format!("{id}-logout")))
+                        .icon(icons::logout())
+                        .label("退出登录")
+                        .disabled(disabled || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.codex_logout(surface, cx)
+                        }))
+                        .into_any_element(),
+                    control(SharedString::from(format!("{id}-recheck")))
+                        .ghost()
+                        .icon(icons::refresh())
+                        .label("重新检查")
+                        .disabled(disabled || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.codex_refresh_status(surface, cx)
+                        }))
+                        .into_any_element(),
+                ]
+            },
+        ))
     }
 }
