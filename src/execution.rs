@@ -189,9 +189,7 @@ impl Request {
 
     /// Identity includes effective parameters and selected content, excluding secret values.
     pub fn binding(&self, cfg: &PipelineConfig) -> Result<serde_json::Value> {
-        let mut config = cfg.clone();
-        config.llm.api_key.clear();
-        config.asr_api.api_key.clear();
+        let mut config = cfg.redacted_for_identity();
         // Storage moves are resolved locations, not a change in the processing plan.
         config.out_dir = PathBuf::new();
         config.out_root = PathBuf::new();

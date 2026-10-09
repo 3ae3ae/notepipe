@@ -82,9 +82,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     };
     let course_id = execution::digest(source_id.as_bytes());
     let course_dir = cfg.out_root.join(&platform).join(&course_id);
-    let mut identity_config = cfg.clone();
-    identity_config.llm.api_key.clear();
-    identity_config.asr_api.api_key.clear();
+    let identity_config = cfg.redacted_for_identity();
     let binding =
         serde_json::json!({"source_id": source_id, "config": identity_config, "title": meta.title});
     let mut task_id = execution::digest(&serde_json::to_vec(&binding)?);
