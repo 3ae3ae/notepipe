@@ -157,16 +157,29 @@ impl State {
         self.location_checks.finish(generation, current, checks)
     }
 
-    fn title(&self) -> &'static str {
+    /// (title, cancel_label, cancel_message) for the active operation kind.
+    fn operation_kind(&self) -> (&'static str, &'static str, &'static str) {
         if self.relocation.is_some() {
-            "重新定位课程库"
+            (
+                "重新定位课程库",
+                "取消重新定位",
+                "正在结束核对，原保存位置保持不变…",
+            )
         } else if self.association {
-            "重新关联保存位置"
+            (
+                "重新关联保存位置",
+                "取消重新关联",
+                "正在结束读取，现有文件会保留…",
+            )
         } else if self.cleanup {
-            "清理旧位置备份"
+            ("清理旧位置备份", "取消清理", "正在结束清理操作…")
         } else {
-            "移动课程库"
+            ("移动课程库", "取消迁移", "正在结束迁移，原课程库会保留…")
         }
+    }
+
+    fn title(&self) -> &'static str {
+        self.operation_kind().0
     }
 }
 
@@ -1288,30 +1301,15 @@ impl Desktop {
                     .loading(cancelling)
                     .label(if cancelling {
                         "正在结束…"
-                    } else if self.storage_ui.relocation.is_some() {
-                        "取消重新定位"
-                    } else if self.storage_ui.association {
-                        "取消重新关联"
-                    } else if self.storage_ui.cleanup {
-                        "取消清理"
                     } else {
-                        "取消迁移"
+                        self.storage_ui.operation_kind().1
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(cancel) = &this.storage_ui.cancel {
                             cancel.store(true, Ordering::Relaxed);
                         }
                         this.storage_ui.progress.message =
-                            if this.storage_ui.relocation.is_some() {
-                                "正在结束核对，原保存位置保持不变…"
-                            } else if this.storage_ui.association {
-                                "正在结束读取，现有文件会保留…"
-                            } else if this.storage_ui.cleanup {
-                                "正在结束清理操作…"
-                            } else {
-                                "正在结束迁移，原课程库会保留…"
-                            }
-                            .into();
+                            this.storage_ui.operation_kind().2.into();
                         cx.notify();
                     })),
             );

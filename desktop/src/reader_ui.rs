@@ -509,6 +509,13 @@ fn block_anchor(block: &PreviewBlock, index: usize) -> String {
         ),
     }
 }
+/// Position-store key for a manifest course at one tab (`:0` is the note
+/// tab). Single source of the format: the library's "继续阅读" probe and the
+/// reader's save/restore must build identical keys. A stored offset below
+/// the `-8.` sentinel means "past the first item" (see note_position_index).
+pub(crate) fn manifest_reading_key(course_id: &str, version_id: &str, tab: usize) -> String {
+    format!("{course_id}:{version_id}:{tab}")
+}
 fn block_time(blocks: &[PreviewBlock], index: usize) -> Option<f64> {
     for block in blocks.iter().take(index + 1).rev() {
         // An explicitly untimed heading ends the previous time's scope.
@@ -538,6 +545,17 @@ fn capture_reader_position(
         fraction: Some(nav::within_fraction(within, height)),
     })
 }
+fn heading_times(blocks: &[PreviewBlock]) -> impl Iterator<Item = (usize, Option<f64>)> + '_ {
+    blocks.iter().enumerate().map(|(index, block)| {
+        (
+            index,
+            match block {
+                PreviewBlock::Heading { seconds, .. } => *seconds,
+                _ => None,
+            },
+        )
+    })
+}
 fn note_position_index(
     blocks: &[PreviewBlock],
     position: &workspace::ReadingPosition,
@@ -553,19 +571,7 @@ fn note_position_index(
         })
         .or_else(|| {
             position.seconds.and_then(|seconds| {
-                nav::nearest_time(
-                    blocks.iter().enumerate().map(|(index, block)| {
-                        (
-                            index,
-                            match block {
-                                PreviewBlock::Heading { seconds, .. } => *seconds,
-                                _ => None,
-                            },
-                        )
-                    }),
-                    seconds,
-                )
-                .map(|(index, _)| index)
+                nav::nearest_time(heading_times(blocks), seconds).map(|(index, _)| index)
             })
         })
 }
@@ -1448,9 +1454,10 @@ impl Desktop {
     fn reading_key(&self) -> Option<String> {
         let preview = self.preview.as_ref()?;
         Some(match &preview.course.manifest {
-            Some(manifest) => format!(
-                "{}:{}:{}",
-                manifest.course_id, manifest.version_id, self.result_tab
+            Some(manifest) => manifest_reading_key(
+                &manifest.course_id,
+                &manifest.version_id,
+                self.result_tab,
             ),
             None => {
                 let identity = self
@@ -2154,18 +2161,8 @@ impl Desktop {
                             && let Some(seconds) = position.and_then(|position| position.seconds)
                         {
                             let blocks = &this.preview.as_ref().unwrap().blocks;
-                            let nearest = nav::nearest_time(
-                                blocks.iter().enumerate().map(|(index, block)| {
-                                    (
-                                        index,
-                                        match block {
-                                            PreviewBlock::Heading { seconds, .. } => *seconds,
-                                            _ => None,
-                                        },
-                                    )
-                                }),
-                                seconds,
-                            );
+                            let nearest =
+                                nav::nearest_time(heading_times(blocks), seconds);
                             if let Some((index, exact)) = nearest {
                                 this.reader_ui.pending_restore = Some(workspace::ReadingPosition {
                                     seconds: Some(seconds),
@@ -5084,19 +5081,8 @@ fn load_reader_data(preview: &notes::Preview) -> ReaderData {
                 body_anchor: section
                     .map(|(index, _)| format!("section-{index}"))
                     .or_else(|| {
-                        nav::nearest_time(
-                            preview.blocks.iter().enumerate().map(|(index, block)| {
-                                (
-                                    index,
-                                    match block {
-                                        PreviewBlock::Heading { seconds, .. } => *seconds,
-                                        _ => None,
-                                    },
-                                )
-                            }),
-                            frame.t,
-                        )
-                        .map(|(i, _)| block_anchor(&preview.blocks[i], i))
+                        nav::nearest_time(heading_times(&preview.blocks), frame.t)
+                            .map(|(i, _)| block_anchor(&preview.blocks[i], i))
                     }),
                 width: 16,
                 height: 9,

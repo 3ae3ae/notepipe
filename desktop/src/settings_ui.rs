@@ -590,14 +590,23 @@ impl Desktop {
     fn setting_value(&self, field: EditField, cx: &App) -> String {
         self.settings_ui.inputs[&field].read(cx).value().to_string()
     }
-    fn reveal_setting(&self, id: impl Into<ElementId>, child: impl IntoElement) -> Div {
-        let child = child.into_any_element();
-        let editor_scroll = self.settings_ui.editor.as_ref().filter(|editor| {
+    /// Scroll handle owning the active settings editor (or the settings page
+    /// itself) when reveal-on-focus applies.
+    fn active_editor_scroll(&self) -> (bool, Option<ScrollHandle>) {
+        let editor = self.settings_ui.editor.as_ref().filter(|editor| {
             editor.target.is_some()
                 || editor.repair_task.is_some()
                 || (self.page == Page::Settings && self.settings_tab == 1)
         });
-        if self.page == Page::Settings || editor_scroll.is_some() {
+        (
+            self.page == Page::Settings || editor.is_some(),
+            editor.map(|editor| editor.scroll.clone()),
+        )
+    }
+    fn reveal_setting(&self, id: impl Into<ElementId>, child: impl IntoElement) -> Div {
+        let child = child.into_any_element();
+        let (reveals, editor_scroll) = self.active_editor_scroll();
+        if reveals {
             div()
                 .w_full()
                 .min_w_0()
@@ -606,7 +615,6 @@ impl Desktop {
                     id,
                     child,
                     editor_scroll
-                        .map(|editor| editor.scroll.clone())
                         .unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
                 ))
         } else {
@@ -618,21 +626,12 @@ impl Desktop {
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
     ) -> SingleChoiceGroup {
-        let editor = self.settings_ui.editor.as_ref().filter(|editor| {
-            editor.target.is_some()
-                || editor.repair_task.is_some()
-                || (self.page == Page::Settings && self.settings_tab == 1)
-        });
-        SingleChoiceGroup::new(id, label).when(
-            self.page == Page::Settings || editor.is_some(),
-            |group| {
-                group.reveal_in(
-                    editor
-                        .map(|editor| editor.scroll.clone())
-                        .unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
-                )
-            },
-        )
+        let (reveals, editor_scroll) = self.active_editor_scroll();
+        SingleChoiceGroup::new(id, label).when(reveals, |group| {
+            group.reveal_in(
+                editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
+            )
+        })
     }
     fn setting_preference(
         &self,

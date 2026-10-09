@@ -1563,7 +1563,11 @@ impl Desktop {
 
     fn course_has_reading_position(&self, course: &Course) -> bool {
         course.manifest.as_ref().is_some_and(|manifest| {
-            let key = format!("{}:{}:0", manifest.course_id, manifest.version_id);
+            let key = crate::reader_ui::manifest_reading_key(
+                &manifest.course_id,
+                &manifest.version_id,
+                0,
+            );
             self.workspace
                 .as_ref()
                 .and_then(|workspace| workspace.state.positions.get(&key))
