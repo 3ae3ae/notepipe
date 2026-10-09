@@ -82,6 +82,7 @@ impl Desktop {
                     && !self.preferences.service_retired_in_snapshot(&v.service_id)
             })
             .collect();
+        let has_services = !latest.is_empty();
         let mut view = v_flex().w_full().min_w_0().gap_2();
         let current_version = current
             .as_deref()
@@ -279,6 +280,7 @@ impl Desktop {
                 (ServicePurpose::Ai, false) => "添加 AI 服务",
             })
             .self_start()
+            .mr(rems(-0.625))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if current_task {
                     this.open_task_service_editor(purpose, window, cx)
@@ -344,7 +346,8 @@ impl Desktop {
                 } else {
                     "AI 服务"
                 },
-                if purpose == ServicePurpose::Ai {
+                // Nothing is sent anywhere until a service exists to choose.
+                if purpose == ServicePurpose::Ai && has_services {
                     "校对与摘要会把文字发送到所选服务"
                 } else {
                     ""

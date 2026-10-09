@@ -118,7 +118,7 @@ impl Desktop {
             if provider == "api" {
                 "音频会发送到所选服务"
             } else {
-                "音频不离开本机"
+                ""
             },
             self.setting_choices("default-asr-device", "默认语音识别方式")
                 .options([("local", "本机识别"), ("api", "在线语音服务")])
@@ -245,7 +245,10 @@ impl Desktop {
                 ai_options,
                 window,
                 cx,
-            ))
+            ));
+        // The rule only applies to proofreading, so it appears with it.
+        if value.ai_proofread {
+            ai = ai
             // As on the canvas, the rule is a list item showing its current value.
             .child(settings_row(
                 "proofread-rules-label",
@@ -253,6 +256,7 @@ impl Desktop {
                 "自定义校对规则",
                 "",
                 quiet("show-proofread-rules")
+                    .mr(rems(-0.625))
                     .label(if value.prompt.is_some() { "已自定义" } else { "使用标准规则" })
                     .icon(if self.settings_ui.show_prompt {
                         icons::chevron_up()
@@ -333,6 +337,7 @@ impl Desktop {
                 window,
                 cx,
             ));
+        }
         let selected = value.options.formats.clone().unwrap_or_default();
         v_flex()
             .w_full()
@@ -381,7 +386,7 @@ impl Desktop {
                         self.setting_preference(
                             icons::movie(),
                             "保留视频供离线播放",
-                            "占用额外磁盘空间",
+                            "",
                             Switch::new("default-keep-video")
                                 .checked(value.options.keep_video.unwrap_or(false))
                                 .on_click(cx.listener(|this, enabled, _, cx| {
@@ -495,16 +500,20 @@ impl Desktop {
                     .min_w(rems(12.))
                     .gap_2()
                     .items_center()
-                    .child(
-                        (if settled { icons::info() } else { icons::warning() })
-                            .size(rems(16. / 14.))
-                            .text_color(color(if settled { MUTED } else { WARNING })),
-                    )
-                    .child(
-                        text("model-readiness-conclusion", conclusion)
-                            .text_size(TEXT_AUX)
-                            .text_color(color(if settled { MUTED } else { WARNING })),
-                    ),
+                    // A routine state needs no sentence; only a problem is named here.
+                    .when(!settled, |status| {
+                        status
+                            .child(
+                                icons::warning()
+                                    .size(rems(16. / 14.))
+                                    .text_color(color(WARNING)),
+                            )
+                            .child(
+                                text("model-readiness-conclusion", conclusion)
+                                    .text_size(TEXT_AUX)
+                                    .text_color(color(WARNING)),
+                            )
+                    }),
             )
             .child(
                 quiet("toggle-model-details")
@@ -525,6 +534,7 @@ impl Desktop {
             )
             .child(
                 quiet("toggle-asr-advanced")
+                    .mr(rems(-0.625))
                     .icon(icons::tune())
                     .label(if self.settings_ui.asr_details_open {
                         "收起高级设置"

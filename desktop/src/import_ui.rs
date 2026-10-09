@@ -2595,7 +2595,7 @@ impl Desktop {
                         crate::settings_ui::preference(
                             Some(icons::movie()),
                             "保留视频供离线播放",
-                            "占用额外磁盘空间",
+                            "",
                             coral_switch(
                                 Switch::new("import-keep-video")
                                     .checked(self.task_options.keep_video)
