@@ -533,6 +533,8 @@ const DISCLOSURE_ROW: Rems = rems(32. / 14.);
 struct TaskProcessingDetails {
     task_id: String,
     rows: Vec<TaskStage>,
+    /// Non-actionable task facts shown inside the disclosure on recovery cards.
+    facts: Option<Div>,
     open: bool,
     animate: bool,
     desktop: WeakEntity<Desktop>,
@@ -549,6 +551,7 @@ impl RenderOnce for TaskProcessingDetails {
             .w_full()
             .min_w_0()
             .gap_3()
+            .when_some(self.facts, |view, facts| view.child(facts))
             .child(TaskStages { rows: self.rows });
         v_flex()
             .w_full()
@@ -2740,8 +2743,20 @@ impl Desktop {
                         .child(destination),
                 ))
                 .child(self.task_processing_facts(task));
-            let (progress, history) = self.task_progress_sections(task, cx);
-            details = details.child(facts).when_some(
+            let (progress, mut history) = self.task_progress_sections(task, cx);
+            // 需要处理的卡片只留可操作的信息；保存位置与文字来源收进「查看已完成的处理」
+            let recovery = matches!(
+                task.state,
+                TaskState::NeedsAttention | TaskState::Partial | TaskState::Uncertain
+            );
+            if recovery {
+                if let Some(history) = &mut history {
+                    history.facts = Some(facts);
+                }
+            } else {
+                details = details.child(facts);
+            }
+            details = details.when_some(
                 progress.filter(|_| task.state != TaskState::Partial),
                 |view, progress| view.child(progress),
             );
@@ -3088,6 +3103,7 @@ impl Desktop {
             TaskProcessingDetails {
                 task_id,
                 rows: completed,
+                facts: None,
                 open,
                 animate,
                 desktop: cx.weak_entity(),
