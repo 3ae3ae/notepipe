@@ -307,29 +307,37 @@ pub(super) fn settings_status_row(
         )
 }
 
+/// One setting's tonal block. Peer settings in a section stack with a
+/// narrow gap, forming an M3 connected list rather than separate cards.
 pub(super) fn setting_surface() -> Div {
     v_flex()
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .p(rems(16. / 14.))
+        .px(rems(20. / 14.))
+        .py(rems(16. / 14.))
         .gap_2()
         .bg(color(SURFACE))
-        .rounded(RADIUS_CARD)
+        .rounded(px(12.))
         .border_1()
-        .border_color(color(HAIRLINE))
+        .border_color(color(CARD_LINE))
 }
 
 /// Section boundaries use hierarchy and space, without a second card outline.
 pub(super) fn settings_section(id: impl Into<ElementId>, title: &'static str, icon: Icon) -> Div {
     // The scroll viewport owns height limits. A section must keep its natural
     // height, including the fixed-height actions at its end, as details change.
-    v_flex().w_full().min_w_0().flex_shrink_0().gap_4().child(
+    // M3 list sections: a primary-colored heading, then peer settings joined
+    // by a narrow gap so the section reads as one list.
+    v_flex().w_full().min_w_0().flex_shrink_0().gap(px(3.)).child(
         h_flex()
             .flex_shrink_0()
             .gap_2()
+            .px(rems(4. / 14.))
+            .pb(rems(9. / 14.))
             .items_center()
-            .child(icon.size_5().flex_shrink_0().text_color(color(MUTED)))
+            .text_color(color(ACCENT_STRONG))
+            .child(icon.size_5().flex_shrink_0())
             .child(
                 text(id, title)
                     .role(Role::Heading)
