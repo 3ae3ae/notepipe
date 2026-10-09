@@ -422,17 +422,6 @@ fn newly_enabled_ai_tests(
         .collect()
 }
 
-fn model_action_label(provider: AsrProvider, state: Option<&CacheState>) -> &'static str {
-    match state {
-        Some(CacheState::Missing | CacheState::Partial) => "下载并准备",
-        Some(CacheState::Cached) if matches!(provider, AsrProvider::Cpu | AsrProvider::Gpu) => {
-            "检查模型文件"
-        }
-        Some(CacheState::Loaded) => "重新验证加载",
-        _ => "验证模型加载",
-    }
-}
-
 fn evidence_covers(
     config: &ServiceConfiguration,
     required: &[TestKind],
@@ -2200,12 +2189,7 @@ impl Desktop {
                 None => ("模型检查未完成", "可以重新检查；详细原因保留在下方。"),
             }
         };
-        let model_title = match model.as_str() {
-            "qwen3-1.7b" => "Qwen3 1.7B",
-            "qwen3-0.6b" => "Qwen3 0.6B",
-            "whisper" => "Whisper",
-            other => other,
-        };
+        let model_title = crate::settings_ui::model_diagnostics::model_display_name(&model);
         body = body.child(
             v_flex()
                 .w_full()
@@ -2230,7 +2214,7 @@ impl Desktop {
                                 .min_w_0()
                                 .gap_1()
                                 .child(
-                                    settings_value("setup-model-identity", model_title.to_owned())
+                                    settings_value("setup-model-identity", model_title)
                                         .text_size(TEXT_TITLE)
                                         .font_weight(FontWeight::SEMIBOLD),
                                 )
@@ -2333,7 +2317,10 @@ impl Desktop {
                         .label(if cancelled {
                             "继续准备"
                         } else {
-                            model_action_label(provider, status.map(|status| &status.state))
+                            crate::settings_ui::model_diagnostics::model_action_label(
+                                provider,
+                                status.map(|status| &status.state),
+                            )
                         })
                         .disabled(self.job.is_some() || snapshot.checking)
                         .on_click(cx.listener(move |this, _, _, cx| {

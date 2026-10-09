@@ -84,6 +84,23 @@ pub(crate) fn model_display_name(model: &str) -> String {
         _ => model.to_owned(),
     }
 }
+
+/// 模型准备按钮文案的唯一权威来源（设置页与引导页共用；此前两处实现已漂移）。
+pub(crate) fn model_action_label(
+    provider: AsrProvider,
+    state: Option<&CacheState>,
+) -> &'static str {
+    match state {
+        Some(CacheState::Missing) => "下载并准备模型",
+        Some(CacheState::Partial) => "继续准备模型",
+        Some(CacheState::Loaded) => "重新验证加载",
+        Some(CacheState::Cached) if matches!(provider, AsrProvider::Cpu | AsrProvider::Gpu) => {
+            "检查模型文件"
+        }
+        Some(CacheState::Cached) => "验证模型加载",
+        _ => "继续准备模型",
+    }
+}
 /// Single classification of the device facts behind a chosen recognition
 /// provider. `model_device_issue` (message) and `model_runtime_repair` (repair
 /// UI) must stay in sync; classifying once keeps both derived from one tree.
@@ -833,17 +850,7 @@ impl Desktop {
             );
         } else if prepare_allowed {
             let loaded = status.is_some_and(|status| status.state == CacheState::Loaded);
-            let label = match status.map(|status| &status.state) {
-                Some(CacheState::Missing) => "下载并准备模型",
-                Some(CacheState::Loaded) => "重新验证加载",
-                Some(CacheState::Cached)
-                    if matches!(provider, AsrProvider::Cpu | AsrProvider::Gpu) =>
-                {
-                    "检查模型文件"
-                }
-                Some(CacheState::Cached) => "验证模型加载",
-                _ => "继续准备模型",
-            };
+            let label = model_action_label(provider, status.map(|status| &status.state));
             actions = actions.child(
                 control(SharedString::from(format!("prepare-model-{key}")))
                     .icon(if loaded {

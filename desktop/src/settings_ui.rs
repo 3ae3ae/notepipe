@@ -1,7 +1,7 @@
 //! Four independently saved setting groups and a shared service editor.
 use super::*;
 #[path = "model_diagnostics.rs"]
-mod model_diagnostics;
+pub(crate) mod model_diagnostics;
 #[path = "generation_settings.rs"]
 mod generation_settings;
 #[path = "service_editor.rs"]
