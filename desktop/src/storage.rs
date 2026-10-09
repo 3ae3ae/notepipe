@@ -346,6 +346,7 @@ pub fn scan_journals(directory: &Path) -> (Vec<(PathBuf, Journal)>, Vec<PathBuf>
     (pending, corrupt)
 }
 
+#[cfg(test)]
 pub fn pending_journals(directory: &Path) -> Vec<(PathBuf, Journal)> {
     scan_journals(directory).0
 }

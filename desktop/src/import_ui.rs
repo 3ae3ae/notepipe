@@ -2826,9 +2826,8 @@ impl Desktop {
                 ))
                 || !task.state.finished()
                 || (task.state == workspace::TaskState::Partial
-                    && task.artifact.as_ref().is_some_and(|path| {
-                        !crate::task_ui::task_component_failures(task, path).is_empty()
-                    }))
+                    && task.artifact.is_some()
+                    && !crate::task_ui::task_component_failures(task).is_empty())
         });
         if linked_task.is_none()
             && !self.task_options.uses_cloud_provider()

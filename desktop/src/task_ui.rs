@@ -1938,9 +1938,9 @@ impl Desktop {
             .workspace
             .as_ref()
             .and_then(|workspace| workspace.state.task(&id))
-            .and_then(|task| task.artifact.as_ref().map(|path| (task, path)))
-            .map(|(task, path)| {
-                task_component_failures(task, path)
+            .and_then(|task| task.artifact.as_ref().map(|_| task))
+            .map(|task| {
+                task_component_failures(task)
                     .into_iter()
                     .map(|(component, _, _)| component)
                     .filter(|component| matches!(component.as_str(), "proofreading" | "summary"))
@@ -2806,7 +2806,7 @@ impl Desktop {
                         })),
                 );
             }
-            if let Some(path) = &task.artifact {
+            if task.artifact.is_some() {
                 let requires_repair = task_requires_service_repair(task);
                 if let Some(reason) = task_service_repair_reason(task) {
                     details = details.child(
@@ -2818,7 +2818,7 @@ impl Desktop {
                     );
                 }
                 let repairable =
-                    task_component_failures(task, path)
+                    task_component_failures(task)
                         .iter()
                         .any(|(component, _, _)| {
                             matches!(component.as_str(), "proofreading" | "summary")
@@ -2834,7 +2834,7 @@ impl Desktop {
                             })),
                     );
                 }
-                for (component, label, outcome) in task_component_failures(task, path) {
+                for (component, label, outcome) in task_component_failures(task) {
                     let unknown_component = uncertain.iter().any(|request| {
                         let purpose = request.purpose.as_deref().unwrap_or_default();
                         (component == "proofreading" && purpose.contains("proof"))
@@ -2923,8 +2923,8 @@ impl Desktop {
                 card = card.child(feedback);
             }
             if task.state == TaskState::Partial {
-                if let Some(path) = &task.artifact {
-                    let failures = task_component_failures(task, path);
+                if task.artifact.is_some() {
+                    let failures = task_component_failures(task);
                     if !failures.is_empty() {
                         card = card.child(
                             accessible_text(
@@ -3426,8 +3426,8 @@ impl Desktop {
         let partial_failures: Vec<(String, String, String)> = if task.state == TaskState::Partial {
             task.artifact
                 .as_ref()
-                .map(|path| {
-                    task_component_failures(task, path)
+                .map(|_| {
+                    task_component_failures(task)
                         .into_iter()
                         .map(|(component, label, outcome)| {
                             let reason = activity::component_failure_message(
@@ -4465,7 +4465,7 @@ mod tests {
         };
         // The first recovery action in Recent Notes and every action in the
         // task cards must target actual incomplete work, never the first success.
-        let failures = super::task_component_failures(&task, &path);
+        let failures = super::task_component_failures(&task);
         assert_eq!(
             failures
                 .iter()
@@ -4521,11 +4521,11 @@ mod tests {
         outcomes.proofreading = Outcome::succeeded();
         outcomes.exports.insert("html".into(), Outcome::succeeded());
         task.outcomes = serde_json::to_value(outcomes).unwrap();
-        assert!(super::task_component_failures(&task, &path).is_empty());
+        assert!(super::task_component_failures(&task).is_empty());
         task.error = Some("服务拒绝凭据".into());
         assert!(!super::task_requires_service_repair(&task));
         task.outcomes = serde_json::Value::Null;
-        assert!(super::task_component_failures(&task, &path).is_empty());
+        assert!(super::task_component_failures(&task).is_empty());
 
         let mut completed = task.clone();
         completed.id = "recovered".into();
@@ -4547,7 +4547,6 @@ mod tests {
 }
 pub(crate) fn task_component_failures(
     task: &TaskRecord,
-    _path: &std::path::Path,
 ) -> Vec<(String, String, course2md::artifact::Outcome)> {
     let value = &task.outcomes;
     let mut results = Vec::new();

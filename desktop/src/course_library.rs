@@ -1950,9 +1950,8 @@ impl Desktop {
                             | crate::workspace::TaskState::Uncertain
                             | crate::workspace::TaskState::Paused
                     ) || (task.state == crate::workspace::TaskState::Partial
-                        && task.artifact.as_ref().is_some_and(|path| {
-                            !crate::task_ui::task_component_failures(task, path).is_empty()
-                        })))
+                        && task.artifact.is_some()
+                        && !crate::task_ui::task_component_failures(task).is_empty()))
             })
             .cloned()
             .collect();
@@ -2010,8 +2009,8 @@ impl Desktop {
             let partial_components = if task.state == crate::workspace::TaskState::Partial {
                 task.artifact
                     .as_ref()
-                    .map(|path| {
-                        crate::task_ui::task_component_failures(&task, path)
+                    .map(|_| {
+                        crate::task_ui::task_component_failures(&task)
                             .into_iter()
                             .map(|(component, _, _)| component)
                             .collect::<Vec<_>>()
