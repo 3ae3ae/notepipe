@@ -15,7 +15,7 @@ impl Desktop {
                 "subtitle-language-label",
                 icons::subtitles(),
                 "字幕语言",
-                "优先使用字幕，没有字幕时识别视频声音。",
+                "",
                 v_flex()
                     .w_full()
                     .min_w_0()
@@ -82,7 +82,7 @@ impl Desktop {
                     .child(
                         text(
                             "subtitle-language-help",
-                            "用逗号分隔语言代码，例如 zh-Hans, en。留空表示自动。",
+                            "逗号分隔，例如 zh-Hans, en",
                         )
                         .text_size(TEXT_AUX)
                         .text_color(color(MUTED)),
@@ -106,7 +106,7 @@ impl Desktop {
             if provider == "api" {
                 "视频声音会发送到所选语音服务。"
             } else {
-                "在这台电脑上识别，课程声音不会上传。"
+                "音频不会上传"
             },
             self.setting_choices("default-asr-device", "默认语音识别方式")
                 .options([("local", "本机识别"), ("api", "在线语音服务")])
@@ -131,7 +131,7 @@ impl Desktop {
                             "asr-hardware-heading",
                             icons::computer(),
                             "本机引擎",
-                            "自动选择本机支持的引擎。固定引擎不可用时会提示原因。",
+                            "",
                             self.setting_choices("default-asr-hardware", "本机引擎")
                                 .options(
                                     [
@@ -184,7 +184,7 @@ impl Desktop {
                 self.setting_preference(
                     icons::auto_fix(),
                     "AI 校对",
-                    "修正识别错误和标点，保留原意与原语言。",
+                    "转录文字会发送到所选 AI 服务",
                     Switch::new("default-ai-proofread")
                         .checked(value.ai_proofread)
                         .on_click(cx.listener(|this, enabled, _, cx| {
@@ -198,7 +198,7 @@ impl Desktop {
                 self.setting_preference(
                     icons::summarize(),
                     "生成摘要",
-                    "提炼课程要点并放在笔记开头。",
+                    "",
                     Switch::new("default-ai-summary")
                         .checked(value.ai_summary)
                         .on_click(cx.listener(|this, enabled, _, cx| {
@@ -214,11 +214,7 @@ impl Desktop {
                 self.setting_preference(
                     icons::image(),
                     "发送截图辅助校对",
-                    if value.vision {
-                        "校对时会将对应截图与文字一起发送。"
-                    } else {
-                        "开启后，校对时会同时发送对应截图。"
-                    },
+                    "",
                     Switch::new("default-ai-vision")
                         .checked(value.vision)
                         .on_click(cx.listener(|this, enabled, _, cx| {
@@ -258,11 +254,6 @@ impl Desktop {
                     .gap_3()
                     .child(
                         text("standard-proofread-rule", course2md::llm::DEFAULT_PROMPT)
-                            .text_sm()
-                            .text_color(color(MUTED)),
-                    )
-                    .child(
-                        text("prompt-contract", "填写你希望校对时遵循的写作要求。")
                             .text_sm()
                             .text_color(color(MUTED)),
                     )
@@ -328,7 +319,7 @@ impl Desktop {
                         "export-format-label",
                         icons::download(),
                         "同时导出",
-                        "笔记自动保存在应用内；所选文件可通过阅读页的「打开导出文件夹」取用。",
+                        "",
                         h_flex().gap_3().flex_wrap().children(
                             [
                                 (course2md::config::OutputFormat::Md, "Markdown 包"),
@@ -361,7 +352,7 @@ impl Desktop {
                         self.setting_preference(
                             icons::movie(),
                             "保留视频供离线播放",
-                            "保存在线来源的视频，会占用额外空间。",
+                            "占用额外磁盘空间",
                             Switch::new("default-keep-video")
                                 .checked(value.options.keep_video.unwrap_or(false))
                                 .on_click(cx.listener(|this, enabled, _, cx| {
@@ -527,7 +518,7 @@ impl Desktop {
             model_control,
         ));
         if !known && provider != Some(AsrProvider::Npu) {
-            view = view.child(text("unavailable-fixed-model", format!("已保留指定模型 {selected}，当前识别方式不支持此模型。请选择上面的实际模型。")).text_sm().text_color(color(DANGER)));
+            view = view.child(text("unavailable-fixed-model", format!("{selected} 不适用于当前识别方式，请重新选择")).text_sm().text_color(color(DANGER)));
         }
         if provider == Some(AsrProvider::Npu) {
             view = view
@@ -560,7 +551,7 @@ impl Desktop {
                 _ => true,
             };
             if !ready {
-                view = view.child(text("selected-device-unavailable", "尚未检测到所选识别方式需要的运行环境。已保留这个选择，可在应用的诊断详情中查看原因。").text_sm().text_color(color(WARNING)));
+                view = view.child(text("selected-device-unavailable", "所选识别方式的运行环境未就绪，详见「应用」诊断").text_sm().text_color(color(WARNING)));
             }
         }
         view

@@ -116,7 +116,7 @@ impl State {
         .map(|field| {
             let placeholder = match field {
                 EditField::Address => "https://api.example.com/v1",
-                EditField::Model => "服务商提供的模型 ID",
+                EditField::Model => "",
                 _ => "",
             };
             (
@@ -219,10 +219,9 @@ pub(super) fn settings_field_row(
     id: impl Into<ElementId>,
     icon: Icon,
     label: &'static str,
-    hint: &'static str,
     field: impl IntoElement,
 ) -> Div {
-    settings_form_row(id, icon, label, hint, field, true)
+    settings_form_row(id, icon, label, "", field, true)
 }
 
 fn settings_form_row(
@@ -240,13 +239,7 @@ fn settings_form_row(
             .min_w_0()
             .gap_2()
             .child(setting_label(id.clone(), icon, label))
-            .child(div().w_full().min_w_0().child(control))
-            .when(!hint.is_empty(), |view| {
-                view.child(theme::supporting_info(
-                    SharedString::from(format!("{id:?}-hint")),
-                    hint,
-                ))
-            });
+            .child(div().w_full().min_w_0().child(control));
     }
     let row = h_flex()
         .w_full()
@@ -373,7 +366,7 @@ pub(crate) fn account_card(
     label: &'static str,
     detail: Option<String>,
     busy: bool,
-    policy: &'static str,
+    policy: Option<&'static str>,
     extra: Option<(&'static str, &'static str)>,
     notice: Option<(&'static str, String, bool)>,
     cx: &App,
@@ -402,11 +395,13 @@ pub(crate) fn account_card(
             ))
         })
         .into_any_element();
-    let policy = theme::supporting_info(SharedString::from(format!("{id}-policy")), policy)
-        .w_full()
-        .min_w_0()
-        .whitespace_normal()
-        .into_any_element();
+    let policy = policy.map(|policy| {
+        theme::supporting_info(SharedString::from(format!("{id}-policy")), policy)
+            .w_full()
+            .min_w_0()
+            .whitespace_normal()
+            .into_any_element()
+    });
     let extra = extra.map(|(suffix, text)| {
         theme::supporting_info(SharedString::from(format!("{id}-{suffix}")), text)
             .w_full()
@@ -431,7 +426,7 @@ pub(crate) fn account_card(
         .justify_end()
         .children(actions)
         .into_any_element();
-    [Some(row), Some(policy), extra, notice, Some(actions)]
+    [Some(row), policy, extra, notice, Some(actions)]
         .into_iter()
         .flatten()
         .collect()
@@ -682,11 +677,6 @@ impl Desktop {
                     EditField::Languages => icons::subtitles(),
                 },
                 label,
-                if field == EditField::Address {
-                    "填写基础地址或完整接口地址，包含 http:// 或 https://。"
-                } else {
-                    ""
-                },
                 v_flex()
                     .w_full()
                     .gap_2()
@@ -734,7 +724,7 @@ impl Desktop {
             self.settings_ui.pending_generation = Some(value.clone());
             self.set_settings_feedback(
                 PreferenceGroup::Generation,
-                "已找回上次未生效的修改，可以重试保存".into(),
+                "已恢复未保存的修改".into(),
                 true,
             );
         }
@@ -742,7 +732,7 @@ impl Desktop {
             self.settings_ui.pending_application = Some(intent);
             self.set_settings_feedback(
                 PreferenceGroup::Application,
-                "已找回上次未生效的修改，可以重试保存".into(),
+                "已恢复未保存的修改".into(),
                 true,
             );
         }
@@ -1162,7 +1152,7 @@ impl Desktop {
                 // 空分区先说明用途：何时需要在线语音服务（与「生成笔记·识别方式」呼应）
                 section = section.child(theme::supporting_info(
                     "speech-services-purpose",
-                    "没有字幕时可改用在线语音服务识别视频声音；音频会发送到所选服务。本机识别可用时不需要添加。",
+                    "音频会发送到所选服务",
                 ));
             }
             for version in latest.values().filter(|version| {
@@ -1208,7 +1198,7 @@ impl Desktop {
                     String::new()
                 }
             })
-            .unwrap_or_else(|| " · 未设为默认".to_owned());
+            .unwrap_or_default();
         let kinds: &[TestKind] = if purpose == ServicePurpose::Speech {
             &[TestKind::Speech]
         } else {
@@ -1475,7 +1465,7 @@ impl Desktop {
                 self.settings_ui.pending_generation = None;
                 self.set_settings_feedback(
                     PreferenceGroup::Generation,
-                    "点击应用后生效".into(),
+                    "尚未应用".into(),
                     false,
                 );
                 if had_pending {
@@ -1768,7 +1758,7 @@ impl Desktop {
                                 && let Some(existing) = this.workspace.as_ref().and_then(|workspace| workspace.state.library(identity.trim()))
                             {
                                 this.workspace_error = Some(format!(
-                                    "「{}」已登记。请在这个课程库下选择“重新定位…”，恢复移动后的关联。",
+                                    "「{}」已登记，可在该课程库中“重新定位…”",
                                     existing.name
                                 ));
                                 cx.notify();
@@ -1785,7 +1775,7 @@ impl Desktop {
                                         if duplicate {
                                             "这个存储位置已经在课程库中"
                                         } else {
-                                            "存储位置已添加，原有笔记和默认位置保持不变"
+                                            "已添加存储位置"
                                         }
                                         .into(),
                                     );
@@ -1849,7 +1839,7 @@ impl Desktop {
                 self.setting_preference(
                     icons::pause(),
                     "减少动态效果",
-                    "关闭过渡与循环动画。",
+                    "",
                     Switch::new("app-reduce-motion")
                         .checked(self.preferences.application().desktop.reduce_motion)
                         .on_click(cx.listener(|this, enabled, _, cx| {
@@ -1870,7 +1860,7 @@ impl Desktop {
                 "restart-onboarding-label",
                 icons::book_open(),
                 "用户引导",
-                "选择默认引擎、配置 AI 服务和准备模型",
+                "",
                 outline_pill("restart-onboarding")
                     .label("重新开始用户引导")
                     .icon(icons::restart())
@@ -1952,7 +1942,7 @@ impl Desktop {
                 card = card
                     .child(info_callout(
                         "repair-bundled-engine",
-                        "转换程序暂时无法运行。重新安装应用后可继续，已有笔记会保留。",
+                        "转换程序无法运行，重新安装应用后笔记仍会保留",
                     ))
                     .child(
                         control("download-repair-app")
@@ -1963,18 +1953,6 @@ impl Desktop {
                                 cx.open_url("https://github.com/mizorewww/course2md/releases")
                             }),
                     );
-            }
-            if !e.ffmpeg || !e.ffprobe || !e.ytdlp {
-                card = card.child(info_callout(
-                    "media-tools-unavailable",
-                    "部分媒体功能暂不可用。展开诊断详情可查看修复方式。",
-                ));
-            }
-            if !speech_service && !local_ready {
-                card = card.child(info_callout(
-                    "local-recognition-help",
-                    "所选本机引擎尚未就绪。下方模型状态中有原因和恢复方式。",
-                ));
             }
         } else {
             card = card.child(
@@ -2049,17 +2027,17 @@ impl Desktop {
             if !e.ffmpeg || !e.ffprobe || !e.ytdlp {
                 let (help, command) = if cfg!(target_os = "macos") {
                     (
-                        "在终端运行以下命令，安装完成后重新检查。",
+                        "在终端运行",
                         "brew install ffmpeg yt-dlp",
                     )
                 } else if cfg!(target_os = "windows") {
                     (
-                        "在 PowerShell 运行以下命令，安装完成后重新检查。",
+                        "在 PowerShell 运行",
                         "winget install Gyan.FFmpeg; winget install yt-dlp.yt-dlp",
                     )
                 } else {
                     (
-                        "使用系统软件包管理器安装 ffmpeg，并使用 pipx 安装下载工具，完成后重新检查。",
+                        "用系统包管理器安装 ffmpeg，再运行",
                         "pipx install yt-dlp",
                     )
                 };
@@ -2276,7 +2254,7 @@ impl Desktop {
             self.commit_application(next, cx);
         }
         if !self.preferences.unsaved_intents_are_preserved() {
-            self.message = Some("设置修改暂时无法保存到恢复记录，窗口已保留。请重试保存，或保留当前输入后恢复此组设置。".into());
+            self.message = Some("修改暂时无法保存，请重试".into());
             cx.notify();
             return false;
         }

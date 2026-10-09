@@ -564,6 +564,7 @@ pub fn described_choice(
         cx,
     );
     let title = title.into();
+    let description = description.into();
     selection_card(id, selected, amount)
         .accessibility_label(title.clone())
         .w_full()
@@ -618,17 +619,19 @@ pub fn described_choice(
                         }),
                 ),
         )
-        .child(
-            div()
-                .w_full()
-                .min_w_0()
-                .pl(rems(28. / 14.))
-                .whitespace_normal()
-                .text_size(TEXT_AUX)
-                .line_height(rems(18. / 14.))
-                .text_color(color(GRAY))
-                .child(description.into()),
-        )
+        .when(!description.is_empty(), |card| {
+            card.child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .pl(rems(28. / 14.))
+                    .whitespace_normal()
+                    .text_size(TEXT_AUX)
+                    .line_height(rems(18. / 14.))
+                    .text_color(color(GRAY))
+                    .child(description),
+            )
+        })
 }
 
 /// Compact forms use a leading label above the field. Padding belongs to the

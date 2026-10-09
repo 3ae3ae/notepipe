@@ -237,7 +237,16 @@ impl Desktop {
         } else {
             (BadgeKind::Neutral, "未登录")
         };
-        let detail = status.trim_start_matches("已登录 · ").to_owned();
+        // 徽章已给出状态，副行只补充徽章没有的信息
+        let detail = if self.account.logout_failed {
+            status
+        } else if self.account.status_error.is_some() && saved {
+            "已保留登录".into()
+        } else if self.account.status.is_none() && saved {
+            "尚未验证".into()
+        } else {
+            status.trim_start_matches("已登录 · ").to_owned()
+        };
         let show_detail = !self.account.checking && detail != label;
         v_flex()
             .w_full()
@@ -279,20 +288,22 @@ impl Desktop {
                     })
                     .child(badge(kind).child(label)),
             )
-            .child(
-                supporting_info(
-                    "bilibili-account-policy",
-                    if saved {
-                        "读取字幕和视频时使用此账号的权限。退出登录不会删除课程和笔记。"
-                    } else if onboarding {
-                        "登录后可读取账号有权访问的视频与字幕，也可以跳过，之后在设置中登录。"
-                    } else {
-                        "公开内容可以先尝试读取；遇到账号权限限制时，登录后继续。"
-                    },
-                )
-                .w_full()
-                .min_w_0()
-                .whitespace_normal(),
+            .when_some(
+                if saved {
+                    Some("退出登录不会删除课程和笔记")
+                } else if onboarding {
+                    Some("登录后可读取账号有权访问的视频与字幕")
+                } else {
+                    None
+                },
+                |view, policy| {
+                    view.child(
+                        supporting_info("bilibili-account-policy", policy)
+                            .w_full()
+                            .min_w_0()
+                            .whitespace_normal(),
+                    )
+                },
             )
             .child(
                 h_flex()
@@ -594,15 +605,11 @@ impl Desktop {
                 "已扫码，请在手机上确认登录".into(),
                 format!("请在约 {seconds} 秒内确认"),
             ),
-            QrDialogState::Expired => ("二维码已过期".into(), "请刷新二维码后重新扫码。".into()),
+            QrDialogState::Expired => ("二维码已过期".into(), String::new()),
             QrDialogState::Error(error) => ("登录未完成".into(), error.clone()),
             QrDialogState::Success(profile) => (
                 "已登录 Bilibili".into(),
-                if profile.name.trim().is_empty() {
-                    "登录状态已保存。".into()
-                } else {
-                    format!("{}，登录状态已保存。", profile.name)
-                },
+                profile.name.trim().to_owned(),
             ),
         };
         let retry = matches!(state, QrDialogState::Expired | QrDialogState::Error(_));

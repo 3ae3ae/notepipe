@@ -7,10 +7,6 @@ use crate::theme::*;
 use course2md::login::LoginStatus;
 use gpui_component::button::ButtonVariants as _;
 
-/// Codex 固定端点说明：设置编辑器与首次引导共用同一文案。
-pub(crate) const ENDPOINT_NOTE: &str =
-    "请求固定发往 OpenAI Codex 后端；无需服务地址与 API Key。";
-
 /// 识别根 crate 的登录缺失/失效标记，替换为界面内的连接引导。
 fn login_required(error: &anyhow::Error) -> bool {
     error
@@ -177,11 +173,11 @@ impl Desktop {
                 match result {
                     Ok(catalog) => {
                         this.codex.status = Some(LoginStatus::Connected("Codex".into()));
-                        this.codex.inform(if catalog.catalog_is_fallback {
-                            "已连接 Codex。暂时无法获取账号的模型目录，已填入默认模型，可稍后刷新。".into()
+                        if catalog.catalog_is_fallback {
+                            this.codex.inform("模型目录暂不可用，已使用默认模型".into());
                         } else {
-                            "已连接 Codex，模型目录已更新。".into()
-                        });
+                            this.codex.notice = None;
+                        }
                         this.codex_apply_catalog(surface, catalog.models, cx);
                         // 重读登录状态，展示账号详情而非通用占位
                         this.codex_refresh_status(surface, cx);
@@ -225,7 +221,7 @@ impl Desktop {
             return;
         }
         if self.codex.busy() {
-            let message = "正在处理上一个 Codex 请求，完成后请重试获取模型。".to_string();
+            let message = "上一个 Codex 请求尚未完成".to_string();
             match surface {
                 CodexSurface::Editor => self.editor_codex_models_failed(message),
                 CodexSurface::Onboarding => self.onboarding_codex_models_failed(message),
@@ -288,11 +284,11 @@ impl Desktop {
                     Ok(_) => {
                         this.codex.status = Some(LoginStatus::Disconnected);
                         let detached = this.codex_detach_default_service();
-                        this.codex.inform(if detached {
-                            "已退出 Codex 登录；默认 AI 服务已解除绑定。".into()
+                        if detached {
+                            this.codex.inform("已退出 Codex 登录；默认 AI 服务已解除绑定。".into());
                         } else {
-                            "已退出 Codex 登录。".into()
-                        });
+                            this.codex.notice = None;
+                        }
                         this.editor_codex_logged_out();
                         this.onboarding_codex_logged_out();
                     }
@@ -376,10 +372,10 @@ impl Desktop {
             label,
             detail,
             busy,
-            "Codex 使用 ChatGPT 订阅登录，请求固定发往 OpenAI Codex 后端；令牌保存在本机登录文件中，转换时自动刷新，无需 API Key。",
+            Some("使用 ChatGPT 订阅，请求发往 OpenAI Codex 后端"),
             authorizing.then_some((
                 "authorizing",
-                "请在浏览器中完成 ChatGPT 授权，最长等待约 3 分钟。",
+                "请在浏览器中完成授权（约 3 分钟内）",
             )),
             notice.map(|(message, is_error)| ("notice", message, is_error)),
             cx,

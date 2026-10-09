@@ -106,7 +106,7 @@ impl ServiceSetup {
             .map(|field| {
                 let placeholder = match field {
                     InputField::Address => "https://api.example.com/v1",
-                    InputField::Model => "服务商提供的模型 ID",
+                    InputField::Model => "",
                     InputField::Key => "",
                 };
                 (
@@ -316,19 +316,19 @@ fn local_model_choices(provider: AsrProvider, current: &str) -> Vec<(String, Str
     let mut choices = vec![(
         course2md::config::DEFAULT_ASR_MODEL.to_owned(),
         "Qwen3 1.7B".to_owned(),
-        "默认 · 下载与内存占用较高".to_owned(),
+        "默认 · 占用较高".to_owned(),
     )];
     if matches!(provider, AsrProvider::Coreml | AsrProvider::Npu) {
         choices.extend([
             (
                 "qwen3-0.6b".into(),
                 "Qwen3 0.6B".into(),
-                "轻量 · 下载与内存占用更少".into(),
+                "轻量".into(),
             ),
             (
                 "whisper".into(),
                 "Whisper".into(),
-                "已有 Whisper 模型时可选".into(),
+                String::new(),
             ),
         ]);
     }
@@ -337,17 +337,17 @@ fn local_model_choices(provider: AsrProvider, current: &str) -> Vec<(String, Str
             (
                 "whisper-tiny".into(),
                 "Whisper Tiny".into(),
-                "轻量版本".into(),
+                String::new(),
             ),
             (
                 "whisper-base".into(),
                 "Whisper Base".into(),
-                "基础版本".into(),
+                String::new(),
             ),
             (
                 "whisper-small".into(),
                 "Whisper Small".into(),
-                "较大版本".into(),
+                String::new(),
             ),
         ]);
     }
@@ -356,7 +356,7 @@ fn local_model_choices(provider: AsrProvider, current: &str) -> Vec<(String, Str
             current.to_owned(),
             current.to_owned(),
             if setup_model_supported(provider, current) {
-                "当前配置 · 已保留"
+                "当前配置"
             } else {
                 "当前配置不适用于此引擎，请选择其他模型"
             }
@@ -762,7 +762,7 @@ impl Desktop {
                     service.evidence = results;
                     if !persisted {
                         this.onboarding.notice = Some((
-                            "检查结果已收到，但尚未保存；不会自动重新发送检查。".into(),
+                            "检查结果尚未保存".into(),
                             true,
                         ));
                     }
@@ -843,7 +843,7 @@ impl Desktop {
         }
         if !self.commit_generation(next, cx) {
             self.onboarding.notice = Some((
-                "服务配置已保留，默认选项尚未保存。可以重试，已保存的服务不会重复创建。".into(),
+                "默认选项尚未保存，可重试".into(),
                 true,
             ));
             return;
@@ -989,31 +989,31 @@ impl Desktop {
             Step::Engine => (
                 1,
                 "默认识别方式",
-                "有字幕时优先使用字幕；以下方式用于没有字幕的视频。",
+                Some("仅用于没有字幕的视频"),
                 icons::microphone(),
             ),
             Step::Ai => (
                 2,
                 "连接 AI 服务",
-                "用于校对文字和生成摘要，也可以稍后配置。",
+                None,
                 icons::auto_fix(),
             ),
             Step::Account => (
                 3,
                 "连接 Bilibili",
-                "登录后可读取账号有权访问的视频与字幕。",
+                None,
                 icons::bilibili(),
             ),
             Step::Model if self.onboarding.provider == Some(AsrProvider::Api) => (
                 4,
                 "准备就绪",
-                "转换时将使用已保存的语音服务。",
+                None,
                 icons::circle_check(),
             ),
             Step::Model => (
                 4,
                 "准备识别模型",
-                "模型保存在本机。下载期间也可以使用已有字幕。",
+                None,
                 icons::download(),
             ),
         };
@@ -1117,10 +1117,9 @@ impl Desktop {
                         )
                     }),
             )
-            .when(
-                !compact && matches!(step, Step::Engine | Step::Ai),
-                |view| view.child(info_callout("setup-description", description)),
-            );
+            .when_some(description.filter(|_| !compact), |view, description| {
+                view.child(info_callout("setup-description", description))
+            });
         let scrolling_content = v_flex()
             .w_full()
             .min_w_0()
@@ -1223,7 +1222,7 @@ impl Desktop {
                     described_choice(
                         "setup-local-route",
                         "本机识别",
-                        "推荐 · 课程音频在这台电脑上处理",
+                        "推荐 · 音频不离开本机",
                         icons::computer(),
                         local,
                         window,
@@ -1240,7 +1239,7 @@ impl Desktop {
                     described_choice(
                         "setup-cloud-route",
                         "在线语音服务",
-                        "使用你配置的服务，无需下载模型",
+                        "音频会发送到所选服务",
                         icons::cloud(),
                         !local,
                         window,
@@ -1259,25 +1258,25 @@ impl Desktop {
             (
                 Some(AsrProvider::Coreml),
                 "Apple 原生",
-                "使用 Apple 芯片",
+                "",
                 icons::computer(),
             ),
             (
                 Some(AsrProvider::Gpu),
                 "GPU",
-                "使用图形处理器",
+                "",
                 icons::computer(),
             ),
             (
                 Some(AsrProvider::Cpu),
                 "CPU",
-                "无需独立显卡",
+                "",
                 icons::computer(),
             ),
             (
                 Some(AsrProvider::Npu),
                 "Intel NPU",
-                "需要 Intel NPU 设备",
+                "",
                 icons::computer(),
             ),
         ];
@@ -1289,7 +1288,7 @@ impl Desktop {
                 e.engine && !matches!(capability, AsrProvider::Api) && e.supports(capability)
             });
             let status = match ready {
-                Some(true) => "运行环境已就绪",
+                Some(true) => "已就绪",
                 Some(false) if capability == AsrProvider::Npu => "未检测到 Intel NPU",
                 Some(false) if capability == AsrProvider::Coreml => "需要 Apple 芯片与运行环境",
                 Some(false) if capability == AsrProvider::Gpu => "未检测到 GPU 运行环境",
@@ -1334,23 +1333,17 @@ impl Desktop {
                 .w_full()
                 .min_w_0()
                 .gap_3()
-                .child(help(
-                    "setup-current-engine",
-                    format!(
-                        "{} · {}",
-                        if selected.is_none() {
-                            "自动选择，目前使用"
-                        } else {
-                            "固定引擎"
-                        },
-                        crate::provider_label(Some(selected.unwrap_or(recommended)))
-                    ),
-                ))
+                .when(selected.is_none(), |view| {
+                    view.child(help(
+                        "setup-current-engine",
+                        format!("目前使用 {}", crate::provider_label(Some(recommended))),
+                    ))
+                })
                 .child(
                     described_choice(
                         "setup-engine-auto",
                         "自动选择引擎",
-                        "根据本机运行环境选择；无需固定硬件方式",
+                        "",
                         icons::auto_fix(),
                         selected.is_none(),
                         window,
@@ -1370,19 +1363,14 @@ impl Desktop {
             .find(|(id, _, _)| id == &self.onboarding.model)
             .map(|(_, label, _)| label.clone())
             .unwrap_or_else(|| self.onboarding.model.clone());
-        let model_profile = models
-            .iter()
-            .find(|(id, _, _)| id == &self.onboarding.model)
-            .map(|(_, _, description)| description.clone())
-            .unwrap_or_else(|| "使用已保存的模型配置".into());
         let request = self.setup_model_request();
         self.ensure_model_diagnostic(request.provider, Some(&request.model), &request.root, cx);
         let snapshot =
             self.setup_model_snapshot(request.provider, Some(&request.model), &request.root);
         let model_status = if snapshot.checking {
-            "正在检查本机模型文件".to_owned()
+            "正在检查模型".to_owned()
         } else if snapshot.device_issue.is_some() {
-            "当前运行环境需要准备，可更换引擎或稍后处理".to_owned()
+            "运行环境未就绪".to_owned()
         } else {
             match snapshot
                 .result
@@ -1390,14 +1378,14 @@ impl Desktop {
                 .and_then(|result| result.as_ref().ok())
                 .map(|status| &status.state)
             {
-                Some(CacheState::Loaded) => "已验证加载，可以识别".into(),
-                Some(CacheState::Cached) => "模型已下载，首次识别时验证加载".into(),
+                Some(CacheState::Loaded) => "已就绪".into(),
+                Some(CacheState::Cached) => "已下载".into(),
                 Some(CacheState::Partial) => {
-                    "模型尚未完整；在模型准备步骤或首次识别时继续下载".into()
+                    "未下载完整".into()
                 }
-                Some(CacheState::Missing) => "模型尚未下载；在模型准备步骤或首次识别时下载".into(),
+                Some(CacheState::Missing) => "未下载".into(),
                 Some(CacheState::Unsupported) => "此模型不适用于当前引擎，请更换模型".into(),
-                None => "模型检查未完成，可在模型准备步骤重试".into(),
+                None => "检查未完成".into(),
             }
         };
         let mut model_grid = div()
@@ -1466,7 +1454,6 @@ impl Desktop {
                                 })),
                         ),
                 )
-                .child(help("setup-current-model-profile", model_profile).text_size(TEXT_AUX))
                 .child(help("setup-current-model-readiness", model_status).text_size(TEXT_AUX))
                 .child(motion::disclosure(
                     "setup-model-choices",
@@ -1709,7 +1696,7 @@ impl Desktop {
                 field_column = field_column.child(
                     help(
                         format!("setup-kept-key-{}", purpose as usize),
-                        "已保存密钥。留空保留，输入新值才会替换。",
+                        "已保存密钥，留空则保留",
                     )
                     .text_size(TEXT_AUX),
                 );
@@ -1846,8 +1833,6 @@ impl Desktop {
         let codex = service.draft.protocol == preferences::ServiceProtocol::CodexResponses;
         if !codex {
             body = body.child(self.setup_input_row(purpose, InputField::Address, "服务地址", cx));
-        } else {
-            body = body.child(help("setup-codex-endpoint", crate::codex_ui::ENDPOINT_NOTE));
         }
         if !service.draft.protocol.keyless() {
             body = body.child(
@@ -1947,7 +1932,7 @@ impl Desktop {
                 .child(
                     help(
                         "setup-ai-use-scope",
-                        "保存后用于后续转换；开启的校对或摘要会把转录文字发送到所选 AI 服务。",
+                        "开启后转录文字会发送到所选 AI 服务",
                     )
                     .text_size(TEXT_AUX),
                 );
@@ -2110,24 +2095,16 @@ impl Desktop {
                 .w_full()
                 .min_w_0()
                 .gap_4()
-                .child(
-                    settings_value("setup-cloud-model-title", "语音服务不需要本机模型")
-                        .font_weight(FontWeight::MEDIUM),
-                )
                 .child(help(
                     "setup-cloud-model-description",
                     version
                         .map(|version| {
                             format!(
-                                "识别时使用 {} · {}。",
+                                "识别时使用 {} · {}",
                                 version.config.name, version.config.model
                             )
                         })
                         .unwrap_or_else(|| "当前没有默认语音服务，请返回第一步完成配置。".into()),
-                ))
-                .child(help(
-                    "setup-later-preferences",
-                    "你可以随时在设置中更换引擎、服务或重新开始用户引导。",
                 ));
         }
         let preparation_result = self
@@ -2164,29 +2141,21 @@ impl Desktop {
         let (label, hint) = if snapshot.preparing {
             ("正在准备模型", "")
         } else if cancelled {
-            ("模型准备已暂停", "下载文件已保留，可以继续准备。")
+            ("模型准备已暂停", "")
         } else if snapshot.checking {
-            ("正在检查模型", "正在读取本机已有文件，不会自动开始下载。")
+            ("正在检查模型", "")
         } else if snapshot.device_issue.is_some() {
-            (
-                "运行环境需要准备",
-                "当前引擎还不能使用。可以重新检查，或返回选择其他引擎。",
-            )
+            ("运行环境需要准备", "可返回第一步更换引擎")
         } else {
             match status.map(|status| &status.state) {
-                Some(CacheState::Loaded) => ("模型已验证加载，可以识别", ""),
-                Some(CacheState::Cached) => (
-                    "模型文件已下载",
-                    "尚未验证加载，可以先检查文件或在首次识别时加载。",
-                ),
-                Some(CacheState::Missing) => {
-                    ("模型尚未下载", "下载完成前，可以先使用视频已有字幕。")
-                }
-                Some(CacheState::Partial) => ("模型尚未下载完整", "继续准备会复用已经下载的文件。"),
+                Some(CacheState::Loaded) => ("模型已就绪", ""),
+                Some(CacheState::Cached) => ("模型文件已下载", ""),
+                Some(CacheState::Missing) => ("模型尚未下载", ""),
+                Some(CacheState::Partial) => ("模型尚未下载完整", ""),
                 Some(CacheState::Unsupported) => {
                     ("引擎不支持当前模型", "请返回第一步选择其他模型。")
                 }
-                None => ("模型检查未完成", "可以重新检查；详细原因保留在下方。"),
+                None => ("模型检查未完成", ""),
             }
         };
         let model_title = crate::settings_ui::model_diagnostics::model_display_name(&model);
@@ -2353,7 +2322,7 @@ impl Desktop {
             if self.job.is_some() {
                 body = body.child(help(
                     "setup-model-job-busy",
-                    "当前处理完成后可以准备模型；也可先继续使用应用。",
+                    "当前任务完成后才能准备模型",
                 ));
             }
         }
@@ -2363,7 +2332,7 @@ impl Desktop {
                 body = body.child(
                     settings_value(
                         "setup-model-result",
-                        "准备未完成，已下载文件保留。可重试，具体原因见模型详情。",
+                        "准备未完成，原因见模型详情",
                     )
                     .text_color(color(DANGER))
                     .role(Role::Status),
@@ -2527,7 +2496,7 @@ impl Desktop {
                 .child(
                     help(
                         "setup-finish-failure-hint",
-                        "暂时进入不会把引导标记为完成，也不会保存未完成的服务或引擎选择。",
+                        "暂时进入不会保存未完成的选择",
                     )
                     .text_size(TEXT_AUX),
                 );
@@ -2703,9 +2672,9 @@ impl Desktop {
                     .unwrap_or_else(|| "正在准备".into())
             }
         } else if preparation.cancelled {
-            "准备已暂停，文件已保留".into()
+            "准备已暂停".into()
         } else if result_error {
-            "准备未完成，文件已保留".into()
+            "准备未完成".into()
         } else if preparation.result.is_some() {
             "准备已结束".into()
         } else {

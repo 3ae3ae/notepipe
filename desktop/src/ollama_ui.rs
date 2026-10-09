@@ -97,8 +97,8 @@ impl Desktop {
             (BadgeKind::Progress, "正在检测")
         } else {
             match &self.ollama.status {
-                Some(Ok(_)) => (BadgeKind::Success, "已检测到本地服务"),
-                Some(Err(_)) => (BadgeKind::Neutral, "未检测到本地服务"),
+                Some(Ok(_)) => (BadgeKind::Success, "已检测到"),
+                Some(Err(_)) => (BadgeKind::Neutral, "未检测到"),
                 None => (BadgeKind::Neutral, "尚未检测"),
             }
         };
@@ -136,7 +136,7 @@ impl Desktop {
             label,
             detail,
             working,
-            "Ollama 在本机运行开源模型，无需账号与 API Key；检测到服务后可一键添加为 AI 服务。",
+            None,
             None,
             failure.map(|message| ("failure", message, false)),
             cx,
@@ -147,7 +147,7 @@ impl Desktop {
                 if let Some(version_id) = added_version {
                     actions.push(
                         badge(BadgeKind::Success)
-                            .child("已添加为 AI 服务")
+                            .child("已添加")
                             .into_any_element(),
                     );
                     actions.push(
