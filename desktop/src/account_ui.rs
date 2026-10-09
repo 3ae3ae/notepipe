@@ -248,46 +248,64 @@ impl Desktop {
             status.trim_start_matches("已登录 · ").to_owned()
         };
         let show_detail = !self.account.checking && detail != label;
+        // 与 Codex/Ollama 同一组合：标题行尾部一个槽位放状态徽章与动作，窄时整体换行
+        let trailing = h_flex()
+            .gap_2()
+            .items_center()
+            .flex_wrap()
+            .when(self.account.checking, |row| {
+                row.child(crate::motion::spinner("account-checking", cx))
+            })
+            .child(badge(kind).child(label))
+            .when_some(login_action, |view, label| {
+                view.child(
+                    outline_pill("account-login")
+                        .icon(icons::bilibili())
+                        .label(label)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_account_dialog(window, cx)
+                        })),
+                )
+            })
+            .child(
+                quiet("account-refresh")
+                    .icon(icons::refresh())
+                    .label("重新检查")
+                    .disabled(self.account.checking)
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
+            )
+            .when(saved, |view| {
+                view.child(
+                    quiet("account-logout")
+                        .icon(icons::logout())
+                        .label("退出登录")
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx))),
+                )
+            });
         v_flex()
             .w_full()
             .min_w_0()
-            .gap_3()
-            .child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_1()
-                            .child(semantic_label(
-                                "bilibili-account-identity",
-                                if onboarding {
-                                    "账号状态"
-                                } else {
-                                    "Bilibili 账号"
-                                },
-                                icons::bilibili(),
-                            ))
-                            .when(show_detail, |view| {
-                                view.child(
-                                    accessible_text("bilibili-account-status", detail.clone())
-                                        .min_w_0()
-                                        .whitespace_normal()
-                                        .pl(rems(28. / 14.))
-                                        .text_size(TEXT_AUX)
-                                        .text_color(color(MUTED)),
-                                )
-                            }),
-                    )
-                    .when(self.account.checking, |row| {
-                        row.child(crate::motion::spinner("account-checking", cx))
-                    })
-                    .child(badge(kind).child(label)),
-            )
+            .gap_2()
+            .child(crate::settings_ui::account_title_row(
+                "bilibili-account-identity",
+                icons::bilibili(),
+                if onboarding {
+                    "账号状态"
+                } else {
+                    "Bilibili 账号"
+                },
+                trailing,
+            ))
+            .when(show_detail, |view| {
+                view.child(
+                    accessible_text("bilibili-account-status", detail.clone())
+                        .w_full()
+                        .min_w_0()
+                        .whitespace_normal()
+                        .text_size(TEXT_AUX)
+                        .text_color(color(MUTED)),
+                )
+            })
             .when_some(
                 if saved {
                     Some("退出登录不会删除课程和笔记")
@@ -296,50 +314,10 @@ impl Desktop {
                 } else {
                     None
                 },
-                |view, policy| {
-                    view.child(
-                        supporting_info("bilibili-account-policy", policy)
-                            .w_full()
-                            .min_w_0()
-                            .whitespace_normal(),
-                    )
-                },
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .justify_end()
-                    .flex_wrap()
-                    .when_some(login_action, |view, label| {
-                        view.child(
-                            outline_pill("account-login")
-                                .icon(icons::bilibili())
-                                .label(label)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_account_dialog(window, cx)
-                                })),
-                        )
-                    })
-                    .child(
-                        control("account-refresh")
-                            .ghost()
-                            .icon(icons::refresh())
-                            .label("重新检查")
-                            .disabled(self.account.checking)
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
-                    )
-                    .when(saved, |view| {
-                        view.child(
-                            control("account-logout")
-                                .ghost()
-                                .icon(icons::logout())
-                                .label("退出登录")
-                                .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx))),
-                        )
-                    }),
+                |view, policy| view.child(supporting_info("bilibili-account-policy", policy)),
             )
     }
+
 
     /// Status text without the「Bilibili：」prefix and the「已登录 · 」name
     /// separator; the single source for the summary row, the compact source

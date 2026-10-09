@@ -93,13 +93,16 @@ impl Desktop {
     pub(crate) fn ollama_account_section(&self, cx: &mut Context<Self>) -> Div {
         let id = "settings-ollama-account";
         let working = self.ollama.working;
+        let added_version = self.ollama_added_service();
+        // 状态只占标题行的一个徽章位：已检测到且已有对应服务时显示「已添加」
         let (kind, label) = if working {
-            (BadgeKind::Progress, "正在检测")
+            (BadgeKind::Progress, "正在检查")
         } else {
             match &self.ollama.status {
+                Some(Ok(_)) if added_version.is_some() => (BadgeKind::Success, "已添加"),
                 Some(Ok(_)) => (BadgeKind::Success, "已检测到"),
                 Some(Err(_)) => (BadgeKind::Neutral, "未检测到"),
-                None => (BadgeKind::Neutral, "尚未检测"),
+                None => (BadgeKind::Neutral, "尚未检查"),
             }
         };
         let detail = match &self.ollama.status {
@@ -123,15 +126,48 @@ impl Desktop {
             Some(Err(message)) => Some(message.clone()),
             _ => None,
         };
-        let added_version = self.ollama_added_service();
-        let added = added_version.is_some();
-        crate::settings_ui::settings_detail_group(
-            SharedString::from(format!("{id}-heading")),
+        let mut actions: Vec<AnyElement> = Vec::new();
+        // 已有对应服务条目时不再邀请重复添加：给直达入口，服务列表仍是唯一管理面（review#1）
+        match added_version {
+            Some(version_id) => actions.push(
+                quiet(SharedString::from(format!("{id}-open-added")))
+                    .icon(icons::edit())
+                    .label("查看服务")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_settings_service_editor(
+                            ServicePurpose::Ai,
+                            Some(version_id.clone()),
+                            window,
+                            cx,
+                        );
+                    }))
+                    .into_any_element(),
+            ),
+            None => actions.push(
+                outline_pill(SharedString::from(format!("{id}-add")))
+                    .icon(icons::add())
+                    .label("添加 Ollama 服务")
+                    .disabled(working)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.ollama_add_service(window, cx);
+                    }))
+                    .into_any_element(),
+            ),
+        }
+        actions.push(
+            quiet(SharedString::from(format!("{id}-recheck")))
+                .icon(icons::refresh())
+                .label("重新检查")
+                .disabled(working)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.ollama_refresh(cx);
+                }))
+                .into_any_element(),
+        );
+        crate::settings_ui::account_card(
+            id,
             icons::computer(),
             "Ollama 本地服务",
-        )
-        .children(crate::settings_ui::account_card(
-            id,
             kind,
             label,
             detail,
@@ -140,55 +176,7 @@ impl Desktop {
             None,
             failure.map(|message| ("failure", message, false)),
             cx,
-            {
-                let mut actions: Vec<AnyElement> = Vec::new();
-                // 已有对应服务条目时不再邀请重复添加：给状态与直达入口，
-                // 服务列表仍是唯一管理面（review#1）
-                if let Some(version_id) = added_version {
-                    actions.push(
-                        badge(BadgeKind::Success)
-                            .child("已添加")
-                            .into_any_element(),
-                    );
-                    actions.push(
-                        quiet(SharedString::from(format!("{id}-open-added")))
-                            .icon(icons::edit())
-                            .label("查看服务")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_settings_service_editor(
-                                    ServicePurpose::Ai,
-                                    Some(version_id.clone()),
-                                    window,
-                                    cx,
-                                );
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                if !added {
-                    actions.push(
-                        outline_pill(SharedString::from(format!("{id}-add")))
-                            .icon(icons::add())
-                            .label("添加 Ollama 服务")
-                            .disabled(working)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.ollama_add_service(window, cx);
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                actions.push(
-                    quiet(SharedString::from(format!("{id}-recheck")))
-                        .icon(icons::refresh())
-                        .label("重新检测")
-                        .disabled(working)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.ollama_refresh(cx);
-                        }))
-                        .into_any_element(),
-                );
-                actions
-            },
-        ))
+            actions,
+        )
     }
 }

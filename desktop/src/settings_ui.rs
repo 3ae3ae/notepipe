@@ -328,12 +328,15 @@ pub(super) fn settings_detail_group(id: impl Into<ElementId>, icon: Icon, title:
     )
 }
 
-/// Shared skeleton of the Codex/Ollama account sections: status row (badge,
-/// optional detail, optional spinner), policy note, an optional extra note,
-/// an optional failure/notice line, and a right-aligned action row. The
+/// Shared skeleton of the Codex/Ollama account sections. The title row owns
+/// one trailing slot (busy spinner, status badge, then actions) that stays on
+/// the title line when it fits and wraps below as a unit when narrow. The
+/// optional detail, policy, extra note and failure/notice lines follow. The
 /// connection state machines stay in each module; this is render-only.
 pub(crate) fn account_card(
     id: &'static str,
+    icon: Icon,
+    title: &'static str,
     kind: BadgeKind,
     label: &'static str,
     detail: Option<String>,
@@ -343,65 +346,86 @@ pub(crate) fn account_card(
     notice: Option<(&'static str, String, bool)>,
     cx: &App,
     actions: Vec<AnyElement>,
-) -> Vec<AnyElement> {
-    let row = h_flex()
-        .w_full()
-        .min_w_0()
-        .gap_2()
-        .items_center()
-        .flex_wrap()
-        .child(badge(kind).child(label))
-        .when_some(detail, |row, detail| {
-            row.child(
-                theme::accessible_text(SharedString::from(format!("{id}-detail")), detail)
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_size(TEXT_AUX)
-                    .text_color(color(MUTED)),
-            )
-        })
-        .when(busy, |row| {
-            row.child(crate::motion::spinner(
-                SharedString::from(format!("{id}-busy")),
-                cx,
-            ))
-        })
-        .into_any_element();
-    let policy = policy.map(|policy| {
-        theme::supporting_info(SharedString::from(format!("{id}-policy")), policy)
-            .w_full()
-            .min_w_0()
-            .whitespace_normal()
-            .into_any_element()
-    });
-    let extra = extra.map(|(suffix, text)| {
-        theme::supporting_info(SharedString::from(format!("{id}-{suffix}")), text)
-            .w_full()
-            .min_w_0()
-            .whitespace_normal()
-            .into_any_element()
-    });
-    let notice = notice.map(|(suffix, message, is_error)| {
+) -> Div {
+    let title_row = account_title_row(
+        SharedString::from(format!("{id}-heading")),
+        icon,
+        title,
+        h_flex()
+            .gap_2()
+            .items_center()
+            .flex_wrap()
+            .when(busy, |row| {
+                row.child(crate::motion::spinner(
+                    SharedString::from(format!("{id}-busy")),
+                    cx,
+                ))
+            })
+            .child(badge(kind).child(label))
+            .children(actions),
+    );
+    let line = move |suffix: &str, message: String, error: bool| {
         theme::accessible_text(SharedString::from(format!("{id}-{suffix}")), message)
             .w_full()
             .min_w_0()
             .whitespace_normal()
             .text_size(TEXT_AUX)
-            .text_color(color(if is_error { DANGER } else { MUTED }))
-            .into_any_element()
-    });
-    let actions = h_flex()
+            .text_color(color(if error { DANGER } else { MUTED }))
+    };
+    v_flex()
         .w_full()
         .min_w_0()
         .gap_2()
+        .child(title_row)
+        .when_some(detail, |view, detail| view.child(line("detail", detail, false)))
+        .when_some(policy, |view, policy| {
+            view.child(theme::supporting_info(
+                SharedString::from(format!("{id}-policy")),
+                policy,
+            ))
+        })
+        .when_some(extra, |view, (suffix, text)| {
+            view.child(theme::supporting_info(
+                SharedString::from(format!("{id}-{suffix}")),
+                text,
+            ))
+        })
+        .when_some(notice, |view, (suffix, message, is_error)| {
+            view.child(line(suffix, message, is_error))
+        })
+}
+
+/// A resource title (account, connection, location) with one trailing slot
+/// for its status and actions. The slot stays on the title line when it fits
+/// and wraps below the title as a unit only when the row is too narrow.
+pub(crate) fn account_title_row(
+    id: impl Into<ElementId>,
+    icon: Icon,
+    title: impl Into<SharedString>,
+    trailing: impl IntoElement,
+) -> Div {
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .min_h(CONTROL_HEIGHT)
+        .items_center()
         .flex_wrap()
-        .justify_end()
-        .children(actions)
-        .into_any_element();
-    [Some(row), policy, extra, notice, Some(actions)]
-        .into_iter()
-        .flatten()
-        .collect()
+        .gap_x_4()
+        .gap_y_2()
+        .child(
+            div()
+                .flex_1()
+                .min_w(rems(10.))
+                .child(setting_label(id, icon, title)),
+        )
+        .child(
+            div()
+                .max_w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .child(trailing),
+        )
 }
 
 /// Diagnostic values begin on a common reading axis. They can wrap and grow

@@ -5,7 +5,6 @@ use super::*;
 use crate::preferences::{ServiceProtocol, ServicePurpose};
 use crate::theme::*;
 use course2md::login::LoginStatus;
-use gpui_component::button::ButtonVariants as _;
 
 /// 识别根 crate 的登录缺失/失效标记，替换为界面内的连接引导。
 fn login_required(error: &anyhow::Error) -> bool {
@@ -361,18 +360,15 @@ impl Desktop {
             && !matches!(working, Some(CodexWork::LoggingOut));
         let notice = self.codex.notice.clone();
         let authorizing = working == Some(CodexWork::Authorizing);
-        crate::settings_ui::settings_detail_group(
-            SharedString::from(format!("{id}-heading")),
+        crate::settings_ui::account_card(
+            id,
             icons::shield(),
             "Codex 账号",
-        )
-        .children(crate::settings_ui::account_card(
-            id,
             kind,
             label,
             detail,
             busy,
-            Some("使用 ChatGPT 订阅，请求发往 OpenAI Codex 后端"),
+            Some("使用你的 ChatGPT 订阅"),
             authorizing.then_some((
                 "authorizing",
                 "请在浏览器中完成授权（约 3 分钟内）",
@@ -403,7 +399,16 @@ impl Desktop {
                         .into_any_element(),
                 ]
             } else {
+                // 与 Bilibili 账号同序：重新检查在前、退出登录在后
                 vec![
+                    quiet(SharedString::from(format!("{id}-recheck")))
+                        .icon(icons::refresh())
+                        .label("重新检查")
+                        .disabled(disabled || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.codex_refresh_status(surface, cx)
+                        }))
+                        .into_any_element(),
                     quiet(SharedString::from(format!("{id}-logout")))
                         .icon(icons::logout())
                         .label("退出登录")
@@ -412,17 +417,8 @@ impl Desktop {
                             this.codex_logout(surface, cx)
                         }))
                         .into_any_element(),
-                    control(SharedString::from(format!("{id}-recheck")))
-                        .ghost()
-                        .icon(icons::refresh())
-                        .label("重新检查")
-                        .disabled(disabled || busy)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.codex_refresh_status(surface, cx)
-                        }))
-                        .into_any_element(),
                 ]
             },
-        ))
+        )
     }
 }
