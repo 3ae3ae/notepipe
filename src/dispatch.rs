@@ -534,19 +534,6 @@ impl Ledger {
     }
 }
 
-pub fn json_request(
-    service: &str,
-    purpose: &str,
-    endpoint: &str,
-    identity: &Value,
-    send: impl FnOnce() -> std::result::Result<HttpResponse, NetworkFailure>,
-    validate: impl FnOnce(&Value) -> Result<()>,
-) -> std::result::Result<Value, Failure> {
-    json_request_described(
-        service, purpose, purpose, endpoint, identity, send, validate,
-    )
-}
-
 pub fn json_request_described(
     service: &str,
     purpose: &str,
