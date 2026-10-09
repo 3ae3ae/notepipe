@@ -422,9 +422,12 @@ pub(crate) fn account_title_row(
                 .child(setting_label(id, icon, title)),
         )
         .child(
+            // Every trailing slot ends in a text button; its label, not its
+            // padding, meets the card's content edge.
             div()
                 .max_w_full()
                 .min_w_0()
+                .mr(rems(-0.625))
                 .flex()
                 .items_center()
                 .child(trailing),
