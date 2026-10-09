@@ -167,6 +167,50 @@ pub struct PolishReport {
     pub note: Option<String>,
 }
 
+/// 润色 worker 池骨架（非 vision / vision 两条路径原先各复制一份，此处置于一处）：
+/// `Mutex` 队列 + `std::thread::scope` workers 抢占式取活，每轮先 `check_control`，
+/// 中止（或锁中毒）记 `aborted` 并由首个错误胜出；队列取走即计进度，
+/// `work` 返回本批成功条数（0 = 该批被跳过/失败，与成功语义一致地不累加）。
+/// Err = 任务被中止，携带首个 check_control 错误。
+fn run_pool<T: Send>(
+    queue: &std::sync::Mutex<impl Iterator<Item = T> + Send>,
+    workers: usize,
+    succeeded: &std::sync::atomic::AtomicUsize,
+    pb: &crate::progress::Bar,
+    work: &(dyn Fn(T) -> usize + Sync),
+) -> Result<()> {
+    let aborted = std::sync::Mutex::new(None::<anyhow::Error>);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    if let Err(e) = crate::dispatch::check_control() {
+                        let mut guard = crate::runtime::lock_recover(&aborted);
+                        if guard.is_none() {
+                            *guard = Some(e);
+                        }
+                        break;
+                    }
+                    let next = queue.lock().map(|mut it| it.next());
+                    match next {
+                        Ok(Some(item)) => {
+                            // 从队列取走即计入进度：被跳过的批次也不再卡住进度条
+                            pb.inc(1);
+                            let count = work(item);
+                            succeeded.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        Ok(None) | Err(_) => break,
+                    }
+                }
+            });
+        }
+    });
+    if let Some(e) = crate::runtime::lock_recover(&aborted).take() {
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// 对已合并的 Section 做润色（在 merge 之后调用）。
 /// - 失败批次保留原文（润色失败不阻断转换）
 /// - vision=true 时附对应截图（每节只读盘 + base64 一次）；服务失败不自动改为另一种请求。
@@ -200,7 +244,6 @@ pub fn polish_sections_report(
     // 整个任务共享一个 agent（连接池复用 TCP+TLS），不再每请求新建
     let agent = chat_agent();
     let succeeded = std::sync::atomic::AtomicUsize::new(0);
-    let aborted = std::sync::Mutex::new(None::<anyhow::Error>);
     let first_error = std::sync::Mutex::new(None::<String>);
 
     if !s.vision {
@@ -214,40 +257,9 @@ pub fn polish_sections_report(
         let pb = crate::progress::Bar::new("llm", total as u64)
             .with_template("{spinner:.green} llm {pos}/{len} [{bar:32.cyan/blue}] {msg}");
         let queue = std::sync::Mutex::new(flat.chunks_mut(BATCH));
-        std::thread::scope(|scope| {
-            for _ in 0..workers {
-                scope.spawn(|| {
-                    loop {
-                        if let Err(e) = crate::dispatch::check_control() {
-                            let mut guard = crate::runtime::lock_recover(&aborted);
-                            if guard.is_none() {
-                                *guard = Some(e);
-                            }
-                            break;
-                        }
-                        let next = queue.lock().map(|mut it| it.next());
-                        match next {
-                            Ok(Some(chunk)) => {
-                                pb.inc(1);
-                                let count = polish_chunk_refs(
-                                    &agent,
-                                    s,
-                                    chunk,
-                                    None,
-                                    &warned,
-                                    &first_error,
-                                );
-                                succeeded.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
-                            }
-                            Ok(None) | Err(_) => break,
-                        }
-                    }
-                });
-            }
-        });
-        if let Some(e) = crate::runtime::lock_recover(&aborted).take() {
-            return Err(e);
-        }
+        run_pool(&queue, workers, &succeeded, &pb, &|chunk| {
+            polish_chunk_refs(&agent, s, chunk, None, &warned, &first_error)
+        })?;
         for sec in sections.iter_mut() {
             sec.speech.retain(|e| !e.text.trim().is_empty());
         }
@@ -289,45 +301,25 @@ pub fn polish_sections_report(
             .enumerate()
             .flat_map(|(si, sec)| sec.speech.chunks_mut(BATCH).map(move |chunk| (si, chunk))),
     );
-    std::thread::scope(|scope| {
-        for _ in 0..workers {
-            scope.spawn(|| {
-                loop {
-                    if let Err(e) = crate::dispatch::check_control() {
-                        let mut guard = crate::runtime::lock_recover(&aborted);
-                        if guard.is_none() {
-                            *guard = Some(e);
-                        }
-                        break;
-                    }
-                    let next = queue.lock().map(|mut it| it.next());
-                    match next {
-                        Ok(Some((si, chunk))) => {
-                            // 从队列取走即计入进度：截图不可用的节不再让进度条停在不满格
-                            pb.inc(1);
-                            let Some(image_b64) = images[si].as_ref() else {
-                                continue; // 截图不可用：整节保留原文（同原实现的提前返回）
-                            };
-                            let count = polish_chunk(
-                                &agent,
-                                s,
-                                chunk,
-                                image_b64.as_deref(),
-                                &warned,
-                                &first_error,
-                            );
-                            succeeded.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        Ok(None) => break,
-                        Err(_) => break, // 中毒锁：其余 worker 会同样退出
-                    }
-                }
-            });
-        }
-    });
-    if let Some(e) = crate::runtime::lock_recover(&aborted).take() {
-        return Err(e);
-    }
+    run_pool(
+        &queue,
+        workers,
+        &succeeded,
+        &pb,
+        &|(si, chunk)| {
+            let Some(image_b64) = images[si].as_ref() else {
+                return 0; // 截图不可用：整节保留原文（同原实现的提前返回）
+            };
+            polish_chunk(
+                &agent,
+                s,
+                chunk,
+                image_b64.as_deref(),
+                &warned,
+                &first_error,
+            )
+        },
+    )?;
     // 删除「成功润色为空串」的纯语气词条目（全部 chunk 完成后统一过滤；
     // 截图不可用而跳过的 Section 未经修改，retain 对其是 no-op）
     for sec in sections.iter_mut() {
