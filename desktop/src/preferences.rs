@@ -1025,55 +1025,55 @@ impl Store {
     pub fn save_generation(&mut self, mut value: GenerationPreferences) -> Result<()> {
         value.options.out = None;
         value.options.resume = Some(true);
-        if let Err(error) = self.persist(PreferenceGroup::Generation, &value) {
-            let intent = Envelope {
-                schema: SCHEMA,
-                revision: self
-                    .revisions
-                    .get(&PreferenceGroup::Generation)
-                    .copied()
-                    .unwrap_or(0),
-                value: value.clone(),
-            };
-            if let Ok(bytes) = serde_json::to_vec_pretty(&intent) {
-                let _ = atomic_write_with_retry(
-                    &self.recovery_root().join("generation-intent.json"),
-                    &bytes,
-                );
-            }
-            self.generation_intent = Some(value);
-            return Err(error);
-        }
-        self.generation = value;
-        self.generation_intent = None;
-        let _ = std::fs::remove_file(self.recovery_root().join("generation-intent.json"));
-        Ok(())
+        self.save_with_intent(
+            PreferenceGroup::Generation,
+            "generation-intent.json",
+            value,
+            |store| &mut store.generation,
+            |store| &mut store.generation_intent,
+        )
     }
 
     pub fn save_application(&mut self, mut value: ApplicationPreferences) -> Result<()> {
         value.desktop.system_titlebar = true;
-        if let Err(error) = self.persist(PreferenceGroup::Application, &value) {
+        self.save_with_intent(
+            PreferenceGroup::Application,
+            "application-intent.json",
+            value,
+            |store| &mut store.application,
+            |store| &mut store.application_intent,
+        )
+    }
+
+    /// Persist one preference group; on failure keep the value as a recovery
+    /// intent so an interrupted save can be retried after relaunch. The
+    /// closures split the borrow between the committed slot and its intent slot.
+    fn save_with_intent<T>(
+        &mut self,
+        group: PreferenceGroup,
+        file: &str,
+        value: T,
+        slot: impl for<'a> FnOnce(&'a mut Self) -> &'a mut T,
+        intent_slot: impl for<'a> FnOnce(&'a mut Self) -> &'a mut Option<T>,
+    ) -> Result<()>
+    where
+        T: Serialize + DeserializeOwned + Validate + Clone,
+    {
+        if let Err(error) = self.persist(group, &value) {
             let intent = Envelope {
                 schema: SCHEMA,
-                revision: self
-                    .revisions
-                    .get(&PreferenceGroup::Application)
-                    .copied()
-                    .unwrap_or(0),
+                revision: self.revisions.get(&group).copied().unwrap_or(0),
                 value: value.clone(),
             };
             if let Ok(bytes) = serde_json::to_vec_pretty(&intent) {
-                let _ = atomic_write_with_retry(
-                    &self.recovery_root().join("application-intent.json"),
-                    &bytes,
-                );
+                let _ = atomic_write_with_retry(&self.recovery_root().join(file), &bytes);
             }
-            self.application_intent = Some(value);
+            *intent_slot(self) = Some(value);
             return Err(error);
         }
-        self.application = value;
-        self.application_intent = None;
-        let _ = std::fs::remove_file(self.recovery_root().join("application-intent.json"));
+        *slot(self) = value;
+        *intent_slot(self) = None;
+        let _ = std::fs::remove_file(self.recovery_root().join(file));
         Ok(())
     }
 
@@ -1280,13 +1280,16 @@ impl Store {
         let version = self
             .version(reference)
             .ok_or_else(|| anyhow!("找不到任务使用的服务版本，请选择服务后建立新尝试"))?;
+        // Single stat of the marker: the match keeps the two error classes
+        // ("retired" vs "cannot confirm"), and the in-memory stopped map is
+        // checked above, so is_service_retired's second stat is not repeated.
+        if self.services.stopped.contains_key(&version.service_id) {
+            bail!("此服务已删除，尚未发送新的请求");
+        }
         match std::fs::metadata(self.retired_marker(&version.service_id)) {
             Ok(_) => bail!("此服务已删除，尚未发送新的请求"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => bail!("暂时无法确认此服务是否已删除，尚未发送新的请求"),
-        }
-        if self.is_service_retired(&version.service_id) {
-            bail!("此服务已删除，尚未发送新的请求");
         }
         Ok(version)
     }
@@ -1421,7 +1424,12 @@ impl Store {
         let required = references.required_for(base);
         for (id, is_asr) in [(required.asr, true), (required.llm, false)] {
             if let Some(id) = id {
-                let version = self.check_dispatch(&id)?;
+                // config_for_refs above already ran check_dispatch for exactly
+                // these required ids; same synchronous call chain, so reuse the
+                // validated lookup instead of statting the marker a second time.
+                let version = self
+                    .version(&id)
+                    .context("找不到任务使用的服务版本，请选择服务后建立新尝试")?;
                 if let Some(reference) = &version.config.credential {
                     let secret = secrets
                         .get(reference)
@@ -1547,47 +1555,43 @@ impl Store {
         self.root.with_extension("recovery")
     }
 
+    /// Restore one recovery intent saved by `save_with_intent`, when its
+    /// revision is not older than the committed value.
+    fn load_recovery_intent<T>(
+        &mut self,
+        group: PreferenceGroup,
+        file: &str,
+        message: &'static str,
+        intent_slot: impl for<'a> FnOnce(&'a mut Self) -> &'a mut Option<T>,
+    ) where
+        T: Serialize + DeserializeOwned + Validate,
+    {
+        if let Ok(Some(intent)) = read_envelope::<T>(&self.recovery_root().join(file)) {
+            if self.revisions.get(&group).copied().unwrap_or(0) <= intent.revision {
+                *intent_slot(self) = Some(intent.value);
+                self.issues.push(SettingsIssue {
+                    group,
+                    kind: SettingsIssueKind::SaveFailed,
+                    message: message.into(),
+                    detail: None,
+                });
+            }
+        }
+    }
+
     fn load_recovery_intents(&mut self) {
-        if let Ok(Some(intent)) = read_envelope::<GenerationPreferences>(
-            &self.recovery_root().join("generation-intent.json"),
-        ) {
-            if self
-                .revisions
-                .get(&PreferenceGroup::Generation)
-                .copied()
-                .unwrap_or(0)
-                <= intent.revision
-            {
-                self.generation_intent = Some(intent.value);
-                self.issues.push(SettingsIssue {
-                    group: PreferenceGroup::Generation,
-                    kind: SettingsIssueKind::SaveFailed,
-                    message: "已找回上次未生效的设置变更，可以重试保存；当前仍使用原来的有效选项"
-                        .into(),
-                    detail: None,
-                });
-            }
-        }
-        if let Ok(Some(intent)) = read_envelope::<ApplicationPreferences>(
-            &self.recovery_root().join("application-intent.json"),
-        ) {
-            if self
-                .revisions
-                .get(&PreferenceGroup::Application)
-                .copied()
-                .unwrap_or(0)
-                <= intent.revision
-            {
-                self.application_intent = Some(intent.value);
-                self.issues.push(SettingsIssue {
-                    group: PreferenceGroup::Application,
-                    kind: SettingsIssueKind::SaveFailed,
-                    message: "已找回上次未生效的应用设置，可以重试保存；当前仍使用原来的有效选项"
-                        .into(),
-                    detail: None,
-                });
-            }
-        }
+        self.load_recovery_intent::<GenerationPreferences>(
+            PreferenceGroup::Generation,
+            "generation-intent.json",
+            "已找回上次未生效的设置变更，可以重试保存；当前仍使用原来的有效选项",
+            |store| &mut store.generation_intent,
+        );
+        self.load_recovery_intent::<ApplicationPreferences>(
+            PreferenceGroup::Application,
+            "application-intent.json",
+            "已找回上次未生效的应用设置，可以重试保存；当前仍使用原来的有效选项",
+            |store| &mut store.application_intent,
+        );
         let Ok(entries) = std::fs::read_dir(self.recovery_root()) else {
             return;
         };
