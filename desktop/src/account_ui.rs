@@ -413,7 +413,7 @@ impl Desktop {
                 self.account.logout_failed = false;
             }
             Err(_) => {
-                self.account.status_error = Some("退出登录尚未完成，原登录状态已保留。".into());
+                self.account.status_error = Some("退出登录尚未完成，原登录状态已保留".into());
                 self.account.logout_failed = true;
             }
         }
@@ -501,7 +501,7 @@ impl Desktop {
                 Err(_) => {
                     let _ = this.update(cx, |this, cx| {
                         if this.account.current(generation) {
-                            this.account.dialog = Some(QrDialogState::Error("获取二维码失败，请检查网络后重试。".into()));
+                            this.account.dialog = Some(QrDialogState::Error("获取二维码失败，请检查网络后重试".into()));
                             cx.notify();
                         }
                     });
@@ -549,7 +549,7 @@ impl Desktop {
                                 Err(_) => (QrDialogState::Error("账号已确认，但保存登录状态失败。请检查本地权限后重新扫码。".into()), false),
                             }
                         }
-                        Err(_) => (QrDialogState::Error("登录请求失败，请检查网络后重新获取二维码。".into()), false),
+                        Err(_) => (QrDialogState::Error("登录请求失败，请检查网络后重新获取二维码".into()), false),
                     };
                     if !keep_polling { this.account.modules = None; }
                     this.account.dialog = Some(state);

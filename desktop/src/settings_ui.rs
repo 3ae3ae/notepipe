@@ -2183,7 +2183,7 @@ impl Desktop {
         if self.preferences.is_blocked(PreferenceGroup::Generation) {
             return Some(OrdinaryPreferenceIssue {
                 group,
-                message: "生成选项暂时无法读取，原文件与当前输入已保留。".into(),
+                message: "生成选项暂时无法读取，原文件与当前输入已保留".into(),
                 can_retry: false,
             });
         }
@@ -2196,7 +2196,7 @@ impl Desktop {
                     .settings_group_notice(group)
                     .filter(|(_, error)| *error)
                     .map(|(message, _)| message)
-                    .unwrap_or_else(|| "生成选项的修改尚未保存，当前输入已保留。".into()),
+                    .unwrap_or_else(|| "生成选项的修改尚未保存，当前输入已保留".into()),
                 can_retry: true,
             });
         }

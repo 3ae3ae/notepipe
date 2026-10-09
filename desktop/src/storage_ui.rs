@@ -702,7 +702,7 @@ impl Desktop {
             }
             ensure!(
                 storage::directory_stamp(&root)? == stamp,
-                "保存位置在读取期间已经变化，请重新检查。"
+                "保存位置在读取期间已经变化，请重新检查"
             );
             ensure!(
                 !worker_cancel.load(Ordering::Relaxed),

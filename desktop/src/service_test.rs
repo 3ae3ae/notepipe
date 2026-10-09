@@ -21,7 +21,7 @@ const SPEECH_SAMPLE: &[u8] = include_bytes!("../assets/tests/service-speech.wav"
 const BLUE_CARD: &[u8] = include_bytes!("../assets/tests/service-blue-card.png");
 const MAX_RESPONSE: u64 = 128 * 1024;
 
-pub const TEST_NOTICE: &str = "测试会发送内置样例（不含你的课程），可能计费";
+pub const TEST_NOTICE: &str = "检查仅发送内置示例，服务商可能计费";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestKind {

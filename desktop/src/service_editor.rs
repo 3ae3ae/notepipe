@@ -455,7 +455,7 @@ impl Desktop {
             .as_ref()
             .and_then(|workspace| workspace.state.tasks.iter().find(|task| task.id == task_id))
         else {
-            self.workspace_error = Some("原任务已不可用，尚未修改服务或创建补做任务。".into());
+            self.workspace_error = Some("原任务已不可用，尚未修改服务或创建补做任务".into());
             cx.notify();
             return;
         };
@@ -1287,7 +1287,7 @@ impl Desktop {
             })
             .when(configuration_saved && repair_task, |footer| {
                 footer.child(
-                    text("service-config-saved-only", "服务配置已保存，尚未开始补做。")
+                    text("service-config-saved-only", "服务配置已保存，尚未开始补做")
                         .text_size(TEXT_AUX)
                         .text_color(color(MUTED)),
                 )
@@ -1849,7 +1849,7 @@ impl Desktop {
                             Err(error) => {
                                 this.set_settings_feedback(
                                     PreferenceGroup::Services,
-                                    "默认服务尚未更改，请重试。".into(),
+                                    "默认服务尚未更改，请重试".into(),
                                     true,
                                 );
                                 this.settings_ui.feedback_details.insert(
@@ -1913,7 +1913,7 @@ impl Desktop {
                 .when(affected > 0, |dialog| {
                     dialog.child(text(
                         "delete-service-affected",
-                        format!("有 {affected} 个未完成任务引用此服务；相关后续请求会停止派发。"),
+                        format!("有 {affected} 个未完成任务引用此服务；相关后续请求会停止派发"),
                     ))
                 })
                 .button_props(

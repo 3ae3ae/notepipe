@@ -186,10 +186,10 @@ impl Desktop {
                             // 登录缺失/失效：引导使用界面内的连接动作，而非 CLI 命令
                             match work {
                                 CodexWork::Importing => {
-                                    "codex CLI 的登录已失效：请在 codex CLI 重新登录后再导入，或改用浏览器授权。"
+                                    "codex CLI 的登录已失效：请在 codex CLI 重新登录后再导入，或改用浏览器授权"
                                         .into()
                                 }
-                                _ => "Codex 登录已失效，请重新连接。".into(),
+                                _ => "Codex 登录已失效，请重新连接".into(),
                             }
                         } else {
                             match work {
@@ -245,7 +245,7 @@ impl Desktop {
                     }
                     Err(error) => {
                         let message = if login_required(&error) {
-                            "Codex 登录已失效，请先连接 Codex 账号。".to_string()
+                            "Codex 登录已失效，请先连接 Codex 账号".to_string()
                         } else {
                             format!("暂时无法获取 Codex 模型目录：{error:#}")
                         };
@@ -284,7 +284,7 @@ impl Desktop {
                         this.codex.status = Some(LoginStatus::Disconnected);
                         let detached = this.codex_detach_default_service();
                         if detached {
-                            this.codex.inform("已退出 Codex 登录；默认 AI 服务已解除绑定。".into());
+                            this.codex.inform("已退出 Codex 登录；默认 AI 服务已解除绑定".into());
                         } else {
                             this.codex.notice = None;
                         }
