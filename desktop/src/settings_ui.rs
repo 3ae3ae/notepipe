@@ -448,7 +448,7 @@ pub(super) fn settings_detail_row(
         .gap_y_1()
         .child(
             field_label(id, label)
-                .w(rems(160. / 14.))
+                .min_w(rems(96. / 14.))
                 .max_w_full()
                 .flex_shrink_0()
                 .whitespace_normal(),
@@ -2007,7 +2007,8 @@ impl Desktop {
         }
     }
     fn environment_page(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let mut card = setting_surface();
+        // 每项能力一个分组条目，条目间是共享的内缩分隔线
+        let mut checks = group("diagnostics-heading", "运行检查");
         if let Some(e) = &self.environment {
             let provider = self
                 .preferences
@@ -2032,7 +2033,7 @@ impl Desktop {
             .into_iter()
             .enumerate()
             {
-                card = card.child(settings_status_row(
+                checks = checks.child(setting_surface().child(settings_status_row(
                     ("diagnostic-capability", index),
                     label,
                     badge(if optional {
@@ -2049,10 +2050,10 @@ impl Desktop {
                     } else {
                         "待修复"
                     }),
-                ));
+                )));
             }
             if !e.engine {
-                card = card
+                checks = checks.child(setting_surface()
                     .child(info_callout(
                         "repair-bundled-engine",
                         "转换程序无法运行，重新安装应用后笔记仍会保留",
@@ -2065,19 +2066,19 @@ impl Desktop {
                             .on_click(|_, _, cx| {
                                 cx.open_url("https://github.com/mizorewww/course2md/releases")
                             }),
-                    );
+                    ));
             }
         } else {
-            card = card.child(
+            checks = checks.child(setting_surface().child(
                 h_flex()
                     .gap_2()
                     .items_center()
                     .child(crate::motion::spinner("diagnostic-checking-spinner", cx))
                     .child(settings_value("diagnostic-checking", "正在检查本机能力…")),
-            );
+            ));
         }
         let open = self.settings_ui.diagnostics_details_open;
-        card = card.child(
+        checks = checks.child(setting_surface().child(
             h_flex()
                 .w_full()
                 .min_w_0()
@@ -2105,7 +2106,7 @@ impl Desktop {
                             cx.notify();
                         })),
                 ),
-        );
+        ));
         let mut details = v_flex().w_full().min_w_0().gap_6().pt_3();
         if let Some(e) = &self.environment {
             let mut programs = settings_detail_group("diagnostic-programs-heading", icons::computer(), "所需程序");
@@ -2183,15 +2184,13 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .gap_6()
-            .child(group("diagnostics-heading", "运行检查").child(
-                v_flex().w_full().min_w_0().child(card).child(crate::motion::disclosure(
-                    "diagnostics-detail-content",
-                    open,
-                    details.px(rems(20. / 14.)).pb(rems(16. / 14.)),
-                    window,
-                    cx,
-                )),
-            ))
+            .child(checks.detail(crate::motion::disclosure(
+                "diagnostics-detail-content",
+                open,
+                details.px(rems(20. / 14.)).pb(rems(16. / 14.)),
+                window,
+                cx,
+            )))
             .child(self.model_diagnostics_panel(window, cx))
     }
     // Wrappers only while the other interface modules are being integrated.
