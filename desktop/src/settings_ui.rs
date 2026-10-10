@@ -2013,8 +2013,14 @@ impl Desktop {
         }
     }
     fn environment_page(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        // 每项能力一个分组条目，条目间是共享的内缩分隔线
+        // 全部可用时只给一个结论；有问题时每项能力一个分组条目
         let mut checks = group("diagnostics-heading", "运行检查");
+        let mut all_ready = false;
+        let open = self.settings_ui.diagnostics_details_open;
+        let mut toggle_details = Some(cx.listener(|this, _, _, cx| {
+            this.settings_ui.diagnostics_details_open = !this.settings_ui.diagnostics_details_open;
+            cx.notify();
+        }));
         if let Some(e) = &self.environment {
             let provider = self
                 .preferences
@@ -2031,13 +2037,75 @@ impl Desktop {
                     course2md::config::AsrProvider::Npu => e.npu,
                     course2md::config::AsrProvider::Api => false,
                 };
-            for (index, (label, ready, optional)) in [
+            let capabilities = [
                 ("视频处理与导出", e.engine && e.ffmpeg && e.ffprobe, false),
                 ("读取在线视频", e.ytdlp, false),
                 ("本机识别环境", local_ready, speech_service),
-            ]
-            .into_iter()
-            .enumerate()
+            ];
+            all_ready = capabilities
+                .iter()
+                .all(|(_, ready, optional)| *ready || *optional);
+            if all_ready {
+                // As on the canvas: one conclusion with its re-check, and the
+                // capabilities it covers as quiet chips on the label ruler.
+                checks = checks.child(
+                    setting_surface()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .min_h(CONTROL_HEIGHT)
+                                .items_center()
+                                .gap_4()
+                                .child(
+                                    div().flex_1().min_w_0().child(semantic_label(
+                                        "diagnostic-summary",
+                                        "一切正常",
+                                        icons::check_circle()
+                                            .size(rems(20. / 14.))
+                                            .text_color(color(SUCCESS)),
+                                    )),
+                                )
+                                .child(
+                                    quiet("refresh-environment")
+                                        .mr(-crate::theme::QUIET_INSET)
+                                        .icon(icons::refresh())
+                                        .label("重新检查")
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.refresh_environment(cx)),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .pl(crate::theme::LABEL_INSET)
+                                .gap_2()
+                                .flex_wrap()
+                                .children(
+                                    capabilities
+                                        .iter()
+                                        .filter(|(_, _, optional)| !optional)
+                                        .map(|(label, _, _)| {
+                                            badge(BadgeKind::Neutral).child(*label)
+                                        }),
+                                ),
+                        )
+                        .children(toggle_details.take().map(|toggle| {
+                            crate::theme::item_disclosure(
+                                "toggle-diagnostics-details",
+                                "诊断详情",
+                                open,
+                            )
+                            .on_click(toggle)
+                        })),
+                );
+            }
+            for (index, (label, ready, optional)) in capabilities
+                .into_iter()
+                .enumerate()
+                .filter(|_| !all_ready)
             {
                 checks = checks.child(setting_surface().child(settings_status_row(
                     ("diagnostic-capability", index),
@@ -2083,8 +2151,8 @@ impl Desktop {
                     .child(settings_value("diagnostic-checking", "正在检查本机能力…")),
             ));
         }
-        let open = self.settings_ui.diagnostics_details_open;
-        checks = checks.child(setting_surface().child(
+        if let Some(toggle_details) = toggle_details {
+            checks = checks.child(setting_surface().child(
             h_flex()
                 .w_full()
                 .min_w_0()
@@ -2106,13 +2174,10 @@ impl Desktop {
                         } else {
                             "查看诊断详情"
                         })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.settings_ui.diagnostics_details_open =
-                                !this.settings_ui.diagnostics_details_open;
-                            cx.notify();
-                        })),
+                        .on_click(toggle_details),
                 ),
-        ));
+            ));
+        }
         let mut details = v_flex().w_full().min_w_0().gap_6().pt_3();
         if let Some(e) = &self.environment {
             let mut programs = settings_detail_group("diagnostic-programs-heading", icons::computer(), "所需程序");
