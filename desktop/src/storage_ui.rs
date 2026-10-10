@@ -1593,6 +1593,7 @@ impl Desktop {
                             icons::folder_open(),
                             library.name.clone(),
                             trailing,
+                            true,
                         ))
                         .child(theme::item_detail(("storage-location-path", index), root.display().to_string(), MUTED))
                         .when_some(check.and_then(|check| check.problem.clone()), |card, problem| {

@@ -366,6 +366,8 @@ pub(crate) fn account_card(
             })
             .child(badge(kind).child(label))
             .children(actions),
+        // Codex and Ollama always end with a quiet re-check or open action.
+        true,
     );
     let line = move |suffix: &str, message: String, error: bool| {
         theme::item_detail(
@@ -405,6 +407,7 @@ pub(crate) fn account_title_row(
     icon: Icon,
     title: impl Into<SharedString>,
     trailing: impl IntoElement,
+    ends_in_text_button: bool,
 ) -> Div {
     h_flex()
         .w_full()
@@ -421,12 +424,12 @@ pub(crate) fn account_title_row(
                 .child(setting_label(id, icon, title)),
         )
         .child(
-            // Every trailing slot ends in a text button; its label, not its
-            // padding, meets the card's content edge.
+            // A trailing text button's label, not its padding, meets the
+            // card's content edge; a bordered pill meets it with its border.
             div()
                 .max_w_full()
                 .min_w_0()
-                .mr(-crate::theme::QUIET_INSET)
+                .when(ends_in_text_button, |slot| slot.mr(-crate::theme::QUIET_INSET))
                 .flex()
                 .items_center()
                 .child(trailing),

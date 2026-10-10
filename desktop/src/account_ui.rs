@@ -267,15 +267,16 @@ impl Desktop {
                         })),
                 )
             })
-            .child(
-                quiet("account-refresh")
-                    .icon(icons::refresh())
-                    .label("重新检查")
-                    .disabled(self.account.checking)
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
-            )
+            // Only a saved login has anything to re-verify.
             .when(saved, |view| {
                 view.child(
+                    quiet("account-refresh")
+                        .icon(icons::refresh())
+                        .label("重新检查")
+                        .disabled(self.account.checking)
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
+                )
+                .child(
                     quiet("account-logout")
                         .icon(icons::logout())
                         .label("退出登录")
@@ -295,6 +296,7 @@ impl Desktop {
                     "Bilibili 账号"
                 },
                 trailing,
+                saved,
             ))
             .when(show_detail, |view| {
                 view.child(crate::theme::item_detail(
