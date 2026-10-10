@@ -297,14 +297,11 @@ impl Desktop {
                 trailing,
             ))
             .when(show_detail, |view| {
-                view.child(
-                    accessible_text("bilibili-account-status", detail.clone())
-                        .w_full()
-                        .min_w_0()
-                        .whitespace_normal()
-                        .text_size(TEXT_AUX)
-                        .text_color(color(MUTED)),
-                )
+                view.child(crate::theme::item_detail(
+                    "bilibili-account-status",
+                    detail.clone(),
+                    MUTED,
+                ))
             })
             .when_some(
                 if saved {

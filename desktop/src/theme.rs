@@ -234,6 +234,11 @@ pub const RADIUS_HERO: Pixels = px(28.);
 pub const RADIUS_SMALL: Pixels = px(8.);
 /// Ordinary controls share this height, including padding, at every text scale.
 pub const CONTROL_HEIGHT: Rems = rems(40. / 14.);
+/// Leading icon slot of an icon + label cluster, and the gap before its text.
+/// Supporting lines of the same item start at `ICON_SLOT + ICON_GAP`.
+pub const ICON_SLOT: Rems = rems(20. / 14.);
+pub const ICON_GAP: Rems = rems(8. / 14.);
+pub const LABEL_INSET: Rems = rems(28. / 14.);
 
 /// Task dialogs sit below the shared title bar with the same page gutter.
 pub fn task_dialog_top(window: &Window) -> Pixels {
@@ -332,13 +337,13 @@ pub fn semantic_label(
         .flex()
         .items_center()
         .min_w_0()
-        .gap(rems(8. / 14.))
+        .gap(ICON_GAP)
         .child(
             div()
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(rems(20. / 14.))
+                .size(ICON_SLOT)
                 .flex_shrink_0()
                 .child(icon),
         )
@@ -363,13 +368,22 @@ pub fn supporting_info(
         .w_full()
         .min_w_0()
         .items_start()
-        .gap(rems(8. / 14.))
+        .gap(ICON_GAP)
+        // The info icon sits in the same slot as a label's icon, so this text
+        // starts on the label text ruler of the item it explains.
         .child(
-            crate::icons::info()
-                .size(rems(16. / 14.))
-                .mt(rems(1. / 14.))
+            div()
+                .flex()
+                .justify_center()
+                .w(ICON_SLOT)
+                .h(rems(18. / 14.))
+                .items_center()
                 .flex_shrink_0()
-                .text_color(color(GRAY)),
+                .child(
+                    crate::icons::info()
+                        .size(rems(16. / 14.))
+                        .text_color(color(GRAY)),
+                ),
         )
         .child(
             accessible_text(id, text)
@@ -380,6 +394,24 @@ pub fn supporting_info(
                 .line_height(rems(18. / 14.))
                 .text_color(color(GRAY)),
         )
+}
+
+/// A supporting fact of an icon-labelled item (an address, a path, a status
+/// sentence). It starts on the item's label text ruler, not under its icon.
+pub fn item_detail(
+    id: impl Into<gpui::ElementId>,
+    text: impl Into<gpui::SharedString>,
+    tone: ColorToken,
+) -> gpui::Stateful<gpui::Div> {
+    use gpui::prelude::*;
+    accessible_text(id, text)
+        .w_full()
+        .min_w_0()
+        .pl(LABEL_INSET)
+        .whitespace_normal()
+        .text_size(TEXT_AUX)
+        .line_height(rems(18. / 14.))
+        .text_color(color(tone))
 }
 
 /// Standalone guidance has its own boundary. Inside a setting, use supporting_info.

@@ -1,7 +1,6 @@
 //! Controlled library migration and explicit cleanup of verified old-location backups.
 use super::*;
 use crate::{
-    settings_ui::text,
     storage::{self, Journal, Phase, Progress},
     theme::*,
 };
@@ -1595,12 +1594,12 @@ impl Desktop {
                             library.name.clone(),
                             trailing,
                         ))
-                        .child(text(("storage-location-path", index), root.display().to_string()).w_full().min_w_0().whitespace_normal().text_size(TEXT_AUX).text_color(color(MUTED)))
+                        .child(theme::item_detail(("storage-location-path", index), root.display().to_string(), MUTED))
                         .when_some(check.and_then(|check| check.problem.clone()), |card, problem| {
-                            card.child(text(("storage-location-problem", index), problem).text_size(TEXT_AUX).text_color(color(DANGER)))
+                            card.child(theme::item_detail(("storage-location-problem", index), problem, DANGER))
                         })
                         .when(needs_reassociation, |card| {
-                            card.child(text(("storage-association-needed", index), "关联记录缺失").text_size(TEXT_AUX).text_color(color(WARNING)))
+                            card.child(theme::item_detail(("storage-association-needed", index), "关联记录缺失", WARNING))
                         }),
                 );
             }

@@ -368,12 +368,11 @@ pub(crate) fn account_card(
             .children(actions),
     );
     let line = move |suffix: &str, message: String, error: bool| {
-        theme::accessible_text(SharedString::from(format!("{id}-{suffix}")), message)
-            .w_full()
-            .min_w_0()
-            .whitespace_normal()
-            .text_size(TEXT_AUX)
-            .text_color(color(if error { DANGER } else { MUTED }))
+        theme::item_detail(
+            SharedString::from(format!("{id}-{suffix}")),
+            message,
+            if error { DANGER } else { MUTED },
+        )
     };
     v_flex()
         .w_full()
