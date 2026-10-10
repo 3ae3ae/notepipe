@@ -1370,7 +1370,7 @@ impl Desktop {
             .ghost()
             .icon(if cards_on { icons::dashboard() } else { icons::task() })
             .label("显示")
-            .mr(rems(-0.625))
+            .mr(-crate::theme::QUIET_INSET)
             .text_color(color(GRAY))
             .dropdown_menu(move |menu, _, _| {
                 let set_cards = |cards: bool| {
@@ -1945,7 +1945,7 @@ impl Desktop {
                 )
                 .child(
                     quiet("recent-all")
-                        .mr(rems(-0.625))
+                        .mr(-crate::theme::QUIET_INSET)
                         .label("全部")
                         .text_color(color(ACCENT_STRONG))
                         .on_click(cx.listener(|this, _, _, cx| {

@@ -900,6 +900,11 @@ pub fn outline_pill(id: impl Into<gpui::ElementId>) -> gpui_component::button::B
         .gap(rems(8. / 14.))
 }
 
+/// gpui-component's medium button inline padding (`px_2p5`). A quiet action
+/// placed on a content edge moves out by this much so its ink, not its hover
+/// shape, meets the edge.
+pub const QUIET_INSET: gpui::Rems = gpui::rems(0.625);
+
 /// Tertiary inline action: quiet gray text.
 ///
 /// Do not add a hover text color here: gpui-component's Button applies its own

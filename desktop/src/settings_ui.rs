@@ -426,7 +426,7 @@ pub(crate) fn account_title_row(
             div()
                 .max_w_full()
                 .min_w_0()
-                .mr(rems(-0.625))
+                .mr(-crate::theme::QUIET_INSET)
                 .flex()
                 .items_center()
                 .child(trailing),

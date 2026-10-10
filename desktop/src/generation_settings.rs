@@ -256,7 +256,7 @@ impl Desktop {
                 "自定义校对规则",
                 "",
                 quiet("show-proofread-rules")
-                    .mr(rems(-0.625))
+                    .mr(-crate::theme::QUIET_INSET)
                     .label(if value.prompt.is_some() { "已自定义" } else { "使用标准规则" })
                     .icon(if self.settings_ui.show_prompt {
                         icons::chevron_up()
@@ -534,7 +534,7 @@ impl Desktop {
             )
             .child(
                 quiet("toggle-asr-advanced")
-                    .mr(rems(-0.625))
+                    .mr(-crate::theme::QUIET_INSET)
                     .icon(icons::tune())
                     .label(if self.settings_ui.asr_details_open {
                         "收起高级设置"

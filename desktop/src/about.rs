@@ -52,7 +52,7 @@ impl Desktop {
                                     .min_w_0()
                                     // 按钮自带的水平内边距（px_2p5）外移，图标与上方文字左缘对齐；
                                     // 悬停底色仍完整包住按钮
-                                    .ml(rems(-0.625))
+                                    .ml(-crate::theme::QUIET_INSET)
                                     .gap_2()
                                     .flex_wrap()
                                     .child(
@@ -80,7 +80,7 @@ impl Desktop {
                         h_flex()
                             .w_full()
                             .min_w_0()
-                            .ml(rems(-0.625))
+                            .ml(-crate::theme::QUIET_INSET)
                             .gap_2()
                             .flex_wrap()
                             .child(

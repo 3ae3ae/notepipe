@@ -520,12 +520,9 @@ fn disclosure_toggle(id: SharedString) -> Button {
         .self_start()
         .h(DISCLOSURE_ROW)
         .min_h(DISCLOSURE_ROW)
-        .ml(-QUIET_INLINE_PADDING)
+        .ml(-crate::theme::QUIET_INSET)
 }
 
-/// gpui-component's medium button padding (`px_2p5`), used to align a quiet
-/// button's icon with neighbouring content.
-const QUIET_INLINE_PADDING: Rems = rems(0.625);
 /// Same minimum height as the card's `detail_row`.
 const DISCLOSURE_ROW: Rems = rems(32. / 14.);
 

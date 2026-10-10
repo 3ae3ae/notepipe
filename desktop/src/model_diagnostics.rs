@@ -682,7 +682,7 @@ impl Desktop {
                             .flex_wrap()
                             .child(
                                 quiet(SharedString::from(format!("model-cache-details-{key}")))
-                                    .ml(rems(-0.625))
+                                    .ml(-crate::theme::QUIET_INSET)
                                     .icon(icons::folder_open())
                                     .label(if cache_open {
                                         "收起缓存详情"

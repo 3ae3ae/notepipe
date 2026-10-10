@@ -280,7 +280,7 @@ impl Desktop {
                 (ServicePurpose::Ai, false) => "添加 AI 服务",
             })
             .self_start()
-            .mr(rems(-0.625))
+            .mr(-crate::theme::QUIET_INSET)
             .on_click(cx.listener(move |this, _, window, cx| {
                 if current_task {
                     this.open_task_service_editor(purpose, window, cx)
@@ -795,7 +795,7 @@ impl Desktop {
             if auth == Authentication::ApiKey {
                 // 显示/隐藏是输入框尾部的安静按钮（与首次引导的密钥字段一致），不再单列开关行
                 let visibility = quiet("toggle-service-key")
-                    .mr(rems(-0.625))
+                    .mr(-crate::theme::QUIET_INSET)
                     .icon(if editor.show_key {
                         icons::eye_off()
                     } else {
@@ -951,7 +951,7 @@ impl Desktop {
             .flex_wrap()
             .child(
                 quiet("close-service-editor")
-                    .ml(rems(-0.625))
+                    .ml(-crate::theme::QUIET_INSET)
                     .icon(icons::close())
                     .label(if configuration_saved {
                         "关闭"
