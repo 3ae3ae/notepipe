@@ -1534,6 +1534,11 @@ impl Desktop {
         let mut locations =
             crate::settings_ui::SettingsGroup::new("storage-locations-heading", "保存位置");
 
+        // The default is only a choice once there is more than one location.
+        let several = self
+            .workspace
+            .as_ref()
+            .is_some_and(|workspace| workspace.state.libraries.len() > 1);
         if let Some(workspace) = &self.workspace {
             for (index, library) in workspace.state.libraries.iter().enumerate() {
                 let root = library.root.clone();
@@ -1550,7 +1555,7 @@ impl Desktop {
                 // 与账号卡片同一组合：徽章与动作是标题行尾部的一个槽位，窄时整体换行。
                 // 强调顺序与其他卡片一致：描边主动作在前，安静的「打开位置」在后。
                 let trailing = h_flex().gap_2().items_center().flex_wrap()
-                    .when(default, |row| row.child(badge(BadgeKind::Neutral).child("默认保存位置")))
+                    .when(default && several, |row| row.child(badge(BadgeKind::Neutral).child("默认保存位置")))
                     .when(offline, |row| row.child(badge(BadgeKind::Warning).child("暂时不可访问")))
                     .when(!default, |row| {
                         row.child(outline_pill(("default-storage-location", index)).icon(icons::check_circle()).label("设为默认").disabled(needs_relocation || needs_reassociation || self.storage_ui.busy)
@@ -1613,10 +1618,12 @@ impl Desktop {
                     .gap_4()
                     .items_center()
                     .flex_wrap()
-                    .child(div().flex_1().min_w(rems(12.)).child(theme::supporting_info(
-                        "storage-policy",
-                        "更改默认位置只影响后续生成的笔记",
-                    )))
+                    .child(div().flex_1().min_w(rems(12.)).when(several, |lead| {
+                        lead.child(theme::supporting_info(
+                            "storage-policy",
+                            "更改默认位置只影响后续生成的笔记",
+                        ))
+                    }))
                     .child(
                         outline_pill("register-storage-location")
                             .icon(icons::add())
