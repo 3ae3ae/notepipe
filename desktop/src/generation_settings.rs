@@ -54,20 +54,16 @@ impl Desktop {
                     .items_center()
                     .flex_wrap()
                     .child(
-                        quiet("toggle-language-details")
-                            // Optical alignment: the label starts on the row's text edge.
-                            .ml(rems(-12. / 14.))
-                            .icon(if self.settings_ui.language_details_open {
-                                icons::chevron_up()
-                            } else {
-                                icons::chevron_down()
-                            })
-                            .label("自定义语言优先级")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.settings_ui.language_details_open =
-                                    !this.settings_ui.language_details_open;
-                                cx.notify();
-                            })),
+                        crate::theme::item_disclosure(
+                            "toggle-language-details",
+                            "自定义语言优先级",
+                            self.settings_ui.language_details_open,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.settings_ui.language_details_open =
+                                !this.settings_ui.language_details_open;
+                            cx.notify();
+                        })),
                     )
                     .when(language == "custom", |row| {
                         row.child(

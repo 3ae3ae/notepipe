@@ -919,6 +919,38 @@ pub fn quiet(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button {
         .text_color(color(GRAY))
 }
 
+/// Disclosure under an icon-labelled item: the chevron takes the item's icon
+/// slot and the label starts on the item's label ruler, so the button's own
+/// inline padding hangs outside the content edge.
+pub fn item_disclosure(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+    open: bool,
+) -> gpui_component::button::Button {
+    use gpui::{prelude::*, *};
+    let chevron = if open {
+        crate::icons::chevron_up()
+    } else {
+        crate::icons::chevron_down()
+    };
+    quiet(id).self_start().ml(-QUIET_INSET).child(
+        div()
+            .flex()
+            .items_center()
+            .gap(ICON_GAP)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(ICON_SLOT)
+                    .flex_shrink_0()
+                    .child(chevron.size(rems(16. / 14.))),
+            )
+            .child(label.into()),
+    )
+}
+
 /// An icon action inside a field shares that field's boundary. Its compact
 /// target leaves room for the input's text and focus ring at every text scale.
 pub fn input_action(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button {
