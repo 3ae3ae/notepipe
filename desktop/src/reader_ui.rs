@@ -2494,15 +2494,21 @@ impl Desktop {
         let rem_size = f32::from(window.rem_size());
         let content_width = crate::views::shell_content_width(Page::Result, window);
         // A single frame aligns navigation, title, tools and document content.
-        // Reserve the same reading axis when the user hides the adjacent contents.
-        let reader_width = content_width.min(
-            f32::from(READER_MEASURE.to_pixels(window.rem_size()))
-                + f32::from(TOC_PANEL.to_pixels(window.rem_size()))
-                + 24.,
-        );
-        let toc_fits_beside = reader_width >= rem_size * 56. + 24.;
+        // Reserve the same reading axis when the user hides the adjacent contents;
+        // a note without contents keeps the frame at the text measure so the
+        // tools end where the text ends.
+        let headings = reader_outline(&preview);
+        let measure = f32::from(READER_MEASURE.to_pixels(window.rem_size()));
+        let frame_width = content_width
+            .min(measure + f32::from(TOC_PANEL.to_pixels(window.rem_size())) + 24.);
+        let reader_width = if headings.is_empty() {
+            frame_width.min(measure)
+        } else {
+            frame_width
+        };
+        let toc_fits_beside = frame_width >= rem_size * 56. + 24.;
         let available_height = (layout.1 - rem_size * (40. / 14.) - 64.).max(0.);
-        let compact = reader_width < rem_size * 60. || available_height < rem_size * 36.;
+        let compact = frame_width < rem_size * 60. || available_height < rem_size * 36.;
         let short_reader = available_height < rem_size * 24.;
         let root = v_flex()
             .id("reader-page")
@@ -2574,8 +2580,6 @@ impl Desktop {
                     .overflow_y_scroll()
                     .track_scroll(&controls_scroll)
             });
-        // The return and heading share the article axis at every width. A
-        // separate return row preserves the title's measure with enlarged text.
         let outline: Vec<(f64, String)> = preview
             .document
             .as_ref()
@@ -2588,34 +2592,18 @@ impl Desktop {
                     .collect()
             })
             .unwrap_or_default();
-        let headings = reader_outline(&preview);
-        let header = self.reader_metadata_row(&preview, compact, short_reader, &controls_scroll, cx);
+        let ReaderHeaderParts { back, title, meta } =
+            self.reader_metadata_row(&preview, compact, short_reader, &controls_scroll, cx);
         let mut compact_metadata = None;
-        let (short_back, scrolling_title) = if short_reader {
-            (Some(header.back), Some(header.title))
+        let (heading, scrolling_title) = if short_reader {
+            (None, Some(title))
         } else {
-            page = page.child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .items_start()
-                    .gap_3()
-                    .child(header.back)
-                    .child(header.title),
-            );
-            (None, None)
+            (Some(title), None)
         };
-        if let Some(meta) = header.meta {
-            if compact {
-                compact_metadata = Some(meta);
-            } else {
-                page = page.child(meta);
-            }
-        }
         let toolbar = self.reader_toolbar(
             &preview,
             &headings,
-            short_back,
+            back,
             compact,
             short_reader,
             toc_fits_beside,
@@ -2635,6 +2623,16 @@ impl Desktop {
                 .children(toolbar.compact_search)
                 .children(toolbar.short_matches),
         );
+        // The return leads the tool bar; title and facts share the article's
+        // left edge below it.
+        page = page.children(heading);
+        if let Some(meta) = meta {
+            if compact {
+                compact_metadata = Some(meta);
+            } else {
+                page = page.child(meta);
+            }
+        }
         let (fixed_header, mut page) = if compact {
             (
                 Some(page.into_any_element()),
@@ -3138,7 +3136,7 @@ impl Desktop {
         &mut self,
         preview: &Rc<notes::Preview>,
         headings: &[(usize, String, Option<f64>)],
-        short_back: Option<AnyElement>,
+        back: AnyElement,
         compact: bool,
         short_reader: bool,
         toc_fits_beside: bool,
@@ -3232,7 +3230,7 @@ impl Desktop {
             .gap_2()
             .when(!compact, |row| row.flex_wrap())
             .items_center()
-            .children(short_back)
+            .child(back)
             .when(!short_reader, |row| {
                 row.child(
                     SingleChoiceGroup::new("reader-tabs", "阅读视图")
