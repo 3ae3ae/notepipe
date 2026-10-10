@@ -1210,34 +1210,35 @@ impl Desktop {
                 setting_surface().gap_3().child(self.account_settings_page(cx)),
             ),
         );
-        // Codex 订阅登录与 Ollama 本地发现：AI 服务的连接入口与状态（与服务列表平级可见）。
-        // Ollama 不是账号，组名按「连接」命名而不是「AI 账号」。
-        view = view.child(
-            group("ai-accounts-heading", "AI 服务连接")
-                .child(setting_surface().child(self.codex_account_section(
-                    crate::codex_ui::CodexSurface::Settings,
-                    false,
-                    cx,
-                )))
-                .child(setting_surface().child(self.ollama_account_section(cx))),
-        );
         let latest = self.preferences.latest_versions();
         for (purpose, heading_id, heading, add_label) in [
-            (
-                ServicePurpose::Speech,
-                "speech-services-heading",
-                "语音服务",
-                "添加语音服务",
-            ),
             (
                 ServicePurpose::Ai,
                 "ai-services-heading",
                 "AI 服务",
                 "添加 AI 服务",
             ),
+            (
+                ServicePurpose::Speech,
+                "speech-services-heading",
+                "语音服务",
+                "添加语音服务",
+            ),
         ] {
             let mut section = group(heading_id, heading);
             let mut empty = true;
+            // Codex sign-in and local Ollama are AI services too; they lead the
+            // same list instead of a near-identical group of their own.
+            if purpose == ServicePurpose::Ai {
+                empty = false;
+                section = section
+                    .child(setting_surface().child(self.codex_account_section(
+                        crate::codex_ui::CodexSurface::Settings,
+                        false,
+                        cx,
+                    )))
+                    .child(setting_surface().child(self.ollama_account_section(cx)));
+            }
             for version in latest.values().filter(|version| {
                 version.config.protocol.purpose() == purpose
                     && !self
