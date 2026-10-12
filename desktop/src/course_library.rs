@@ -2110,7 +2110,7 @@ impl Desktop {
                                 .bg(color(SECONDARY_CONTAINER))
                                 .overflow_hidden()
                                 .when_some(course.thumbnail.clone(), |cover, path| {
-                                    cover.child(img(path).size_full().object_fit(ObjectFit::Cover))
+                                    cover.child(img(path).size_full().rounded(RADIUS_SMALL).object_fit(ObjectFit::Cover))
                                 }),
                         )
                         .child(
