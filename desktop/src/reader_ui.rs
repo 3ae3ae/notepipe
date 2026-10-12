@@ -1153,8 +1153,9 @@ impl NoteFlow {
             .w_full()
             .min_w_0()
             .flex_shrink_0()
+            // Virtual list measurements include padding, not external margins.
             .when(!summary && index + 1 != self.items.len(), |view| {
-                view.mb_5()
+                view.pb_5()
             })
             .when(summary, |view| view.bg(color(SURFACE_HIGH)).px_5().py_2())
             .when(
