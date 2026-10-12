@@ -330,9 +330,21 @@ pub fn tool_path() -> std::ffi::OsString {
     if let Some(path) = std::env::var_os("COURSE2MD_TOOL_PATH").filter(|path| !path.is_empty()) {
         return path;
     }
-    let mut dirs: Vec<_> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect())
-        .unwrap_or_default();
+    // 随包自带的工具（yt-dlp 等）与可执行文件同目录，排在最前：安装包行为
+    // 不随用户 PATH 漂移。`.app` 布局额外看 ../Resources/bin。
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    {
+        dirs.push(dir.clone());
+        dirs.push(dir.join("../Resources/bin"));
+    }
+    dirs.extend(
+        std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+            .unwrap_or_default(),
+    );
     #[cfg(unix)]
     {
         if let Some(home) = std::env::var_os("HOME") {
@@ -407,18 +419,22 @@ impl Environment {
 
     pub fn detect() -> Self {
         let cli = resolve_cli().ok();
+        // yt-dlp 走共享搜索清单（随包自带 → PATH → 常见安装目录），定位到
+        // 绝对路径再探测；找不到时退回裸名，probe 失败与「未安装」同义。
+        let ytdlp = course2md::ytdlp::resolve_in(Some(&tool_path()))
+            .unwrap_or_else(|| PathBuf::from("yt-dlp"));
         // (字段名, 命令, 参数) 与回填写在一起：数组重排不会造成静默错配
         let checks = std::thread::scope(|scope| {
-            let commands: Vec<(&'static str, &Path, &'static str)> = vec![
+            let commands: Vec<(&'static str, PathBuf, &'static str)> = vec![
                 (
                     "engine",
-                    cli.as_deref().unwrap_or(Path::new("course2md")),
+                    cli.clone().unwrap_or_else(|| PathBuf::from("course2md")),
                     "--version",
                 ),
-                ("ffmpeg", Path::new("ffmpeg"), "-version"),
-                ("ffprobe", Path::new("ffprobe"), "-version"),
-                ("ytdlp", Path::new("yt-dlp"), "--version"),
-                ("llama-devices", Path::new("llama-server"), "--list-devices"),
+                ("ffmpeg", PathBuf::from("ffmpeg"), "-version"),
+                ("ffprobe", PathBuf::from("ffprobe"), "-version"),
+                ("ytdlp", ytdlp, "--version"),
+                ("llama-devices", PathBuf::from("llama-server"), "--list-devices"),
             ];
             let handles: Vec<_> = commands
                 .into_iter()
@@ -429,7 +445,7 @@ impl Environment {
                     } else {
                         Duration::from_secs(5)
                     };
-                    (name, scope.spawn(move || probe(bin, &[arg], timeout)))
+                    (name, scope.spawn(move || probe(&bin, &[arg], timeout)))
                 })
                 .collect();
             handles

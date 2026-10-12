@@ -629,7 +629,7 @@ pub async fn probe_video(url: &str) -> Result<OnlineVideo> {
 
 /// Metadata and all available subtitle channels only; no media/AI requests.
 pub async fn probe_online(url: &str) -> Result<OnlineProbe> {
-    let mut cmd = Command::new("yt-dlp");
+    let mut cmd = Command::new(crate::ytdlp::program());
     let _cookies = crate::auth::configure_ytdlp(cmd.as_std_mut(), url)?;
     ytdlp_base(&mut cmd).args([
         "--simulate",
@@ -729,7 +729,7 @@ pub async fn fetch_selected_subtitle(
         text.clone()
     } else {
         let template = temp.path().join("subtitle");
-        let mut cmd = Command::new("yt-dlp");
+        let mut cmd = Command::new(crate::ytdlp::program());
         let _cookies = crate::auth::configure_ytdlp(cmd.as_std_mut(), url)?;
         ytdlp_base(&mut cmd).args([
             "--skip-download",
@@ -811,7 +811,7 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
                 e = watch_control() => return Err(e),
             }
         }
-        let mut cmd = Command::new("yt-dlp");
+        let mut cmd = Command::new(crate::ytdlp::program());
         let _cookies = crate::auth::configure_ytdlp(cmd.as_std_mut(), url)?;
         let fmt = format!("bv*[height<={max_height}]+ba/b[height<={max_height}]/b");
         ytdlp_base(&mut cmd).args([

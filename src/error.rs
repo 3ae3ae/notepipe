@@ -18,9 +18,15 @@ pub fn cmd_error(program: &str, code: Option<i32>, stderr: &str) -> anyhow::Erro
     anyhow::anyhow!("{program} 运行失败 / failed (code={code:?}):\n{tail}")
 }
 
-/// 校验外部工具存在。
+/// 校验外部工具存在。yt-dlp 走共享搜索清单（随包自带/PATH/常见安装目录），
+/// 其余工具仍只查 PATH。
 pub fn require_cmd(cmd: &str) -> Result<()> {
-    if crate::runtime::which(cmd).is_none() {
+    let missing = if cmd == "yt-dlp" {
+        crate::ytdlp::resolve().is_none()
+    } else {
+        crate::runtime::which(cmd).is_none()
+    };
+    if missing {
         anyhow::bail!(
             "未找到 {cmd}，请先安装 / {cmd} is not installed. {}",
             install_hint(cmd)

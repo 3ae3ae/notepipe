@@ -72,6 +72,7 @@ src/
   apple.rs     macOS Apple Silicon 原生后端：Silero VAD + Qwen3-ASR (MLX / CoreML)
   asr.rs       ASR 调度、silencedetect 分段、llama-server 进程管理与转写
   fetch.rs     yt-dlp 元数据抓取与视频下载
+  ytdlp.rs     yt-dlp 二进制定位：env 覆盖 → 随包自带 → PATH → 常见安装目录
   media.rs     ffprobe 视频/音频探测与 ffmpeg 音频抽取
   scene.rs     SSIM 采样、ROI 裁剪、冷却防抖与全分辨率抽帧
   llm.rs       LLM 字幕润色：OpenAI 兼容客户端、批处理与容错

@@ -257,7 +257,15 @@ fn command_once(
     check_preview_deadline(cancel, start)?;
     let stdout = tempfile::tempfile()?;
     let stderr = tempfile::tempfile()?;
-    let mut command = Command::new(name);
+    // yt-dlp 用共享搜索清单定位到绝对路径（随包自带 → PATH → 常见安装目录），
+    // 不再依赖子进程 PATH 解析；其余命令沿用裸名 + 扩展 PATH。
+    let program = if name == "yt-dlp" {
+        course2md::ytdlp::resolve_in(Some(&crate::backend::tool_path()))
+            .unwrap_or_else(|| PathBuf::from(name))
+    } else {
+        PathBuf::from(name)
+    };
+    let mut command = Command::new(&program);
     let _cookies = if name == "yt-dlp" {
         course2md::auth::configure_ytdlp(&mut command, args.last().copied().unwrap_or_default())?
     } else {

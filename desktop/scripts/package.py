@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tomllib
+import urllib.request
 
 from dmg import build_install_dmg
 
@@ -34,6 +35,48 @@ def macos_versions(version):
 
 def run(*args):
     subprocess.run(args, cwd=PROJECT, check=True)
+
+
+def ytdlp_asset(system, machine):
+    """Standalone binary asset name in yt-dlp's GitHub releases, or None."""
+    if system == "Darwin":
+        return "yt-dlp_macos"
+    if system == "Windows":
+        return {"AMD64": "yt-dlp.exe", "ARM64": "yt-dlp_arm64.exe"}.get(machine)
+    if system == "Linux":
+        return {"x86_64": "yt-dlp_linux", "aarch64": "yt-dlp_linux_aarch64"}.get(machine)
+    return None
+
+
+def bundle_ytdlp(dest):
+    """Place a standalone yt-dlp beside the app binaries.
+
+    COURSE2MD_YTDLP points at a local build to bundle instead of downloading.
+    Failure is non-fatal: the app still resolves yt-dlp from PATH at runtime.
+    """
+    try:
+        local = os.environ.get("COURSE2MD_YTDLP")
+        if local:
+            shutil.copy2(local, dest)
+        else:
+            asset = ytdlp_asset(platform.system(), platform.machine())
+            if not asset:
+                return None
+            url = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{asset}"
+            tmp = dest.parent / (dest.name + ".download")
+            try:
+                with urllib.request.urlopen(url, timeout=300) as response, tmp.open("wb") as out:
+                    shutil.copyfileobj(response, out)
+                if tmp.stat().st_size < 1_000_000:
+                    raise OSError(f"{asset} download is suspiciously small")
+                tmp.replace(dest)
+            finally:
+                tmp.unlink(missing_ok=True)
+        dest.chmod(0o755)
+        return dest
+    except OSError as error:
+        print(f"warning: yt-dlp not bundled ({error}); the app will use yt-dlp from PATH")
+        return None
 
 
 def main():
@@ -109,6 +152,11 @@ def main():
             shutil.copy2(ROOT / "assets/icon.png", base / "course2md.png")
     shutil.copy2(PROJECT / "target" / profile / f"course2md{suffix}", binaries / f"course2md{suffix}")
     shutil.copy2(ROOT / "target" / profile / f"course2md-desktop{suffix}", binaries / f"course2md-desktop{suffix}")
+    # 自带 yt-dlp：与可执行文件同目录是运行时搜索清单的一档；COURSE2MD_NO_YTDLP=1 可跳过。
+    if not os.environ.get("COURSE2MD_NO_YTDLP"):
+        bundled = bundle_ytdlp(binaries / f"yt-dlp{suffix}")
+        if bundled:
+            print(f"bundled {bundled.name}")
     if system == "Windows":
         verify_windows_icon(binaries / "course2md-desktop.exe")
     shutil.copy2(PROJECT / "LICENSE", base / "LICENSE")
@@ -129,6 +177,10 @@ def main():
             signing.extend(["--options", "runtime", "--timestamp"])
         run("codesign", *signing, str(binaries / "course2md"))
         run("codesign", *signing, str(binaries / "course2md-desktop"))
+        # 自带 yt-dlp 作为嵌套代码一并签名（--deep verify 与公证要求包内代码均可校验）
+        ytdlp = binaries / "yt-dlp"
+        if ytdlp.is_file():
+            run("codesign", *signing, str(ytdlp))
         run("codesign", *signing, str(bundle))
         run("codesign", "--verify", "--deep", "--strict", str(bundle))
         notarization = [os.environ.get(key) for key in ("APPLE_API_KEY_PATH", "APPLE_API_KEY_ID", "APPLE_API_ISSUER")]

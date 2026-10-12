@@ -5,6 +5,9 @@
 
 ## [未发布]
 
+- 修复 yt-dlp 定位：CLI 与桌面端共用统一搜索清单（`COURSE2MD_YTDLP` → 可执行文件旁随包版本 → PATH → Homebrew/pipx/mise/asdf/conda/Nix/Scoop/WinGet/Python user-base 等常见目录）。桌面会话拿不到登录 shell 的 PATH 时不再误报「缺少 yt-dlp」；`course2md doctor` 会显示实际使用的 yt-dlp 路径。
+- install.sh 与桌面安装包（DMG/ZIP/tar.gz）现在随包自带 yt-dlp 独立二进制，与可执行文件同目录；PATH 中已有 yt-dlp 时沿用系统版本，Homebrew/AUR 的 yt-dlp 依赖不变。
+
 ## [2.0.0-rc.7] — 2026-10-10
 
 - 桌面端按 Material 3 重新设计：顶栏改为左侧品牌、右侧笔记库/设置；工作台收为居中单列与一体化胶囊链接输入；笔记库改为搜索栏、筛选 chip 与共享笔记卡片；设置统一为主色分组标题加单卡片分隔列表；线性进度改用 tonal 轨道。

@@ -29,7 +29,7 @@ brew install --cask mizorewww/tap/course2md-gui
 
 装完后，从「访达 → 应用程序」打开 **course2md**。
 
-**手动安装：**[下载 macOS 安装包（DMG）](https://github.com/mizorewww/course2md/releases/latest/download/course2md-gui-macos-arm64.dmg)，打开后将 **course2md.app** 拖入「应用程序」。这种方式只安装应用，视频工具需按 [macOS 安装指南](https://github.com/mizorewww/course2md/wiki/%E5%AE%89%E8%A3%85%E6%A1%8C%E9%9D%A2%E5%BA%94%E7%94%A8#macos-apple-silicon)另行安装。
+**手动安装：**[下载 macOS 安装包（DMG）](https://github.com/mizorewww/course2md/releases/latest/download/course2md-gui-macos-arm64.dmg)，打开后将 **course2md.app** 拖入「应用程序」。应用已自带 yt-dlp，只有 `ffmpeg` 需按 [macOS 安装指南](https://github.com/mizorewww/course2md/wiki/%E5%AE%89%E8%A3%85%E6%A1%8C%E9%9D%A2%E5%BA%94%E7%94%A8#macos-apple-silicon)另行安装。
 
 ### Arch Linux / CachyOS：x86_64
 
@@ -44,11 +44,10 @@ yay -S course2md-gui-bin
 ### Windows：x64
 
 1. [下载 Windows 便携包（ZIP）](https://github.com/mizorewww/course2md/releases/latest/download/course2md-desktop-windows-AMD64.zip)，**完整解压**到固定文件夹。
-2. 在 PowerShell 中安装视频工具：
+2. 在 PowerShell 中安装 `ffmpeg`（`yt-dlp.exe` 已随包附带；PATH 中已有的 yt-dlp 也会被读取）：
 
    ```powershell
    winget install --id Gyan.FFmpeg -e
-   winget install --id yt-dlp.yt-dlp -e
    ```
 
 3. 打开解压目录中的 **course2md-desktop.exe**。旁边的 `course2md.exe` 是配套引擎，请保留在同一目录。如果应用已打开，安装工具后退出并重新打开。
@@ -77,9 +76,9 @@ CLI 与桌面应用共享同一份配置文件，可以同时安装。
 curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh | bash
 ```
 
-脚本把 `course2md` 装进 `~/bin`（可用 `COURSE2MD_BIN_DIR` 覆盖）并检查依赖。也可以选择：Homebrew `brew install mizorewww/tap/course2md`；Arch Linux `yay -S course2md-bin`（x86_64、aarch64）；或用 Rust stable 执行 `cargo install --path .` 从源码安装。
+脚本把 `course2md` 装进 `~/bin`（可用 `COURSE2MD_BIN_DIR` 覆盖）并检查依赖；PATH 中没有 yt-dlp 时会自动安装随包版本。也可以选择：Homebrew `brew install mizorewww/tap/course2md`；Arch Linux `yay -S course2md-bin`（x86_64、aarch64）；或用 Rust stable 执行 `cargo install --path .` 从源码安装。
 
-`ffmpeg`（含 `ffprobe`）始终必需；在线链接需要 `yt-dlp`；GPU/CPU 识别需要 `llama-server`——macOS Apple Silicon 预编译包含 CoreML 后端，无需额外运行时。运行 `course2md doctor` 可一键检查。
+`ffmpeg`（含 `ffprobe`）始终必需；在线链接需要 `yt-dlp`（预编译安装随包自带，也会读取 PATH 及常见安装目录中的版本）；GPU/CPU 识别需要 `llama-server`——macOS Apple Silicon 预编译包含 CoreML 后端，无需额外运行时。运行 `course2md doctor` 可一键检查。
 
 ## 快速上手
 

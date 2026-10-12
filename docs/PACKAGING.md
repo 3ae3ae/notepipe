@@ -7,7 +7,7 @@
 | Homebrew tap `mizorewww/tap` | Cask `course2md-gui` (Apple Silicon, macOS 15+) | Formula `course2md` |
 | AUR | `course2md-gui-bin` (x86_64) | `course2md-bin` (x86_64, aarch64) |
 
-GUI packages contain a matching private CLI engine. They do not install a terminal `course2md` command and can coexist with the standalone CLI package. Both channels install ffmpeg and yt-dlp. Model downloads and optional recognition backends are configured on first use; they are not bundled into the package.
+GUI packages contain a matching private CLI engine. They do not install a terminal `course2md` command and can coexist with the standalone CLI package. Both channels install ffmpeg and yt-dlp. The desktop packages additionally bundle a standalone yt-dlp next to the executables (skipped when the download fails, `COURSE2MD_NO_YTDLP` is set, or `COURSE2MD_YTDLP` supplies a local build); at runtime both app and CLI resolve yt-dlp in the order `COURSE2MD_YTDLP` → beside the executable → PATH → well-known install locations. Model downloads and optional recognition backends are configured on first use; they are not bundled into the package.
 
 ## Automatic publication
 

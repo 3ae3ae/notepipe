@@ -9,7 +9,7 @@ use std::process::Command;
 /// 版本首行展示的最大字符数（防止某些工具输出超长首行撑爆版面）
 const VERSION_LINE_MAX_CHARS: usize = 72;
 
-fn tool_version(cmd: &str, args: &[&str]) -> Option<String> {
+fn tool_version(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Option<String> {
     let out = Command::new(cmd).args(args).output().ok()?;
     if !out.status.success() {
         return None;
@@ -55,9 +55,22 @@ pub fn run() -> Result<()> {
         }
     }
     out.push("\n按用途选装 / Optional tools by use".into());
-    match tool_version("yt-dlp", &["--version"]) {
-        Some(version) => check(&mut out, true, "yt-dlp", &format!("  {version}")),
-        None => out.push("- yt-dlp  远程视频需要，本地文件不需要 / Required for URLs, optional for local files: brew install yt-dlp (macOS); pipx install yt-dlp".into()),
+    match crate::ytdlp::resolve() {
+        Some(path) => match tool_version(&path, &["--version"]) {
+            Some(version) => check(
+                &mut out,
+                true,
+                "yt-dlp",
+                &format!("  {version} · {}", path.display()),
+            ),
+            None => check(
+                &mut out,
+                false,
+                "yt-dlp",
+                &format!("  找到但无法运行 / found but failed to run: {}", path.display()),
+            ),
+        },
+        None => out.push("- yt-dlp  远程视频需要，本地文件不需要 / Required for URLs, optional for local files: brew install yt-dlp (macOS); pipx install yt-dlp；重跑 install.sh 会安装随包版本 / rerun install.sh for the bundled build".into()),
     }
     #[cfg(apple_native)]
     {

@@ -26,8 +26,8 @@ need() { command -v "$1" >/dev/null 2>&1 || missing+=("$1"); }
 need ffmpeg
 need ffprobe
 # macOS arm64 预编译包含 CoreML 后端，无需 llama-server；其余平台需要。
+# yt-dlp 不在此列：PATH 没有时下面会随包装到 BIN_DIR，兜底逻辑见脚本尾部。
 if [ "$os-$arch" != "darwin-arm64" ] && [ "$os-$arch" != "darwin-aarch64" ]; then
-  need yt-dlp
   need llama-server
 fi
 if [ "${#missing[@]}" -gt 0 ]; then
@@ -66,6 +66,29 @@ fi
 
 install -m 755 "$tmp" "$BIN_DIR/course2md"
 echo "已安装：$BIN_DIR/course2md"
+
+# yt-dlp：PATH 里已有就沿用系统版本；否则从 yt-dlp 官方 release 下载独立二进制
+# 装到 BIN_DIR——与 course2md 同目录是运行时搜索清单的一档（随包自带）。
+if command -v yt-dlp >/dev/null 2>&1; then
+  echo "检测到 yt-dlp：$(command -v yt-dlp)，沿用 PATH 版本"
+else
+  ytdlp_asset=""
+  case "$os-$arch" in
+    darwin-*) ytdlp_asset="yt-dlp_macos" ;;
+    linux-x86_64|linux-amd64) ytdlp_asset="yt-dlp_linux" ;;
+    linux-aarch64|linux-arm64) ytdlp_asset="yt-dlp_linux_aarch64" ;;
+  esac
+  yt="$(mktemp)"
+  if [ -n "$ytdlp_asset" ] &&
+     curl -fsSL --max-time 300 "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$ytdlp_asset" -o "$yt"; then
+    install -m 755 "$yt" "$BIN_DIR/yt-dlp"
+    echo "已安装：$BIN_DIR/yt-dlp（随包自带）"
+  else
+    echo "警告：yt-dlp 下载失败；远程视频功能需要它，可稍后手动安装" >&2
+    echo "      macOS: brew install yt-dlp ；其他: pipx install yt-dlp" >&2
+  fi
+  rm -f "$yt"
+fi
 
 # MLX Metal kernels：CoreML 推理需要与二进制同目录（仅 macOS arm64）
 if [ "$os-$arch" = "darwin-arm64" ] || [ "$os-$arch" = "darwin-aarch64" ]; then

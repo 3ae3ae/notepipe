@@ -29,7 +29,7 @@ brew install --cask mizorewww/tap/course2md-gui
 
 After installation, open **course2md** from **Finder → Applications**.
 
-**Manual installation:** [download the macOS installer (DMG)](https://github.com/mizorewww/course2md/releases/latest/download/course2md-gui-macos-arm64.dmg), open it, and drag **course2md.app** to Applications. This installs only the app; install video tools separately using the [macOS installation guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#macos-apple-silicon).
+**Manual installation:** [download the macOS installer (DMG)](https://github.com/mizorewww/course2md/releases/latest/download/course2md-gui-macos-arm64.dmg), open it, and drag **course2md.app** to Applications. The app bundles yt-dlp; only `ffmpeg` needs to be installed separately using the [macOS installation guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#macos-apple-silicon).
 
 ### Arch Linux / CachyOS: x86_64
 
@@ -44,11 +44,10 @@ With `paru`, run `paru -S course2md-gui-bin`. Open **course2md** from your appli
 ### Windows: x64
 
 1. [Download the Windows portable package (ZIP)](https://github.com/mizorewww/course2md/releases/latest/download/course2md-desktop-windows-AMD64.zip) and **extract everything** to a permanent folder.
-2. Install video tools in PowerShell:
+2. Install `ffmpeg` in PowerShell (`yt-dlp.exe` is bundled in the package; a yt-dlp already on PATH is also used):
 
    ```powershell
    winget install --id Gyan.FFmpeg -e
-   winget install --id yt-dlp.yt-dlp -e
    ```
 
 3. Open **course2md-desktop.exe** from the extracted folder. Keep `course2md.exe` beside it: this is the bundled engine. If the app was already open, quit and reopen it after installing tools.
@@ -77,9 +76,9 @@ The CLI and the desktop app share one configuration file and can be installed si
 curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh | bash
 ```
 
-This installs `course2md` into `~/bin` (override with `COURSE2MD_BIN_DIR`) and checks dependencies. Also available: Homebrew `brew install mizorewww/tap/course2md`; Arch Linux `yay -S course2md-bin` (x86_64, aarch64); or from source with `cargo install --path .` (Rust stable).
+This installs `course2md` into `~/bin` (override with `COURSE2MD_BIN_DIR`), checks dependencies, and installs a bundled `yt-dlp` when none is on PATH. Also available: Homebrew `brew install mizorewww/tap/course2md`; Arch Linux `yay -S course2md-bin` (x86_64, aarch64); or from source with `cargo install --path .` (Rust stable).
 
-`ffmpeg` (including `ffprobe`) is always required, `yt-dlp` for online links, and `llama-server` for GPU/CPU recognition — except on the macOS Apple-Silicon package, whose CoreML backend needs no extra runtime. Run `course2md doctor` to check everything.
+`ffmpeg` (including `ffprobe`) is always required, `yt-dlp` for online links (bundled with prebuilt installs; a copy on PATH or at common install locations is also detected), and `llama-server` for GPU/CPU recognition — except on the macOS Apple-Silicon package, whose CoreML backend needs no extra runtime. Run `course2md doctor` to check everything.
 
 ## Quick start
 
