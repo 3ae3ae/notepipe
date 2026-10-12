@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-const READER_MEASURE: Rems = rems(52.);
+const READER_MEASURE: Rems = rems(48.);
 /// Minimum spacing between polled reading-position saves during scrolling.
 const READING_POSITION_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -1138,11 +1138,32 @@ impl NoteFlow {
     /// that reading positions and search jumps resolve against.
     fn item_wrapper(&self, index: usize, content: AnyElement) -> Stateful<Div> {
         let block = note_item_block(self.items[index]);
+        let is_summary = |item: NoteItem| match item {
+            NoteItem::SummaryLabel(_) => true,
+            NoteItem::Block(block) => note_summary_block(&self.preview.blocks[block]),
+            NoteItem::Title => false,
+        };
+        let summary = is_summary(self.items[index]);
+        let summary_end = summary
+            && self
+                .items
+                .get(index + 1)
+                .is_none_or(|item| !is_summary(*item));
         let mut wrapper = div()
             .w_full()
             .min_w_0()
             .flex_shrink_0()
-            .when(index + 1 != self.items.len(), |view| view.mb_3());
+            .when(!summary && index + 1 != self.items.len(), |view| {
+                view.mb_5()
+            })
+            .when(summary, |view| view.bg(color(SURFACE_HIGH)).px_5().py_2())
+            .when(
+                matches!(self.items[index], NoteItem::SummaryLabel(_)),
+                |view| view.rounded_t(RADIUS_CARD).pt_4(),
+            )
+            .when(summary_end, |view| {
+                view.rounded_b(RADIUS_CARD).pb_4().mb_6()
+            });
         if let Some(block) = block {
             let positions = self.item_layout.clone();
             wrapper = wrapper.on_children_prepainted(move |bounds, _, _| {
@@ -1180,7 +1201,7 @@ impl NoteFlow {
 
 /// Render one note-flow item. Mirrors the pre-virtualization article order:
 /// scrolling title, summary label and paragraphs, then remaining blocks.
-fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> AnyElement {
+fn render_note_item(flow: &NoteFlow, item_ix: usize, _window: &mut Window) -> AnyElement {
     let Some(&item) = flow.items.get(item_ix) else {
         return div().into_any_element();
     };
@@ -1191,19 +1212,14 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
             .flex_shrink_0()
             .min_w_0()
             .whitespace_normal()
-            .text_size(TEXT_TITLE)
+            .text_size(TEXT_DISPLAY)
             .font_weight(FontWeight::SEMIBOLD)
             .into_any_element(),
-        NoteItem::SummaryLabel(_) => h_flex()
-            .gap_2()
-            .items_center()
-            .child(icons::article().size(rems(18. / 14.)).flex_shrink_0())
-            .child(
-                theme::accessible_text("reader-summary-label", "摘要")
-                    .role(Role::Heading)
-                    .text_size(TEXT_TITLE)
-                    .font_weight(FontWeight::SEMIBOLD),
-            )
+        NoteItem::SummaryLabel(_) => theme::accessible_text("reader-summary-label", "摘要")
+            .role(Role::Heading)
+            .text_size(TEXT_AUX)
+            .text_color(color(GRAY))
+            .font_weight(FontWeight::SEMIBOLD)
             .into_any_element(),
         NoteItem::Block(index) => match &preview.blocks[index] {
             PreviewBlock::Heading {
@@ -1337,9 +1353,6 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
                     .filter(|frame| frame.width > 0 && frame.height > 0)
                     .map(|frame| frame.width as f32 / frame.height as f32)
                     .unwrap_or(16. / 9.);
-                let rem_size = f32::from(window.rem_size());
-                let available_height =
-                    (f32::from(window.bounds().size.height) - rem_size * (40. / 14.) - 64.).max(0.);
                 let desktop = flow.desktop.clone();
                 v_flex()
                     .w_full()
@@ -1350,8 +1363,8 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
                             control(("note-image", index))
                                 .ghost()
                                 .p_0()
-                                // 行内截图限高：默认窗口内摘要与正文能衔接（M7）
-                                .w(px((available_height * 0.24).min(160.) * aspect_ratio))
+                                // Screenshots are reading material and share the prose measure.
+                                .w_full()
                                 .max_w_full()
                                 .h_auto()
                                 .min_h(px(0.))
@@ -1402,7 +1415,12 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize, window: &mut Window) -> Any
                                 h_flex().w_full().justify_start().child(
                                     quiet(("seek-image", index))
                                         .icon(icons::play_arrow())
-                                        .label("从此处观看")
+                                        .label(
+                                            frame
+                                                .and_then(|frame| frame.seconds)
+                                                .map(course2md::render::fmt_ts)
+                                                .unwrap_or_else(|| "从此处观看".into()),
+                                        )
                                         .min_h(rems(1.6))
                                         // 抵消按钮内边距（gpui-component px_2p5），图标与截图左缘对齐
                                         .ml(-rems(0.625))
@@ -1456,11 +1474,9 @@ impl Desktop {
     fn reading_key(&self) -> Option<String> {
         let preview = self.preview.as_ref()?;
         Some(match &preview.course.manifest {
-            Some(manifest) => manifest_reading_key(
-                &manifest.course_id,
-                &manifest.version_id,
-                self.result_tab,
-            ),
+            Some(manifest) => {
+                manifest_reading_key(&manifest.course_id, &manifest.version_id, self.result_tab)
+            }
             None => {
                 let identity = self
                     .course_location(&preview.course)
@@ -2192,11 +2208,7 @@ impl Desktop {
                             }
                         }
                     }
-                    Err(error) => {
-                        this.message = Some(format!(
-                            "这个版本暂时无法打开：{error:#}"
-                        ))
-                    }
+                    Err(error) => this.message = Some(format!("这个版本暂时无法打开：{error:#}")),
                 }
                 cx.notify();
             });
@@ -2459,12 +2471,15 @@ impl Desktop {
         let Some(preview) = self.preview.clone() else {
             return crate::motion::enter(
                 "reader-opening",
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .py_6()
-                    .child(crate::motion::spinner("reader-opening-spinner", cx))
-                    .child(theme::accessible_text("opening-note", "正在打开笔记…")));
+                v_flex().w_full().gap_4().py_4()
+                    .child(quiet("reader-loading-back")
+                        .icon(IconName::ArrowLeft).label("返回")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.navigate(this.result_origin, cx);
+                        })))
+                    .child(h_flex().items_center().gap_2()
+                        .child(crate::motion::spinner("reader-opening-spinner", cx))
+                        .child(theme::accessible_text("opening-note", "正在打开笔记…"))));
         };
         // 渲染只读已提交快照：数据加载在 preview 变更的事件路径触发（ensure_reader_data），
         // tab stops 在各 result_tab 赋值点同步
@@ -2499,12 +2514,12 @@ impl Desktop {
         // tools end where the text ends.
         let headings = reader_outline(&preview);
         let measure = f32::from(READER_MEASURE.to_pixels(window.rem_size()));
-        let frame_width = content_width
-            .min(measure + f32::from(TOC_PANEL.to_pixels(window.rem_size())) + 24.);
-        let reader_width = if headings.is_empty() {
-            frame_width.min(measure)
-        } else {
+        let frame_width =
+            content_width.min(measure + f32::from(TOC_PANEL.to_pixels(window.rem_size())) + 24.);
+        let reader_width = if self.reader_ui.toc_open == Some(true) && !headings.is_empty() {
             frame_width
+        } else {
+            frame_width.min(measure)
         };
         let toc_fits_beside = frame_width >= rem_size * 56. + 24.;
         let available_height = (layout.1 - rem_size * (40. / 14.) - 64.).max(0.);
@@ -2595,7 +2610,7 @@ impl Desktop {
         let ReaderHeaderParts { back, title, meta } =
             self.reader_metadata_row(&preview, compact, short_reader, &controls_scroll, cx);
         let mut compact_metadata = None;
-        let (heading, scrolling_title) = if short_reader {
+        let (heading, scrolling_title) = if compact {
             (None, Some(title))
         } else {
             (Some(title), None)
@@ -2617,8 +2632,7 @@ impl Desktop {
                 .min_w_0()
                 .gap_2()
                 .py_2()
-                .border_b_1()
-                .border_color(color(HAIRLINE))
+                .mb_3()
                 .child(toolbar.bar)
                 .children(toolbar.compact_search)
                 .children(toolbar.short_matches),
@@ -2627,7 +2641,7 @@ impl Desktop {
         // left edge below it.
         page = page.children(heading);
         if let Some(meta) = meta {
-            if compact {
+            if short_reader {
                 compact_metadata = Some(meta);
             } else {
                 page = page.child(meta);
@@ -2674,12 +2688,12 @@ impl Desktop {
         );
         page = page.children(self.reader_notices(&preview, &controls_scroll, window, cx));
         let reading_note = self.result_tab == 0;
-        let items = note_items(&preview.blocks, short_reader);
+        let items = note_items(&preview.blocks, compact);
         // The note flow's persistent list state follows the loaded note and the
         // item sequence derived from it; text-scale changes only re-measure.
         let items_key = (
             preview.course.dir.clone(),
-            short_reader,
+            compact,
             preview.blocks.len(),
         );
         if self.reader_ui.note_items_key.as_ref() != Some(&items_key) {
@@ -2792,9 +2806,8 @@ impl Desktop {
                 cx,
             )
         };
-        // Wide reading opens the contents automatically. Manual choices are retained
-        // across tab changes, note changes and subsequent window resizing.
-        let toc_open = self.reader_ui.toc_open.unwrap_or(toc_fits_beside)
+        // Reading starts with an uninterrupted article; contents are an explicit choice.
+        let toc_open = self.reader_ui.toc_open.unwrap_or(false)
             && !headings.is_empty()
             && self.result_tab == 0;
         let toc_side = toc_open && toc_fits_beside;
@@ -2901,30 +2914,9 @@ impl Desktop {
             .when(short_reader, |title| title.flex_shrink_0())
             .min_w_0()
             .whitespace_normal()
-            .when(compact && !short_reader, |title| {
-                title.whitespace_nowrap().text_ellipsis()
-            })
-            .text_size(if compact { TEXT_TITLE } else { TEXT_DISPLAY })
+            .text_size(TEXT_DISPLAY)
             .font_weight(FontWeight::SEMIBOLD);
-        let title = if compact && !short_reader {
-            control("reader-title-details")
-                .ghost()
-                .flex_1()
-                .min_w_0()
-                .h_auto()
-                .p_0()
-                .justify_start()
-                .tooltip(preview.course.title.clone())
-                .accessibility_label("查看完整标题与笔记详情")
-                .child(title)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.reader_ui.info_open = !this.reader_ui.info_open;
-                    cx.notify();
-                }))
-                .into_any_element()
-        } else {
-            title.into_any_element()
-        };
+        let title = title.into_any_element();
         let back = reveal(
             "reveal-reader-back",
             quiet("reader-back")
@@ -3139,7 +3131,7 @@ impl Desktop {
         back: AnyElement,
         compact: bool,
         short_reader: bool,
-        toc_fits_beside: bool,
+        _toc_fits_beside: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> ReaderToolbarParts {
@@ -3228,7 +3220,7 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .gap_2()
-            .when(!compact, |row| row.flex_wrap())
+            .flex_wrap()
             .items_center()
             .child(back)
             .when(!short_reader, |row| {
@@ -3249,14 +3241,28 @@ impl Desktop {
                         })),
                 )
             });
+        let search_visible = !reading_note || self.reader_ui.find_open;
         let mut search_row = h_flex()
             .flex_1()
             .min_w_0()
             .gap_2()
             .items_center()
-            .child(search);
+            .when(search_visible, |row| row.child(search))
+            .when(!search_visible, |row| {
+                row.child(div().flex_1()).child(
+                    quiet("reader-open-find")
+                        .icon(icons::search())
+                        .w(CONTROL_HEIGHT)
+                        .px_0()
+                        .accessibility_label("查找笔记内容")
+                        .tooltip("查找笔记内容 ⌘F")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_reader_find(window, cx);
+                        })),
+                )
+            });
         if !headings.is_empty() && reading_note {
-            let toc_on = self.reader_ui.toc_open.unwrap_or(toc_fits_beside);
+            let toc_on = self.reader_ui.toc_open.unwrap_or(false);
             search_row = search_row.child(
                 // 目录轨打开时以 accent 文字色表达状态（持久含义经由文字色，不是选中面）
                 quiet("note-contents")
