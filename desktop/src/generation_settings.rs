@@ -2,7 +2,11 @@
 use super::*;
 
 impl Desktop {
-    pub(super) fn generation_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn generation_settings_page(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let value = self.preferences.generation();
         let provider = value.options.provider.map(|p| p.as_str()).unwrap_or("");
         let language = match value.preferred_subtitle_languages.as_slice() {
@@ -12,14 +16,24 @@ impl Desktop {
         };
         let languages = group("language-settings", "生成笔记 · 默认值")
             .child(settings_row(
-                "default-text-source-label", icons::subtitles(), "文字来源",
+                "default-text-source-label",
+                icons::subtitles(),
+                "文字来源",
                 match value.options.transcript_source {
-                    Some(course2md::config::TranscriptSource::Subtitle) => "没有字幕时会提示选择字幕文件或改用语音识别",
-                    Some(course2md::config::TranscriptSource::Asr) => "识别视频声音，不使用现有字幕",
+                    Some(course2md::config::TranscriptSource::Subtitle) => {
+                        "没有字幕时会提示选择字幕文件或改用语音识别"
+                    }
+                    Some(course2md::config::TranscriptSource::Asr) => {
+                        "识别视频声音，不使用现有字幕"
+                    }
                     _ => "有字幕时直接用字幕，没有字幕时识别视频声音",
                 },
                 self.setting_choices("default-text-source", "文字来源")
-                    .options([("auto", "自动"), ("subtitle", "仅字幕"), ("asr", "语音识别")])
+                    .options([
+                        ("auto", "自动"),
+                        ("subtitle", "仅字幕"),
+                        ("asr", "语音识别"),
+                    ])
                     .full_width()
                     .selected(match value.options.transcript_source {
                         Some(course2md::config::TranscriptSource::Subtitle) => "subtitle",
@@ -41,110 +55,125 @@ impl Desktop {
                 icons::subtitles(),
                 "字幕语言",
                 "",
-                self.reveal_setting("default-subtitle-language-reveal", {
-                    let current = language.to_owned();
-                    let entity = cx.weak_entity();
-                    control("default-subtitle-language")
-                        .w_full()
-                        .label(match language {
-                            "zh-Hans" => "简体中文",
-                            "zh-Hant" => "繁體中文",
-                            "en" => "英语",
-                            "ja" => "日语",
-                            "custom" => "自定义优先级",
-                            _ => "自动",
-                        })
-                        .child(div().flex_1())
-                        .child(icons::chevron_down().size_4())
-                        .dropdown_menu(move |menu, _, _| {
-                            [("", "自动"), ("zh-Hans", "简体中文"),
-                             ("zh-Hant", "繁體中文"), ("en", "英语"), ("ja", "日语")]
-                                .into_iter().fold(menu, |menu, (id, label)| {
-                                    let entity = entity.clone();
-                                    menu.item(PopupMenuItem::new(label).checked(id == current)
-                                        .on_click(move |_, window, cx| {
-                                            let _ = entity.update(cx, |this, cx| {
-                                                let mut next = this.generation_edit_base();
-                                                next.preferred_subtitle_languages = if id.is_empty() {
-                                                    Vec::new()
-                                                } else {
-                                                    vec![id.to_owned()]
-                                                };
-                                                next.subtitle_languages_draft = None;
-                                                if this.commit_generation(next, cx) {
-                                                    this.settings_ui.language_details_open = false;
-                                                    this.settings_ui.inputs[&EditField::Languages]
-                                                        .update(cx, |input, cx| input.set_value(id, window, cx));
-                                                }
-                                            });
-                                        }))
-                                })
-                        })
-                }),
-            ))
-            // The custom order and its editor stay inside the 字幕语言 item.
-            .detail(
-                h_flex()
+                v_flex()
                     .w_full()
                     .min_w_0()
-                    .px(rems(20. / 14.))
-                    .pb(rems(10. / 14.))
-                    .gap_3()
-                    .items_center()
-                    .flex_wrap()
-                    .child(
-                        crate::theme::item_disclosure(
-                            "toggle-language-details",
-                            "自定义语言优先级",
-                            self.settings_ui.language_details_open,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.settings_ui.language_details_open =
-                                !this.settings_ui.language_details_open;
-                            cx.notify();
-                        })),
-                    )
-                    .when(language == "custom", |row| {
-                        row.child(
-                            text(
-                                "subtitle-custom-summary",
-                                value.preferred_subtitle_languages.join(" → "),
-                            )
-                            .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
-                        )
-                    }),
-            )
-            .detail(crate::motion::disclosure(
-                "subtitle-language-details",
-                self.settings_ui.language_details_open || value.subtitle_languages_draft.is_some(),
-                v_flex()
-                    .px(rems(20. / 14.))
-                    .pb(rems(16. / 14.))
+                    .gap_2()
+                    .child(self.reveal_setting("default-subtitle-language-reveal", {
+                        let current = language.to_owned();
+                        let entity = cx.weak_entity();
+                        control("default-subtitle-language")
+                            .w_full()
+                            .label(match language {
+                                "zh-Hans" => "简体中文",
+                                "zh-Hant" => "繁體中文",
+                                "en" => "英语",
+                                "ja" => "日语",
+                                "custom" => "自定义优先级",
+                                _ => "自动",
+                            })
+                            .child(div().flex_1())
+                            .child(icons::chevron_down().size_4())
+                            .dropdown_menu(move |menu, _, _| {
+                                [
+                                    ("", "自动"),
+                                    ("zh-Hans", "简体中文"),
+                                    ("zh-Hant", "繁體中文"),
+                                    ("en", "英语"),
+                                    ("ja", "日语"),
+                                ]
+                                .into_iter()
+                                .fold(menu, |menu, (id, label)| {
+                                    let entity = entity.clone();
+                                    menu.item(
+                                        PopupMenuItem::new(label).checked(id == current).on_click(
+                                            move |_, window, cx| {
+                                                let _ = entity.update(cx, |this, cx| {
+                                                    let mut next = this.generation_edit_base();
+                                                    next.preferred_subtitle_languages =
+                                                        if id.is_empty() {
+                                                            Vec::new()
+                                                        } else {
+                                                            vec![id.to_owned()]
+                                                        };
+                                                    next.subtitle_languages_draft = None;
+                                                    if this.commit_generation(next, cx) {
+                                                        this.settings_ui.language_details_open =
+                                                            false;
+                                                        this.settings_ui.inputs
+                                                            [&EditField::Languages]
+                                                            .update(cx, |input, cx| {
+                                                                input.set_value(id, window, cx)
+                                                            });
+                                                    }
+                                                });
+                                            },
+                                        ),
+                                    )
+                                })
+                            })
+                    }))
                     .child(
                         h_flex()
                             .w_full()
                             .min_w_0()
                             .gap_3()
+                            .items_center()
                             .flex_wrap()
                             .child(
-                                div().flex_1().min_w(rems(16.)).child(
-                                    text_input(&self.settings_ui.inputs[&EditField::Languages])
-                                        .w_full()
-                                        .aria_label("语言优先级"),
-                                ),
+                                crate::theme::item_disclosure(
+                                    "toggle-language-details",
+                                    "自定义语言优先级",
+                                    self.settings_ui.language_details_open,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.settings_ui.language_details_open =
+                                            !this.settings_ui.language_details_open;
+                                        cx.notify();
+                                    },
+                                )),
                             )
-                            .child(
-                                outline_pill("apply-languages")
-                                    .icon(icons::check_circle())
-                                    .label("应用")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.apply_language_preferences(cx)
-                                    })),
-                            ),
-                    ),
-                window,
-                cx,
+                            .when(language == "custom", |row| {
+                                row.child(
+                                    text(
+                                        "subtitle-custom-summary",
+                                        value.preferred_subtitle_languages.join(" → "),
+                                    )
+                                    .text_size(TEXT_AUX)
+                                    .text_color(color(MUTED)),
+                                )
+                            }),
+                    )
+                    .child(crate::motion::disclosure(
+                        "subtitle-language-details",
+                        self.settings_ui.language_details_open
+                            || value.subtitle_languages_draft.is_some(),
+                        v_flex().child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .gap_3()
+                                .flex_wrap()
+                                .child(
+                                    div().flex_1().min_w(rems(16.)).child(
+                                        text_input(&self.settings_ui.inputs[&EditField::Languages])
+                                            .w_full()
+                                            .aria_label("语言优先级"),
+                                    ),
+                                )
+                                .child(
+                                    outline_pill("apply-languages")
+                                        .icon(icons::check_circle())
+                                        .label("应用")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.apply_language_preferences(cx)
+                                        })),
+                                ),
+                        ),
+                        window,
+                        cx,
+                    )),
             ));
         let mut recognition = group("asr-default-settings", "语音识别").child(settings_row(
             "asr-method-label",
@@ -160,30 +189,45 @@ impl Desktop {
                 let entity = cx.weak_entity();
                 control("default-asr-device")
                     .w_full()
-                    .label(if online { "在线语音服务" } else { "本机" })
+                    .label(if online {
+                        "在线语音服务"
+                    } else {
+                        "本机"
+                    })
                     .child(div().flex_1())
-                    .when(!online, |button| button.child(
-                        text("default-asr-engine-value", match provider {
-                            "coreml" => "Apple 原生",
-                            "gpu" => "GPU",
-                            "cpu" => "CPU",
-                            "npu" => "Intel NPU",
-                            _ => "自动选择引擎",
-                        }).text_color(color(MUTED)).font_weight(FontWeight::NORMAL),
-                    ))
+                    .when(!online, |button| {
+                        button.child(
+                            text(
+                                "default-asr-engine-value",
+                                match provider {
+                                    "coreml" => "Apple 原生",
+                                    "gpu" => "GPU",
+                                    "cpu" => "CPU",
+                                    "npu" => "Intel NPU",
+                                    _ => "自动选择引擎",
+                                },
+                            )
+                            .text_color(color(MUTED))
+                            .font_weight(FontWeight::NORMAL),
+                        )
+                    })
                     .child(icons::chevron_down().size_4())
                     .dropdown_menu(move |menu, _, _| {
                         [(false, "本机识别"), (true, "在线语音服务")]
-                            .into_iter().fold(menu, |menu, (use_online, label)| {
+                            .into_iter()
+                            .fold(menu, |menu, (use_online, label)| {
                                 let entity = entity.clone();
-                                menu.item(PopupMenuItem::new(label).checked(online == use_online)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = entity.update(cx, |this, cx| {
-                                            let mut next = this.generation_edit_base();
-                                            next.select_recognition_location(use_online);
-                                            this.commit_generation(next, cx);
-                                        });
-                                    }))
+                                menu.item(
+                                    PopupMenuItem::new(label)
+                                        .checked(online == use_online)
+                                        .on_click(move |_, _, cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                let mut next = this.generation_edit_base();
+                                                next.select_recognition_location(use_online);
+                                                this.commit_generation(next, cx);
+                                            });
+                                        }),
+                                )
                             })
                     })
             }),
@@ -251,123 +295,141 @@ impl Desktop {
         }
         let mut ai = group("ai-default-settings", "AI 处理")
             .child(settings_row(
-                "default-ai-processing-label", icons::auto_fix(), "AI 处理", "",
-                v_flex().w_full().gap_3()
-                    .child(Checkbox::new("default-ai-proofread")
-                        .label("校对文字和标点").checked(value.ai_proofread)
-                        .on_click(cx.listener(|this, enabled, _, cx| {
-                            let mut next = this.generation_edit_base();
-                            next.ai_proofread = *enabled;
-                            this.commit_generation(next, cx);
-                        })))
-                    .child(Checkbox::new("default-ai-summary")
-                        .label("在开头生成摘要").checked(value.ai_summary)
-                        .on_click(cx.listener(|this, enabled, _, cx| {
-                            let mut next = this.generation_edit_base();
-                            next.ai_summary = *enabled;
-                            this.commit_generation(next, cx);
-                        })))
-                    .child(Checkbox::new("default-ai-vision")
-                        .label("校对时附带对应截图").checked(value.vision)
-                        .disabled(!value.ai_proofread)
-                        .on_click(cx.listener(|this, enabled, _, cx| {
-                            let mut next = this.generation_edit_base();
-                            next.vision = *enabled;
-                            this.commit_generation(next, cx);
-                        }))),
+                "default-ai-processing-label",
+                icons::auto_fix(),
+                "AI 处理",
+                "",
+                v_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(
+                        Checkbox::new("default-ai-proofread")
+                            .label("校对文字和标点")
+                            .checked(value.ai_proofread)
+                            .on_click(cx.listener(|this, enabled, _, cx| {
+                                let mut next = this.generation_edit_base();
+                                next.ai_proofread = *enabled;
+                                this.commit_generation(next, cx);
+                            })),
+                    )
+                    .child(
+                        Checkbox::new("default-ai-summary")
+                            .label("在开头生成摘要")
+                            .checked(value.ai_summary)
+                            .on_click(cx.listener(|this, enabled, _, cx| {
+                                let mut next = this.generation_edit_base();
+                                next.ai_summary = *enabled;
+                                this.commit_generation(next, cx);
+                            })),
+                    )
+                    .child(
+                        Checkbox::new("default-ai-vision")
+                            .label("校对时附带对应截图")
+                            .checked(value.vision)
+                            .disabled(!value.ai_proofread)
+                            .on_click(cx.listener(|this, enabled, _, cx| {
+                                let mut next = this.generation_edit_base();
+                                next.vision = *enabled;
+                                this.commit_generation(next, cx);
+                            })),
+                    ),
             ))
             .child(self.service_picker(ServicePurpose::Ai, false, cx));
         // The rule only applies to proofreading, so it appears with it.
         if value.ai_proofread {
             ai = ai
-            // As on the canvas, the rule is a list item showing its current value.
-            .child(settings_row(
-                "proofread-rules-label",
-                icons::edit(),
-                "自定义校对规则",
-                "",
-                quiet("show-proofread-rules")
-                    .mr(-crate::theme::QUIET_INSET)
-                    .label(if value.prompt.is_some() { "已自定义" } else { "使用标准规则" })
-                    .icon(if self.settings_ui.show_prompt {
-                        icons::chevron_up()
-                    } else {
-                        icons::chevron_down()
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.settings_ui.show_prompt = !this.settings_ui.show_prompt;
-                        // The standard rule is edited in place rather than printed beside an empty box.
-                        if this.settings_ui.show_prompt
-                            && this.settings_ui.prompt.read(cx).value().trim().is_empty()
-                        {
-                            this.settings_ui.prompt.update(cx, |input, cx| {
-                                input.set_value(course2md::llm::DEFAULT_PROMPT, window, cx)
-                            });
-                        }
-                        cx.notify();
-                    })),
-            ))
-            .detail(crate::motion::disclosure(
-                "proofread-rules-content",
-                self.settings_ui.show_prompt,
-                v_flex()
-                    .px(rems(20. / 14.))
-                    .pb(rems(16. / 14.))
-                    .gap_3()
-                    .child(
-                        Textarea::new(&self.settings_ui.prompt)
-                            .h(px(160.))
-                            .w_full()
-                            .aria_label("自定义校对规则"),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .flex_wrap()
-                            .child(
-                                outline_pill("apply-proofread-rules")
-                                    .icon(icons::save())
-                                    .label("应用校对规则")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let prompt = this
-                                            .settings_ui
-                                            .prompt
-                                            .read(cx)
-                                            .value()
-                                            .trim()
-                                            .to_owned();
-                                        let mut next = this.generation_edit_base();
-                                        next.prompt = (!prompt.is_empty()
-                                            && prompt != course2md::llm::DEFAULT_PROMPT.trim())
-                                        .then_some(prompt);
-                                        next.prompt_draft = None;
-                                        this.commit_generation(next, cx);
-                                    })),
-                            )
-                            .child(
-                                quiet("restore-proofread-rules")
-                                    .icon(icons::refresh())
-                                    .label("恢复标准规则")
-                                    .disabled(value.prompt.is_none())
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        let mut next = this.generation_edit_base();
-                                        next.prompt = None;
-                                        next.prompt_draft = None;
-                                        if this.commit_generation(next, cx) {
-                                            this.settings_ui.prompt.update(cx, |input, cx| {
-                                                input.set_value(
-                                                    course2md::llm::DEFAULT_PROMPT,
-                                                    window,
-                                                    cx,
-                                                )
-                                            });
-                                        }
-                                    })),
-                            ),
-                    ),
-                window,
-                cx,
-            ));
+                // As on the canvas, the rule is a list item showing its current value.
+                .child(settings_row(
+                    "proofread-rules-label",
+                    icons::edit(),
+                    "自定义校对规则",
+                    "",
+                    quiet("show-proofread-rules")
+                        .mr(-crate::theme::QUIET_INSET)
+                        .label(if value.prompt.is_some() {
+                            "已自定义"
+                        } else {
+                            "使用标准规则"
+                        })
+                        .icon(if self.settings_ui.show_prompt {
+                            icons::chevron_up()
+                        } else {
+                            icons::chevron_down()
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.settings_ui.show_prompt = !this.settings_ui.show_prompt;
+                            // The standard rule is edited in place rather than printed beside an empty box.
+                            if this.settings_ui.show_prompt
+                                && this.settings_ui.prompt.read(cx).value().trim().is_empty()
+                            {
+                                this.settings_ui.prompt.update(cx, |input, cx| {
+                                    input.set_value(course2md::llm::DEFAULT_PROMPT, window, cx)
+                                });
+                            }
+                            cx.notify();
+                        })),
+                ))
+                .detail(crate::motion::disclosure(
+                    "proofread-rules-content",
+                    self.settings_ui.show_prompt,
+                    v_flex()
+                        .px(rems(20. / 14.))
+                        .pb(rems(16. / 14.))
+                        .gap_3()
+                        .child(
+                            Textarea::new(&self.settings_ui.prompt)
+                                .h(px(160.))
+                                .w_full()
+                                .aria_label("自定义校对规则"),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .flex_wrap()
+                                .child(
+                                    outline_pill("apply-proofread-rules")
+                                        .icon(icons::save())
+                                        .label("应用校对规则")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            let prompt = this
+                                                .settings_ui
+                                                .prompt
+                                                .read(cx)
+                                                .value()
+                                                .trim()
+                                                .to_owned();
+                                            let mut next = this.generation_edit_base();
+                                            next.prompt = (!prompt.is_empty()
+                                                && prompt != course2md::llm::DEFAULT_PROMPT.trim())
+                                            .then_some(prompt);
+                                            next.prompt_draft = None;
+                                            this.commit_generation(next, cx);
+                                        })),
+                                )
+                                .child(
+                                    quiet("restore-proofread-rules")
+                                        .icon(icons::refresh())
+                                        .label("恢复标准规则")
+                                        .disabled(value.prompt.is_none())
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            let mut next = this.generation_edit_base();
+                                            next.prompt = None;
+                                            next.prompt_draft = None;
+                                            if this.commit_generation(next, cx) {
+                                                this.settings_ui.prompt.update(cx, |input, cx| {
+                                                    input.set_value(
+                                                        course2md::llm::DEFAULT_PROMPT,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                });
+                                            }
+                                        })),
+                                ),
+                        ),
+                    window,
+                    cx,
+                ));
         }
         let mut defaults = languages;
         defaults.items.extend(recognition.items);
@@ -382,17 +444,38 @@ impl Desktop {
             .child(
                 group("export-default-settings", "保存")
                     .child(settings_row(
-                        "settings-save-location", icons::folder(), "保存位置", "",
-                        h_flex().w_full().min_w_0().gap_3().items_center()
-                            .child(text("settings-current-location", self.workspace.as_ref()
-                                .and_then(|workspace| workspace.state.libraries.iter()
-                                    .find(|library| library.id == workspace.state.default_library))
-                                .map(|library| library.root.display().to_string())
-                                .unwrap_or_else(|| "尚未设置".into())).flex_1().min_w_0())
-                            .child(outline_pill("settings-manage-storage").label("更改")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.select_settings_tab(2, window, cx);
-                                }))),
+                        "settings-save-location",
+                        icons::folder(),
+                        "保存位置",
+                        "",
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_3()
+                            .items_center()
+                            .child(
+                                text(
+                                    "settings-current-location",
+                                    self.workspace
+                                        .as_ref()
+                                        .and_then(|workspace| {
+                                            workspace.state.libraries.iter().find(|library| {
+                                                library.id == workspace.state.default_library
+                                            })
+                                        })
+                                        .map(|library| library.root.display().to_string())
+                                        .unwrap_or_else(|| "尚未设置".into()),
+                                )
+                                .flex_1()
+                                .min_w_0(),
+                            )
+                            .child(
+                                outline_pill("settings-manage-storage")
+                                    .label("更改")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.select_settings_tab(2, window, cx);
+                                    })),
+                            ),
                     ))
                     .child(settings_row(
                         "export-format-label",
@@ -408,9 +491,14 @@ impl Desktop {
                             .into_iter()
                             .enumerate()
                             .map(|(index, (format, label))| {
-                                filter_chip(("default-export", index), selected.contains(&format), cx)
-                                    .label(label)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                filter_chip(
+                                    ("default-export", index),
+                                    selected.contains(&format),
+                                    cx,
+                                )
+                                .label(label)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         let mut next = this.generation_edit_base();
                                         let formats =
                                             next.options.formats.get_or_insert_with(Vec::new);
@@ -420,16 +508,17 @@ impl Desktop {
                                             formats.push(format);
                                         }
                                         this.commit_generation(next, cx);
-                                    }))
+                                    },
+                                ))
                             }),
                         ),
                     ))
-                    .child(
-                        settings_row(
-                            "default-keep-video-label",
-                            icons::movie(),
-                            "原视频",
-                            "",
+                    .child(settings_row(
+                        "default-keep-video-label",
+                        icons::movie(),
+                        "原视频",
+                        "",
+                        h_flex().w_full().child(
                             Checkbox::new("default-keep-video")
                                 .label("保留下载的视频，可离线播放")
                                 .checked(value.options.keep_video.unwrap_or(false))
@@ -439,7 +528,7 @@ impl Desktop {
                                     this.commit_generation(next, cx);
                                 })),
                         ),
-                    ),
+                    )),
             )
             .into_any_element()
     }
@@ -471,8 +560,7 @@ impl Desktop {
         let picker = if models.len() == 1 {
             // 只有一个可选模型时不是「选择器」：展示静态值，不伪装可选择（settings#2）
             let (_, label) = models[0];
-            settings_value("default-local-model-single", label.to_owned())
-                .into_any_element()
+            settings_value("default-local-model-single", label.to_owned()).into_any_element()
         } else if models.len() > 3 {
             let current = selected.to_owned();
             let label = models
@@ -528,13 +616,10 @@ impl Desktop {
                 .into_any_element()
         };
         let (settled, conclusion) = self.default_model_conclusion();
-        // Status and its actions span the item below the label/control row,
-        // starting on the label ruler like every other setting's help.
+        // Keep cached readiness and recovery actions on the model control ruler.
         let model_footer = h_flex()
             .w_full()
             .min_w_0()
-            .px(rems(20. / 14.))
-            .pb(rems(12. / 14.))
             .gap_3()
             .items_center()
             .flex_wrap()
@@ -544,20 +629,18 @@ impl Desktop {
                     .min_w(rems(12.))
                     .gap_2()
                     .items_center()
-                    // A routine state needs no sentence; only a problem is named here.
                     .when(!settled, |status| {
-                        status
-                            .child(
-                                icons::warning()
-                                    .size(rems(16. / 14.))
-                                    .text_color(color(WARNING)),
-                            )
-                            .child(
-                                text("model-readiness-conclusion", conclusion)
-                                    .text_size(TEXT_AUX)
-                                    .text_color(color(WARNING)),
-                            )
-                    }),
+                        status.child(
+                            icons::warning()
+                                .size(rems(16. / 14.))
+                                .text_color(color(WARNING)),
+                        )
+                    })
+                    .child(
+                        text("model-readiness-conclusion", conclusion)
+                            .text_size(TEXT_AUX)
+                            .text_color(color(if settled { MUTED } else { WARNING })),
+                    ),
             )
             .child(
                 quiet("toggle-model-details")
@@ -590,13 +673,27 @@ impl Desktop {
                         cx.notify();
                     })),
             );
-        let mut view = v_flex()
-            .w_full()
-            .min_w_0()
-            .child(settings_row("local-model-heading", icons::storage(), "识别模型", "", picker))
-            .child(model_footer);
+        let mut view = v_flex().w_full().min_w_0().child(settings_row(
+            "local-model-heading",
+            icons::storage(),
+            "识别模型",
+            "",
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .child(picker)
+                .child(model_footer),
+        ));
         if !known && provider != Some(AsrProvider::Npu) {
-            view = view.child(text("unavailable-fixed-model", format!("{selected} 不适用于当前识别方式，请重新选择")).text_sm().text_color(color(DANGER)));
+            view = view.child(
+                text(
+                    "unavailable-fixed-model",
+                    format!("{selected} 不适用于当前识别方式，请重新选择"),
+                )
+                .text_sm()
+                .text_color(color(DANGER)),
+            );
         }
         if provider == Some(AsrProvider::Npu) {
             view = view
@@ -629,7 +726,14 @@ impl Desktop {
                 _ => true,
             };
             if !ready {
-                view = view.child(text("selected-device-unavailable", "所选识别方式的运行环境未就绪，详见「应用」诊断").text_sm().text_color(color(WARNING)));
+                view = view.child(
+                    text(
+                        "selected-device-unavailable",
+                        "所选识别方式的运行环境未就绪，详见「应用」诊断",
+                    )
+                    .text_sm()
+                    .text_color(color(WARNING)),
+                );
             }
         }
         view

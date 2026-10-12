@@ -419,6 +419,7 @@ impl Desktop {
     pub(crate) fn appearance_mode_control(&self, cx: &mut Context<Self>) -> SingleChoiceGroup {
         let preference = self.preferences.application().appearance.clone();
         let modes = SingleChoiceGroup::new("appearance-mode", "外观模式")
+            .full_width()
             .options([("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
             .icon("system", icons::computer())
             .icon("light", icons::sun())
