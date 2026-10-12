@@ -622,10 +622,7 @@ impl Desktop {
                         .child(badge(BadgeKind::Warning).child("分类需要恢复"))
                         .child(accessible_text(
                             ("classification-recovery", index),
-                            format!(
-                                "{} 的分类记录无法读取",
-                                location.name
-                            ),
+                            format!("{} 的分类记录无法读取", location.name),
                         ))
                         .child(row)
                         .when(!diagnostics.is_empty(), |view| {
@@ -696,10 +693,7 @@ impl Desktop {
                         .child(badge(BadgeKind::Warning).child("笔记名称需要恢复"))
                         .child(accessible_text(
                             ("title-recovery", index),
-                            format!(
-                                "{} 的笔记名称记录无法读取",
-                                location.name
-                            ),
+                            format!("{} 的笔记名称记录无法读取", location.name),
                         ))
                         .child(row)
                         .when(!diagnostics.is_empty(), |view| {
@@ -719,7 +713,7 @@ impl Desktop {
         let rem = f32::from(window.rem_size());
         let content = crate::views::shell_content_width(Page::Library, window);
         // gap_4 is one rem, and card padding/menu spacing scales with that rem.
-        let columns = ((content + rem) / (20. * rem + rem)).floor().max(1.) as usize;
+        let columns = ((content + 24.) / (17. * rem + 24.)).floor().max(1.) as usize;
         let layout = LibraryLayout {
             columns,
             compact: content < 336. * scale,
@@ -784,10 +778,9 @@ impl Desktop {
                 Some("保存位置暂时无法访问，未能搜索".to_owned())
             }
             // 未连接的位置各有恢复卡片；仅搜索时提示结果不完整
-            crate::storage::LibraryCoverage::Partial if !query.is_empty() => Some(format!(
-                "另有 {} 个位置未纳入搜索",
-                scope.unavailable.len()
-            )),
+            crate::storage::LibraryCoverage::Partial if !query.is_empty() => {
+                Some(format!("另有 {} 个位置未纳入搜索", scope.unavailable.len()))
+            }
             _ => None,
         };
         if let Some(message) = coverage_message {
@@ -935,10 +928,7 @@ impl Desktop {
                     .map(|row| LibraryItem::CardRow(row.to_vec())),
             );
         }
-        if !items
-            .iter()
-            .any(|item| matches!(item, LibraryItem::Empty))
-        {
+        if !items.iter().any(|item| matches!(item, LibraryItem::Empty)) {
             self.entered.remove("library-empty-state");
         }
         self.library_list_page(items, layout, rem, cx)
@@ -1004,7 +994,8 @@ impl Desktop {
                 } else {
                     ("library-list", id)
                 },
-                element)
+                element,
+            )
         } else {
             element.into_any_element()
         }
@@ -1102,9 +1093,8 @@ impl Desktop {
                                 .icon(IconName::Close)
                                 .label("清除搜索")
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.inputs[&Field::Search].update(cx, |state, cx| {
-                                        state.set_value("", window, cx)
-                                    });
+                                    this.inputs[&Field::Search]
+                                        .update(cx, |state, cx| state.set_value("", window, cx));
                                     cx.notify();
                                 })),
                         )
@@ -1114,9 +1104,9 @@ impl Desktop {
                             primary_pill("empty-library-add")
                                 .icon(IconName::Plus)
                                 .label("导入视频")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.begin_add(window, cx)
-                                })),
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.begin_add(window, cx)),
+                                ),
                         )
                     })
                     .when(query.is_empty() && self.folder_filter.is_some(), |empty| {
@@ -1330,18 +1320,22 @@ impl Desktop {
             .children(options.into_iter().map(|option| {
                 let checked = option.value == selected;
                 let is_folder = option.folder.is_some_and(|id| id != 0);
-                filter_chip(SharedString::from(format!("folder-filter-{}", option.value)), checked, cx)
-                    .label(option.label.clone())
-                    .when(is_folder && !checked, |chip| chip.icon(icons::folder()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.library_root = option.root.clone();
-                        if let Some(organization) = this.library_indexes.get(&option.root) {
-                            this.library = organization.clone();
-                        }
-                        this.folder_filter = option.folder;
-                        this.scrolls[Page::Library as usize].set_offset(point(px(0.), px(0.)));
-                        cx.notify();
-                    }))
+                filter_chip(
+                    SharedString::from(format!("folder-filter-{}", option.value)),
+                    checked,
+                    cx,
+                )
+                .label(option.label.clone())
+                .when(is_folder && !checked, |chip| chip.icon(icons::folder()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.library_root = option.root.clone();
+                    if let Some(organization) = this.library_indexes.get(&option.root) {
+                        this.library = organization.clone();
+                    }
+                    this.folder_filter = option.folder;
+                    this.scrolls[Page::Library as usize].set_offset(point(px(0.), px(0.)));
+                    cx.notify();
+                }))
             }))
     }
 
@@ -1355,7 +1349,17 @@ impl Desktop {
     }
 
     /// Library controls share Material action icons and theme-aware state surfaces.
-    pub fn library_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    pub fn library_search(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        theme::search_field(
+            &self.inputs[&Field::Search],
+            "搜索笔记标题",
+            rems(48. / 14.),
+            window,
+            cx,
+        )
+    }
+
+    pub fn library_toolbar(&self, _window: &Window, cx: &mut Context<Self>) -> Div {
         if !self.library_controls_visible(cx) {
             return div();
         }
@@ -1368,7 +1372,11 @@ impl Desktop {
         // segmented controls competing with the filters.
         let display = control("library-display")
             .ghost()
-            .icon(if cards_on { icons::dashboard() } else { icons::task() })
+            .icon(if cards_on {
+                icons::dashboard()
+            } else {
+                icons::task()
+            })
             .label("显示")
             .mr(-crate::theme::QUIET_INSET)
             .text_color(color(GRAY))
@@ -1392,12 +1400,28 @@ impl Desktop {
                     }
                 };
                 let menu = menu
-                    .item(PopupMenuItem::new("卡片").checked(cards_on).on_click(set_cards(true)))
-                    .item(PopupMenuItem::new("列表").checked(!cards_on).on_click(set_cards(false)));
+                    .item(
+                        PopupMenuItem::new("卡片")
+                            .checked(cards_on)
+                            .on_click(set_cards(true)),
+                    )
+                    .item(
+                        PopupMenuItem::new("列表")
+                            .checked(!cards_on)
+                            .on_click(set_cards(false)),
+                    );
                 let menu = if can_group {
                     menu.separator()
-                        .item(PopupMenuItem::new("平铺").checked(!group_on).on_click(set_group(false)))
-                        .item(PopupMenuItem::new("按文件夹分组").checked(group_on).on_click(set_group(true)))
+                        .item(
+                            PopupMenuItem::new("平铺")
+                                .checked(!group_on)
+                                .on_click(set_group(false)),
+                        )
+                        .item(
+                            PopupMenuItem::new("按文件夹分组")
+                                .checked(group_on)
+                                .on_click(set_group(true)),
+                        )
                 } else {
                     menu
                 };
@@ -1417,7 +1441,12 @@ impl Desktop {
             .min_w_0()
             .gap_2()
             .items_center()
-            .child(div().flex_1().min_w_0().child(self.folder_filter_control(cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.folder_filter_control(cx)),
+            )
             .when_some(self.folder_filter.filter(|id| *id != 0), |row, id| {
                 let entity = cx.entity().downgrade();
                 row.child(
@@ -1455,13 +1484,6 @@ impl Desktop {
             .gap_4()
             .pt_2()
             .pb_4()
-            .child(theme::search_field(
-                &self.inputs[&Field::Search],
-                "搜索笔记标题",
-                rems(48. / 14.),
-                window,
-                cx,
-            ))
             .child(filters)
     }
 
@@ -1589,28 +1611,24 @@ impl Desktop {
         let collection_id = courses.first().map(|(index, _)| *index).unwrap_or(0);
         let collection = v_flex().w_full();
         if !self.desktop_settings.library_cards || layout.stacked {
-            let rows = v_flex()
-                .gap_2()
-                .children(courses.iter().map(|(index, course)| {
-                    self.library_list_row(index, course, layout, cx)
-                }));
+            let rows = v_flex().gap_2().children(
+                courses
+                    .iter()
+                    .map(|(index, course)| self.library_list_row(index, course, layout, cx)),
+            );
             return if animate {
-                collection.child(crate::motion::enter(
-                    ("library-list", collection_id),
-                    rows))
+                collection.child(crate::motion::enter(("library-list", collection_id), rows))
             } else {
                 collection.child(rows)
             };
         }
-        let cards = v_flex().gap_4().children(
+        let cards = v_flex().gap_8().children(
             courses
                 .chunks(layout.columns)
                 .map(|row| self.library_card_row(row, layout, cx)),
         );
         if animate {
-            collection.child(crate::motion::enter(
-                ("library-grid", collection_id),
-                cards))
+            collection.child(crate::motion::enter(("library-grid", collection_id), cards))
         } else {
             collection.child(cards)
         }
@@ -1626,11 +1644,12 @@ impl Desktop {
     ) -> Div {
         let spacers = layout.columns.saturating_sub(row.len());
         h_flex()
-            .gap_4()
+            .gap_6()
             .items_stretch()
-            .children(row.iter().map(|(index, course)| {
-                self.note_card(course, *index, "library", true, cx)
-            }))
+            .children(
+                row.iter()
+                    .map(|(index, course)| self.note_card(course, *index, "library", true, cx)),
+            )
             .children((0..spacers).map(|_| div().flex_1().min_w_0()))
     }
 
@@ -1645,6 +1664,16 @@ impl Desktop {
         with_actions: bool,
         cx: &mut Context<Self>,
     ) -> Div {
+        let folder_label = (!self.desktop_settings.library_group_folders
+            && self.folder_filter.is_none())
+        .then(|| self.course_folder(course).filter(|id| *id != 0))
+        .flatten()
+        .and_then(|id| {
+            self.course_location(course)
+                .and_then(|location| self.library_indexes.get(&location.root))
+                .and_then(|library| library.folders.get(&id))
+                .cloned()
+        });
         let open = |course: &Course| {
             let course = course.clone();
             cx.listener(move |this: &mut Self, _, _, cx| this.open_course(course.clone(), cx))
@@ -1654,8 +1683,7 @@ impl Desktop {
             .w_full()
             .h_auto()
             .p_0()
-            .rounded_t(RADIUS_CARD)
-            .rounded_b(px(0.))
+            .rounded(RADIUS_CARD)
             .aspect_ratio(16. / 9.)
             .tab_stop(false)
             .accessibility_label(format!("阅读 {}", course.title))
@@ -1664,14 +1692,10 @@ impl Desktop {
                 Some(thumbnail) => cover.child(
                     img(thumbnail.clone())
                         .size_full()
-                        .rounded_t(RADIUS_CARD)
+                        .rounded(RADIUS_CARD)
                         .object_fit(ObjectFit::Cover),
                 ),
-                None => cover.child(
-                    icons::movie()
-                        .size(rems(32. / 14.))
-                        .text_color(color(ON_SECONDARY_CONTAINER)),
-                ),
+                None => cover,
             })
             .on_click(open(course));
         let title = control(SharedString::from(format!("{scope}-title-{index}")))
@@ -1697,58 +1721,50 @@ impl Desktop {
                     .child(course.title.clone()),
             )
             .on_click(open(course));
-        v_flex()
-            .flex_1()
-            .min_w_0()
-            .bg(color(SURFACE))
-            .border_1()
-            .border_color(color(CARD_LINE))
-            .rounded(RADIUS_CARD)
-            .shadow(shadow_card())
-            .child(cover)
-            .child(
-                v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .px(rems(14. / 14.))
-                    .pt(rems(10. / 14.))
-                    .pb(rems(14. / 14.))
-                    .gap(px(2.))
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .gap_1()
-                            .items_center()
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .gap(px(2.))
-                                    .child(title)
-                                    .child(
+        v_flex().flex_1().min_w_0().child(cover).child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .pt(rems(10. / 14.))
+                .pb(rems(8. / 14.))
+                .gap(px(2.))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap(px(2.))
+                                .child(title)
+                                .when_some(folder_label, |view, folder| {
+                                    view.child(
                                         div()
-                                            .w_full()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
                                             .text_size(TEXT_AUX)
-                                            .font_weight(FontWeight::NORMAL)
-                                            .text_color(color(GRAY))
-                                            .child(self.course_meta(course)),
-                                    ),
-                            )
-                            .when(with_actions, |row| {
-                                row.child(self.course_actions(course.clone(), index, cx))
-                            }),
+                                            .text_color(color(MUTED))
+                                            .child(folder),
+                                    )
+                                }),
+                        )
+                        .when(with_actions, |row| {
+                            row.child(self.course_actions(course.clone(), index, cx))
+                        }),
+                )
+                .when(course.incomplete(), |view| {
+                    view.child(
+                        h_flex()
+                            .pt_1()
+                            .child(badge(BadgeKind::Warning).child("部分内容待补全")),
                     )
-                    .when(course.incomplete(), |view| {
-                        view.child(h_flex().pt_1().child(badge(BadgeKind::Warning).child("部分内容待补全")))
-                    })
-                    .when(with_actions, |view| {
-                        view.children(self.course_read_error(course, index, cx))
-                            .children(self.course_export_feedback(course, cx))
-                    }),
-            )
+                })
+                .when(with_actions, |view| {
+                    view.children(self.course_read_error(course, index, cx))
+                        .children(self.course_export_feedback(course, cx))
+                }),
+        )
     }
 
     fn course_row_thumbnail(thumbnail: &std::path::Path) -> gpui::Img {
@@ -1762,12 +1778,7 @@ impl Desktop {
 
     /// Title, caller-built meta line and the incomplete badge, shared by the
     /// list row and the recent-note row.
-    fn course_row_text(
-        &self,
-        course: &Course,
-        clamp_title: bool,
-        meta: Div,
-    ) -> Div {
+    fn course_row_text(&self, course: &Course, clamp_title: bool, meta: Div) -> Div {
         v_flex()
             .flex_1()
             .min_w_0()
@@ -1815,21 +1826,23 @@ impl Desktop {
                     ),
                 }),
         );
-        read = read.child(self.course_row_text(
-            course,
-            !layout.stacked,
-            div()
-                .w_full()
-                .whitespace_normal()
-                .text_size(TEXT_AUX)
-                .font_weight(FontWeight::NORMAL)
-                .text_color(color(GRAY))
-                .child(format!(
-                    "{} · {}",
-                    self.course_meta(course),
-                    course.content_description()
-                )),
-        ));
+        read = read.child(
+            self.course_row_text(
+                course,
+                !layout.stacked,
+                div()
+                    .w_full()
+                    .whitespace_normal()
+                    .text_size(TEXT_AUX)
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(color(GRAY))
+                    .child(format!(
+                        "{} · {}",
+                        self.course_meta(course),
+                        course.content_description()
+                    )),
+            ),
+        );
         let read = control(("read-course", *index))
             .ghost()
             .flex_1()
@@ -1863,7 +1876,9 @@ impl Desktop {
                     .loading(self.opening_course.as_ref() == Some(&course.dir))
                     .disabled(self.opening_course.as_ref() == Some(&course.dir))
                     .accessibility_label(format!("阅读 {}", course.title))
-                    .when(layout.compact && !layout.stacked, |button| button.tooltip("阅读笔记"))
+                    .when(layout.compact && !layout.stacked, |button| {
+                        button.tooltip("阅读笔记")
+                    })
                     .on_click({
                         let course = course.clone();
                         cx.listener(move |this, _, _, cx| this.open_course(course.clone(), cx))
@@ -1897,7 +1912,7 @@ impl Desktop {
 
     /// Workbench "最近笔记": attention tasks first, then recent readable notes.
     /// An empty library renders nothing at all (the hero plus box are the empty state).
-    pub fn recent_notes_section(&self, columns: usize, cx: &mut Context<Self>) -> Option<Div> {
+    pub fn recent_notes_section(&self, _columns: usize, cx: &mut Context<Self>) -> Option<Div> {
         let linked = self.current_input_task(cx).map(|task| task.id.clone());
         let mut attention: Vec<_> = self
             .workspace
@@ -1928,32 +1943,13 @@ impl Desktop {
                     .iter()
                     .any(|task| task.artifact.as_ref() == Some(&course.dir))
             })
-            .take(columns.max(1))
+            .take(4)
             .cloned()
             .collect();
         if attention.is_empty() && notes.is_empty() {
             return None;
         }
         let mut section = v_flex().w_full().min_w_0().gap_3();
-        section = section.child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .gap_2()
-                .child(
-                    theme::section_title("recent-title", "最近的笔记").flex_1(),
-                )
-                .child(
-                    quiet("recent-all")
-                        .mr(-crate::theme::QUIET_INSET)
-                        .label("全部")
-                        .text_color(color(ACCENT_STRONG))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.folder_filter = None;
-                            this.navigate(Page::Library, cx);
-                        })),
-                ),
-        );
         for task in attention {
             let id = task.id.clone();
             let uncertain = task.state == crate::workspace::TaskState::Uncertain
@@ -2088,22 +2084,62 @@ impl Desktop {
                     }),
             );
         }
-        if !notes.is_empty() {
-            let spacers = columns.saturating_sub(notes.len());
-            section = section.child(
-                h_flex()
-                    .w_full()
-                    .gap_3()
-                    .items_stretch()
-                    .children(notes.iter().enumerate().map(|(index, course)| {
-                        self.note_card(course, index, "recent", false, cx)
-                    }))
-                    .children((0..spacers).map(|_| div().flex_1().min_w_0())),
-            );
+        for (index, course) in notes.iter().enumerate() {
+            let selected = course.clone();
+            let row = control(("recent-note", index))
+                .ghost()
+                .w_full()
+                .h_auto()
+                .p_3()
+                .rounded(RADIUS_CARD)
+                .bg(color(SURFACE))
+                .accessibility_label(format!("阅读 {}", course.title))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .items_center()
+                        .gap_4()
+                        .child(
+                            div()
+                                .w(rems(160. / 14.))
+                                .max_w(relative(0.28))
+                                .aspect_ratio(16. / 9.)
+                                .flex_shrink_0()
+                                .rounded(RADIUS_SMALL)
+                                .bg(color(SECONDARY_CONTAINER))
+                                .overflow_hidden()
+                                .when_some(course.thumbnail.clone(), |cover, path| {
+                                    cover.child(img(path).size_full().object_fit(ObjectFit::Cover))
+                                }),
+                        )
+                        .child(
+                            self.course_row_text(
+                                course,
+                                true,
+                                div()
+                                    .text_size(TEXT_AUX)
+                                    .font_weight(FontWeight::NORMAL)
+                                    .text_color(color(GRAY))
+                                    .child(self.course_meta(course)),
+                            ),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronRight)
+                                .size_4()
+                                .flex_shrink_0()
+                                .text_color(color(GRAY)),
+                        ),
+                )
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.open_course(selected.clone(), cx)),
+                );
+            section = section
+                .child(row)
+                .children(self.course_read_error(course, index, cx));
         }
         Some(section)
     }
-
 }
 
 #[cfg(test)]

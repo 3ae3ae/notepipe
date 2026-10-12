@@ -7,9 +7,7 @@ const SHELL_GUTTER: f32 = 24.;
 pub(super) const SETTINGS_SIDEBAR_WIDTH: f32 = 200.;
 pub(super) const SETTINGS_COLUMN_GAP: f32 = 32.;
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 800.;
-const SETTINGS_SHELL_WIDTH: f32 =
-    SETTINGS_SIDEBAR_WIDTH + SETTINGS_COLUMN_GAP + SETTINGS_CONTENT_MAX_WIDTH + SHELL_GUTTER * 2.;
-const SETTINGS_SIDEBAR_BREAKPOINT: f32 = 1100.;
+const SETTINGS_SHELL_WIDTH: f32 = SETTINGS_CONTENT_MAX_WIDTH + SHELL_GUTTER * 2.;
 
 /// The app bar marks the current destination with a tonal pill; TitleBar's
 /// default bottom hairline would be unused chrome.
@@ -23,8 +21,9 @@ fn shell_column_for(page: Page) -> Div {
 
 fn shell_column_width(page: Page) -> AbsoluteLength {
     match page {
-        // 全产品一条内容标尺：工作台/任务/笔记库/阅读共用 COLUMN（设置是侧栏构图，自成一体）
+        // Each task gets a useful content width: a gallery needs room for covers.
         Page::Settings => rems(SETTINGS_SHELL_WIDTH / 14.).into(),
+        Page::Library => rems(1168. / 14.).into(),
         _ => COLUMN.into(),
     }
 }
@@ -37,9 +36,8 @@ pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
         .max(0.)
 }
 
-pub(super) fn settings_uses_sidebar(window: &Window) -> bool {
-    f32::from(window.bounds().size.width)
-        >= SETTINGS_SIDEBAR_BREAKPOINT * (f32::from(window.rem_size()) / 14.)
+pub(super) fn settings_uses_sidebar(_window: &Window) -> bool {
+    false
 }
 
 pub(super) fn settings_sidebar_width(window: &Window) -> f32 {
@@ -68,6 +66,11 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 impl Desktop {
     /// Keep task results reachable while the user is on another page.
     fn shell_topbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
+        if matches!(self.page, Page::Settings | Page::Result) {
+            return apply_shell_title_bar_chrome(
+                TitleBar::new().h(px(32.)),
+            );
+        }
         let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
             workspace.state.tasks.iter().any(|task| {
                 task.handled_by.is_none()
@@ -99,16 +102,6 @@ impl Desktop {
             .hover(|style| style.opacity(0.8))
             .role(Role::Link)
             .aria_label("course2md 工作台")
-            .child(
-                div()
-                    .size(rems(28. / 14.))
-                    .rounded(px(8.))
-                    .bg(color(PRIMARY))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icons::book_open().size(rems(18. / 14.)).text_color(color(ON_PRIMARY))),
-            )
             .child(
                 div()
                     .text_size(TEXT_TITLE)
@@ -290,11 +283,12 @@ impl Desktop {
                 .unwrap_or_else(|| "笔记".into()),
         }
     }
-    fn page_header(&self, cx: &mut Context<Self>) -> Div {
+    fn page_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let row = h_flex()
             .w_full()
             .min_w_0()
             .gap_3()
+            .flex_wrap()
             .h_auto()
             .min_h(rems(3.5))
             .items_center()
@@ -308,18 +302,13 @@ impl Desktop {
                 .min_w_0(),
             )
             .when(self.library_controls_visible(cx), |row| {
-                row.child(
-                    primary_pill("library-new-note")
-                        .icon(icons::plus())
-                        .label("新笔记")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if this.prepare_workbench_input(window, cx) {
-                                this.navigate(Page::New, cx);
-                            }
-                        })),
-                )
+                let available = shell_content_width(Page::Library, window);
+                let scale = f32::from(window.rem_size()) / 14.;
+                row.child(self.library_search(window, cx).w(px(
+                    if available < 600. * scale { available } else { 360. * scale },
+                )))
             });
-        v_flex().pt(px(24.)).child(row)
+        v_flex().pt(px(40.)).pb(px(16.)).child(row)
     }
 }
 
@@ -414,7 +403,7 @@ impl Render for Desktop {
                 v.child(
                     shell_column_for(self.page)
                         .flex_shrink_0()
-                        .child(self.page_header(cx)),
+                        .child(self.page_header(window, cx)),
                 )
             })
             .when(self.page == Page::Library, |v| {
@@ -574,8 +563,9 @@ impl Render for Desktop {
             }))
             .on_action(cx.listener(|this, _: &OpenAbout, window, cx| {
                 if !window.has_active_dialog(cx) {
-                    this.settings_tab = 3;
                     this.open_settings(window, cx);
+                    this.settings_tab = 3;
+                    this.prepare_settings_view(window, cx);
                 }
             }))
             .child(a11y::ModalBackground::new(

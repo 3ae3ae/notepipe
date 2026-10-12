@@ -277,7 +277,6 @@ struct Desktop {
     generation_options_open: bool,
     validation_attempt: usize,
     show_options: bool,
-    show_export_options: bool,
     show_logs: bool,
     environment: Option<backend::Environment>,
     scrolls: [ScrollHandle; 5],
@@ -438,7 +437,7 @@ impl Desktop {
         let fields = [
             (
                 Field::Source,
-                "粘贴 YouTube 或 Bilibili 视频链接",
+                "粘贴视频链接，按 Enter",
                 String::new(),
             ),
             (Field::Title, "", String::new()),
@@ -621,12 +620,11 @@ impl Desktop {
             settings_origin: None,
             settings_return_focus: None,
             result_tab: 0,
-            settings_tab: 4,
+            settings_tab: 0,
             source_editor_open: false,
             generation_options_open: false,
             validation_attempt: 0,
             show_options: false,
-            show_export_options: false,
             show_logs: false,
             environment: None,
             scrolls: std::array::from_fn(|_| ScrollHandle::new()),
@@ -1567,8 +1565,9 @@ fn main() {
                 let search_view = weak.clone();
                 cx.on_action(move |_: &OpenAbout, cx| {
                     dispatch_desktop_action(&about_view, cx, |this, window, cx| {
-                        this.settings_tab = 3;
                         this.open_settings(window, cx);
+                        this.settings_tab = 3;
+                        this.prepare_settings_view(window, cx);
                     });
                 });
                 cx.on_action(move |_: &OpenSettings, cx| {
