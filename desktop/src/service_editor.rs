@@ -348,7 +348,11 @@ impl Desktop {
                 },
                 // Nothing is sent anywhere until a service exists to choose.
                 if purpose == ServicePurpose::Ai && has_services {
-                    "校对与摘要会把文字发送到所选服务"
+                    if self.preferences.generation().ai_proofread && self.preferences.generation().vision {
+                        "文字及对应截图会发送到所选服务"
+                    } else {
+                        "校对与摘要会把文字发送到所选服务"
+                    }
                 } else {
                     ""
                 },

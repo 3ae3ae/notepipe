@@ -26,16 +26,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-actions!(
-    course2md_settings,
-    [
-        NextSettingsTab,
-        PreviousSettingsTab,
-        FirstSettingsTab,
-        LastSettingsTab
-    ]
-);
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum EditField {
     Name,
@@ -99,14 +89,6 @@ pub(crate) struct State {
 
 impl State {
     pub fn new(window: &mut Window, cx: &mut Context<Desktop>) -> Self {
-        cx.bind_keys([
-            KeyBinding::new("right", NextSettingsTab, Some("SettingsTabs")),
-            KeyBinding::new("down", NextSettingsTab, Some("SettingsTabs")),
-            KeyBinding::new("left", PreviousSettingsTab, Some("SettingsTabs")),
-            KeyBinding::new("up", PreviousSettingsTab, Some("SettingsTabs")),
-            KeyBinding::new("home", FirstSettingsTab, Some("SettingsTabs")),
-            KeyBinding::new("end", LastSettingsTab, Some("SettingsTabs")),
-        ]);
         let inputs: BTreeMap<_, _> = [
             EditField::Name,
             EditField::Address,
@@ -197,12 +179,8 @@ pub(super) fn field_label(
         .font_weight(FontWeight::SEMIBOLD)
 }
 
-fn setting_label(id: impl Into<ElementId>, icon: Icon, value: impl Into<SharedString>) -> Div {
-    semantic_label(
-        id,
-        value.into(),
-        icon.size(rems(20. / 14.)).text_color(color(GRAY)),
-    )
+fn setting_label(id: impl Into<ElementId>, _icon: Icon, value: impl Into<SharedString>) -> Div {
+    div().child(text(id, value).text_size(TEXT_BODY).text_color(color(MUTED)))
 }
 
 /// A complete preference owns its label, value, help and trailing actions.
@@ -255,7 +233,7 @@ fn settings_form_row(
         .child(
             v_flex()
                 .flex_1()
-                .flex_basis(rems(180. / 14.))
+                .flex_basis(rems(120. / 14.))
                 .min_w_0()
                 .max_w_full()
                 .min_h(CONTROL_HEIGHT)
@@ -263,22 +241,22 @@ fn settings_form_row(
                 .child(setting_label(id.clone(), icon, label)),
         )
         .child(
-            h_flex()
+            v_flex()
                 .flex_1()
-                .flex_basis(rems(320. / 14.))
+                .flex_grow(3.)
+                .flex_basis(rems(400. / 14.))
                 .max_w_full()
                 .min_w_0()
                 .min_h(CONTROL_HEIGHT)
-                .items_center()
-                .justify_end()
-                .child(control),
+                .gap_2()
+                .child(h_flex().w_full().min_w_0().min_h(CONTROL_HEIGHT)
+                    .items_center().justify_end().child(control))
+                .when(!hint.is_empty(), |column| column.child(
+                    text(SharedString::from(format!("{id:?}-hint")), hint)
+                        .text_size(TEXT_AUX).text_color(color(MUTED)),
+                )),
         );
-    setting_surface().child(row).when(!hint.is_empty(), |view| {
-        view.child(theme::supporting_info(
-            SharedString::from(format!("{id:?}-hint")),
-            hint,
-        ))
-    })
+    setting_surface().child(row)
 }
 
 /// Status rows inside an existing card: label on the shared axis, value trailing.
@@ -487,24 +465,6 @@ fn service_protocol_label(protocol: ServiceProtocol) -> &'static str {
         ai => ai.ai_kind_label(),
     }
 }
-
-fn settings_tab_icon(index: usize) -> Icon {
-    match index {
-        4 => icons::palette(),
-        // 生成笔记 = 笔记/文档对象（tune 留给偏好/高级覆盖项，见 crosspage#8 图标指称）
-        0 => icons::subtitles(),
-        1 => icons::cloud(),
-        2 => icons::storage(),
-        _ => icons::info(),
-    }
-}
-const SETTINGS_TABS: [(usize, &str); 5] = [
-    (4, "外观"),
-    (0, "生成笔记"),
-    (1, "服务与账号"),
-    (2, "存储"),
-    (3, "应用"),
-];
 
 fn settings_tab_label(index: usize) -> &'static str {
     ["生成笔记", "服务与账号", "存储", "应用", "外观"][index.min(4)]
@@ -884,6 +844,7 @@ impl Desktop {
 
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.page != Page::Settings {
+            self.settings_tab = 0;
             self.settings_origin = Some(self.page);
             self.settings_return_focus = window.focused(cx);
         }
@@ -939,63 +900,6 @@ impl Desktop {
         }
     }
 
-    fn settings_navigation(
-        &self,
-        sidebar: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let scale = f32::from(window.rem_size()) / 14.;
-        let short = !sidebar && crate::views::settings_content_width(window) < 640. * scale;
-        let group = SingleChoiceGroup::new("settings-tabs", "设置分类")
-            .tabs()
-            .full_width()
-            .options(SETTINGS_TABS.into_iter().map(|(index, label)| {
-                (
-                    index.to_string(),
-                    if short {
-                        match index {
-                            0 => "生成",
-                            1 => "服务",
-                            _ => label,
-                        }
-                    } else {
-                        label
-                    }
-                    .to_owned(),
-                )
-            }))
-            .selected(self.settings_tab.to_string())
-            .focus_handles(
-                SETTINGS_TABS
-                    .into_iter()
-                    .map(|(index, _)| self.settings_ui.tab_focus[index].clone()),
-            )
-            .icon("4", settings_tab_icon(4))
-            .icon("0", settings_tab_icon(0))
-            .icon("1", settings_tab_icon(1))
-            .icon("2", settings_tab_icon(2))
-            .icon("3", settings_tab_icon(3))
-            .on_change(cx.listener(|this, value: &SharedString, window, cx| {
-                if let Ok(index) = value.parse() {
-                    this.select_settings_tab(index, window, cx);
-                }
-            }));
-        if sidebar {
-            div()
-                .w(px(crate::views::settings_sidebar_width(window)))
-                .flex_shrink_0()
-                .child(group.vertical())
-                .into_any_element()
-        } else {
-            div()
-                .w_full()
-                .flex_shrink_0()
-                .child(group)
-                .into_any_element()
-        }
-    }
-
     pub fn settings_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // 渲染不得有副作用：hydrate/诊断检查/tab 钳制都在 open_settings、
         // select_settings_tab、restore_settings_group 等事件入口完成
@@ -1009,7 +913,7 @@ impl Desktop {
             };
         let header = theme::page_heading(
             "settings-page-title",
-            "设置",
+            if self.settings_tab == 0 { "设置" } else { settings_tab_label(self.settings_tab) },
         )
         .flex_shrink_0();
         let header = h_flex()
@@ -1019,29 +923,28 @@ impl Desktop {
             .justify_between()
             .gap_4()
             .child(header)
-            .when(
-                self.settings_origin == Some(Page::Result) && self.preview.is_some(),
-                |row| {
-                    row.child(
-                        quiet("return-to-reading")
-                            .icon(icons::arrow_left())
-                            .label("返回笔记")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let focus = this.settings_return_focus.take();
-                                this.settings_origin = None;
-                                this.navigate(Page::Result, cx);
-                                if let Some(focus) = focus {
-                                    window.on_next_frame(move |window, cx| focus.focus(window, cx));
-                                }
-                            })),
-                    )
-                },
-            );
-        let navigation = self.settings_navigation(sidebar, window, cx);
+            .when(self.settings_tab != 0, |row| row.child(
+                quiet("settings-overview-back").icon(icons::arrow_left()).label("返回设置")
+                    .on_click(cx.listener(|this, _, window, cx| this.select_settings_tab(0, window, cx))),
+            ))
+            .when(self.settings_tab == 0, |row| {
+                row.child(quiet("settings-return")
+                    .icon(icons::arrow_left()).label("返回")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let destination = this.settings_origin.take().unwrap_or(Page::New);
+                        let focus = this.settings_return_focus.take();
+                        this.navigate(destination, cx);
+                        if let Some(focus) = focus {
+                            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+                        }
+                    })))
+            });
+
         let mut panel = v_flex()
             .relative()
             .id("settings-panel")
-            .role(Role::TabPanel)
+            .track_focus(&self.settings_ui.tab_focus[self.settings_tab.min(4)])
+            .role(Role::Group)
             .aria_label(settings_tab_label(self.settings_tab))
             .flex_1()
             .min_w_0()
@@ -1124,7 +1027,7 @@ impl Desktop {
             }
         }
         let content = match self.settings_tab {
-            0 => self.generation_settings_page(window, cx),
+            0 => self.settings_overview(window, cx),
             1 => self.services_settings_page(window, cx),
             2 => self.storage_settings_page(cx),
             3 => self.application_settings_page(window, cx),
@@ -1174,7 +1077,6 @@ impl Desktop {
                     .gap(px(crate::views::SETTINGS_COLUMN_GAP))
             })
             .when(!sidebar, |view| view.flex_col().gap(px(24.)))
-            .child(navigation)
             .child(panel);
         v_flex()
             .w_full()
@@ -1187,6 +1089,24 @@ impl Desktop {
             .gap(px(24.))
             .child(header)
             .child(body)
+            .into_any_element()
+    }
+
+    fn settings_overview(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        v_flex().w_full().min_w_0().gap_6()
+            .child(self.generation_settings_page(window, cx))
+            .child(group("settings-account-appearance", "账号与外观")
+                .child(setting_surface().child(self.account_settings_page(cx)))
+                .child(settings_row("overview-appearance", icons::palette(), "主题", "",
+                    self.appearance_mode_control(cx)))
+                .child(settings_row("overview-appearance-details", icons::tune(), "界面偏好", "",
+                    quiet("overview-open-appearance").label("配色与文字大小").icon(icons::chevron_right())
+                        .on_click(cx.listener(|this, _, window, cx| this.select_settings_tab(4, window, cx))))))
+            .child(h_flex().w_full().justify_end().gap_3().flex_wrap()
+                .child(quiet("overview-manage-services").icon(icons::cloud()).label("管理服务")
+                    .on_click(cx.listener(|this, _, window, cx| this.select_settings_tab(1, window, cx))))
+                .child(quiet("overview-diagnostics").icon(icons::info()).label("运行检查与关于")
+                    .on_click(cx.listener(|this, _, window, cx| this.select_settings_tab(3, window, cx)))))
             .into_any_element()
     }
 
