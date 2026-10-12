@@ -529,7 +529,7 @@ pub fn text_input(
 
 /* ---------- 共享控件 ---------- */
 
-/// M3 list section title: primary-colored, semibold, above the list it names.
+/// Quiet section title: supports the content hierarchy without competing with actions.
 /// Shared by settings groups, task groups and the workbench's recent notes.
 pub fn section_title(
     id: impl Into<gpui::ElementId>,
@@ -541,7 +541,7 @@ pub fn section_title(
         .text_size(rems(15. / 14.))
         .line_height(rems(22. / 14.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(color(ACCENT_STRONG))
+        .text_color(color(GRAY))
 }
 
 /// M3 search bar: a filled, borderless pill with a leading search icon. The
