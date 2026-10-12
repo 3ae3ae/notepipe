@@ -7,7 +7,9 @@ const SHELL_GUTTER: f32 = 24.;
 pub(super) const SETTINGS_SIDEBAR_WIDTH: f32 = 200.;
 pub(super) const SETTINGS_COLUMN_GAP: f32 = 32.;
 const SETTINGS_CONTENT_MAX_WIDTH: f32 = 800.;
-const SETTINGS_SHELL_WIDTH: f32 = SETTINGS_CONTENT_MAX_WIDTH + SHELL_GUTTER * 2.;
+const SETTINGS_SHELL_WIDTH: f32 =
+    SETTINGS_SIDEBAR_WIDTH + SETTINGS_COLUMN_GAP + SETTINGS_CONTENT_MAX_WIDTH + SHELL_GUTTER * 2.;
+const SETTINGS_SIDEBAR_BREAKPOINT: f32 = 1100.;
 
 /// The app bar marks the current destination with a tonal pill; TitleBar's
 /// default bottom hairline would be unused chrome.
@@ -36,8 +38,9 @@ pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
         .max(0.)
 }
 
-pub(super) fn settings_uses_sidebar(_window: &Window) -> bool {
-    false
+pub(super) fn settings_uses_sidebar(window: &Window) -> bool {
+    f32::from(window.bounds().size.width)
+        >= SETTINGS_SIDEBAR_BREAKPOINT * (f32::from(window.rem_size()) / 14.)
 }
 
 pub(super) fn settings_sidebar_width(window: &Window) -> f32 {
@@ -66,11 +69,6 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 impl Desktop {
     /// Keep task results reachable while the user is on another page.
     fn shell_topbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
-        if matches!(self.page, Page::Settings | Page::Result) {
-            return apply_shell_title_bar_chrome(
-                TitleBar::new().h(px(32.)),
-            );
-        }
         let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
             workspace.state.tasks.iter().any(|task| {
                 task.handled_by.is_none()
@@ -307,6 +305,13 @@ impl Desktop {
                 row.child(self.library_search(window, cx).w(px(
                     if available < 600. * scale { available } else { 360. * scale },
                 )))
+                .child(primary_pill("library-new-note")
+                    .icon(icons::plus()).label("新笔记")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.prepare_workbench_input(window, cx) {
+                            this.navigate(Page::New, cx);
+                        }
+                    })))
             });
         v_flex().pt(px(40.)).pb(px(16.)).child(row)
     }

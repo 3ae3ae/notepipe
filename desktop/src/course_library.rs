@@ -1664,16 +1664,6 @@ impl Desktop {
         with_actions: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let folder_label = (!self.desktop_settings.library_group_folders
-            && self.folder_filter.is_none())
-        .then(|| self.course_folder(course).filter(|id| *id != 0))
-        .flatten()
-        .and_then(|id| {
-            self.course_location(course)
-                .and_then(|location| self.library_indexes.get(&location.root))
-                .and_then(|library| library.folders.get(&id))
-                .cloned()
-        });
         let open = |course: &Course| {
             let course = course.clone();
             cx.listener(move |this: &mut Self, _, _, cx| this.open_course(course.clone(), cx))
@@ -1740,14 +1730,16 @@ impl Desktop {
                                 .min_w_0()
                                 .gap(px(2.))
                                 .child(title)
-                                .when_some(folder_label, |view, folder| {
-                                    view.child(
-                                        div()
-                                            .text_size(TEXT_AUX)
-                                            .text_color(color(MUTED))
-                                            .child(folder),
-                                    )
-                                }),
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_size(TEXT_AUX)
+                                        .font_weight(FontWeight::NORMAL)
+                                        .text_color(color(GRAY))
+                                        .child(self.course_meta(course)),
+                                ),
                         )
                         .when(with_actions, |row| {
                             row.child(self.course_actions(course.clone(), index, cx))
@@ -1950,6 +1942,23 @@ impl Desktop {
             return None;
         }
         let mut section = v_flex().w_full().min_w_0().gap_3();
+        section = section.child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap_2()
+                .child(theme::section_title("recent-title", "最近的笔记").flex_1())
+                .child(
+                    quiet("recent-all")
+                        .mr(-crate::theme::QUIET_INSET)
+                        .label("全部")
+                        .text_color(color(ACCENT_STRONG))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.folder_filter = None;
+                            this.navigate(Page::Library, cx);
+                        })),
+                ),
+        );
         for task in attention {
             let id = task.id.clone();
             let uncertain = task.state == crate::workspace::TaskState::Uncertain

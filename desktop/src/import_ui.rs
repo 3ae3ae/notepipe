@@ -2098,6 +2098,10 @@ impl Desktop {
                     })),
             );
         }
+        if self.task_options.llm && self.import_base_config().llm.prompt
+            .as_ref().is_some_and(|prompt| !prompt.trim().is_empty()) {
+            choices = choices.child(help("使用自定义校对规则"));
+        }
         let mut view = v_flex()
             .w_full()
             .min_w_0()
@@ -2499,13 +2503,25 @@ impl Desktop {
                 })),
             );
         }
-        crate::settings_ui::settings_row(
+        v_flex().w_full().min_w_0().child(crate::settings_ui::settings_row(
             "import-exports-label",
             icons::download(),
             "同时导出",
             "",
             choices,
-        )
+        )).when(self.online, |view| view.child(crate::settings_ui::settings_row(
+            "import-keep-video-label", icons::movie(), "原视频", "",
+            h_flex().w_full().min_w_0().child(
+                Checkbox::new("import-keep-video")
+                    .label("保留视频供离线播放")
+                    .checked(self.task_options.keep_video)
+                    .on_click(cx.listener(|this, value, _, cx| {
+                        this.task_options.keep_video = *value;
+                        this.save_current_draft(cx);
+                        cx.notify();
+                    })),
+            ),
+        )))
     }
 
     fn existing_source_note(&self) -> Option<Course> {
@@ -2673,12 +2689,25 @@ impl Desktop {
             .when(!self.online, |input| input.child(self.source_kind_tabs(cx)))
             .child(self.box_source_input(window, cx));
         let mut view = v_flex()
-            .pt(px(if hero { 40. } else { 24. }))
-            .gap(px(16.))
+            .pt(px(24.))
+            .gap(px(if hero { 32. } else { 24. }))
             .w_full()
             .min_w_0()
             .max_w(rems(WORKBENCH_WIDTH / 14.))
             .mx_auto()
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_center()
+                    .pt(px(if hero { 56. } else { 8. }))
+                    .child(
+                        accessible_text("workbench-title", "把视频整理成笔记")
+                            .role(Role::Heading)
+                            .text_size(rems(if hero { 36. } else { 28. } / 14.))
+                            .line_height(rems(if hero { 44. } else { 36. } / 14.))
+                            .font_weight(FontWeight::MEDIUM),
+                    ),
+            )
             .when(show_source_input, |view| view.child(input));
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
@@ -2756,9 +2785,9 @@ impl Desktop {
                 );
             }
             if self.preview_cancel.is_none() && self.source_candidates.is_empty() {
-                if !show_source_input {
+                {
                     view = view.child(quiet("generation-options-after-preview")
-                        .self_start().icon(icons::tune()).label("本次生成选项")
+                        .self_start().icon(icons::tune()).label(if self.generation_options_open { "收起高级选项" } else { "高级选项 · 文字来源、AI 与导出" })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.generation_options_open = !this.generation_options_open;
                             cx.notify();

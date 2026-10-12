@@ -437,7 +437,7 @@ impl Desktop {
         let fields = [
             (
                 Field::Source,
-                "粘贴视频链接，按 Enter",
+                "粘贴 YouTube 或 Bilibili 视频链接",
                 String::new(),
             ),
             (Field::Title, "", String::new()),
@@ -620,7 +620,7 @@ impl Desktop {
             settings_origin: None,
             settings_return_focus: None,
             result_tab: 0,
-            settings_tab: 0,
+            settings_tab: 4,
             source_editor_open: false,
             generation_options_open: false,
             validation_attempt: 0,
