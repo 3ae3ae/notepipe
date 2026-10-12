@@ -416,8 +416,13 @@ impl Desktop {
             )
     }
 
-    pub(crate) fn appearance_mode_control(&self, cx: &mut Context<Self>) -> SingleChoiceGroup {
+    pub(crate) fn appearance_page(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let preference = self.preferences.application().appearance.clone();
+        let width = crate::views::settings_content_width(window);
         let modes = SingleChoiceGroup::new("appearance-mode", "外观模式")
             .full_width()
             .options([("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
@@ -445,17 +450,6 @@ impl Desktop {
                     window.refresh();
                 }
             }));
-        modes
-    }
-
-    pub(crate) fn appearance_page(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let preference = self.preferences.application().appearance.clone();
-        let width = crate::views::settings_content_width(window);
-        let modes = self.appearance_mode_control(cx);
         // Both stored values remain in place in every appearance mode. Measure
         // against every supported name so selecting a longer one cannot move
         // the preference rows below these two fields.

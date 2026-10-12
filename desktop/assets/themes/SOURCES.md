@@ -20,5 +20,3 @@ roles. The upstream Day background `#e1e2e7`, blue `#2e7de9` and selection
 Original licenses are in `licenses/` and included in distributed bundles. They
 cover the palette source material; upstream projects do not endorse course2md.
 Brand artwork has separate provenance in `../brands/SOURCES.md`.
-
-Ink was refined on 2026-10-12 against the user’s supplied desktop references: neutral charcoal canvas `#111417`, surface `#1a1e23`, softer body text `#d9dce2` and pale blue action `#a1caff`. This is the original application palette; other upstream palettes and stored identities are unchanged.

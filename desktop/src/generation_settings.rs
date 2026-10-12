@@ -14,7 +14,7 @@ impl Desktop {
             [one] if ["zh-Hans", "zh-Hant", "en", "ja"].contains(&one.as_str()) => one.as_str(),
             _ => "custom",
         };
-        let languages = group("language-settings", "生成笔记 · 默认值")
+        let languages = group("language-settings", "文字来源")
             .child(settings_row(
                 "default-text-source-label",
                 icons::subtitles(),
@@ -431,16 +431,15 @@ impl Desktop {
                     cx,
                 ));
         }
-        let mut defaults = languages;
-        defaults.items.extend(recognition.items);
-        defaults.items.extend(ai.items);
         let selected = value.options.formats.clone().unwrap_or_default();
         v_flex()
             .w_full()
             .min_w_0()
             .flex_shrink_0()
             .gap_6()
-            .child(defaults)
+            .child(languages)
+            .child(recognition)
+            .child(ai)
             .child(
                 group("export-default-settings", "保存")
                     .child(settings_row(
