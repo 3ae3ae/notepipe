@@ -2029,6 +2029,7 @@ impl Desktop {
 
     fn import_text_mode_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let selector = SingleChoiceGroup::new("conversion-text-mode", "文字来源方式")
+            .full_width()
             .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
             .selected(self.task_options.source_mode.to_string())
             .on_change(cx.listener(|this, value: &SharedString, _, cx| {
@@ -2246,6 +2247,57 @@ impl Desktop {
                         crate::settings_ui::model_diagnostics::model_display_name(&model)
                     ),
                 ));
+            } else if snapshot.device_issue.is_none()
+                && !snapshot.checking
+                && !snapshot.preparing
+                && snapshot.notice.is_none()
+                && !snapshot.cancelled
+                && snapshot.result.as_ref().is_some_and(|result| {
+                    result.as_ref().is_ok_and(|status| {
+                        status.state == course2md::models::status::CacheState::Missing
+                            && status.can_prepare
+                            && status.last_error.is_none()
+                    })
+                })
+            {
+                // A routine first download needs one status line and one action.
+                // Checks, failures and active transfers retain the full recovery panel below.
+                let prepare_model = model.clone();
+                let prepare_root = root.clone();
+                let details = cx.weak_entity();
+                view = view.child(
+                    h_flex().w_full().min_w_0().gap_2().flex_wrap().items_center()
+                        .child(div().flex_1().min_w_0().text_size(TEXT_AUX)
+                            .text_color(color(MUTED))
+                            .child(format!("{} · 待下载",
+                                crate::settings_ui::model_diagnostics::model_display_name(&model))))
+                        .child(outline_pill("import-prepare-model")
+                            .icon(icons::download()).label("下载模型")
+                            .disabled(self.job.is_some())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.prepare_setup_model(provider, Some(&prepare_model), &prepare_root, cx);
+                            })))
+                        .child(quiet("import-model-details")
+                            .icon(icons::ellipsis()).w(CONTROL_HEIGHT).px_0()
+                            .accessibility_label("模型检查与设置")
+                            .tooltip("模型检查与设置")
+                            .dropdown_menu(move |menu, _, _| {
+                                let recheck = details.clone();
+                                let settings = details.clone();
+                                menu.item(PopupMenuItem::new("重新检查模型")
+                                    .icon(icons::refresh())
+                                    .on_click(move |_, _, cx| {
+                                        let _ = recheck.update(cx, |this, cx| this.refresh_model_diagnostics(cx));
+                                    }))
+                                    .item(PopupMenuItem::new("模型设置与缓存详情")
+                                        .icon(icons::settings())
+                                        .on_click(move |_, window, cx| {
+                                            let _ = settings.update(cx, |this, cx| this.open_settings(window, cx));
+                                        }))
+                            })),
+                ).when(self.job.is_some(), |view| view.child(
+                    div().text_size(TEXT_AUX).text_color(color(MUTED))
+                        .child("当前处理结束后可准备模型")));
             } else {
                 view = view.child(self.model_readiness_panel_with(
                     provider,
