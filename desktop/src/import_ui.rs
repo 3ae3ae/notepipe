@@ -1657,13 +1657,12 @@ impl Desktop {
 
     /// The video identity remains compact; paths and account tools are details.
     fn box_selected_video(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let Some(source) = &self.source_preview else {
-            return v_flex();
-        };
+        let Some(source) = &self.source_preview else { return v_flex(); };
+        let compact = f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14.;
         let duration = (source.duration.is_finite() && source.duration > 0.)
             .then(|| course2md::render::fmt_ts(source.duration));
-        let mut cover = div().relative().w(rems(128. / 14.)).max_w(relative(0.28))
-            .aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL)
+        let mut cover = div().relative().w(rems(if compact { 128. / 14. } else { 160. / 14. }))
+            .max_w(relative(0.28)).aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL)
             .bg(color(SECONDARY_CONTAINER)).overflow_hidden()
             .when_some(source.cover.clone(), |cover, path| cover.child(
                 img(path).size_full().rounded(RADIUS_SMALL).object_fit(ObjectFit::Cover)));
@@ -1672,83 +1671,65 @@ impl Desktop {
                 .rounded(px(3.)).bg(color(INK)).text_color(color(CANVAS))
                 .text_size(rems(10. / 14.)).child(duration));
         }
-        let selected = h_flex().w_full().min_w_0().gap_4().items_center()
-            .child(cover)
-            .child(v_flex().min_w_0().flex_1().gap_2()
-                .child(accessible_text("import-selected-title", source.title.clone())
-                    .text_size(TEXT_TITLE).font_weight(FontWeight::SEMIBOLD)
-                    .whitespace_normal().text_ellipsis().line_clamp(2))
-                .when(!source.author.trim().is_empty(), |view| view.child(
-                    div().text_size(TEXT_BODY).text_color(color(GRAY)).child(source.author.clone()))))
-            .child(quiet("clear-source-preview").icon(icons::close())
-                .tooltip("移除预览").accessibility_label("移除预览")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.invalidate_source();
-                    this.save_current_draft(cx);
-                    cx.notify();
-                })));
         let subtitle_status = if self.subtitle_loading { "正在读取字幕…" }
             else if source.subtitle_request.is_some() || source.subtitle_read_error.is_some() || self.subtitle_error.is_some() {
                 "文字来源待确认"
             } else if self.import_uses_speech() { "将识别视频声音" }
             else if source.selected_subtitle.is_some() { "有字幕，将直接使用" }
             else { "文字来源待确认" };
+        let confirmed_subtitle = subtitle_status == "有字幕，将直接使用";
+        let platform = if !source.online { "本地视频".to_owned() }
+            else { url::Url::parse(&source.input).ok().and_then(|url| url.host_str().map(str::to_owned))
+                .map(|host| {
+                    if host == "bilibili.com" || host.ends_with(".bilibili.com") || host == "b23.tv" { "Bilibili".into() }
+                    else if host == "youtube.com" || host.ends_with(".youtube.com") || host == "youtu.be" { "YouTube".into() }
+                    else { host }
+                }).unwrap_or_default() };
+        let metadata = [platform, source.author.clone()].into_iter()
+            .filter(|part| !part.trim().is_empty()).collect::<Vec<_>>().join(" · ");
         let details = v_flex().gap_3().child(help(source.input.clone())).when(
             source.online && course2md::auth::is_bilibili_url(&source.input),
             |view| view.child(self.source_account_row(cx)),
         );
-        v_flex().w_full().min_w_0().child(
-            v_flex()
-                .id("import-selected-source")
-                .w_full().min_w_0()
-                .p_4().rounded(RADIUS_CARD).bg(color(SURFACE))
-                .gap_3()
-                .on_drop(
-                    cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
-                        this.drop_source_files(paths.paths(), window, cx)
-                    }),
-                )
-                .child(selected)
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .flex_wrap()
-                        .w_full().items_center()
-                        .child(div().flex_1().min_w_0().text_size(TEXT_AUX)
-                            .text_color(color(GRAY)).child(subtitle_status))
-                        .child(
-                            quiet("source-details")
-                                .icon(if self.show_preview_details {
-                                    IconName::ChevronUp
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .accessibility_label("来源详情").tooltip("来源详情")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.show_preview_details = !this.show_preview_details;
-                                    cx.notify();
-                                })),
-                        )
-                        .when(self.online, |row| {
-                            row.child(
-                                quiet("reread-source")
-                                    .icon(icons::refresh())
-                                    .accessibility_label("重新读取").tooltip("重新读取")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.inspect_source(window, cx)
-                                    })),
-                            )
-                        })
-                        .when(self.can_start_input(cx), |row| row.child(self.box_bottom_row(false, cx))),
-                )
-                .child(motion::disclosure(
-                    "source-details-disclosure",
-                    self.show_preview_details,
-                    details,
-                    window,
-                    cx,
-                )),
-        )
+        let selected = h_flex().w_full().min_w_0().gap_4().items_center()
+            .child(cover)
+            .child(v_flex().min_w_0().flex_1().gap(rems(6. / 14.))
+                .child(accessible_text("import-selected-title", source.title.clone())
+                    .text_size(rems(16. / 14.)).line_height(rems(22. / 14.)).font_weight(FontWeight::SEMIBOLD)
+                    .whitespace_normal().text_ellipsis().line_clamp(2))
+                .when(!metadata.is_empty(), |view| view.child(
+                    div().text_size(TEXT_BODY).text_color(color(GRAY)).child(metadata)))
+                .child(h_flex().min_w_0().child(badge(BadgeKind::Neutral)
+                    .rounded(RADIUS_SMALL).text_size(rems(12. / 14.))
+                    .when(confirmed_subtitle, |badge| badge.child(icons::check().size_3()))
+                    .child(subtitle_status))))
+            .child(v_flex().flex_shrink_0().items_end().justify_between().gap_2()
+                .child(quiet("clear-source-preview").icon(icons::close())
+                    .tooltip("移除预览").accessibility_label("移除预览")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.invalidate_source(); this.save_current_draft(cx); cx.notify();
+                    })))
+                .child(h_flex().gap_1()
+                    .child(quiet("source-details").icon(if self.show_preview_details { IconName::ChevronUp } else { IconName::ChevronDown })
+                        .w(rems(32. / 14.)).h(rems(32. / 14.)).px_0()
+                        .accessibility_label("来源详情").tooltip("来源详情")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_preview_details = !this.show_preview_details; cx.notify();
+                        })))
+                    .when(self.online, |row| row.child(quiet("reread-source").icon(icons::refresh())
+                        .w(rems(32. / 14.)).h(rems(32. / 14.)).px_0()
+                        .accessibility_label("重新读取").tooltip("重新读取")
+                        .on_click(cx.listener(|this, _, window, cx| this.inspect_source(window, cx)))))));
+        v_flex().w_full().min_w_0().child(v_flex().id("import-selected-source")
+            .w_full().min_w_0().p(rems(12. / 14.)).rounded(RADIUS_CARD).bg(color(SURFACE))
+            .border_1().border_color(color(CARD_LINE)).gap_3()
+            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                this.drop_source_files(paths.paths(), window, cx)
+            }))
+            .child(selected)
+            .when(!self.online && self.can_start_input(cx), |card| card.child(
+                h_flex().w_full().justify_end().child(self.box_bottom_row(false, cx))))
+            .child(motion::disclosure("source-details-disclosure", self.show_preview_details, details, window, cx)))
     }
 
     fn text_source_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -2587,17 +2568,24 @@ impl Desktop {
     }
 
     fn preview_source_button(&self, compact: bool, cx: &mut Context<Self>) -> Div {
-        let disabled = self.preview_cancel.is_some() || self.value(Field::Source, cx).is_empty();
+        // Enter remains bound to inspect_source. Only this explicitly relabeled
+        // button changes to conversion once an eligible preview is on screen.
+        let start = self.online && self.source_preview.is_some()
+            && self.workbench_linked_task(cx).is_none() && self.can_start_input(cx);
+        let disabled = self.preview_cancel.is_some() || self.value(Field::Source, cx).is_empty()
+            || (start && self.pending_conversion.is_some());
+        let label = if start { "开始转换" } else { "预览视频" };
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("preview-source"), disabled, cx)
-                .h(rems(48. / 14.))
-                .icon(icons::arrow_forward())
-                .when(!compact, |button| button.label("预览视频"))
-                .when(compact, |button| button.w(rems(48. / 14.)).px_0())
-                .accessibility_label("预览视频")
-                .track_focus(&self.import_submit_focus)
-                .disabled(disabled)
-                .on_click(cx.listener(|this, _, window, cx| this.inspect_source(window, cx))),
+                .h(rems(48. / 14.)).icon(icons::arrow_forward())
+                .when(!compact || start, |button| button.label(label))
+                .when(compact && !start, |button| button.w(rems(48. / 14.)).px_0())
+                .accessibility_label(label).tooltip(label)
+                .track_focus(&self.import_submit_focus).disabled(disabled)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if start { this.start_conversion(window, cx); }
+                    else { this.inspect_source(window, cx); }
+                })),
         )
     }
 
