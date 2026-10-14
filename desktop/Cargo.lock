@@ -1456,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "course2md"
-version = "2.0.0-rc.7"
+version = "2.0.0-rc.8"
 dependencies = [
  "anyhow",
  "base64",
@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "course2md-desktop"
-version = "2.0.0-rc.7"
+version = "2.0.0-rc.8"
 dependencies = [
  "anyhow",
  "base64",

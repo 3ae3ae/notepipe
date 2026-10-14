@@ -5,8 +5,11 @@
 
 ## [未发布]
 
+## [2.0.0-rc.8] — 2026-10-14
+
 - 修复 yt-dlp 定位：CLI 与桌面端共用统一搜索清单（`COURSE2MD_YTDLP` → 可执行文件旁随包版本 → PATH → Homebrew/pipx/mise/asdf/conda/Nix/Scoop/WinGet/Python user-base 等常见目录）。桌面会话拿不到登录 shell 的 PATH 时不再误报「缺少 yt-dlp」；`course2md doctor` 会显示实际使用的 yt-dlp 路径。
 - install.sh 与桌面安装包（DMG/ZIP/tar.gz）现在随包自带 yt-dlp 独立二进制，与可执行文件同目录；PATH 中已有 yt-dlp 时沿用系统版本，Homebrew/AUR 的 yt-dlp 依赖不变。
+- 发布范围、安装和已知验证边界见 [RC8 发布说明](docs/releases/v2.0.0-rc.8.md)。
 
 ## [2.0.0-rc.7] — 2026-10-10
 
