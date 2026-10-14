@@ -362,7 +362,7 @@ impl Desktop {
         let authorizing = working == Some(CodexWork::Authorizing);
         crate::settings_ui::account_card(
             id,
-            icons::shield(),
+            icons::sparkles(),
             "Codex 账号",
             kind,
             label,
@@ -377,7 +377,15 @@ impl Desktop {
             cx,
             if !connected {
                 vec![
-                    outline_pill(SharedString::from(format!("{id}-import")))
+                    quiet(SharedString::from(format!("{id}-authorize")))
+                        .icon(icons::external_link())
+                        .label("浏览器授权…")
+                        .disabled(disabled || busy)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.codex_authorize(surface, cx)
+                        }))
+                        .into_any_element(),
+                    tonal_pill(SharedString::from(format!("{id}-import")), cx)
                         .icon(icons::login())
                         .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
                             "重新导入 Codex 登录"
@@ -387,14 +395,6 @@ impl Desktop {
                         .disabled(disabled || busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.codex_import(surface, cx)
-                        }))
-                        .into_any_element(),
-                    quiet(SharedString::from(format!("{id}-authorize")))
-                        .icon(icons::external_link())
-                        .label("浏览器授权…")
-                        .disabled(disabled || busy)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.codex_authorize(surface, cx)
                         }))
                         .into_any_element(),
                 ]

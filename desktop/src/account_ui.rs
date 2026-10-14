@@ -284,7 +284,7 @@ impl Desktop {
             .min_w_0()
             .gap(px(16.))
             .items_center()
-            .child(crate::settings_ui::settings_resource_icon(icons::bilibili()))
+            .child(crate::settings_ui::settings_resource_icon(icons::tv()))
             .child(
                 v_flex()
                     .flex_1()

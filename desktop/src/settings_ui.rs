@@ -493,7 +493,7 @@ pub(crate) fn account_card(
                 .gap_2()
                 .items_center()
                 .flex_wrap()
-                .max_w(relative(0.5))
+                .flex_shrink_0().max_w_full()
                 .children(actions),
         )
 }
@@ -566,7 +566,7 @@ fn settings_tab_icon(index: usize) -> Icon {
     match index {
         4 => icons::palette(),
         // 生成笔记 = 笔记/文档对象（tune 留给偏好/高级覆盖项，见 crosspage#8 图标指称）
-        0 => icons::subtitles(),
+        0 => icons::article(),
         1 => icons::cloud(),
         2 => icons::storage(),
         _ => icons::info(),
@@ -596,6 +596,7 @@ pub(crate) struct SettingsGroup {
     title: &'static str,
     action: Option<AnyElement>,
     items: Vec<Vec<AnyElement>>,
+    resource_dividers: bool,
 }
 
 impl SettingsGroup {
@@ -605,7 +606,13 @@ impl SettingsGroup {
             title,
             action: None,
             items: Vec::new(),
+            resource_dividers: false,
         }
+    }
+
+    fn resource_dividers(mut self) -> Self {
+        self.resource_dividers = true;
+        self
     }
 
     /// Content that belongs to the previous item (a disclosure, a summary
@@ -637,12 +644,14 @@ impl ParentElement for SettingsGroup {
 impl RenderOnce for SettingsGroup {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         let mut card = settings_card();
+        let count = self.items.len();
         for (index, item) in self.items.into_iter().enumerate() {
             if index > 0 {
                 card = card.child(
                     div()
                         .h(px(1.))
-                        .mx(SETTING_ITEM_INSET)
+                        .mr(SETTING_ITEM_INSET)
+                        .ml(if self.resource_dividers && index + 1 < count { rems(76. / 14.) } else { SETTING_ITEM_INSET })
                         .flex_shrink_0()
                         .bg(color(HAIRLINE)),
                 );
@@ -1335,19 +1344,19 @@ impl Desktop {
                 "添加语音服务",
             ),
         ] {
-            let mut section = group(heading_id, heading);
+            let mut section = group(heading_id, heading).resource_dividers();
             let mut empty = true;
             // Codex sign-in and local Ollama are AI services too; they lead the
             // same list instead of a near-identical group of their own.
             if purpose == ServicePurpose::Ai {
                 empty = false;
                 section = section
-                    .child(setting_surface().child(self.codex_account_section(
+                    .child(setting_surface().py(rems(16. / 14.)).child(self.codex_account_section(
                         crate::codex_ui::CodexSurface::Settings,
                         false,
                         cx,
                     )))
-                    .child(setting_surface().child(self.ollama_account_section(cx)));
+                    .child(setting_surface().py(rems(16. / 14.)).child(self.ollama_account_section(cx)));
             }
             for version in latest.values().filter(|version| {
                 version.config.protocol.purpose() == purpose
@@ -1376,7 +1385,7 @@ impl Desktop {
                 None
             };
             section = section.child(
-                setting_surface().child(
+                setting_surface().when(purpose == ServicePurpose::Ai, |row| row.py(rems(9. / 14.))).child(
                     h_flex()
                         .w_full()
                         .min_w_0()
@@ -2293,7 +2302,7 @@ impl Desktop {
                             ),
                     )
                     .child(
-                        setting_surface().children(toggle_details.take().map(|toggle| {
+                        setting_surface().py(rems(9. / 14.)).children(toggle_details.take().map(|toggle| {
                             quiet("toggle-diagnostics-details")
                                 .w_full()
                                 .label("诊断详情")

@@ -154,10 +154,10 @@ impl Desktop {
                     .into_any_element(),
             ),
         }
-        actions.push(
+        actions.insert(0,
             quiet(SharedString::from(format!("{id}-recheck")))
                 .icon(icons::refresh())
-                .label("重新检查")
+                .accessibility_label("重新检查 Ollama").tooltip("重新检查")
                 .disabled(working)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.ollama_refresh(cx);
@@ -166,7 +166,7 @@ impl Desktop {
         );
         crate::settings_ui::account_card(
             id,
-            icons::computer(),
+            icons::server(),
             "Ollama 本地服务",
             kind,
             label,
