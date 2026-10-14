@@ -479,7 +479,8 @@ impl Desktop {
                                             )
                                             .text_size(TEXT_AUX)
                                             .text_color(color(MUTED))
-                                            .min_w_0(),
+                                            .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
+                                .min_w_0(),
                                         ),
                                 )
                                 .child(

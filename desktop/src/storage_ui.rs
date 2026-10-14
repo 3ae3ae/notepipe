@@ -1590,7 +1590,8 @@ impl Desktop {
                                                 ("storage-location-path", index),
                                                 root.display().to_string(),
                                             )
-                                            .text_size(TEXT_AUX)
+                                            .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
+                                .text_size(TEXT_AUX)
                                             .text_color(color(MUTED)),
                                         ),
                                 )

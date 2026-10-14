@@ -488,7 +488,7 @@ impl Desktop {
         let status = entry
             .and_then(Entry::result)
             .and_then(|result| result.as_ref().ok());
-        let (mut view, cache_details) =
+        let (mut view, cache_action, cache_details) =
             self.model_status_section(provider, &request, provider_row, window, cx);
         let (actions, extras) = self.model_prepare_actions(
             provider,
@@ -503,7 +503,8 @@ impl Desktop {
         for extra in extras {
             view = view.child(extra);
         }
-        view.child(actions)
+        view.child(h_flex().w_full().min_w_0().gap_2().items_center().flex_wrap()
+            .child(actions.w_auto()).children(cache_action))
             .when_some(cache_details, |view, details| view.child(details))
     }
 
@@ -516,11 +517,12 @@ impl Desktop {
         provider_row: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Div, Option<Div>) {
+    ) -> (Div, Option<Div>, Option<AnyElement>) {
         let key = request.key();
         let entry = self.settings_ui.model_diagnostics.entries.get(&key);
         let device_issue = self.model_device_issue(provider);
         let mut cache_details = None;
+        let mut cache_action = None;
         let mut view = v_flex().w_full().min_w_0().gap_3();
         if provider_row {
             view = view.child(model_status_row(
@@ -696,14 +698,9 @@ impl Desktop {
                         .child(part_details),
                 );
             }
-            cache_details = Some(
-                v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap_3()
-                    .child(
+            cache_action = Some(
                         h_flex()
-                            .w_full()
+                            .w_auto()
                             .min_w_0()
                             .gap_3()
                             .flex_wrap()
@@ -743,16 +740,15 @@ impl Desktop {
                                     .text_size(TEXT_AUX)
                                     .text_color(color(MUTED)),
                                 )
-                            }),
-                    )
-                    .child(crate::motion::disclosure(
+                            })
+            );
+            cache_details = Some(crate::motion::disclosure(
                         SharedString::from(format!("model-cache-content-{key}")),
                         cache_open,
                         cache,
                         window,
                         cx,
-                    )),
-            );
+                    ));
             if let Some(error) = &status.last_error {
                 view = view.child(settings_detail_row(
                     SharedString::from(format!("model-last-error-label-{key}")),
@@ -765,7 +761,7 @@ impl Desktop {
                 ));
             }
         }
-        (view, cache_details)
+        (view, cache_action, cache_details)
     }
 
     /// Action row (recheck / pause / prepare) and the transient rows it owns:

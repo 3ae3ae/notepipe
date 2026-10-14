@@ -318,7 +318,7 @@ impl Desktop {
                                 .text_color(color(MUTED)),
                         )
                     })
-                    .when(saved || onboarding, |view| {
+                    .map(|view| {
                         view.child(
                             accessible_text(
                                 "bilibili-account-policy",

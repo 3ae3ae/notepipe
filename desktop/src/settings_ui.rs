@@ -367,7 +367,7 @@ pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, contr
                     )
                 }),
         )
-        .child(coral_switch(control))
+        .child(processing_switch(control))
 }
 
 /// Status rows inside an existing card: label on the shared axis, value trailing.
@@ -679,7 +679,7 @@ pub(crate) fn settings_card() -> Div {
         .min_w_0()
         .flex_shrink_0()
         .bg(color(SURFACE))
-        .rounded(RADIUS_CARD)
+        .rounded(SETTINGS_CARD_RADIUS)
         .overflow_hidden()
 }
 pub(super) fn preference(
@@ -1023,7 +1023,7 @@ impl Desktop {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let rail = f32::from(window.viewport_size().width) < 900.;
+        let rail = f32::from(window.viewport_size().width) < 960.;
         let mut navigation = v_flex()
             .id("settings-navigation")
             .key_context("SettingsTabs")
@@ -1057,7 +1057,7 @@ impl Desktop {
                 .items_center()
                 .justify_center()
                 .h(px(32.))
-                .w(px(56.))
+                .w(px(if rail {56.} else {24.}))
                 .rounded_full()
                 .when(selected && rail, |view| view.bg(color(ACCENT_SOFT)))
                 .child(settings_tab_icon(index).size(px(22.)));
@@ -1073,21 +1073,22 @@ impl Desktop {
             navigation = navigation.child(
                 gpui_base::Tab::new(("settings-tab", index))
                     .selected(selected)
-                    .track_focus(&self.settings_ui.tab_focus[index])
+                    .track_focus(&self.settings_ui.tab_focus[index].clone().tab_stop(selected))
                     .accessibility_label(settings_tab_label(index))
                     .w_full()
                     .h_auto()
                     .min_h(px(56.))
                     .rounded_full()
-                    .px(px(if rail { 0. } else { 12. }))
+                    .px(px(if rail { 0. } else { 16. }))
                     .py(px(8.))
+                    .bg(gpui::transparent_black())
                     .when(selected && !rail, |tab| tab.bg(color(ACCENT_SOFT)))
                     .child(
                         div()
                             .flex()
                             .w_full()
                             .items_center()
-                            .gap(px(if rail { 4. } else { 8. }))
+                            .gap(px(if rail { 4. } else { 12. }))
                             .when(rail, |view| view.flex_col())
                             .child(icon)
                             .child(
@@ -1112,7 +1113,7 @@ impl Desktop {
         let content_width = crate::views::settings_content_width(window);
         let layout_width = content_width
             + if sidebar {
-                crate::views::settings_sidebar_width(window) + crate::views::SETTINGS_COLUMN_GAP
+                crate::views::settings_sidebar_width(window) + crate::views::settings_column_gap(window)
             } else {
                 0.
             };
@@ -1276,7 +1277,7 @@ impl Desktop {
             .when(sidebar, |view| {
                 view.flex_row()
                     .items_stretch()
-                    .gap(px(crate::views::SETTINGS_COLUMN_GAP))
+                    .gap(px(crate::views::settings_column_gap(window)))
             })
             .when(!sidebar, |view| view.flex_col().gap(px(24.)))
             .child(navigation)
