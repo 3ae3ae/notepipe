@@ -277,6 +277,42 @@ fn settings_form_row(
     setting_surface().child(row)
 }
 
+/// Top-label controls share the reference form's 520 px reading width.
+pub(super) fn settings_stacked_row(
+    id: impl Into<ElementId>, _icon: Icon, label: &'static str,
+    hint: &'static str, control: impl IntoElement,
+) -> Div {
+    let id = id.into();
+    setting_surface().child(v_flex().w_full().max_w(px(520.)).min_w_0().gap_3()
+        .child(text(id.clone(), label).text_size(TEXT_BODY))
+        .child(control)
+        .when(!hint.is_empty(), |view| view.child(text(
+            SharedString::from(format!("{id:?}-hint")), hint
+        ).text_size(TEXT_AUX).text_color(color(MUTED)).px(px(12.)))))
+}
+
+pub(super) fn settings_outlined_row(
+    id: impl Into<ElementId>, _icon: Icon, label: &'static str,
+    hint: &'static str, control: impl IntoElement,
+) -> Div {
+    let id = id.into();
+    setting_surface().child(v_flex().w_full().max_w(px(520.)).min_w_0().gap_2()
+        .child(outlined_field_label(id.clone(), label, control))
+        .when(!hint.is_empty(), |view| view.child(text(
+            SharedString::from(format!("{id:?}-hint")), hint
+        ).text_size(TEXT_AUX).text_color(color(MUTED)))))
+}
+
+pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, control: Switch) -> Div {
+    h_flex().w_full().min_w_0().min_h(px(56.)).items_center().gap_4()
+        .child(v_flex().flex_1().min_w_0().gap_1()
+            .child(text(SharedString::from(format!("switch-label-{label}")), label).text_size(TEXT_BODY))
+            .when(!hint.is_empty(), |view| view.child(text(
+                SharedString::from(format!("switch-hint-{label}")), hint
+            ).text_size(TEXT_AUX).text_color(color(MUTED)))))
+        .child(coral_switch(control))
+}
+
 /// Status rows inside an existing card: label on the shared axis, value trailing.
 /// Do not wrap these in `settings_row`; that would give each item its own surface.
 pub(super) fn settings_status_row(
@@ -317,7 +353,7 @@ pub(super) fn setting_surface() -> Div {
         .min_w_0()
         .flex_shrink_0()
         .px(SETTING_ITEM_INSET)
-        .py(rems(14. / 14.))
+        .py(rems(20. / 14.))
         .gap_2()
 }
 
@@ -587,7 +623,7 @@ impl RenderOnce for SettingsGroup {
                     .min_h(rems(24. / 14.))
                     .items_center()
                     .child(
-                        theme::section_title(self.id, self.title).flex_1(),
+                        theme::section_title(self.id, self.title).flex_1().pl(SETTING_ITEM_INSET),
                     )
                     .children(self.action),
             )
@@ -604,9 +640,6 @@ pub(crate) fn settings_card() -> Div {
         .flex_shrink_0()
         .bg(color(SURFACE))
         .rounded(RADIUS_CARD)
-        .border_1()
-        .border_color(color(CARD_LINE))
-        .shadow(shadow_card())
         .overflow_hidden()
 }
 pub(super) fn preference(
@@ -951,61 +984,43 @@ impl Desktop {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let scale = f32::from(window.rem_size()) / 14.;
-        let short = !sidebar && crate::views::settings_content_width(window) < 640. * scale;
-        let group = SingleChoiceGroup::new("settings-tabs", "设置分类")
-            .tabs()
-            .full_width()
-            .options(SETTINGS_TABS.into_iter().map(|(index, label)| {
-                (
-                    index.to_string(),
-                    if short {
-                        match index {
-                            0 => "生成",
-                            1 => "服务",
-                            _ => label,
-                        }
-                    } else {
-                        label
-                    }
-                    .to_owned(),
-                )
+        let rail = f32::from(window.viewport_size().width) < 900.;
+        let mut navigation = v_flex().id("settings-navigation").key_context("SettingsTabs")
+            .w(px(crate::views::settings_sidebar_width(window))).flex_shrink_0().gap(px(8.))
+            .on_action(cx.listener(|this, _: &NextSettingsTab, window, cx| {
+                let position = SETTINGS_TABS.iter().position(|(i, _)| *i == this.settings_tab).unwrap_or(0);
+                this.select_settings_tab(SETTINGS_TABS[(position + 1) % 5].0, window, cx);
             }))
-            .selected(self.settings_tab.to_string())
-            .focus_handles(
-                SETTINGS_TABS
-                    .into_iter()
-                    .map(|(index, _)| self.settings_ui.tab_focus[index].clone()),
-            )
-            .icon("4", settings_tab_icon(4))
-            .icon("0", settings_tab_icon(0))
-            .icon("1", settings_tab_icon(1))
-            .icon("2", settings_tab_icon(2))
-            .icon("3", settings_tab_icon(3))
-            .on_change(cx.listener(|this, value: &SharedString, window, cx| {
-                if let Ok(index) = value.parse() {
-                    this.select_settings_tab(index, window, cx);
-                }
-            }));
-        if sidebar {
-            div()
-                .w(px(crate::views::settings_sidebar_width(window)))
-                .flex_shrink_0()
-                .child(group.vertical())
-                .into_any_element()
-        } else {
-            div()
-                .w_full()
-                .flex_shrink_0()
-                .child(group)
-                .into_any_element()
+            .on_action(cx.listener(|this, _: &PreviousSettingsTab, window, cx| {
+                let position = SETTINGS_TABS.iter().position(|(i, _)| *i == this.settings_tab).unwrap_or(0);
+                this.select_settings_tab(SETTINGS_TABS[(position + 4) % 5].0, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FirstSettingsTab, window, cx| this.select_settings_tab(4, window, cx)))
+            .on_action(cx.listener(|this, _: &LastSettingsTab, window, cx| this.select_settings_tab(3, window, cx)));
+        for (index, label) in SETTINGS_TABS {
+            let selected = self.settings_tab == index;
+            let icon = div().flex().items_center().justify_center().h(px(32.)).w(px(56.))
+                .rounded_full().when(selected && rail, |view| view.bg(color(ACCENT_SOFT)))
+                .child(settings_tab_icon(index).size(px(22.)));
+            let label = if rail { match index {0 => "笔记", 1 => "服务", _ => label} } else {label};
+            navigation = navigation.child(gpui_base::Tab::new(("settings-tab", index))
+                .selected(selected).track_focus(&self.settings_ui.tab_focus[index])
+                .accessibility_label(settings_tab_label(index)).w_full().h_auto().min_h(px(56.))
+                .rounded_full().px(px(if rail {0.} else {12.})).py(px(8.))
+                .when(selected && !rail, |tab| tab.bg(color(ACCENT_SOFT)))
+                .child(div().flex().w_full().items_center().gap(px(if rail {4.} else {8.}))
+                    .when(rail, |view| view.flex_col())
+                    .child(icon).child(div().text_size(if rail {TEXT_AUX} else {TEXT_BODY}).child(label)))
+                .on_click(cx.listener(move |this, _, window, cx| this.select_settings_tab(index, window, cx))));
         }
+        let _ = sidebar;
+        navigation.into_any_element()
     }
 
     pub fn settings_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // 渲染不得有副作用：hydrate/诊断检查/tab 钳制都在 open_settings、
         // select_settings_tab、restore_settings_group 等事件入口完成
-        let sidebar = crate::views::settings_uses_sidebar(window);
+        let sidebar = true;
         let content_width = crate::views::settings_content_width(window);
         let layout_width = content_width
             + if sidebar {
@@ -1013,30 +1028,15 @@ impl Desktop {
             } else {
                 0.
             };
-        let header = theme::page_heading(
-            "settings-page-title",
-            "设置",
-        )
-        .flex_shrink_0();
-        let header = h_flex()
-            .w_full()
-            .min_w_0()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(header)
-            .map(|row| {
-                row.child(quiet("settings-return")
-                    .icon(icons::arrow_left()).label("返回")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let destination = this.settings_origin.take().unwrap_or(Page::New);
-                        let focus = this.settings_return_focus.take();
-                        this.navigate(destination, cx);
-                        if let Some(focus) = focus {
-                            window.on_next_frame(move |window, cx| focus.focus(window, cx));
-                        }
-                    })))
-            });
+        let header = h_flex().w_full().min_w_0().items_center().gap_3().flex_shrink_0()
+            .child(quiet("settings-return").icon(icons::arrow_left()).accessibility_label("返回")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    let destination = this.settings_origin.take().unwrap_or(Page::New);
+                    let focus = this.settings_return_focus.take();
+                    this.navigate(destination, cx);
+                    if let Some(focus) = focus { window.on_next_frame(move |window, cx| focus.focus(window, cx)); }
+                })))
+            .child(text("settings-page-title", "设置").text_size(TEXT_TITLE));
 
         let navigation = self.settings_navigation(sidebar, window, cx);
         let mut panel = v_flex()
@@ -1147,15 +1147,18 @@ impl Desktop {
                     .w_full()
                     .when(!editing_service, |view| view.overflow_y_scroll())
                     .track_scroll(&self.scrolls[Page::Settings as usize])
-                    .p(px(4.))
-                    .pr(px(12.))
+                    .p(px(0.))
                     .child(
                         div()
                             .w_full()
                             .min_w_0()
                             .when(editing_service, |view| view.h_full().min_h_0())
                             .when(!editing_service, |view| view.pb(px(24.)))
-                            .child(content),
+                            .child(v_flex().w_full().min_w_0().gap(px(32.))
+                                .child(v_flex().gap_2()
+                                    .child(theme::page_heading("settings-category-heading", settings_tab_label(self.settings_tab)))
+                                    .when(self.settings_tab == 0, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_AUX).text_color(color(MUTED)))))
+                                .child(content)),
                     ),
             )
             .when(!editing_service, |panel| {
@@ -1164,6 +1167,7 @@ impl Desktop {
                 )
             });
         let body = div()
+            .max_w(px(layout_width)).mx_auto()
             .flex()
             .w_full()
             .min_w_0()
@@ -1182,9 +1186,7 @@ impl Desktop {
             .h_full()
             .min_w_0()
             .min_h_0()
-            .max_w(px(layout_width))
-            .mx_auto()
-            .pt(px(24.))
+            .pt(px(16.))
             .gap(px(24.))
             .child(header)
             .child(body)
@@ -1920,7 +1922,7 @@ impl Desktop {
     }
     pub(crate) fn appearance_controls(&self, cx: &mut Context<Self>) -> Div {
         div().w_full().child(group("appearance-motion", "界面偏好")
-            .child(settings_row(
+            .child(settings_stacked_row(
                 "app-font-scale-label",
                 icons::zoom_in(),
                 "界面文字大小",
@@ -1953,10 +1955,9 @@ impl Desktop {
                     ),
             ))
             .child(
-                self.setting_preference(
-                    icons::pause(),
+                setting_surface().child(settings_switch_row(
                     "减少动态效果",
-                    "",
+                    "关闭过渡动画和进度条的流动效果",
                     Switch::new("app-reduce-motion")
                         .checked(self.preferences.application().desktop.reduce_motion)
                         .on_click(cx.listener(|this, enabled, _, cx| {
@@ -1965,7 +1966,7 @@ impl Desktop {
                             this.commit_application(next, cx);
                         })),
                 ),
-            ))
+            )))
     }
     fn application_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         v_flex()

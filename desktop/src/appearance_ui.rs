@@ -2,7 +2,7 @@
 use super::*;
 use crate::palettes::{ALL, Appearance, PaletteId};
 use crate::preferences::PreferenceGroup;
-use crate::settings_ui::{field_label, settings_row};
+use crate::settings_ui::{field_label, settings_stacked_row};
 use crate::theme::*;
 
 const PALETTE_GAP: f32 = 16.;
@@ -375,45 +375,19 @@ impl Desktop {
                         label,
                     )),
             )
-            .child(
-                outline_pill(("palette-preset", usize::from(dark)))
-                    .w_full()
-                    .min_w_0()
-                    .h_auto()
-                    .p(px(0.))
-                    .rounded(RADIUS_CARD)
-                    .overflow_hidden()
+            .child(div().rounded(RADIUS_SMALL).overflow_hidden().child(sample(palette)))
+            .child(outlined_field_label(
+                ("palette-preset-field", usize::from(dark)),
+                if dark { "深色配色" } else { "浅色配色" },
+                control(("palette-preset", usize::from(dark)))
+                    .w_full().h(px(56.)).rounded(RADIUS_SMALL)
                     .accessibility_label(format!("{label}：{}，选择主题", palette.name()))
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .min_w_0()
-                            .whitespace_normal()
-                            .text_left()
-                            .child(sample(palette))
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    .min_h(rems(3.43))
-                                    .gap(px(8.))
-                                    .p(px(12.))
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_size(TEXT_BODY)
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(palette.name()),
-                                    )
-                                    .child(icons::chevron_down().size(px(18.)).flex_shrink_0()),
-                            ),
-                    )
+                    .label(palette.name()).child(div().flex_1())
+                    .child(icons::chevron_down().size(px(18.)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_palette_picker(dark, window, cx);
                     })),
-            )
+            ))
     }
 
     pub(crate) fn appearance_page(
@@ -465,7 +439,7 @@ impl Desktop {
             .gap(px(28.))
             .child(
                 crate::settings_ui::SettingsGroup::new("appearance-theme", "主题")
-                    .child(settings_row("appearance-mode-row", icons::palette(), "外观模式", "", modes))
+                    .child(settings_stacked_row("appearance-mode-row", icons::palette(), "外观模式", "", modes))
                     .child(
                         crate::settings_ui::setting_surface().gap(px(12.)).child(
                             div()
