@@ -156,6 +156,7 @@ impl Desktop {
         }
         actions.insert(0,
             quiet(SharedString::from(format!("{id}-recheck")))
+                .w(CONTROL_HEIGHT).min_w(CONTROL_HEIGHT).px_0().flex_shrink_0()
                 .icon(icons::refresh())
                 .accessibility_label("重新检查 Ollama").tooltip("重新检查")
                 .disabled(working)

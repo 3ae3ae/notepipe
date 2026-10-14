@@ -1134,6 +1134,7 @@ impl Desktop {
             .flex_shrink_0()
             .child(
                 quiet("settings-return")
+                    .w(CONTROL_HEIGHT).min_w(CONTROL_HEIGHT).px_0().flex_shrink_0()
                     .icon(icons::arrow_left())
                     .accessibility_label("返回")
                     .on_click(cx.listener(|this, _, window, cx| {
