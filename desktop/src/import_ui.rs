@@ -408,7 +408,7 @@ enum ConversionGate {
 /// Normal asynchronous stages retain the first Start intent. Only an abandoned
 /// source or an unresolved material choice ends this automatic continuation.
 fn conversion_gate(
-    requested_revision: u64,
+    requested_revision: Option<u64>,
     current_revision: u64,
     reading: bool,
     has_source: bool,
@@ -417,7 +417,7 @@ fn conversion_gate(
     library_ready: bool,
     existing_note: bool,
 ) -> ConversionGate {
-    if requested_revision != current_revision {
+    if requested_revision != Some(current_revision) {
         ConversionGate::Stop
     } else if reading {
         ConversionGate::Wait
@@ -433,7 +433,7 @@ fn conversion_gate(
 }
 
 impl Desktop {
-    /// A start command owns preparation and submission for this source revision.
+    /// Explicit confirmation of an already visible preview owns submission.
     pub fn start_conversion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_queued_message();
         if self.reading && self.page == Page::New {
@@ -461,8 +461,11 @@ impl Desktop {
             cx.notify();
             return;
         }
-        if self.source_preview.is_none() && self.preview_cancel.is_none() {
+        // Preview is a separate user step. Never queue an unseen source,
+        // including callers returning from login or selecting a local file.
+        if self.source_preview.is_none() {
             self.inspect_source(window, cx);
+            return;
         }
         self.pending_conversion = Some(self.preview_generation);
         self.following_conversion = (self.page == Page::New)
@@ -506,7 +509,7 @@ impl Desktop {
             }
         }
         match conversion_gate(
-            generation,
+            self.pending_conversion,
             self.preview_generation,
             reading,
             self.source_preview.is_some(),
@@ -907,7 +910,7 @@ impl Desktop {
 
     fn select_source_input(&mut self, input: String, window: &mut Window, cx: &mut Context<Self>) {
         self.inputs[&Field::Source].update(cx, |state, cx| state.set_value(input, window, cx));
-        self.start_conversion(window, cx);
+        self.inspect_source(window, cx);
     }
 
     fn toggle_candidate(&mut self, input: &str, cx: &mut Context<Self>) {
@@ -940,6 +943,7 @@ impl Desktop {
                 self.inputs[&Field::Source].update(cx, |state, cx| {
                     state.set_value(path.display().to_string(), window, cx)
                 });
+                self.inspect_source(window, cx);
             }
             [] => {}
             _ => {
@@ -1068,13 +1072,13 @@ impl Desktop {
                                         cx.notify();
                                     })),
                             )
-                            .child(self.box_bottom_row(!self.can_start_input(cx), cx)),
+                            .child(self.preview_source_button(cx)),
                     )
                     .when_some(validation, |view, message| view.child(issue(message))),
             );
             // The pill's placeholder names the supported sites; the only extra
             // line offers the other source route, as in the redesign canvas.
-            view = view.child(
+            view = view.when(self.source_preview.is_none(), |view| view.child(
                 h_flex()
                     .w_full()
                     .justify_center()
@@ -1095,7 +1099,7 @@ impl Desktop {
                                 this.pick(false, window, cx);
                             })),
                     ),
-            );
+            ));
         } else {
             view = self.local_source_input(view, cx);
         }
@@ -1462,7 +1466,7 @@ impl Desktop {
                                     // raw tool line falls back to the generic message.
                                     let first = error.lines().next().unwrap_or(error);
                                     if source::is_login_failure(error) {
-                                        "视频需要登录后读取，请登录后重试转换".to_owned()
+                                        "视频需要登录后读取，请登录后重试预览".to_owned()
                                     } else if first.contains("WARNING:") || first.contains("ERROR:")
                                     {
                                         "暂时无法读取这个视频，请检查链接或稍后重试".to_owned()
@@ -1481,9 +1485,9 @@ impl Desktop {
                             .child(
                                 outline_pill("retry-source")
                                     .icon(icons::refresh())
-                                    .label("重试转换")
+                                    .label("重试预览")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.start_conversion(window, cx)
+                                        this.inspect_source(window, cx)
                                     })),
                             )
                             .when(
@@ -1611,7 +1615,7 @@ impl Desktop {
                                     })),
                             )
                             .when(self.can_start_input(cx), |row| {
-                                row.child(self.box_bottom_row(false, cx))
+                                row.child(self.preview_source_button(cx))
                             }),
                     )
                     .on_drop(
@@ -1634,8 +1638,6 @@ impl Desktop {
         let Some(source) = &self.source_preview else {
             return v_flex();
         };
-        let can_close_input =
-            self.source_editor_open && self.value(Field::Source, cx) == source.input;
         let mut selected = h_flex().gap_4().items_start();
         if let Some(cover) = &source.cover {
             selected = selected.child(
@@ -1671,6 +1673,9 @@ impl Desktop {
         v_flex().w_full().min_w_0().child(
             v_flex()
                 .id("import-selected-source")
+                .w_full().min_w_0()
+                .p(SETTING_ITEM_INSET).rounded(RADIUS_CARD).bg(color(SURFACE))
+                .border_1().border_color(color(CARD_LINE))
                 .gap_3()
                 .on_drop(
                     cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
@@ -1682,35 +1687,8 @@ impl Desktop {
                     h_flex()
                         .gap_2()
                         .flex_wrap()
-                        .when(
-                            !self.source_editor_open && self.can_start_input(cx),
-                            |row| row.child(self.box_bottom_row(false, cx)),
-                        )
-                        .child(
-                            quiet("change-source")
-                                .icon(if can_close_input {
-                                    icons::chevron_up()
-                                } else {
-                                    icons::movie()
-                                })
-                                .label(if can_close_input {
-                                    "收起输入"
-                                } else {
-                                    "更换视频"
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.source_editor_open = !can_close_input;
-                                    if !can_close_input {
-                                        this.scrolls[Page::New as usize]
-                                            .set_offset(point(px(0.), px(0.)));
-                                        if this.online {
-                                            this.inputs[&Field::Source]
-                                                .update(cx, |input, cx| input.focus(window, cx));
-                                        }
-                                    }
-                                    cx.notify();
-                                })),
-                        )
+                        .w_full().items_center()
+                        .child(div().flex_1())
                         .child(
                             quiet("source-details")
                                 .icon(if self.show_preview_details {
@@ -1737,7 +1715,8 @@ impl Desktop {
                                         this.inspect_source(window, cx)
                                     })),
                             )
-                        }),
+                        })
+                        .when(self.can_start_input(cx), |row| row.child(self.box_bottom_row(false, cx))),
                 )
                 .child(motion::disclosure(
                     "source-details-disclosure",
@@ -2078,7 +2057,7 @@ impl Desktop {
     }
 
     fn import_ai_options(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let mut choices = v_flex().w_full().min_w_0().gap_4();
+        let mut choices = v_flex().w_full().min_w_0();
         for (index, option) in [
             ConversionAiOption::Proofread,
             ConversionAiOption::Summary,
@@ -2087,7 +2066,7 @@ impl Desktop {
         .into_iter()
         .enumerate()
         {
-            choices = choices.child(
+            choices = choices.child(crate::settings_ui::settings_checkbox_row(
                 Checkbox::new(("import-ai-option", index))
                     .label(conversion_ai_option_label(option))
                     .checked(conversion_ai_option_enabled(&self.task_options, option))
@@ -2096,7 +2075,7 @@ impl Desktop {
                         apply_conversion_ai_option(&mut this.task_options, option, *enabled);
                         this.persist_task_options(cx);
                     })),
-            );
+            ));
         }
         if self.task_options.llm && self.import_base_config().llm.prompt
             .as_ref().is_some_and(|prompt| !prompt.trim().is_empty()) {
@@ -2388,13 +2367,6 @@ impl Desktop {
             .find(|library| Some(&library.id) == current.as_ref())
             .cloned();
         let mut view = v_flex().w_full().min_w_0().gap_2();
-        if self.source_preview.is_some() {
-            view = view.child(crate::focus_scroll::RevealFocus::new(
-                ("import-title-focus", self.validation_attempt),
-                self.input(Field::Title, "笔记名称", cx),
-                self.scrolls[Page::New as usize].clone(),
-            ));
-        }
         if libraries.len() > 1 {
             let entity = cx.entity().downgrade();
             let label = selected
@@ -2477,13 +2449,24 @@ impl Desktop {
                         ),
                 ),
         );
-        crate::settings_ui::settings_row(
+        v_flex().w_full().min_w_0()
+            .when(self.source_preview.is_some(), |view| view.child(
+                crate::settings_ui::settings_row(
+                    "import-title-label", icons::subtitles(), "笔记名称", "",
+                    crate::focus_scroll::RevealFocus::new(
+                        ("import-title-focus", self.validation_attempt),
+                        text_input(&self.inputs[&Field::Title]).w_full(),
+                        self.scrolls[Page::New as usize].clone(),
+                    ),
+                ),
+            ))
+            .child(crate::settings_ui::settings_row(
             "import-destination-label",
             icons::folder_open(),
             "保存到",
             "",
             view,
-        )
+        ))
     }
 
     fn import_exports(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -2567,22 +2550,26 @@ impl Desktop {
             })
     }
 
-    /// The single start command owns source preparation and conversion.
+    fn preview_source_button(&self, cx: &mut Context<Self>) -> Div {
+        let disabled = self.preview_cancel.is_some() || self.value(Field::Source, cx).is_empty();
+        h_flex().items_center().child(
+            theme::disabled_when(outline_pill("preview-source"), disabled, cx)
+                .h(rems(48. / 14.))
+                .icon(icons::search())
+                .label("预览")
+                .track_focus(&self.import_submit_focus)
+                .disabled(disabled)
+                .on_click(cx.listener(|this, _, window, cx| this.inspect_source(window, cx))),
+        )
+    }
+
+    /// Conversion starts only from the explicit action beside the preview.
     fn box_bottom_row(&self, unavailable: bool, cx: &mut Context<Self>) -> Div {
-        let disabled = unavailable
-            || self.pending_conversion.is_some()
-            || self.value(Field::Source, cx).is_empty();
+        let disabled = unavailable || self.pending_conversion.is_some()
+            || self.source_preview.is_none() || self.preview_cancel.is_some();
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("start-conversion"), disabled, cx)
-                .h(rems(48. / 14.))
-                .min_h(rems(48. / 14.))
-                .px(rems(22. / 14.))
-                .track_focus(&self.import_submit_focus)
-                .icon(icons::arrow_forward())
-                .w(rems(48. / 14.))
-                .px_0()
-                .accessibility_label("开始转换")
-                .tooltip("开始转换")
+                .icon(icons::arrow_forward()).label("开始转换")
                 .disabled(disabled)
                 .on_click(cx.listener(|this, _, window, cx| this.start_conversion(window, cx))),
         )
@@ -2678,10 +2665,9 @@ impl Desktop {
             .current_input_task(cx)
             .filter(|task| task.state == workspace::TaskState::Cancelled)
             .map(|task| (task.id.clone(), "任务已取消".to_owned()));
-        let show_source_input = self.source_preview.is_none() || self.source_editor_open;
         // Only the empty source state is a centered hero; a read source and its
         // decisions return to the page's leading ruler.
-        let hero = self.source_preview.is_none() && linked_task.is_none();
+        // Keep the title/input axis stable when preview data arrives.
         let input = v_flex()
             .w_full()
             .min_w_0()
@@ -2690,7 +2676,7 @@ impl Desktop {
             .child(self.box_source_input(window, cx));
         let mut view = v_flex()
             .pt(px(24.))
-            .gap(px(if hero { 32. } else { 24. }))
+            .gap(px(24.))
             .w_full()
             .min_w_0()
             .max_w(rems(WORKBENCH_WIDTH / 14.))
@@ -2699,16 +2685,16 @@ impl Desktop {
                 h_flex()
                     .w_full()
                     .justify_center()
-                    .pt(px(if hero { 56. } else { 8. }))
+                    .pt(px(32.))
                     .child(
                         accessible_text("workbench-title", "把视频整理成笔记")
                             .role(Role::Heading)
-                            .text_size(rems(if hero { 36. } else { 28. } / 14.))
-                            .line_height(rems(if hero { 44. } else { 36. } / 14.))
+                            .text_size(rems(36. / 14.))
+                            .line_height(rems(44. / 14.))
                             .font_weight(FontWeight::MEDIUM),
                     ),
             )
-            .when(show_source_input, |view| view.child(input));
+            .child(input);
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
                 SharedString::from(format!("cancelled-input-task-{id}")),
@@ -2716,18 +2702,6 @@ impl Desktop {
             ));
         }
         if let Some(task) = linked_task {
-            if show_source_input {
-                view = view.child(
-                    quiet("hide-source-editor")
-                        .self_start()
-                        .icon(icons::chevron_up())
-                        .label("收起输入")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.source_editor_open = false;
-                            cx.notify();
-                        })),
-                );
-            }
             let task_view = match task.state {
                 workspace::TaskState::Complete | workspace::TaskState::Partial
                     if opening_result =>
@@ -2750,18 +2724,6 @@ impl Desktop {
                     .border_color(color(CARD_LINE))
                     .shadow(shadow_hero()),
             );
-            if !show_source_input {
-                view = view.child(
-                    quiet("convert-another-video")
-                        .self_start()
-                        .ml(-crate::theme::QUIET_INSET)
-                        .icon(icons::plus())
-                        .label("转换其他视频")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.import_video_from_action(window, cx);
-                        })),
-                );
-            }
         } else {
             let text_required = self.subtitle_attention_required();
             if self.source_preview.is_some() {
@@ -2787,7 +2749,7 @@ impl Desktop {
             if self.preview_cancel.is_none() && self.source_candidates.is_empty() {
                 {
                     view = view.child(quiet("generation-options-after-preview")
-                        .self_start().icon(icons::tune()).label(if self.generation_options_open { "收起高级选项" } else { "高级选项 · 文字来源、AI 与导出" })
+                        .self_start().ml(-crate::theme::QUIET_INSET).icon(icons::tune()).label(if self.generation_options_open { "收起高级选项" } else { "高级选项 · 文字来源、AI 与导出" })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.generation_options_open = !this.generation_options_open;
                             cx.notify();
@@ -2796,24 +2758,24 @@ impl Desktop {
                 let options = v_flex()
                     .w_full()
                     .min_w_0()
-                    .p_3()
                     .rounded(RADIUS_HERO)
                     .bg(color(SURFACE))
                     .border_1()
                     .border_color(color(CARD_LINE))
                     .child(self.import_text_mode_options(window, cx))
-                    .child(div().mx_4().h(px(1.)).bg(color(LINE)))
+                    .child(div().mx(SETTING_ITEM_INSET).h(px(1.)).bg(color(LINE)))
                     .child(self.import_ai_options(window, cx))
-                    .child(div().mx_4().h(px(1.)).bg(color(LINE)))
+                    .child(div().mx(SETTING_ITEM_INSET).h(px(1.)).bg(color(LINE)))
                     .child(self.import_destination(cx))
                     .child(self.import_exports(window, cx))
-                    .child(div().mx_4().h(px(1.)).bg(color(LINE)))
+                    .child(div().mx(SETTING_ITEM_INSET).h(px(1.)).bg(color(LINE)))
                     .child(
                         h_flex()
                             .w_full()
                             .min_w_0()
-                            .p_4()
+                            .p(SETTING_ITEM_INSET)
                             .gap_3()
+                            .flex_wrap()
                             .items_center()
                             .child(
                                 div()
@@ -2821,7 +2783,7 @@ impl Desktop {
                                     .min_w_0()
                                     .text_size(TEXT_AUX)
                                     .text_color(color(MUTED))
-                                    .child("只对接下来添加的视频生效。长期默认值在设置里改。"),
+                                    .child("用于本次转换。长期默认值在设置里修改。"),
                             )
                             .child(
                                 quiet("reset-task-overrides")
@@ -3120,9 +3082,21 @@ mod tests {
     use course2md::subtitle::{CachedSubtitle, SubtitleEvidence, SubtitleReadError};
 
     #[test]
-    fn one_start_continues_metadata_subtitles_and_environment_without_a_confirmation_stage() {
+    fn preview_completion_without_confirmation_never_submits() {
+        for reading in [true, false] {
+            for environment_ready in [true, false] {
+                for library_ready in [true, false] {
+                    assert_eq!(conversion_gate(None, 7, reading, true, false,
+                        environment_ready, library_ready, false), ConversionGate::Stop);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn confirmed_start_waits_for_remaining_prerequisites() {
         // The same Start revision survives each independently completing prerequisite.
-        let start = 7;
+        let start = Some(7);
         for (reading, source, text_choice, environment) in [
             (true, false, false, false),
             (true, true, true, true),
@@ -3166,7 +3140,7 @@ mod tests {
     fn first_start_waits_for_library_scan_before_existing_note_decision() {
         // A restored source and the environment can be ready before the async
         // library scan replaces its initially empty (or stale) note list.
-        let start = 7;
+        let start = Some(7);
         for cached_note in [false, true] {
             assert_eq!(
                 conversion_gate(start, 7, false, true, false, true, false, cached_note),

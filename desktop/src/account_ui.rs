@@ -744,7 +744,7 @@ impl Desktop {
                         icons::close()
                     })
                     .label(if retry_source {
-                        "继续转换"
+                        "重新预览"
                     } else if success {
                         "完成"
                     } else {
@@ -757,7 +757,6 @@ impl Desktop {
                         window.close_dialog(cx);
                         if retry {
                             this.inspect_source(window, cx);
-                            this.start_conversion(window, cx);
                         }
                     })),
             )

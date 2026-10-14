@@ -236,6 +236,7 @@ pub const RADIUS_SMALL: Pixels = px(8.);
 pub const CONTROL_HEIGHT: Rems = rems(40. / 14.);
 /// Leading icon slot of an icon + label cluster, and the gap before its text.
 /// Supporting lines of the same item start at `ICON_SLOT + ICON_GAP`.
+pub const SETTING_ITEM_INSET: Rems = rems(20. / 14.);
 pub const ICON_SLOT: Rems = rems(20. / 14.);
 pub const ICON_GAP: Rems = rems(8. / 14.);
 pub const LABEL_INSET: Rems = rems(28. / 14.);

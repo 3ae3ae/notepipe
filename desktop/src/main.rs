@@ -519,7 +519,7 @@ impl Desktop {
                     && this.page == Page::New
                     && this.online
                 {
-                    this.start_conversion(window, cx);
+                    this.inspect_source(window, cx);
                 }
             },
         ));
@@ -824,17 +824,6 @@ impl Desktop {
     fn value(&self, field: Field, cx: &App) -> String {
         self.inputs[&field].read(cx).value().trim().to_string()
     }
-    fn input(&self, field: Field, label: &'static str, _cx: &App) -> Div {
-        v_flex()
-            .gap_2()
-            .w_full()
-            .child(
-                theme::accessible_text(("field-label", field as usize), label)
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM),
-            )
-            .child(theme::text_input(&self.inputs[&field]).aria_label(label))
-    }
     fn output(&self, _cx: &App) -> PathBuf {
         self.workspace
             .as_ref()
@@ -870,6 +859,9 @@ impl Desktop {
                             this.inputs[&field].update(cx, |state, cx| {
                                 state.set_value(path.display().to_string(), window, cx)
                             });
+                            if !directory {
+                                this.inspect_source(window, cx);
+                            }
                         }
                     }
                     Ok(Ok(None)) => {}

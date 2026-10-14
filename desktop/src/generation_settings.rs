@@ -301,8 +301,8 @@ impl Desktop {
                 "",
                 v_flex()
                     .w_full()
-                    .gap_3()
-                    .child(
+                    .min_w_0()
+                    .child(settings_checkbox_row(
                         Checkbox::new("default-ai-proofread")
                             .label("校对文字和标点")
                             .checked(value.ai_proofread)
@@ -311,8 +311,8 @@ impl Desktop {
                                 next.ai_proofread = *enabled;
                                 this.commit_generation(next, cx);
                             })),
-                    )
-                    .child(
+                    ))
+                    .child(settings_checkbox_row(
                         Checkbox::new("default-ai-summary")
                             .label("在开头生成摘要")
                             .checked(value.ai_summary)
@@ -321,8 +321,8 @@ impl Desktop {
                                 next.ai_summary = *enabled;
                                 this.commit_generation(next, cx);
                             })),
-                    )
-                    .child(
+                    ))
+                    .child(settings_checkbox_row(
                         Checkbox::new("default-ai-vision")
                             .label("校对时附带对应截图")
                             .checked(value.vision)
@@ -332,7 +332,7 @@ impl Desktop {
                                 next.vision = *enabled;
                                 this.commit_generation(next, cx);
                             })),
-                    ),
+                    )),
             ))
             .child(self.service_picker(ServicePurpose::Ai, false, cx));
         // The rule only applies to proofreading, so it appears with it.

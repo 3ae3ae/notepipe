@@ -300,13 +300,23 @@ pub(super) fn settings_status_row(
         )
 }
 
+/// Checkbox groups share the label row's control centerline without extra padding.
+pub(super) fn settings_checkbox_row(checkbox: impl IntoElement) -> Div {
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .min_h(CONTROL_HEIGHT)
+        .items_center()
+        .child(checkbox)
+}
+
 /// One setting's content box inside a settings card; the card owns the surface.
 pub(super) fn setting_surface() -> Div {
     v_flex()
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .px(rems(20. / 14.))
+        .px(SETTING_ITEM_INSET)
         .py(rems(14. / 14.))
         .gap_2()
 }
@@ -558,7 +568,7 @@ impl RenderOnce for SettingsGroup {
                 card = card.child(
                     div()
                         .h(px(1.))
-                        .mx(rems(20. / 14.))
+                        .mx(SETTING_ITEM_INSET)
                         .flex_shrink_0()
                         .bg(color(HAIRLINE)),
                 );
@@ -2249,7 +2259,7 @@ impl Desktop {
             .child(checks.detail(crate::motion::disclosure(
                 "diagnostics-detail-content",
                 open,
-                details.px(rems(20. / 14.)).pb(rems(16. / 14.)),
+                details.px(SETTING_ITEM_INSET).pb(rems(16. / 14.)),
                 window,
                 cx,
             )))
