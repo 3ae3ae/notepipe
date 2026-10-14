@@ -1526,6 +1526,10 @@ impl Desktop {
                 // 与账号卡片同一组合：徽章与动作是标题行尾部的一个槽位，窄时整体换行。
                 // 强调顺序与其他卡片一致：描边主动作在前，安静的「打开位置」在后。
                 let trailing = h_flex().gap_2().items_center().flex_wrap()
+                    .child(quiet(("open-storage-location", index)).icon(icons::folder_open()).label("打开位置").disabled(offline).on_click({
+                        let root = root.clone();
+                        move |_, _, cx| cx.open_with_system(&root)
+                    }))
                     .when(default && several, |row| row.child(badge(BadgeKind::Neutral).child("默认保存位置")))
                     .when(offline, |row| row.child(badge(BadgeKind::Warning).child("暂时不可访问")))
                     .when(!default, |row| {
@@ -1546,7 +1550,7 @@ impl Desktop {
                             })))
                     })
                     .when(!needs_relocation && !needs_reassociation, |row| {
-                        row.child(outline_pill(("move-storage-location", index)).icon(icons::storage()).label("移动课程库…").disabled(self.storage_ui.busy)
+                        row.child(outline_pill(("move-storage-location", index)).label("移动课程库…").disabled(self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, window, cx| this.begin_library_move(move_id.clone(), window, cx))))
                     })
                     .when(needs_reassociation, |row| {
@@ -1557,10 +1561,7 @@ impl Desktop {
                         row.child(outline_pill(("relocate-storage-location", index)).icon(icons::folder_open()).label("重新定位…").disabled(self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, window, cx| this.begin_library_relocation(relocate_id.clone(), window, cx))))
                     })
-                    .child(quiet(("open-storage-location", index)).icon(icons::folder_open()).label("打开位置").disabled(offline).on_click({
-                        let root = root.clone();
-                        move |_, _, cx| cx.open_with_system(&root)
-                    }));
+;
                 locations = locations.child(
                     crate::settings_ui::setting_surface()
                         .min_w_0()
@@ -1572,7 +1573,7 @@ impl Desktop {
                                 .gap(px(16.))
                                 .child(crate::settings_ui::settings_resource_icon(
                                     icons::folder_open(),
-                                ))
+                                ).rounded(RADIUS_SMALL))
                                 .child(
                                     v_flex()
                                         .flex_1()
@@ -1583,7 +1584,7 @@ impl Desktop {
                                                 ("storage-location-name", index),
                                                 library.name.clone(),
                                             )
-                                            .font_weight(FontWeight::SEMIBOLD),
+                                            .text_size(rems(16. / 14.)).font_weight(FontWeight::NORMAL),
                                         )
                                         .child(
                                             accessible_text(
@@ -1595,7 +1596,7 @@ impl Desktop {
                                             .text_color(color(MUTED)),
                                         ),
                                 )
-                                .child(trailing.max_w(relative(0.55))),
+                                .child(trailing.flex_shrink_0()),
                         )
                         .when_some(
                             check.and_then(|check| check.problem.clone()),
@@ -1618,7 +1619,7 @@ impl Desktop {
             }
         }
         locations = locations.child(
-            crate::settings_ui::setting_surface().child(
+            crate::settings_ui::setting_surface().py(rems(9. / 14.)).child(
                 h_flex()
                     .w_full()
                     .min_w_0()
