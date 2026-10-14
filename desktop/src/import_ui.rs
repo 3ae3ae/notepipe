@@ -1086,12 +1086,11 @@ impl Desktop {
                             // The link pill always ends in its action; an unavailable
                             // start stays visible as a disabled button.
                             .child(
-                                nav_action("generation-options", true, cx)
+                                nav_action("generation-options", self.generation_options_open, cx)
                                     .child(icons::tune().size(rems(24. / 14.)))
                                     .rounded(RADIUS_PILL)
                                     .w(rems(48. / 14.))
                                     .h(rems(48. / 14.))
-                                    .bg(color(SECONDARY_CONTAINER))
                                     .accessibility_label("本次生成选项")
                                     .tooltip("本次生成选项")
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -2821,7 +2820,7 @@ impl Desktop {
             if let Some(recent) = recent { lower = lower.child(recent); }
         }
         let mut view = v_flex().w_full().min_w_0().pt(rems(if compact { 40. / 14. } else { 56. / 14. }))
-            .gap(rems(if compact { 32. / 14. } else { 40. / 14. })).child(view)
+            .gap(rems(if compact { 38. / 14. } else { 46. / 14. })).child(view)
             .when_some(active, |view, active| view.child(active)).child(lower);
         if let Some(error) = &self.workspace_error {
             view = view.child(motion::enter(

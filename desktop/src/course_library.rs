@@ -2037,7 +2037,7 @@ impl Desktop {
             }
             return Some(empty);
         }
-        let mut section = v_flex().w_full().min_w_0().gap_3();
+        let mut section = v_flex().w_full().min_w_0().gap(rems(16. / 14.));
         section = section.child(
             h_flex()
                 .w_full()
