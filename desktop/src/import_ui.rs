@@ -1062,7 +1062,7 @@ impl Desktop {
                             // The field's own ring is off inside the pill, so the pill
                             // carries focus: a 2px accent outline, as on other fields.
                             .border_2()
-                            .border_color(color(if validation.is_some() {
+                            .border_color(color(if validation.is_some() || self.preview_error.is_some() {
                                 DANGER
                             } else if focused {
                                 ACCENT
@@ -1081,6 +1081,8 @@ impl Desktop {
                                         .text_size(TEXT_TITLE),
                                 ),
                             )
+                            .when(validation.is_some() || self.preview_error.is_some(), |row| row.child(
+                                icons::warning().size(rems(24. / 14.)).text_color(color(DANGER))))
                             // The link pill always ends in its action; an unavailable
                             // start stays visible as a disabled button.
                             .child(
@@ -1102,9 +1104,41 @@ impl Desktop {
                     )
                     .when_some(validation, |view, message| view.child(issue(message))),
             );
-            // The pill's placeholder names the supported sites; the only extra
-            // line offers the other source route, as in the redesign canvas.
-            view = view.when(self.source_preview.is_none(), |view| view.child(
+        } else {
+            view = self.local_source_input(view, cx);
+        }
+        if self.preview_cancel.is_some() {
+            view = view.child(v_flex().w_full().min_w_0().gap_3()
+                .child(motion::indeterminate_progress("source-reading-progress", cx))
+                .child(h_flex().w_full().min_w_0().p_4().gap_4().items_center()
+                    .rounded(RADIUS_CARD).bg(color(SURFACE))
+                    .child(div().w(rems(128. / 14.)).max_w(relative(0.28))
+                        .aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL).bg(color(INSET)))
+                    .child(v_flex().flex_1().min_w_0().gap_3()
+                        .child(accessible_text("import-reading-state", "正在读取视频信息…")
+                            .text_size(TEXT_BODY).text_color(color(MUTED)))
+                        .child(div().w(relative(0.72)).h(rems(12. / 14.)).rounded_full().bg(color(INSET)))
+                        .child(div().w(relative(0.45)).h(rems(10. / 14.)).rounded_full().bg(color(INSET))))
+                    .child(quiet("cancel-source-read").icon(IconName::Close)
+                        .accessibility_label("取消读取视频").tooltip("取消读取视频")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.invalidate_source(); cx.notify();
+                        })))));
+        } else if self.source_preview.is_some()
+            && self.workbench_linked_task(cx).is_none() {
+            view = view.child(self.box_selected_video(window, cx));
+        }
+        if let Some(title) = &self.source_collection_title {
+            view = self.candidate_list_view(view, title, cx);
+        }
+        view = self.source_preview_error(view, window, cx);
+        if self.online {
+            view = view.child(self.local_upload_hint(cx));
+        }
+        view
+    }
+
+    fn local_upload_hint(&self, cx: &mut Context<Self>) -> Div {
                 h_flex()
                     .w_full()
                     .justify_center()
@@ -1126,42 +1160,7 @@ impl Desktop {
                                 this.switch_source_kind(false, window, cx);
                                 this.pick(false, window, cx);
                             })),
-                    ),
-            ));
-        } else {
-            view = self.local_source_input(view, cx);
-        }
-        if self.preview_cancel.is_some() {
-            view = view.child(motion::enter(
-                text_id("reading", &self.preview_generation.to_string()),
-                h_flex()
-                    .w_full()
-                    .gap_3()
-                    .p_3()
-                    .items_center()
-                    .rounded(RADIUS_SMALL)
-                    .bg(color(INSET))
-                    .child(motion::spinner("source-reading-spinner", cx))
-                    .child(
-                        accessible_text("import-reading-state", "正在读取视频…")
-                            .flex_1()
-                            .min_w_0(),
                     )
-                    .child(
-                        quiet("cancel-source-read")
-                            .icon(IconName::Close)
-                            .label("取消")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.invalidate_source();
-                                cx.notify();
-                            })),
-                    ),
-            ));
-        }
-        if let Some(title) = &self.source_collection_title {
-            view = self.candidate_list_view(view, title, cx);
-        }
-        self.source_preview_error(view, window, cx)
     }
 
     /// 候选合集列表：在线来源走多选批量入队；本地多文件拖入保持单选。
@@ -1453,7 +1452,7 @@ impl Desktop {
         (preview, text)
     }
 
-    /// 预览错误：候选已读出时行内提示；没有候选时给出错误卡与重试/登录/详情动作。
+    /// Keep source failures beside the field, with retry/login/details still reachable.
     fn source_preview_error(&self, view: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let mut view = view;
         if let Some(error) = &self.preview_error
@@ -1473,11 +1472,7 @@ impl Desktop {
             );
             view = view.child(motion::enter(
                 text_id("source-error", error),
-                v_flex()
-                    .gap_3()
-                    .p_4()
-                    .rounded(RADIUS_CARD)
-                    .bg(color(DANGER_BG))
+                v_flex().w_full().min_w_0().gap_2()
                     .child(
                         h_flex()
                             .gap_2()
@@ -1666,34 +1661,39 @@ impl Desktop {
         let Some(source) = &self.source_preview else {
             return v_flex();
         };
-        let mut selected = h_flex().gap_4().items_start();
-        if let Some(cover) = &source.cover {
-            selected = selected.child(
-                img(cover.clone())
-                    .w(rems(8.))
-                    .h(rems(4.5))
-                    .object_fit(ObjectFit::Cover)
-                    .rounded(RADIUS_SMALL)
-                    .flex_shrink_0(),
-            );
+        let duration = (source.duration.is_finite() && source.duration > 0.)
+            .then(|| course2md::render::fmt_ts(source.duration));
+        let mut cover = div().relative().w(rems(128. / 14.)).max_w(relative(0.28))
+            .aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL)
+            .bg(color(SECONDARY_CONTAINER)).overflow_hidden()
+            .when_some(source.cover.clone(), |cover, path| cover.child(
+                img(path).size_full().rounded(RADIUS_SMALL).object_fit(ObjectFit::Cover)));
+        if let Some(duration) = duration {
+            cover = cover.child(div().absolute().right(px(4.)).bottom(px(4.)).px_1().py(px(1.))
+                .rounded(px(3.)).bg(color(INK)).text_color(color(CANVAS))
+                .text_size(rems(10. / 14.)).child(duration));
         }
-        selected = selected.child(
-            v_flex()
-                .min_w_0()
-                .flex_1()
-                .gap_2()
-                .child(
-                    accessible_text("import-selected-title", source.title.clone())
-                        .text_size(TEXT_TITLE)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .whitespace_normal()
-                        .text_ellipsis()
-                        .line_clamp(2),
-                )
-                .when(!source.detail().is_empty(), |view| {
-                    view.child(help(source.detail()))
-                }),
-        );
+        let selected = h_flex().w_full().min_w_0().gap_4().items_center()
+            .child(cover)
+            .child(v_flex().min_w_0().flex_1().gap_2()
+                .child(accessible_text("import-selected-title", source.title.clone())
+                    .text_size(TEXT_TITLE).font_weight(FontWeight::SEMIBOLD)
+                    .whitespace_normal().text_ellipsis().line_clamp(2))
+                .when(!source.author.trim().is_empty(), |view| view.child(
+                    div().text_size(TEXT_BODY).text_color(color(GRAY)).child(source.author.clone()))))
+            .child(quiet("clear-source-preview").icon(icons::close())
+                .tooltip("移除预览").accessibility_label("移除预览")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.invalidate_source();
+                    this.save_current_draft(cx);
+                    cx.notify();
+                })));
+        let subtitle_status = if self.subtitle_loading { "正在读取字幕…" }
+            else if source.subtitle_request.is_some() || source.subtitle_read_error.is_some() || self.subtitle_error.is_some() {
+                "文字来源待确认"
+            } else if self.import_uses_speech() { "将识别视频声音" }
+            else if source.selected_subtitle.is_some() { "有字幕，将直接使用" }
+            else { "文字来源待确认" };
         let details = v_flex().gap_3().child(help(source.input.clone())).when(
             source.online && course2md::auth::is_bilibili_url(&source.input),
             |view| view.child(self.source_account_row(cx)),
@@ -1702,8 +1702,7 @@ impl Desktop {
             v_flex()
                 .id("import-selected-source")
                 .w_full().min_w_0()
-                .p(SETTING_ITEM_INSET).rounded(RADIUS_CARD).bg(color(SURFACE))
-                .border_1().border_color(color(CARD_LINE))
+                .p_4().rounded(RADIUS_CARD).bg(color(SURFACE))
                 .gap_3()
                 .on_drop(
                     cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
@@ -1716,7 +1715,8 @@ impl Desktop {
                         .gap_2()
                         .flex_wrap()
                         .w_full().items_center()
-                        .child(div().flex_1())
+                        .child(div().flex_1().min_w_0().text_size(TEXT_AUX)
+                            .text_color(color(GRAY)).child(subtitle_status))
                         .child(
                             quiet("source-details")
                                 .icon(if self.show_preview_details {
@@ -1724,11 +1724,7 @@ impl Desktop {
                                 } else {
                                     IconName::ChevronDown
                                 })
-                                .label(if self.show_preview_details {
-                                    "收起详情"
-                                } else {
-                                    "来源详情"
-                                })
+                                .accessibility_label("来源详情").tooltip("来源详情")
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.show_preview_details = !this.show_preview_details;
                                     cx.notify();
@@ -1738,7 +1734,7 @@ impl Desktop {
                             row.child(
                                 quiet("reread-source")
                                     .icon(icons::refresh())
-                                    .label("重新读取")
+                                    .accessibility_label("重新读取").tooltip("重新读取")
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.inspect_source(window, cx)
                                     })),
@@ -2623,6 +2619,22 @@ impl Desktop {
         submitted_input_task(state.draft()?, &state.tasks, &self.value(Field::Source, cx))
     }
 
+    /// The source card and hero share one definition of the submitted task.
+    fn workbench_linked_task(&self, cx: &App) -> Option<&workspace::TaskRecord> {
+        let opening_result = self.reading && self.following_conversion.is_some();
+        self.current_input_task(cx).filter(|task| {
+            (opening_result
+                && matches!(
+                    task.state,
+                    workspace::TaskState::Complete | workspace::TaskState::Partial
+                ))
+                || !task.state.finished()
+                || (task.state == workspace::TaskState::Partial
+                    && task.artifact.is_some()
+                    && !crate::task_ui::task_component_failures(task).is_empty())
+        })
+    }
+
     /// Called by explicit workbench entry and initial restoration, never render.
     /// Terminal tasks remain in the task list and recent notes after their input
     /// has become a fresh form; an in-flight or edited input is never replaced.
@@ -2685,17 +2697,7 @@ impl Desktop {
 
     pub fn new_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let opening_result = self.reading && self.following_conversion.is_some();
-        let linked_task = self.current_input_task(cx).cloned().filter(|task| {
-            (opening_result
-                && matches!(
-                    task.state,
-                    workspace::TaskState::Complete | workspace::TaskState::Partial
-                ))
-                || !task.state.finished()
-                || (task.state == workspace::TaskState::Partial
-                    && task.artifact.is_some()
-                    && !crate::task_ui::task_component_failures(task).is_empty())
-        });
+        let linked_task = self.workbench_linked_task(cx).cloned();
         if linked_task.is_none()
             && !self.task_options.uses_cloud_provider()
             && (self.import_uses_speech()
@@ -2729,7 +2731,9 @@ impl Desktop {
                 message,
             ));
         }
-        if let Some(task) = linked_task {
+        let has_linked_task = linked_task.is_some();
+        if let Some(task) = linked_task.filter(|task| !matches!(task.state,
+            workspace::TaskState::Queued | workspace::TaskState::Running | workspace::TaskState::Pausing)) {
             let task_view = match task.state {
                 workspace::TaskState::Complete | workspace::TaskState::Partial
                     if opening_result =>
@@ -2752,14 +2756,10 @@ impl Desktop {
                     .border_color(color(CARD_LINE))
                     .shadow(shadow_hero()),
             );
-        } else {
+        } else if !has_linked_task {
             let text_required = self.subtitle_attention_required();
             if self.source_preview.is_some() {
-                let mut source = v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap_4()
-                    .child(self.box_selected_video(window, cx));
+                let mut source = v_flex().w_full().min_w_0().gap_4();
                 if text_required {
                     source = source.child(
                         box_section(icons::subtitles(), "文字来源")
@@ -2781,6 +2781,7 @@ impl Desktop {
         let show_options = self.generation_options_open
             && self.preview_cancel.is_none() && self.source_candidates.is_empty()
             && self.current_input_task(cx).is_none_or(|task| task.state.finished());
+        let active = self.workbench_active_tasks_section(window, cx);
         let recent = self.recent_notes_section(1, cx);
         let options = if show_options {
             Some(v_flex().w_full().min_w_0().p(rems(24. / 14.))
@@ -2820,7 +2821,8 @@ impl Desktop {
             if let Some(recent) = recent { lower = lower.child(recent); }
         }
         let mut view = v_flex().w_full().min_w_0().pt(rems(if compact { 40. / 14. } else { 56. / 14. }))
-            .gap(rems(if compact { 32. / 14. } else { 40. / 14. })).child(view).child(lower);
+            .gap(rems(if compact { 32. / 14. } else { 40. / 14. })).child(view)
+            .when_some(active, |view, active| view.child(active)).child(lower);
         if let Some(error) = &self.workspace_error {
             view = view.child(motion::enter(
                 text_id("workspace-error", error),

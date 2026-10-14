@@ -74,6 +74,19 @@ pub fn spinner(id: impl Into<ElementId>, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
+/// Unmeasured work uses motion, never a fabricated completion percentage.
+pub fn indeterminate_progress(id: impl Into<ElementId>, cx: &App) -> AnyElement {
+    let segment = div().absolute().h_full().w(relative(0.3)).rounded_full().bg(color(PROGRESS_FILL));
+    let segment = if cx.reduce_motion() {
+        segment.left(relative(0.35)).into_any_element()
+    } else {
+        segment.with_animation(id, Animation::new(Duration::from_millis(1400)).repeat().with_max_fps(60.),
+            |segment, t| segment.left(relative(t * 1.3 - 0.3))).into_any_element()
+    };
+    div().relative().w_full().h(px(3.)).rounded_full().overflow_hidden()
+        .bg(color(PROGRESS_TRACK)).child(segment).into_any_element()
+}
+
 pub fn value(id: impl Into<ElementId>, target: f32, window: &mut Window, cx: &mut App) -> f32 {
     let id = id.into();
     #[cfg(feature = "performance")]
