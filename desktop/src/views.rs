@@ -4,12 +4,7 @@ use crate::theme::*;
 use gpui_component::button::*;
 
 const SHELL_GUTTER: f32 = 24.;
-pub(super) const SETTINGS_SIDEBAR_WIDTH: f32 = 200.;
-pub(super) const SETTINGS_COLUMN_GAP: f32 = 32.;
-const SETTINGS_CONTENT_MAX_WIDTH: f32 = 800.;
-const SETTINGS_SHELL_WIDTH: f32 =
-    SETTINGS_SIDEBAR_WIDTH + SETTINGS_COLUMN_GAP + SETTINGS_CONTENT_MAX_WIDTH + SHELL_GUTTER * 2.;
-const SETTINGS_SIDEBAR_BREAKPOINT: f32 = 1100.;
+const SETTINGS_SHELL_WIDTH: f32 = 1108.;
 
 /// The app bar marks the current destination with a tonal pill; TitleBar's
 /// default bottom hairline would be unused chrome.
@@ -33,29 +28,29 @@ fn shell_column_width(page: Page) -> AbsoluteLength {
 
 /// The max width includes both gutters; layout calculations use the same box.
 pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
-    (f32::from(window.bounds().size.width).min(f32::from(
-        shell_column_width(page).to_pixels(window.rem_size()),
-    )) - SHELL_GUTTER * 2.)
-        .max(0.)
+    let width = f32::from(window.bounds().size.width);
+    let scale = f32::from(window.rem_size()) / 14.;
+    let gutter = if matches!(page, Page::New | Page::Settings) && width < 960. * scale { 16. } else { SHELL_GUTTER };
+    (width.min(f32::from(shell_column_width(page).to_pixels(window.rem_size()))) - gutter * 2.).max(0.)
 }
 
-pub(super) fn settings_uses_sidebar(window: &Window) -> bool {
-    f32::from(window.bounds().size.width)
-        >= SETTINGS_SIDEBAR_BREAKPOINT * (f32::from(window.rem_size()) / 14.)
-}
+pub(super) fn settings_uses_sidebar(_window: &Window) -> bool { true }
 
 pub(super) fn settings_sidebar_width(window: &Window) -> f32 {
-    SETTINGS_SIDEBAR_WIDTH * f32::from(window.rem_size()) / 14.
+    let scale = f32::from(window.rem_size()) / 14.;
+    let width = f32::from(window.bounds().size.width) / scale;
+    (if width >= 1200. { 260. } else if width >= 960. { 220. } else { 64. }) * scale
 }
 
-/// Shared by the settings panel and its grids: exclude the real navigation and gutters.
+pub(super) fn settings_column_gap(window: &Window) -> f32 {
+    let scale = f32::from(window.rem_size()) / 14.;
+    let width = f32::from(window.bounds().size.width) / scale;
+    (if width >= 1200. { 40. } else if width >= 960. { 24. } else { 8. }) * scale
+}
+
+/// Shared by settings panels and grids; use the same sidebar, gap and gutters.
 pub(super) fn settings_content_width(window: &Window) -> f32 {
-    let available_width = shell_content_width(Page::Settings, window);
-    if settings_uses_sidebar(window) {
-        (available_width - settings_sidebar_width(window) - SETTINGS_COLUMN_GAP).max(0.)
-    } else {
-        available_width
-    }
+    (shell_content_width(Page::Settings, window) - settings_sidebar_width(window) - settings_column_gap(window)).max(0.)
 }
 
 fn shell_column_at(width: AbsoluteLength) -> Div {
@@ -70,6 +65,9 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 impl Desktop {
     /// Keep task results reachable while the user is on another page.
     fn shell_topbar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
+        if self.page == Page::Settings {
+            return apply_shell_title_bar_chrome(TitleBar::new().h(px(28.)));
+        }
         let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
             workspace.state.tasks.iter().any(|task| {
                 task.handled_by.is_none()
@@ -530,7 +528,8 @@ impl Render for Desktop {
                     )
                     .child(
                         shell_column_for(self.page)
-                            .when(self.page == Page::New && f32::from(window.bounds().size.width) < 960., |v| v.px(px(16.)))
+                            .when(self.page == Page::Settings, |v| v.max_w_full())
+                            .when(matches!(self.page, Page::New | Page::Settings) && f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14., |v| v.px(px(16.)))
                             .when(
                                 matches!(self.page, Page::Result | Page::Settings)
                                     || self_scrolling,
@@ -549,6 +548,8 @@ impl Render for Desktop {
             .child(body);
         div()
             .id("desktop-action-root")
+            .relative()
+            .group("workbench-drop")
             .track_focus(&self.root_focus)
             .tab_stop(false)
             .size_full()
@@ -584,6 +585,7 @@ impl Render for Desktop {
                 background,
                 window.has_active_dialog(cx),
             ))
+            .when(self.page == Page::New, |view| view.child(self.workbench_drop_overlay(cx)))
             .children(Root::render_dialog_layer(window, cx))
             .into_any_element()
     }

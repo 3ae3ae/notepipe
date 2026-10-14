@@ -230,6 +230,8 @@ fn sync_component_theme(dark: bool, cx: &mut App) {
 /* ---------- 几何（px，不随字号缩放） ---------- */
 pub const RADIUS_PILL: Pixels = px(999.);
 pub const RADIUS_CARD: Pixels = px(16.);
+/// Settings reference surfaces share a 24px corner radius.
+pub const SETTINGS_CARD_RADIUS: Pixels = px(24.);
 pub const RADIUS_HERO: Pixels = px(28.);
 pub const RADIUS_SMALL: Pixels = px(8.);
 /// Ordinary controls share this height, including padding, at every text scale.
@@ -1028,7 +1030,7 @@ pub fn coral_switch(switch: gpui_component::switch::Switch) -> gpui_component::s
 
 /// Larger switches for a full-width processing panel's preference rows.
 pub fn processing_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
-    coral_switch(switch).track_height(rems(30. / 14.))
+    coral_switch(switch).track_height(rems(32. / 14.))
 }
 
 /// GPUI Component's Root resets rem size from Theme on every render. Update that
