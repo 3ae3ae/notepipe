@@ -111,7 +111,7 @@ def main():
     if not args.no_build:
         run("cargo", "build", *flags)
         run("cargo", "build", "--manifest-path", str(ROOT / "Cargo.toml"), *flags)
-    version = tomllib.loads((PROJECT / "Cargo.toml").read_text())["package"]["version"]
+    version = tomllib.loads((PROJECT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
     suffix = ".exe" if system == "Windows" else ""
     package_name = f"course2md-desktop-{system.lower()}-{platform.machine()}"
     base = ROOT / "target" / "packages" / package_name
