@@ -26,6 +26,7 @@ fn shell_column_width(page: Page) -> AbsoluteLength {
         // Each task gets a useful content width: a gallery needs room for covers.
         Page::Settings => rems(SETTINGS_SHELL_WIDTH / 14.).into(),
         Page::Library => rems(1168. / 14.).into(),
+        Page::New => rems(1200. / 14.).into(),
         _ => COLUMN.into(),
     }
 }
@@ -68,7 +69,7 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 
 impl Desktop {
     /// Keep task results reachable while the user is on another page.
-    fn shell_topbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
+    fn shell_topbar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
             workspace.state.tasks.iter().any(|task| {
                 task.handled_by.is_none()
@@ -100,9 +101,13 @@ impl Desktop {
             .hover(|style| style.opacity(0.8))
             .role(Role::Link)
             .aria_label("course2md 工作台")
+            .child(h_flex().w(rems(32. / 14.)).h(rems(32. / 14.))
+                .justify_center().items_center().rounded(RADIUS_SMALL)
+                .bg(color(ACCENT_STRONG)).text_color(color(ON_PRIMARY))
+                .child(icons::file().size(rems(20. / 14.))))
             .child(
                 div()
-                    .text_size(TEXT_TITLE)
+                    .text_size(rems(24. / 14.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(color(INK))
                     .child("course2md"),
@@ -114,7 +119,8 @@ impl Desktop {
             }));
         let library = nav_action("nav-library", matches!(page, Page::Library | Page::Result), cx)
             .icon(icons::book_open())
-            .label("笔记库")
+            .when(f32::from(window.bounds().size.width) >= 960. * self.preferences.application().font_scale, |button| button.label("笔记库"))
+            .accessibility_label("笔记库")
             .on_click(cx.listener(|this, _, _, cx| {
                 this.folder_filter = None;
                 this.navigate(Page::Library, cx);
@@ -524,6 +530,7 @@ impl Render for Desktop {
                     )
                     .child(
                         shell_column_for(self.page)
+                            .when(self.page == Page::New && f32::from(window.bounds().size.width) < 960., |v| v.px(px(16.)))
                             .when(
                                 matches!(self.page, Page::Result | Page::Settings)
                                     || self_scrolling,

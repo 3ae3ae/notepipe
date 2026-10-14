@@ -1524,7 +1524,7 @@ fn main() {
                     let (width, height) = value.split_once('x')?;
                     let width = width.parse::<f32>().ok()?;
                     let height = height.parse::<f32>().ok()?;
-                    (width.is_finite() && height.is_finite() && width >= 860. && height >= 620.)
+                    (width.is_finite() && height.is_finite() && width >= 720. && height >= 620.)
                         .then_some(size(px(width), px(height)))
                 })
                 .unwrap_or(size(px(1140.), px(820.)))
@@ -1534,7 +1534,7 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::centered(initial_size, cx)),
-                window_min_size: Some(size(px(860.), px(620.))),
+                window_min_size: Some(size(px(720.), px(620.))),
                 titlebar: Some(TitlebarOptions {
                     traffic_light_position: Some(point(px(16.), px(19.))),
                     ..TitleBar::title_bar_options()

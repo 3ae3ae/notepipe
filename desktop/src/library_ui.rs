@@ -759,6 +759,7 @@ impl Desktop {
             .when(has_course, |button| button.ghost())
             .h_auto()
             .min_h(rems(2.6))
+            .when(!has_course, |button| button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL))
             .py_2()
             .disabled(self.loading || load_error.is_some())
             .icon(IconName::Folder)

@@ -166,6 +166,7 @@ impl Desktop {
                 .w_full()
                 .min_w_0()
                 .h_auto()
+                .when(current_task, |button| button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL))
                 .py_2()
                 .accessibility_label(format!(
                     "{}：{}{}",
@@ -273,12 +274,14 @@ impl Desktop {
                 icons::add()
             })
             .ghost()
-            .label(match (purpose, editor_version.is_some()) {
-                (ServicePurpose::Speech, true) => "编辑",
-                (ServicePurpose::Speech, false) => "添加语音服务",
-                (ServicePurpose::Ai, true) => "编辑",
-                (ServicePurpose::Ai, false) => "添加 AI 服务",
-            })
+            .when(current_task && editor_version.is_some(), |button| button
+                .w(rems(48. / 14.)).h(rems(56. / 14.)).px_0().accessibility_label("编辑服务").tooltip("编辑服务"))
+            .when(!current_task || editor_version.is_none(), |button| button.label(
+                match (purpose, editor_version.is_some()) {
+                    (_, true) => "编辑",
+                    (ServicePurpose::Speech, false) => "添加语音服务",
+                    (ServicePurpose::Ai, false) => "添加 AI 服务",
+                }))
             .self_start()
             .mr(-crate::theme::QUIET_INSET)
             .on_click(cx.listener(move |this, _, window, cx| {

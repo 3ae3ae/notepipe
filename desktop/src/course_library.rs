@@ -1947,11 +1947,17 @@ impl Desktop {
                 .w_full()
                 .items_center()
                 .gap_2()
-                .child(theme::section_title("recent-title", "最近的笔记").flex_1())
+                .child(theme::accessible_text("recent-title", "最近的笔记")
+                    .role(Role::Heading)
+                    .text_size(rems(24. / 14.))
+                    .line_height(rems(32. / 14.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .flex_1())
                 .child(
                     quiet("recent-all")
                         .mr(-crate::theme::QUIET_INSET)
-                        .label("全部")
+                        .label("查看全部")
+                        .child(Icon::new(IconName::ChevronRight).size_4())
                         .text_color(color(ACCENT_STRONG))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.folder_filter = None;
@@ -1959,6 +1965,8 @@ impl Desktop {
                         })),
                 ),
         );
+        let mut list = v_flex().w_full().min_w_0().rounded(RADIUS_CARD).bg(color(SURFACE));
+        let has_attention = !attention.is_empty();
         for task in attention {
             let id = task.id.clone();
             let uncertain = task.state == crate::workspace::TaskState::Uncertain
@@ -2053,16 +2061,13 @@ impl Desktop {
                 );
             }
             let summary = crate::task_ui::task_attention_summary(&task);
-            section = section.child(
+            list = list.child(
                 v_flex()
                     .w_full()
                     .min_w_0()
                     .p_3()
                     .gap_2()
                     .bg(color(SURFACE))
-                    .border_1()
-                    .border_color(color(CARD_LINE))
-                    .rounded(RADIUS_CARD)
                     // Same order as every task and note row: title, status, actions.
                     .child(
                         h_flex()
@@ -2095,13 +2100,26 @@ impl Desktop {
         }
         for (index, course) in notes.iter().enumerate() {
             let selected = course.clone();
+            let duration = course.manifest.as_ref().and_then(|manifest| {
+                self.workspace.as_ref()?.state.tasks.iter()
+                    .find(|task| task.id == manifest.task_id)
+                    .map(|task| task.plan.source.duration)
+            }).filter(|seconds| seconds.is_finite() && *seconds > 0.)
+                .map(course2md::render::fmt_ts);
+            let metadata = self.course_meta(course).split(" · ")
+                .filter(|part| duration.as_deref() != Some(*part))
+                .collect::<Vec<_>>().join(" · ");
+            if index > 0 || has_attention {
+                list = list.child(h_flex().w_full().min_w_0().pl_4().gap_4()
+                    .child(div().w(rems(128. / 14.)).max_w(relative(0.28)).flex_shrink_0())
+                    .child(div().flex_1().min_w_0().h(px(1.)).bg(color(HAIRLINE))));
+            }
             let row = control(("recent-note", index))
                 .ghost()
                 .w_full()
                 .h_auto()
-                .p_3()
+                .p_4()
                 .rounded(RADIUS_CARD)
-                .bg(color(SURFACE))
                 .accessibility_label(format!("阅读 {}", course.title))
                 .child(
                     h_flex()
@@ -2111,7 +2129,8 @@ impl Desktop {
                         .gap_4()
                         .child(
                             div()
-                                .w(rems(160. / 14.))
+                                .relative()
+                                .w(rems(128. / 14.))
                                 .max_w(relative(0.28))
                                 .aspect_ratio(16. / 9.)
                                 .flex_shrink_0()
@@ -2120,18 +2139,24 @@ impl Desktop {
                                 .overflow_hidden()
                                 .when_some(course.thumbnail.clone(), |cover, path| {
                                     cover.child(img(path).size_full().rounded(RADIUS_SMALL).object_fit(ObjectFit::Cover))
-                                }),
+                                })
+                                .when_some(duration, |cover, duration| cover.child(
+                                    div().absolute().right(px(4.)).bottom(px(4.))
+                                        .px(px(4.)).py(px(1.)).rounded(px(3.))
+                                        .bg(color(INK))
+                                        .text_color(color(CANVAS))
+                                        .text_size(rems(10. / 14.))
+                                        .font_weight(FontWeight::NORMAL)
+                                        .child(duration))),
                         )
                         .child(
-                            self.course_row_text(
-                                course,
-                                true,
-                                div()
-                                    .text_size(TEXT_AUX)
-                                    .font_weight(FontWeight::NORMAL)
-                                    .text_color(color(GRAY))
-                                    .child(self.course_meta(course)),
-                            ),
+                            v_flex().flex_1().min_w_0().gap_2()
+                                .child(div().w_full().text_size(rems(16. / 14.)).whitespace_nowrap().text_ellipsis()
+                                    .font_weight(FontWeight::SEMIBOLD).child(course.title.clone()))
+                                .child(div().text_size(TEXT_BODY).font_weight(FontWeight::NORMAL)
+                                    .text_color(color(GRAY)).child(metadata))
+                                .when(course.incomplete(), |view| view.child(
+                                    h_flex().child(badge(BadgeKind::Warning).child("部分内容待补全")))),
                         )
                         .child(
                             Icon::new(IconName::ChevronRight)
@@ -2143,11 +2168,11 @@ impl Desktop {
                 .on_click(
                     cx.listener(move |this, _, _, cx| this.open_course(selected.clone(), cx)),
                 );
-            section = section
+            list = list
                 .child(row)
                 .children(self.course_read_error(course, index, cx));
         }
-        Some(section)
+        Some(section.child(list))
     }
 }
 

@@ -1,20 +1,50 @@
 //! One start intent continues source preparation through to a readable note.
 use super::*;
 
-/// The workbench's single content column, as in the redesign canvas.
-const WORKBENCH_WIDTH: f32 = 720.;
+/// Hero and preview share this ruler; the lower workbench reflows independently.
+const WORKBENCH_WIDTH: f32 = 760.;
 use crate::{motion, preferences::ServicePurpose, theme::*};
 use anyhow::Context as _;
 use course2md::subtitle::{SubtitleEvidence, SubtitleReadError, SubtitleTrack};
 use gpui_component::{
-    button::ButtonVariants,
     checkbox::Checkbox,
+    switch::Switch,
     menu::{DropdownMenu, PopupMenuItem},
 };
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+
+/// The processing panel uses a single field column with one shared inset.
+fn import_option_field(
+    id: impl Into<ElementId>,
+    _icon: Icon,
+    label: &'static str,
+    _hint: &'static str,
+    content: impl IntoElement,
+) -> Div {
+    if matches!(label, "语音识别" | "AI 服务" | "保存到") {
+        return outlined_field_label(id, label, content);
+    }
+    let section = matches!(label, "文字来源" | "AI 处理" | "同时导出");
+    v_flex().w_full().min_w_0()
+        .gap_2()
+        .child(accessible_text(id, label)
+            .text_size(if section { TEXT_BODY } else { TEXT_AUX })
+            .font_weight(if section { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+            .text_color(color(if section { ACCENT_STRONG } else { MUTED })))
+        .child(content)
+}
+
+fn import_option_switch_row(label: &'static str, hint: &'static str, switch: impl IntoElement) -> Div {
+    h_flex().w_full().min_w_0().min_h(rems(44. / 14.)).items_center().gap_4()
+        .child(v_flex().flex_1().min_w_0().gap_1()
+            .child(div().text_size(rems(16. / 14.)).child(label))
+            .when(!hint.is_empty(), |view| view.child(
+                div().text_size(TEXT_AUX).text_color(color(MUTED)).child(hint))))
+        .child(div().flex_shrink_0().child(switch))
+}
 
 fn help(text: impl Into<SharedString>) -> Div {
     // 与设置/引导页同一辅助信息处理：共享 ⓘ 图标 + 常规字重（共享实现在
@@ -1039,6 +1069,7 @@ impl Desktop {
                             } else {
                                 CARD_LINE
                             }))
+                            .child(Icon::new(icons::link()).size(rems(24. / 14.)).text_color(color(MUTED)))
                             .child(
                                 div().flex_1().min_w_0().child(
                                     text_input(&self.inputs[&Field::Source])
@@ -1053,17 +1084,12 @@ impl Desktop {
                             // The link pill always ends in its action; an unavailable
                             // start stays visible as a disabled button.
                             .child(
-                                control("generation-options")
-                                    .ghost()
-                                    .icon(icons::tune())
+                                nav_action("generation-options", true, cx)
+                                    .child(icons::tune().size(rems(24. / 14.)))
                                     .rounded(RADIUS_PILL)
                                     .w(rems(48. / 14.))
                                     .h(rems(48. / 14.))
-                                    .bg(color(if self.generation_options_open {
-                                        SECONDARY_CONTAINER
-                                    } else {
-                                        SURFACE
-                                    }))
+                                    .bg(color(SECONDARY_CONTAINER))
                                     .accessibility_label("本次生成选项")
                                     .tooltip("本次生成选项")
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1072,7 +1098,7 @@ impl Desktop {
                                         cx.notify();
                                     })),
                             )
-                            .child(self.preview_source_button(cx)),
+                            .child(self.preview_source_button(f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14., cx)),
                     )
                     .when_some(validation, |view, message| view.child(issue(message))),
             );
@@ -1084,14 +1110,16 @@ impl Desktop {
                     .justify_center()
                     .items_center()
                     .flex_wrap()
-                    .gap_1()
+                    .gap_3()
+                    .pt(rems(8. / 14.))
                     .child(
                         accessible_text("import-drop-hint", "或把本地视频拖进窗口")
                             .text_size(TEXT_BODY)
                             .text_color(color(GRAY)),
                     )
                     .child(
-                        quiet("choose-local-video")
+                        outline_pill("choose-local-video")
+                            .icon(icons::file_upload())
                             .label("选择文件")
                             .text_color(color(ACCENT_STRONG))
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1615,7 +1643,7 @@ impl Desktop {
                                     })),
                             )
                             .when(self.can_start_input(cx), |row| {
-                                row.child(self.preview_source_button(cx))
+                                row.child(self.preview_source_button(false, cx))
                             }),
                     )
                     .on_drop(
@@ -2008,7 +2036,7 @@ impl Desktop {
 
     fn import_text_mode_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let selector = SingleChoiceGroup::new("conversion-text-mode", "文字来源方式")
-            .full_width()
+            .segmented()
             .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
             .selected(self.task_options.source_mode.to_string())
             .on_change(cx.listener(|this, value: &SharedString, _, cx| {
@@ -2027,7 +2055,8 @@ impl Desktop {
         let mut view = v_flex()
             .w_full()
             .min_w_0()
-            .child(crate::settings_ui::settings_row(
+            .gap(rems(24. / 14.))
+            .child(import_option_field(
                 "conversion-text-mode-label",
                 icons::subtitles(),
                 "文字来源",
@@ -2045,7 +2074,7 @@ impl Desktop {
                 ),
             ));
         if self.task_options.source_mode != 1 {
-            view = view.child(crate::settings_ui::settings_row(
+            view = view.child(import_option_field(
                 "conversion-speech-label",
                 icons::microphone(),
                 "语音识别",
@@ -2057,7 +2086,7 @@ impl Desktop {
     }
 
     fn import_ai_options(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let mut choices = v_flex().w_full().min_w_0();
+        let mut choices = v_flex().w_full().min_w_0().gap_2();
         for (index, option) in [
             ConversionAiOption::Proofread,
             ConversionAiOption::Summary,
@@ -2066,9 +2095,9 @@ impl Desktop {
         .into_iter()
         .enumerate()
         {
-            choices = choices.child(crate::settings_ui::settings_checkbox_row(
-                Checkbox::new(("import-ai-option", index))
-                    .label(conversion_ai_option_label(option))
+            choices = choices.child(import_option_switch_row(
+                conversion_ai_option_label(option), "",
+                processing_switch(Switch::new(("import-ai-option", index)))
                     .checked(conversion_ai_option_enabled(&self.task_options, option))
                     .disabled(option == ConversionAiOption::Vision && !self.task_options.llm)
                     .on_click(cx.listener(move |this, enabled, _, cx| {
@@ -2084,7 +2113,8 @@ impl Desktop {
         let mut view = v_flex()
             .w_full()
             .min_w_0()
-            .child(crate::settings_ui::settings_row(
+            .gap(rems(24. / 14.))
+            .child(import_option_field(
                 "import-ai-label",
                 icons::subtitles(),
                 "AI 处理",
@@ -2110,13 +2140,13 @@ impl Desktop {
                     ),
                 ));
             }
-            view = view.child(crate::settings_ui::settings_row(
-                "import-ai-service-label",
-                icons::settings(),
-                "AI 服务",
-                "",
-                service,
-            ));
+            view = view.child(if self.selected_task_service(ServicePurpose::Ai).is_some() {
+                import_option_field("import-ai-service-label", icons::settings(), "AI 服务", "", service)
+            } else {
+                v_flex().w_full().gap_2()
+                    .child(div().text_size(TEXT_AUX).text_color(color(MUTED)).child("AI 服务"))
+                    .child(service)
+            });
         }
         view
     }
@@ -2149,7 +2179,12 @@ impl Desktop {
 
     fn import_speech_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let cloud = self.task_options.uses_cloud_provider();
-        let label = if cloud { "识别服务" } else { "本机" };
+        let label = if cloud {
+            "识别服务".to_owned()
+        } else {
+            let (_, model, _) = self.import_model_request();
+            format!("本机 · {}", crate::settings_ui::model_diagnostics::model_display_name(&model))
+        };
         let engine = if cloud {
             String::new()
         } else {
@@ -2173,6 +2208,9 @@ impl Desktop {
             .map(|(index, (_, label))| (index, *label))
             .collect();
         let selector = control("import-speech-location")
+            .h(rems(56. / 14.))
+            .font_weight(FontWeight::NORMAL).text_size(rems(16. / 14.))
+            .rounded(RADIUS_SMALL)
             .w_full()
             .min_w_0()
             .accessibility_label("语音识别方式")
@@ -2443,7 +2481,9 @@ impl Desktop {
                 .child(
                     outline_pill("import-new-folder")
                         .icon(icons::create_new_folder())
-                        .label("新建文件夹")
+                        .w(rems(48. / 14.)).h(rems(48. / 14.)).px_0()
+                        .accessibility_label("新建文件夹")
+                        .tooltip("新建文件夹")
                         .on_click(
                             cx.listener(|this, _, window, cx| this.begin_folder(None, window, cx)),
                         ),
@@ -2451,7 +2491,7 @@ impl Desktop {
         );
         v_flex().w_full().min_w_0()
             .when(self.source_preview.is_some(), |view| view.child(
-                crate::settings_ui::settings_row(
+                import_option_field(
                     "import-title-label", icons::subtitles(), "笔记名称", "",
                     crate::focus_scroll::RevealFocus::new(
                         ("import-title-focus", self.validation_attempt),
@@ -2460,7 +2500,7 @@ impl Desktop {
                     ),
                 ),
             ))
-            .child(crate::settings_ui::settings_row(
+            .child(import_option_field(
             "import-destination-label",
             icons::folder_open(),
             "保存到",
@@ -2478,6 +2518,7 @@ impl Desktop {
                     self.task_options.formats[index],
                     cx,
                 )
+                .when(self.task_options.formats[index], |button| button.icon(icons::check()))
                 .label(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.task_options.formats[index] = !this.task_options.formats[index];
@@ -2486,25 +2527,25 @@ impl Desktop {
                 })),
             );
         }
-        v_flex().w_full().min_w_0().child(crate::settings_ui::settings_row(
+        v_flex().w_full().min_w_0().child(import_option_field(
             "import-exports-label",
             icons::download(),
             "同时导出",
             "",
             choices,
-        )).when(self.online, |view| view.child(crate::settings_ui::settings_row(
-            "import-keep-video-label", icons::movie(), "原视频", "",
-            h_flex().w_full().min_w_0().child(
-                Checkbox::new("import-keep-video")
-                    .label("保留视频供离线播放")
-                    .checked(self.task_options.keep_video)
-                    .on_click(cx.listener(|this, value, _, cx| {
-                        this.task_options.keep_video = *value;
-                        this.save_current_draft(cx);
-                        cx.notify();
-                    })),
-            ),
-        )))
+        )).when(self.online, |view| view.child(
+            div().w_full().min_w_0().pt(rems(24. / 14.))
+                .child(import_option_switch_row(
+                    "保留原视频", "供离线播放，会占用更多磁盘空间",
+                    processing_switch(Switch::new("import-keep-video"))
+                        .checked(self.task_options.keep_video)
+                        .on_click(cx.listener(|this, value, _, cx| {
+                            this.task_options.keep_video = *value;
+                            this.save_current_draft(cx);
+                            cx.notify();
+                        })),
+                )),
+        ))
     }
 
     fn existing_source_note(&self) -> Option<Course> {
@@ -2550,13 +2591,15 @@ impl Desktop {
             })
     }
 
-    fn preview_source_button(&self, cx: &mut Context<Self>) -> Div {
+    fn preview_source_button(&self, compact: bool, cx: &mut Context<Self>) -> Div {
         let disabled = self.preview_cancel.is_some() || self.value(Field::Source, cx).is_empty();
         h_flex().items_center().child(
-            theme::disabled_when(outline_pill("preview-source"), disabled, cx)
+            theme::disabled_when(primary_pill("preview-source"), disabled, cx)
                 .h(rems(48. / 14.))
-                .icon(icons::search())
-                .label("预览")
+                .icon(icons::arrow_forward())
+                .when(!compact, |button| button.label("预览视频"))
+                .when(compact, |button| button.w(rems(48. / 14.)).px_0())
+                .accessibility_label("预览视频")
                 .track_focus(&self.import_submit_focus)
                 .disabled(disabled)
                 .on_click(cx.listener(|this, _, window, cx| this.inspect_source(window, cx))),
@@ -2665,35 +2708,20 @@ impl Desktop {
             .current_input_task(cx)
             .filter(|task| task.state == workspace::TaskState::Cancelled)
             .map(|task| (task.id.clone(), "任务已取消".to_owned()));
-        // Only the empty source state is a centered hero; a read source and its
-        // decisions return to the page's leading ruler.
-        // Keep the title/input axis stable when preview data arrives.
-        let input = v_flex()
-            .w_full()
-            .min_w_0()
-            .gap_4()
+        let compact = f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14.;
+        let input = v_flex().w_full().min_w_0().gap_4()
             .when(!self.online, |input| input.child(self.source_kind_tabs(cx)))
             .child(self.box_source_input(window, cx));
         let mut view = v_flex()
-            .pt(px(24.))
-            .gap(px(24.))
-            .w_full()
-            .min_w_0()
-            .max_w(rems(WORKBENCH_WIDTH / 14.))
-            .mx_auto()
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_center()
-                    .pt(px(32.))
-                    .child(
-                        accessible_text("workbench-title", "把视频整理成笔记")
-                            .role(Role::Heading)
-                            .text_size(rems(36. / 14.))
-                            .line_height(rems(44. / 14.))
-                            .font_weight(FontWeight::MEDIUM),
-                    ),
-            )
+            .gap(rems(24. / 14.))
+            .w_full().min_w_0().max_w(rems(WORKBENCH_WIDTH / 14.)).mx_auto()
+            .child(v_flex().w_full().items_center().gap(rems(8. / 14.))
+                .child(accessible_text("workbench-title", "把视频整理成笔记")
+                    .role(Role::Heading).text_size(rems(if compact { 28. / 14. } else { 36. / 14. }))
+                    .line_height(rems(if compact { 36. / 14. } else { 44. / 14. })).font_weight(FontWeight::SEMIBOLD))
+                .child(div().text_center().text_size(rems(if compact { 14. / 14. } else { 16. / 14. }))
+                    .line_height(rems(24. / 14.)).text_color(color(MUTED))
+                    .child("粘贴链接或拖入本地视频，自动生成带截图的 Markdown 笔记")))
             .child(input);
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
@@ -2746,79 +2774,53 @@ impl Desktop {
                         .child(self.text_source_view(window, cx)),
                 );
             }
-            if self.preview_cancel.is_none() && self.source_candidates.is_empty() {
-                {
-                    view = view.child(quiet("generation-options-after-preview")
-                        .self_start().ml(-crate::theme::QUIET_INSET).icon(icons::tune()).label(if self.generation_options_open { "收起高级选项" } else { "高级选项 · 文字来源、AI 与导出" })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.generation_options_open = !this.generation_options_open;
-                            cx.notify();
-                        })));
-                }
-                let options = v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .rounded(RADIUS_HERO)
-                    .bg(color(SURFACE))
-                    .border_1()
-                    .border_color(color(CARD_LINE))
-                    .child(self.import_text_mode_options(window, cx))
-                    .child(div().mx(SETTING_ITEM_INSET).h(px(1.)).bg(color(LINE)))
-                    .child(self.import_ai_options(window, cx))
-                    .child(div().mx(SETTING_ITEM_INSET).h(px(1.)).bg(color(LINE)))
-                    .child(self.import_destination(cx))
-                    .child(self.import_exports(window, cx))
-                    .child(div().mx(SETTING_ITEM_INSET).h(px(1.)).bg(color(LINE)))
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .p(SETTING_ITEM_INSET)
-                            .gap_3()
-                            .flex_wrap()
-                            .items_center()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(TEXT_AUX)
-                                    .text_color(color(MUTED))
-                                    .child("用于本次转换。长期默认值在设置里修改。"),
-                            )
-                            .child(
-                                quiet("reset-task-overrides")
-                                    .label("恢复 AI 默认")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.reset_task_ai_overrides(cx)
-                                    })),
-                            )
-                            .child(quiet("close-generation-options").label("完成").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.generation_options_open = false;
-                                    cx.notify();
-                                }),
-                            )),
-                    );
-                view = view.child(disclosure(
-                    "generation-options-body",
-                    self.generation_options_open,
-                    options,
-                    window,
-                    cx,
-                ));
+        }
+        let scale = f32::from(window.rem_size()) / 14.;
+        let column = crate::views::shell_content_width(Page::New, window);
+        let wide = column >= 960. * scale;
+        let show_options = self.generation_options_open
+            && self.preview_cancel.is_none() && self.source_candidates.is_empty()
+            && self.current_input_task(cx).is_none_or(|task| task.state.finished());
+        let recent = self.recent_notes_section(1, cx);
+        let options = if show_options {
+            Some(v_flex().w_full().min_w_0().p(rems(24. / 14.))
+                .gap(rems(24. / 14.)).rounded(RADIUS_HERO).bg(color(SURFACE))
+                .child(v_flex().w_full().gap(rems(4. / 14.))
+                    .child(h_flex().w_full().items_center()
+                        .child(div().flex_1().text_size(rems(24. / 14.))
+                            .line_height(rems(32. / 14.)).font_weight(FontWeight::MEDIUM).child("处理选项"))
+                        .child(quiet("close-generation-options").icon(IconName::Close)
+                            .w(CONTROL_HEIGHT).px_0().accessibility_label("收起处理选项")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.generation_options_open = false; cx.notify();
+                            }))))
+                    .child(div().text_size(TEXT_AUX).text_color(color(MUTED))
+                        .child("只对接下来添加的视频生效，长期默认值在设置里改")))
+                .child(self.import_text_mode_options(window, cx))
+                .child(div().h(px(1.)).bg(color(LINE)))
+                .child(self.import_ai_options(window, cx))
+                .child(div().h(px(1.)).bg(color(LINE)))
+                .child(self.import_destination(cx))
+                .child(self.import_exports(window, cx))
+                .child(h_flex().w_full().justify_end().pt(rems(8. / 14.))
+                    .child(quiet("reset-task-overrides").icon(icons::refresh()).label("恢复 AI 默认")
+                        .on_click(cx.listener(|this, _, _, cx| this.reset_task_ai_overrides(cx))))))
+        } else { None };
+        let mut lower = div().flex().w_full().min_w_0().gap(rems(24. / 14.)).items_start();
+        if wide {
+            if let Some(recent) = recent {
+                lower = lower.child(div().flex_1().min_w_0().child(recent));
             }
-        }
-
-        let column = (f32::from(window.bounds().size.width) - 48.)
-            .min(WORKBENCH_WIDTH * f32::from(window.rem_size()) / 14.);
-        let columns = if column >= 520. * f32::from(window.rem_size()) / 14. {
-            3
+            if let Some(options) = options {
+                lower = lower.child(div().w(rems(if column < 1100. * scale { 360. / 14. } else { 400. / 14. })).flex_shrink_0().child(options));
+            }
         } else {
-            2
-        };
-        if let Some(recent) = self.recent_notes_section(columns, cx) {
-            view = view.child(recent);
+            lower = lower.flex_col();
+            if let Some(options) = options { lower = lower.child(options); }
+            if let Some(recent) = recent { lower = lower.child(recent); }
         }
+        let mut view = v_flex().w_full().min_w_0().pt(rems(if compact { 40. / 14. } else { 56. / 14. }))
+            .gap(rems(if compact { 32. / 14. } else { 40. / 14. })).child(view).child(lower);
         if let Some(error) = &self.workspace_error {
             view = view.child(motion::enter(
                 text_id("workspace-error", error),
