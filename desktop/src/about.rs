@@ -1,6 +1,5 @@
 //! Product identity and build provenance, kept separate from operational settings.
 use super::*;
-use crate::settings_ui::settings_detail_group;
 use crate::theme::*;
 
 impl Desktop {
@@ -11,100 +10,25 @@ impl Desktop {
         } else {
             format!("{} · 构建 {commit}", env!("CARGO_PKG_VERSION"))
         };
-        v_flex()
-            .w_full()
-            .min_w_0()
-            .gap_4()
-            .text_color(color(INK))
-            .child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .items_center()
-                    .gap_4()
-                    .child(img("images/course2md.png").size(rems(64. / 14.)).flex_shrink_0())
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .gap_3()
-                            .child(
-                                v_flex()
-                                    .min_w_0()
-                                    .gap_1()
-                                    .child(
-                                        accessible_text("about-name", "course2md")
-                                            .role(Role::Heading)
-                                            .text_size(TEXT_TITLE)
-                                            .font_weight(FontWeight::SEMIBOLD),
-                                    )
-                                    .child(
-                                        accessible_text("about-build", version)
-                                            .min_w_0()
-                                            .whitespace_normal()
-                                            .text_size(TEXT_AUX)
-                                            .text_color(color(MUTED)),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    // 按钮自带的水平内边距（px_2p5）外移，图标与上方文字左缘对齐；
-                                    // 悬停底色仍完整包住按钮
-                                    .ml(-crate::theme::QUIET_INSET)
-                                    .gap_2()
-                                    .flex_wrap()
-                                    .child(
-                                        quiet("about-project")
-                                            .icon(icons::external_link())
-                                            .label("项目主页")
-                                            .on_click(|_, _, cx| {
-                                                cx.open_url("https://github.com/mizorewww/course2md");
-                                            }),
-                                    )
-                                    .child(
-                                        quiet("about-issue")
-                                            .icon(icons::edit())
-                                            .label("发送反馈")
-                                            .on_click(|_, _, cx| {
-                                                cx.open_url("https://github.com/mizorewww/course2md/issues");
-                                            }),
-                                    ),
-                            ),
-                    ),
-            )
-            .child(
-                settings_detail_group("about-license-title", icons::code(), "开源许可")
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .ml(-crate::theme::QUIET_INSET)
-                            .gap_2()
-                            .flex_wrap()
-                            .child(
-                                quiet("about-license")
-                                    .icon(icons::external_link())
-                                    .label("course2md · MIT")
-                                    .on_click(|_, _, cx| {
-                                        cx.open_url(
-                                            "https://github.com/mizorewww/course2md/blob/main/LICENSE",
-                                        );
-                                    }),
-                            )
-                            .child(
-                                quiet("about-icons-license")
-                                    .icon(icons::external_link())
-                                    .label("Material Icons · Apache 2.0")
-                                    .on_click(|_, _, cx| {
-                                        cx.open_url(
-                                            "https://github.com/google/material-design-icons/blob/master/LICENSE",
-                                        );
-                                    }),
-                            ),
-                    ),
-            )
+        v_flex().w_full().min_w_0().gap(px(20.)).text_color(color(INK))
+            .child(h_flex().w_full().min_w_0().items_center().gap(px(16.))
+                .child(img("images/course2md.png").size(px(56.)).flex_shrink_0())
+                .child(v_flex().flex_1().min_w_0().gap_1()
+                    .child(accessible_text("about-name", "course2md").role(Role::Heading).text_size(TEXT_TITLE).font_weight(FontWeight::SEMIBOLD))
+                    .child(accessible_text("about-build", version).text_size(TEXT_AUX).text_color(color(MUTED))))
+                .child(h_flex().gap_2().items_center().flex_wrap()
+                    .child(quiet("about-project").icon(icons::external_link()).label("项目主页")
+                        .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md")))
+                    .child(quiet("about-issue").icon(icons::edit()).label("发送反馈")
+                        .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/issues")))))
+            .child(div().w_full().h(px(1.)).bg(color(HAIRLINE)))
+            .child(h_flex().w_full().min_w_0().items_center().gap_4().flex_wrap()
+                .child(accessible_text("about-license-title", "开源许可").flex_1())
+                .child(h_flex().gap_2().flex_wrap()
+                    .child(outline_pill("about-license").label("course2md · MIT")
+                        .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/blob/main/LICENSE")))
+                    .child(outline_pill("about-icons-license").label("Material Icons · Apache 2.0")
+                        .on_click(|_, _, cx| cx.open_url("https://github.com/google/material-design-icons/blob/master/LICENSE")))))
             .into_any_element()
     }
 }

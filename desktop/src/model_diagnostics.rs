@@ -9,6 +9,17 @@ use course2md::{
 use gpui_component::button::*;
 use std::path::Path;
 
+fn model_status_row(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    value: impl IntoElement,
+) -> Div {
+    settings_status_row(id, label, value)
+        .min_h(px(56.))
+        .border_b_1()
+        .border_color(color(HAIRLINE))
+}
+
 #[derive(Clone)]
 struct Request {
     provider: AsrProvider,
@@ -113,7 +124,10 @@ enum DeviceIssue {
     NpuDevice,
     NpuRuntime,
 }
-fn device_issue(provider: AsrProvider, environment: &crate::backend::Environment) -> Option<DeviceIssue> {
+fn device_issue(
+    provider: AsrProvider,
+    environment: &crate::backend::Environment,
+) -> Option<DeviceIssue> {
     if !environment.engine {
         return Some(DeviceIssue::Engine);
     }
@@ -226,12 +240,9 @@ impl Desktop {
         // inspect() 会对数 GB 的模型文件做同步 SHA-256，必须离开 executor；
         // 见 crate::spawn_blocking_io 的说明
         let work = crate::spawn_blocking_io(move || {
-            let result = course2md::models::status::inspect(
-                request.provider,
-                &request.model,
-                &request.root,
-            )
-            .map_err(|error| format!("{error:#}"));
+            let result =
+                course2md::models::status::inspect(request.provider, &request.model, &request.root)
+                    .map_err(|error| format!("{error:#}"));
             let directories = result
                 .as_ref()
                 .ok()
@@ -327,17 +338,12 @@ impl Desktop {
             if success {
                 format!("{} 已准备完成", request.model)
             } else if cancelled {
-                format!(
-                    "{} 的准备已停止",
-                    request.model
-                )
+                format!("{} 的准备已停止", request.model)
             } else {
                 format!(
                     "{} 的准备未完成：{}",
                     request.model,
-                    self.task_error
-                        .as_deref()
-                        .unwrap_or("准备失败")
+                    self.task_error.as_deref().unwrap_or("准备失败")
                 )
             },
             !success && !cancelled,
@@ -356,9 +362,15 @@ impl Desktop {
         let environment = self.environment.as_ref()?;
         Some(match device_issue(provider, environment)? {
             DeviceIssue::Engine => "转换程序无法运行，请重新安装应用".into(),
-            DeviceIssue::AppleRuntime if !cfg!(all(target_os = "macos", target_arch = "aarch64")) => "当前系统不支持 Apple 原生识别，请改用其他方式".into(),
+            DeviceIssue::AppleRuntime
+                if !cfg!(all(target_os = "macos", target_arch = "aarch64")) =>
+            {
+                "当前系统不支持 Apple 原生识别，请改用其他方式".into()
+            }
             DeviceIssue::AppleRuntime => "缺少 Apple 识别组件，请重新安装应用或改用其他方式".into(),
-            DeviceIssue::LlamaMissing if provider == AsrProvider::Gpu => "未检测到 llama-server，安装后重新检查".into(),
+            DeviceIssue::LlamaMissing if provider == AsrProvider::Gpu => {
+                "未检测到 llama-server，安装后重新检查".into()
+            }
             DeviceIssue::LlamaMissing => "未检测到 llama-server，安装后重新检查".into(),
             DeviceIssue::GpuAbsent => "未检测到可用 GPU，可改用 CPU".into(),
             DeviceIssue::NpuDevice => "未检测到 Intel NPU，请改用其他方式".into(),
@@ -379,14 +391,14 @@ impl Desktop {
         };
         if reinstall {
             return view.child(
-                    control(SharedString::from(format!("model-reinstall-{key}")))
-                        .icon(icons::download())
-                        .label("下载完整应用")
-                        .self_start()
-                        .on_click(|_, _, cx| {
-                            cx.open_url("https://github.com/mizorewww/course2md/releases")
-                        }),
-                );
+                control(SharedString::from(format!("model-reinstall-{key}")))
+                    .icon(icons::download())
+                    .label("下载完整应用")
+                    .self_start()
+                    .on_click(|_, _, cx| {
+                        cx.open_url("https://github.com/mizorewww/course2md/releases")
+                    }),
+            );
         }
         if device_issue(provider, environment) == Some(DeviceIssue::LlamaMissing) {
             view = view.child(
@@ -402,19 +414,34 @@ impl Desktop {
             );
             if cfg!(target_os = "macos") {
                 view = view
-                    .child(settings_value(
-                        SharedString::from(format!("model-llama-install-command-{key}")),
-                        "需要 Homebrew；安装后重新打开应用",
-                    ).text_sm())
-                    .child(control(SharedString::from(format!("model-copy-llama-install-{key}")))
-                        .icon(icons::content_copy()).label("复制安装命令")
+                    .child(
+                        settings_value(
+                            SharedString::from(format!("model-llama-install-command-{key}")),
+                            "需要 Homebrew；安装后重新打开应用",
+                        )
+                        .text_sm(),
+                    )
+                    .child(
+                        control(SharedString::from(format!(
+                            "model-copy-llama-install-{key}"
+                        )))
+                        .icon(icons::content_copy())
+                        .label("复制安装命令")
                         .self_start()
-                        .on_click(|_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string("brew install llama.cpp".into()))));
+                        .on_click(|_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                "brew install llama.cpp".into(),
+                            ))
+                        }),
+                    );
             } else {
-                view = view.child(settings_value(
-                    SharedString::from(format!("model-llama-path-help-{key}")),
-                    "安装 llama-server 并加入 PATH，然后重新打开应用",
-                ).text_sm());
+                view = view.child(
+                    settings_value(
+                        SharedString::from(format!("model-llama-path-help-{key}")),
+                        "安装 llama-server 并加入 PATH，然后重新打开应用",
+                    )
+                    .text_sm(),
+                );
             }
         }
         if device_issue(provider, environment) == Some(DeviceIssue::NpuRuntime) {
@@ -496,7 +523,7 @@ impl Desktop {
         let mut cache_details = None;
         let mut view = v_flex().w_full().min_w_0().gap_3();
         if provider_row {
-            view = view.child(settings_status_row(
+            view = view.child(model_status_row(
                 SharedString::from(format!("model-provider-label-{key}")),
                 "本机引擎",
                 settings_value(
@@ -506,7 +533,7 @@ impl Desktop {
                 .w_auto(),
             ));
         }
-        view = view.child(settings_status_row(
+        view = view.child(model_status_row(
             SharedString::from(format!("model-name-label-{key}")),
             "模型",
             settings_value(
@@ -533,7 +560,7 @@ impl Desktop {
             .and_then(Entry::result)
             .and_then(|result| result.as_ref().ok());
         if checking {
-            view = view.child(settings_status_row(
+            view = view.child(model_status_row(
                 SharedString::from(format!("model-checking-label-{key}")),
                 "模型状态",
                 h_flex()
@@ -573,21 +600,21 @@ impl Desktop {
                 .as_ref()
                 .is_some_and(|request| request.key() == key);
             let (kind, label, description) = if being_prepared {
-(BadgeKind::Progress, "准备中", None)
+                (BadgeKind::Progress, "准备中", None)
             } else {
                 match status.state {
-                CacheState::Missing => (BadgeKind::Neutral, "待下载", None),
-                CacheState::Partial => (BadgeKind::Warning, "待准备", None),
-                CacheState::Cached => (BadgeKind::Success, "已下载", None),
-                CacheState::Loaded => (BadgeKind::Success, "已验证可加载", None),
-                CacheState::Unsupported => (
-                    BadgeKind::Warning,
-                    "不支持",
-                    Some("请选择这种识别方式支持的模型"),
-                ),
+                    CacheState::Missing => (BadgeKind::Neutral, "待下载", None),
+                    CacheState::Partial => (BadgeKind::Warning, "待准备", None),
+                    CacheState::Cached => (BadgeKind::Success, "已下载", None),
+                    CacheState::Loaded => (BadgeKind::Success, "已验证可加载", None),
+                    CacheState::Unsupported => (
+                        BadgeKind::Warning,
+                        "不支持",
+                        Some("请选择这种识别方式支持的模型"),
+                    ),
                 }
             };
-            view = view.child(settings_status_row(
+            view = view.child(model_status_row(
                 SharedString::from(format!("model-state-label-{key}")),
                 "模型状态",
                 badge(kind).child(label),
@@ -708,7 +735,10 @@ impl Desktop {
                                 row.child(
                                     settings_value(
                                         SharedString::from(format!("model-cached-size-{key}")),
-                                        format!("缓存占用 {}", crate::activity::bytes(status.bytes)),
+                                        format!(
+                                            "缓存占用 {}",
+                                            crate::activity::bytes(status.bytes)
+                                        ),
                                     )
                                     .text_size(TEXT_AUX)
                                     .text_color(color(MUTED)),
@@ -762,15 +792,15 @@ impl Desktop {
                 .as_ref()
                 .is_some_and(|active| active.key() == key);
         let request_for_check = request.clone();
-        let mut actions = h_flex().w_full().min_w_0().gap_2().flex_wrap().child(
-            control(SharedString::from(format!("recheck-model-{key}")))
-                .icon(icons::refresh())
-                .label("重新检查模型")
-                .disabled(checking || active)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.check_model_request(request_for_check.clone(), true, cx)
-                })),
-        );
+        let recheck = outline_pill(SharedString::from(format!("recheck-model-{key}")))
+            .icon(icons::refresh())
+            .label("重新检查模型")
+            .disabled(checking || active)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.check_model_request(request_for_check.clone(), true, cx)
+            }));
+        let mut actions = h_flex().w_full().min_w_0().gap_2().flex_wrap();
+
         let prepare_allowed = self.environment.is_some()
             && device_issue.is_none()
             && status.is_some_and(|status| status.can_prepare);
@@ -863,7 +893,7 @@ impl Desktop {
                 );
             }
         }
-        (actions, extras)
+        (actions.child(recheck), extras)
     }
 
     pub(super) fn model_diagnostics_panel(
@@ -894,15 +924,14 @@ impl Desktop {
             && active.key() != request.key()
         {
             view = view.child(
-                settings_detail_group("other-active-model", icons::storage(), "正在准备的模型").child(
-                    self.model_readiness_panel(
+                settings_detail_group("other-active-model", icons::storage(), "正在准备的模型")
+                    .child(self.model_readiness_panel(
                         active.provider,
                         Some(&active.model),
                         &active.root,
                         window,
                         cx,
-                    ),
-                ),
+                    )),
             );
         }
         if let Some((message, error)) = &self.settings_ui.model_diagnostics.result {
@@ -934,7 +963,12 @@ impl Desktop {
             );
             if self.settings_ui.model_diagnostics.details {
                 view = view.child(
-                    settings_detail_group("model-preparation-log-heading", icons::task(), "准备日志").child(
+                    settings_detail_group(
+                        "model-preparation-log-heading",
+                        icons::task(),
+                        "准备日志",
+                    )
+                    .child(
                         settings_value(
                             "model-preparation-log",
                             self.logs.iter().cloned().collect::<Vec<_>>().join("\n"),
@@ -951,7 +985,8 @@ impl Desktop {
         let Some(environment) = &self.environment else {
             return v_flex();
         };
-        let mut hardware = settings_detail_group("model-hardware-heading", icons::computer(), "设备与运行时");
+        let mut hardware =
+            settings_detail_group("model-hardware-heading", icons::computer(), "设备与运行时");
         for (id, label, value) in [
             ("cpu-device", "CPU 架构", std::env::consts::ARCH),
             (
@@ -1052,7 +1087,8 @@ impl Desktop {
                                 move |this, _, _, cx| {
                                     let mut value = this.generation_edit_base();
                                     value.select_provider(Some(provider));
-                                    value.options.asr_model = Some(course2md::config::DEFAULT_ASR_MODEL.into());
+                                    value.options.asr_model =
+                                        Some(course2md::config::DEFAULT_ASR_MODEL.into());
                                     if this.commit_generation(value, cx) {
                                         this.refresh_model_diagnostics(cx);
                                     }
@@ -1087,10 +1123,7 @@ impl Desktop {
             return (true, "使用语音服务识别".into());
         }
         if self.model_device_issue(request.provider).is_some() {
-            return (
-                false,
-                "所选识别方式暂不可用，可在模型管理中查看原因".into(),
-            );
+            return (false, "所选识别方式暂不可用，可在模型管理中查看原因".into());
         }
         let entry = self
             .settings_ui
@@ -1100,14 +1133,8 @@ impl Desktop {
         if entry.is_none_or(Entry::checking) {
             return (true, "正在检查识别模型…".into());
         }
-        if entry
-            .and_then(Entry::result)
-            .is_some_and(Result::is_err)
-        {
-            return (
-                false,
-                "模型检查未完成，可在模型管理中查看原因并重试".into(),
-            );
+        if entry.and_then(Entry::result).is_some_and(Result::is_err) {
+            return (false, "模型检查未完成，可在模型管理中查看原因并重试".into());
         }
         match entry
             .and_then(Entry::result)

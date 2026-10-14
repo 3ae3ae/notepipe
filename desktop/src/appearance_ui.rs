@@ -70,7 +70,7 @@ fn sample(palette: PaletteId) -> Div {
     // These are the selected palette's actual preview colors, not application chrome.
     div()
         .w_full()
-        .h(px(96.))
+        .h(px(120.))
         .flex_shrink_0()
         .rounded_t(RADIUS_CARD)
         .overflow_hidden()
@@ -102,8 +102,8 @@ fn sample(palette: PaletteId) -> Div {
                 .items_start()
                 .child(
                     div()
-                        .w(px(30.))
-                        .h(px(44.))
+                        .w(px(36.))
+                        .h(px(80.))
                         .rounded(px(5.))
                         .bg(rgb(p.inset))
                         .child(
@@ -118,7 +118,7 @@ fn sample(palette: PaletteId) -> Div {
                 .child(
                     v_flex()
                         .flex_1()
-                        .h(px(44.))
+                        .h(px(80.))
                         .p(px(6.))
                         .gap(px(4.))
                         .rounded(px(6.))
@@ -375,14 +375,22 @@ impl Desktop {
                         label,
                     )),
             )
-            .child(div().rounded(RADIUS_SMALL).overflow_hidden().child(sample(palette)))
+            .child(
+                div()
+                    .rounded(RADIUS_SMALL)
+                    .overflow_hidden()
+                    .child(sample(palette)),
+            )
             .child(outlined_field_label(
                 ("palette-preset-field", usize::from(dark)),
                 if dark { "深色配色" } else { "浅色配色" },
                 control(("palette-preset", usize::from(dark)))
-                    .w_full().h(px(56.)).rounded(RADIUS_SMALL)
+                    .w_full()
+                    .h(px(56.))
+                    .rounded(RADIUS_SMALL)
                     .accessibility_label(format!("{label}：{}，选择主题", palette.name()))
-                    .label(palette.name()).child(div().flex_1())
+                    .label(palette.name())
+                    .child(div().flex_1())
                     .child(icons::chevron_down().size(px(18.)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_palette_picker(dark, window, cx);
@@ -439,7 +447,13 @@ impl Desktop {
             .gap(px(28.))
             .child(
                 crate::settings_ui::SettingsGroup::new("appearance-theme", "主题")
-                    .child(settings_stacked_row("appearance-mode-row", icons::palette(), "外观模式", "", modes))
+                    .child(settings_stacked_row(
+                        "appearance-mode-row",
+                        icons::palette(),
+                        "外观模式",
+                        "",
+                        modes,
+                    ))
                     .child(
                         crate::settings_ui::setting_surface().gap(px(12.)).child(
                             div()

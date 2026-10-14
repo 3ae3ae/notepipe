@@ -1,9 +1,9 @@
 //! Four independently saved setting groups and a shared service editor.
 use super::*;
-#[path = "model_diagnostics.rs"]
-pub(crate) mod model_diagnostics;
 #[path = "generation_settings.rs"]
 mod generation_settings;
+#[path = "model_diagnostics.rs"]
+pub(crate) mod model_diagnostics;
 #[path = "service_editor.rs"]
 mod service_editor;
 use crate::credentials::Secret;
@@ -16,7 +16,6 @@ use crate::theme::*;
 use anyhow::{Context as _, anyhow};
 use gpui_component::{
     button::*,
-    checkbox::Checkbox,
     input::{InputContentType, Textarea, TextareaState},
     menu::{DropdownMenu, PopupMenuItem},
     switch::Switch,
@@ -198,7 +197,11 @@ pub(super) fn field_label(
 }
 
 fn setting_label(id: impl Into<ElementId>, _icon: Icon, value: impl Into<SharedString>) -> Div {
-    div().child(text(id, value).text_size(TEXT_BODY).text_color(color(MUTED)))
+    div().child(
+        text(id, value)
+            .text_size(TEXT_BODY)
+            .text_color(color(MUTED)),
+    )
 }
 
 /// A complete preference owns its label, value, help and trailing actions.
@@ -267,49 +270,103 @@ fn settings_form_row(
                 .min_w_0()
                 .min_h(CONTROL_HEIGHT)
                 .gap_2()
-                .child(h_flex().w_full().min_w_0().min_h(CONTROL_HEIGHT)
-                    .items_center().justify_end().child(control))
-                .when(!hint.is_empty(), |column| column.child(
-                    text(SharedString::from(format!("{id:?}-hint")), hint)
-                        .text_size(TEXT_AUX).text_color(color(MUTED)),
-                )),
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .min_h(CONTROL_HEIGHT)
+                        .items_center()
+                        .justify_end()
+                        .child(control),
+                )
+                .when(!hint.is_empty(), |column| {
+                    column.child(
+                        text(SharedString::from(format!("{id:?}-hint")), hint)
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED)),
+                    )
+                }),
         );
     setting_surface().child(row)
 }
 
 /// Top-label controls share the reference form's 520 px reading width.
 pub(super) fn settings_stacked_row(
-    id: impl Into<ElementId>, _icon: Icon, label: &'static str,
-    hint: &'static str, control: impl IntoElement,
+    id: impl Into<ElementId>,
+    _icon: Icon,
+    label: &'static str,
+    hint: &'static str,
+    control: impl IntoElement,
 ) -> Div {
     let id = id.into();
-    setting_surface().child(v_flex().w_full().max_w(px(520.)).min_w_0().gap_3()
-        .child(text(id.clone(), label).text_size(TEXT_BODY))
-        .child(control)
-        .when(!hint.is_empty(), |view| view.child(text(
-            SharedString::from(format!("{id:?}-hint")), hint
-        ).text_size(TEXT_AUX).text_color(color(MUTED)).px(px(12.)))))
+    setting_surface().child(
+        v_flex()
+            .w_full()
+            .max_w(px(520.))
+            .min_w_0()
+            .gap_3()
+            .child(text(id.clone(), label).text_size(TEXT_BODY))
+            .child(control)
+            .when(!hint.is_empty(), |view| {
+                view.child(
+                    text(SharedString::from(format!("{id:?}-hint")), hint)
+                        .text_size(TEXT_AUX)
+                        .text_color(color(MUTED))
+                        .px(px(12.)),
+                )
+            }),
+    )
 }
 
 pub(super) fn settings_outlined_row(
-    id: impl Into<ElementId>, _icon: Icon, label: &'static str,
-    hint: &'static str, control: impl IntoElement,
+    id: impl Into<ElementId>,
+    _icon: Icon,
+    label: &'static str,
+    hint: &'static str,
+    control: impl IntoElement,
 ) -> Div {
     let id = id.into();
-    setting_surface().child(v_flex().w_full().max_w(px(520.)).min_w_0().gap_2()
-        .child(outlined_field_label(id.clone(), label, control))
-        .when(!hint.is_empty(), |view| view.child(text(
-            SharedString::from(format!("{id:?}-hint")), hint
-        ).text_size(TEXT_AUX).text_color(color(MUTED)))))
+    setting_surface().child(
+        v_flex()
+            .w_full()
+            .max_w(px(520.))
+            .min_w_0()
+            .gap_2()
+            .child(outlined_field_label(id.clone(), label, control))
+            .when(!hint.is_empty(), |view| {
+                view.child(
+                    text(SharedString::from(format!("{id:?}-hint")), hint)
+                        .text_size(TEXT_AUX)
+                        .text_color(color(MUTED)),
+                )
+            }),
+    )
 }
 
 pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, control: Switch) -> Div {
-    h_flex().w_full().min_w_0().min_h(px(56.)).items_center().gap_4()
-        .child(v_flex().flex_1().min_w_0().gap_1()
-            .child(text(SharedString::from(format!("switch-label-{label}")), label).text_size(TEXT_BODY))
-            .when(!hint.is_empty(), |view| view.child(text(
-                SharedString::from(format!("switch-hint-{label}")), hint
-            ).text_size(TEXT_AUX).text_color(color(MUTED)))))
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .min_h(px(56.))
+        .items_center()
+        .gap_4()
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(
+                    text(SharedString::from(format!("switch-label-{label}")), label)
+                        .text_size(TEXT_BODY),
+                )
+                .when(!hint.is_empty(), |view| {
+                    view.child(
+                        text(SharedString::from(format!("switch-hint-{label}")), hint)
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED)),
+                    )
+                }),
+        )
         .child(coral_switch(control))
 }
 
@@ -336,16 +393,6 @@ pub(super) fn settings_status_row(
         )
 }
 
-/// Checkbox groups share the label row's control centerline without extra padding.
-pub(super) fn settings_checkbox_row(checkbox: impl IntoElement) -> Div {
-    h_flex()
-        .w_full()
-        .min_w_0()
-        .min_h(CONTROL_HEIGHT)
-        .items_center()
-        .child(checkbox)
-}
-
 /// One setting's content box inside a settings card; the card owns the surface.
 pub(super) fn setting_surface() -> Div {
     v_flex()
@@ -357,17 +404,20 @@ pub(super) fn setting_surface() -> Div {
         .gap_2()
 }
 
-pub(super) fn settings_detail_group(id: impl Into<ElementId>, icon: Icon, title: &'static str) -> Div {
+pub(super) fn settings_detail_group(
+    id: impl Into<ElementId>,
+    icon: Icon,
+    title: &'static str,
+) -> Div {
     v_flex().w_full().min_w_0().gap_3().child(
         h_flex()
             .min_w_0()
             .items_center()
             .gap_2()
             .child(
-                icon
-                .size(rems(20. / 14.))
-                .flex_shrink_0()
-                .text_color(color(MUTED)),
+                icon.size(rems(20. / 14.))
+                    .flex_shrink_0()
+                    .text_color(color(MUTED)),
             )
             .child(field_label(id, title).role(Role::Heading).min_w_0()),
     )
@@ -392,90 +442,72 @@ pub(crate) fn account_card(
     cx: &App,
     actions: Vec<AnyElement>,
 ) -> Div {
-    let title_row = account_title_row(
-        SharedString::from(format!("{id}-heading")),
-        icon,
-        title,
-        h_flex()
-            .gap_2()
-            .items_center()
-            .flex_wrap()
-            .when(busy, |row| {
-                row.child(crate::motion::spinner(
-                    SharedString::from(format!("{id}-busy")),
-                    cx,
-                ))
-            })
-            .child(badge(kind).child(label))
-            .children(actions),
-        // Codex and Ollama always end with a quiet re-check or open action.
-        true,
-    );
-    let line = move |suffix: &str, message: String, error: bool| {
-        theme::item_detail(
-            SharedString::from(format!("{id}-{suffix}")),
-            message,
-            if error { DANGER } else { MUTED },
-        )
-    };
-    v_flex()
-        .w_full()
-        .min_w_0()
+    let identity = h_flex()
         .gap_2()
-        .child(title_row)
-        .when_some(detail, |view, detail| view.child(line("detail", detail, false)))
-        .when_some(policy, |view, policy| {
-            view.child(theme::supporting_info(
-                SharedString::from(format!("{id}-policy")),
-                policy,
+        .items_center()
+        .flex_wrap()
+        .child(
+            text(SharedString::from(format!("{id}-heading")), title)
+                .text_size(TEXT_BODY)
+                .font_weight(FontWeight::SEMIBOLD),
+        )
+        .when(busy, |row| {
+            row.child(crate::motion::spinner(
+                SharedString::from(format!("{id}-busy")),
+                cx,
             ))
         })
-        .when_some(extra, |view, (suffix, text)| {
-            view.child(theme::supporting_info(
-                SharedString::from(format!("{id}-{suffix}")),
-                text,
-            ))
-        })
-        .when_some(notice, |view, (suffix, message, is_error)| {
-            view.child(line(suffix, message, is_error))
-        })
-}
-
-/// A resource title (account, connection, location) with one trailing slot
-/// for its status and actions. The slot stays on the title line when it fits
-/// and wraps below the title as a unit only when the row is too narrow.
-pub(crate) fn account_title_row(
-    id: impl Into<ElementId>,
-    icon: Icon,
-    title: impl Into<SharedString>,
-    trailing: impl IntoElement,
-    ends_in_text_button: bool,
-) -> Div {
+        .child(badge(kind).child(label));
+    let line = move |suffix: &str, message: String, error: bool| {
+        text(SharedString::from(format!("{id}-{suffix}")), message)
+            .text_size(TEXT_AUX)
+            .text_color(color(if error { DANGER } else { MUTED }))
+    };
     h_flex()
         .w_full()
         .min_w_0()
-        .min_h(CONTROL_HEIGHT)
+        .gap(px(16.))
         .items_center()
-        .flex_wrap()
-        .gap_x_4()
-        .gap_y_2()
+        .child(settings_resource_icon(icon))
         .child(
-            div()
+            v_flex()
                 .flex_1()
-                .min_w(rems(10.))
-                .child(setting_label(id, icon, title)),
+                .min_w_0()
+                .gap_1()
+                .child(identity)
+                .when_some(detail, |view, detail| {
+                    view.child(line("detail", detail, false))
+                })
+                .when_some(policy, |view, policy| {
+                    view.child(line("policy", policy.into(), false))
+                })
+                .when_some(extra, |view, (suffix, text)| {
+                    view.child(line(suffix, text.into(), false))
+                })
+                .when_some(notice, |view, (suffix, message, error)| {
+                    view.child(line(suffix, message, error))
+                }),
         )
         .child(
-            // A trailing text button's label, not its padding, meets the
-            // card's content edge; a bordered pill meets it with its border.
-            div()
-                .max_w_full()
-                .min_w_0()
-                .when(ends_in_text_button, |slot| slot.mr(-crate::theme::QUIET_INSET))
-                .flex()
+            h_flex()
+                .gap_2()
                 .items_center()
-                .child(trailing),
+                .flex_wrap()
+                .max_w(relative(0.5))
+                .children(actions),
         )
+}
+
+pub(crate) fn settings_resource_icon(icon: Icon) -> Div {
+    div()
+        .flex()
+        .size(px(40.))
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(color(INSET))
+        .child(icon.size(px(22.)).text_color(color(MUTED)))
 }
 
 /// Diagnostic values begin on a common reading axis. They can wrap and grow
@@ -568,7 +600,12 @@ pub(crate) struct SettingsGroup {
 
 impl SettingsGroup {
     pub(crate) fn new(id: &'static str, title: &'static str) -> Self {
-        Self { id, title, action: None, items: Vec::new() }
+        Self {
+            id,
+            title,
+            action: None,
+            items: Vec::new(),
+        }
     }
 
     /// Content that belongs to the previous item (a disclosure, a summary
@@ -592,7 +629,8 @@ impl SettingsGroup {
 
 impl ParentElement for SettingsGroup {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.items.extend(elements.into_iter().map(|element| vec![element]));
+        self.items
+            .extend(elements.into_iter().map(|element| vec![element]));
     }
 }
 
@@ -623,7 +661,9 @@ impl RenderOnce for SettingsGroup {
                     .min_h(rems(24. / 14.))
                     .items_center()
                     .child(
-                        theme::section_title(self.id, self.title).flex_1().pl(SETTING_ITEM_INSET),
+                        theme::section_title(self.id, self.title)
+                            .flex_1()
+                            .pl(SETTING_ITEM_INSET),
                     )
                     .children(self.action),
             )
@@ -739,8 +779,7 @@ impl Desktop {
                 .child(crate::focus_scroll::RevealFocus::new(
                     id,
                     child,
-                    editor_scroll
-                        .unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
+                    editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
                 ))
         } else {
             div().w_full().min_w_0().flex_shrink_0().child(child)
@@ -985,33 +1024,82 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let rail = f32::from(window.viewport_size().width) < 900.;
-        let mut navigation = v_flex().id("settings-navigation").key_context("SettingsTabs")
-            .w(px(crate::views::settings_sidebar_width(window))).flex_shrink_0().gap(px(8.))
+        let mut navigation = v_flex()
+            .id("settings-navigation")
+            .key_context("SettingsTabs")
+            .w(px(crate::views::settings_sidebar_width(window)))
+            .flex_shrink_0()
+            .gap(px(8.))
             .on_action(cx.listener(|this, _: &NextSettingsTab, window, cx| {
-                let position = SETTINGS_TABS.iter().position(|(i, _)| *i == this.settings_tab).unwrap_or(0);
+                let position = SETTINGS_TABS
+                    .iter()
+                    .position(|(i, _)| *i == this.settings_tab)
+                    .unwrap_or(0);
                 this.select_settings_tab(SETTINGS_TABS[(position + 1) % 5].0, window, cx);
             }))
             .on_action(cx.listener(|this, _: &PreviousSettingsTab, window, cx| {
-                let position = SETTINGS_TABS.iter().position(|(i, _)| *i == this.settings_tab).unwrap_or(0);
+                let position = SETTINGS_TABS
+                    .iter()
+                    .position(|(i, _)| *i == this.settings_tab)
+                    .unwrap_or(0);
                 this.select_settings_tab(SETTINGS_TABS[(position + 4) % 5].0, window, cx);
             }))
-            .on_action(cx.listener(|this, _: &FirstSettingsTab, window, cx| this.select_settings_tab(4, window, cx)))
-            .on_action(cx.listener(|this, _: &LastSettingsTab, window, cx| this.select_settings_tab(3, window, cx)));
+            .on_action(cx.listener(|this, _: &FirstSettingsTab, window, cx| {
+                this.select_settings_tab(4, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &LastSettingsTab, window, cx| {
+                this.select_settings_tab(3, window, cx)
+            }));
         for (index, label) in SETTINGS_TABS {
             let selected = self.settings_tab == index;
-            let icon = div().flex().items_center().justify_center().h(px(32.)).w(px(56.))
-                .rounded_full().when(selected && rail, |view| view.bg(color(ACCENT_SOFT)))
+            let icon = div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .h(px(32.))
+                .w(px(56.))
+                .rounded_full()
+                .when(selected && rail, |view| view.bg(color(ACCENT_SOFT)))
                 .child(settings_tab_icon(index).size(px(22.)));
-            let label = if rail { match index {0 => "笔记", 1 => "服务", _ => label} } else {label};
-            navigation = navigation.child(gpui_base::Tab::new(("settings-tab", index))
-                .selected(selected).track_focus(&self.settings_ui.tab_focus[index])
-                .accessibility_label(settings_tab_label(index)).w_full().h_auto().min_h(px(56.))
-                .rounded_full().px(px(if rail {0.} else {12.})).py(px(8.))
-                .when(selected && !rail, |tab| tab.bg(color(ACCENT_SOFT)))
-                .child(div().flex().w_full().items_center().gap(px(if rail {4.} else {8.}))
-                    .when(rail, |view| view.flex_col())
-                    .child(icon).child(div().text_size(if rail {TEXT_AUX} else {TEXT_BODY}).child(label)))
-                .on_click(cx.listener(move |this, _, window, cx| this.select_settings_tab(index, window, cx))));
+            let label = if rail {
+                match index {
+                    0 => "笔记",
+                    1 => "服务",
+                    _ => label,
+                }
+            } else {
+                label
+            };
+            navigation = navigation.child(
+                gpui_base::Tab::new(("settings-tab", index))
+                    .selected(selected)
+                    .track_focus(&self.settings_ui.tab_focus[index])
+                    .accessibility_label(settings_tab_label(index))
+                    .w_full()
+                    .h_auto()
+                    .min_h(px(56.))
+                    .rounded_full()
+                    .px(px(if rail { 0. } else { 12. }))
+                    .py(px(8.))
+                    .when(selected && !rail, |tab| tab.bg(color(ACCENT_SOFT)))
+                    .child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .items_center()
+                            .gap(px(if rail { 4. } else { 8. }))
+                            .when(rail, |view| view.flex_col())
+                            .child(icon)
+                            .child(
+                                div()
+                                    .text_size(if rail { TEXT_AUX } else { TEXT_BODY })
+                                    .child(label),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_settings_tab(index, window, cx)
+                    })),
+            );
         }
         let _ = sidebar;
         navigation.into_any_element()
@@ -1028,15 +1116,26 @@ impl Desktop {
             } else {
                 0.
             };
-        let header = h_flex().w_full().min_w_0().items_center().gap_3().flex_shrink_0()
-            .child(quiet("settings-return").icon(icons::arrow_left()).accessibility_label("返回")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    let destination = this.settings_origin.take().unwrap_or(Page::New);
-                    let focus = this.settings_return_focus.take();
-                    this.navigate(destination, cx);
-                    if let Some(focus) = focus { window.on_next_frame(move |window, cx| focus.focus(window, cx)); }
-                })))
-            .child(text("settings-page-title", "设置").text_size(TEXT_TITLE));
+        let header = h_flex()
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .gap_3()
+            .flex_shrink_0()
+            .child(
+                quiet("settings-return")
+                    .icon(icons::arrow_left())
+                    .accessibility_label("返回")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let destination = this.settings_origin.take().unwrap_or(Page::New);
+                        let focus = this.settings_return_focus.take();
+                        this.navigate(destination, cx);
+                        if let Some(focus) = focus {
+                            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+                        }
+                    })),
+            )
+            .child(text("settings-page-title", "设置").text_size(rems(22. / 14.)));
 
         let navigation = self.settings_navigation(sidebar, window, cx);
         let mut panel = v_flex()
@@ -1167,7 +1266,8 @@ impl Desktop {
                 )
             });
         let body = div()
-            .max_w(px(layout_width)).mx_auto()
+            .max_w(px(layout_width))
+            .mx_auto()
             .flex()
             .w_full()
             .min_w_0()
@@ -1210,7 +1310,9 @@ impl Desktop {
         }
         view = view.child(
             group("account-settings-heading", "来源账号").child(
-                setting_surface().gap_3().child(self.account_settings_page(cx)),
+                setting_surface()
+                    .gap_3()
+                    .child(self.account_settings_page(cx)),
             ),
         );
         let latest = self.preferences.latest_versions();
@@ -1219,7 +1321,7 @@ impl Desktop {
                 ServicePurpose::Ai,
                 "ai-services-heading",
                 "AI 服务",
-                "添加 AI 服务",
+                "添加其他 AI 服务",
             ),
             (
                 ServicePurpose::Speech,
@@ -1254,7 +1356,7 @@ impl Desktop {
             // The add action is the list's last item. An empty list says so in
             // the same row for both kinds; otherwise the speech consequence sits
             // beside the action because adding is where the choice is made.
-            let lead = if empty {
+            let _lead = if empty {
                 Some(
                     text(("services-empty", purpose as usize), "尚未添加")
                         .text_color(color(MUTED))
@@ -1277,14 +1379,50 @@ impl Desktop {
                         .gap_4()
                         .items_center()
                         .flex_wrap()
-                        .child(div().flex_1().min_w(rems(12.)).children(lead))
+                        .when(purpose == ServicePurpose::Speech, |row| {
+                            row.child(settings_resource_icon(icons::microphone()))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .child(text(
+                                            "speech-service-empty-title",
+                                            if empty {
+                                                "尚未添加语音服务"
+                                            } else {
+                                                "添加语音服务"
+                                            },
+                                        ))
+                                        .child(
+                                            text(
+                                                "speech-service-empty-detail",
+                                                if self.preferences.generation().options.provider
+                                                    == Some(course2md::config::AsrProvider::Api)
+                                                {
+                                                    "当前使用在线语音服务"
+                                                } else {
+                                                    "当前使用本机识别"
+                                                },
+                                            )
+                                            .text_size(TEXT_AUX)
+                                            .text_color(color(MUTED)),
+                                        ),
+                                )
+                        })
                         .child(
-                            outline_pill(("add-service", purpose as usize))
-                                .icon(icons::add())
-                                .label(add_label)
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                            (if purpose == ServicePurpose::Ai {
+                                quiet(("add-service", purpose as usize))
+                            } else {
+                                outline_pill(("add-service", purpose as usize))
+                            })
+                            .icon(icons::add())
+                            .label(add_label)
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
                                     this.open_settings_service_editor(purpose, None, window, cx);
-                                })),
+                                },
+                            )),
                         ),
                 ),
             );
@@ -1582,11 +1720,7 @@ impl Desktop {
         match self.preferences.save_generation(next.clone()) {
             Ok(()) => {
                 self.settings_ui.pending_generation = None;
-                self.set_settings_feedback(
-                    PreferenceGroup::Generation,
-                    "尚未应用".into(),
-                    false,
-                );
+                self.set_settings_feedback(PreferenceGroup::Generation, "尚未应用".into(), false);
                 if had_pending {
                     self.refresh_preference_defaults(cx);
                 }
@@ -1759,7 +1893,8 @@ impl Desktop {
                             .min_w_0()
                             .text_size(TEXT_BODY)
                             .text_color(color(if error { DANGER } else { MUTED })),
-                    )));
+                    ),
+            ));
             let has_pending = match group {
                 PreferenceGroup::Generation => self.settings_ui.pending_generation.is_some(),
                 PreferenceGroup::Application => self.settings_ui.pending_application.is_some(),
@@ -1848,7 +1983,11 @@ impl Desktop {
         }
         view
     }
-    pub(super) fn register_storage_location(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn register_storage_location(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -1873,8 +2012,12 @@ impl Desktop {
                                     .any(|l| l.root.canonicalize().ok() == path.canonicalize().ok())
                             });
                             if !duplicate
-                                && let Ok(identity) = std::fs::read_to_string(path.join(".course2md-library-id"))
-                                && let Some(existing) = this.workspace.as_ref().and_then(|workspace| workspace.state.library(identity.trim()))
+                                && let Ok(identity) =
+                                    std::fs::read_to_string(path.join(".course2md-library-id"))
+                                && let Some(existing) = this
+                                    .workspace
+                                    .as_ref()
+                                    .and_then(|workspace| workspace.state.library(identity.trim()))
                             {
                                 this.workspace_error = Some(format!(
                                     "「{}」已登记，可在该课程库中“重新定位…”",
@@ -1921,52 +2064,54 @@ impl Desktop {
         .detach();
     }
     pub(crate) fn appearance_controls(&self, cx: &mut Context<Self>) -> Div {
-        div().w_full().child(group("appearance-motion", "界面偏好")
-            .child(settings_stacked_row(
-                "app-font-scale-label",
-                icons::zoom_in(),
-                "界面文字大小",
-                "",
-                self.setting_choices("app-font-scale", "应用文字大小")
-                    .options(crate::preferences::FONT_SCALES.into_iter().map(|scale| {
-                        (
-                            (scale * 100.).round().to_string(),
-                            format!("{}%", (scale * 100.) as u32),
+        div().w_full().child(
+            group("appearance-motion", "界面偏好")
+                .child(settings_stacked_row(
+                    "app-font-scale-label",
+                    icons::zoom_in(),
+                    "界面文字大小",
+                    "",
+                    self.setting_choices("app-font-scale", "应用文字大小")
+                        .options(crate::preferences::FONT_SCALES.into_iter().map(|scale| {
+                            (
+                                (scale * 100.).round().to_string(),
+                                format!("{}%", (scale * 100.) as u32),
+                            )
+                        }))
+                        .full_width()
+                        .selected(
+                            (self.preferences.application().font_scale * 100.)
+                                .round()
+                                .to_string(),
                         )
-                    }))
-                    .full_width()
-                    .selected(
-                        (self.preferences.application().font_scale * 100.)
-                            .round()
-                            .to_string(),
-                    )
-                    .on_change(
-                        cx.listener(move |this, selected: &SharedString, window, cx| {
-                            let Ok(percent) = selected.parse::<f32>() else {
-                                return;
-                            };
-                            let scale = percent / 100.;
-                            let mut next = this.application_edit_base();
-                            next.font_scale = scale;
-                            if this.commit_application(next, cx) {
-                                theme::apply_scale(scale, window, cx);
-                            }
-                        }),
-                    ),
-            ))
-            .child(
-                setting_surface().child(settings_switch_row(
-                    "减少动态效果",
-                    "关闭过渡动画和进度条的流动效果",
-                    Switch::new("app-reduce-motion")
-                        .checked(self.preferences.application().desktop.reduce_motion)
-                        .on_click(cx.listener(|this, enabled, _, cx| {
-                            let mut next = this.application_edit_base();
-                            next.desktop.reduce_motion = *enabled;
-                            this.commit_application(next, cx);
-                        })),
+                        .on_change(cx.listener(
+                            move |this, selected: &SharedString, window, cx| {
+                                let Ok(percent) = selected.parse::<f32>() else {
+                                    return;
+                                };
+                                let scale = percent / 100.;
+                                let mut next = this.application_edit_base();
+                                next.font_scale = scale;
+                                if this.commit_application(next, cx) {
+                                    theme::apply_scale(scale, window, cx);
+                                }
+                            },
+                        )),
+                ))
+                .child(
+                    setting_surface().child(settings_switch_row(
+                        "减少动态效果",
+                        "关闭过渡动画和进度条的流动效果",
+                        Switch::new("app-reduce-motion")
+                            .checked(self.preferences.application().desktop.reduce_motion)
+                            .on_click(cx.listener(|this, enabled, _, cx| {
+                                let mut next = this.application_edit_base();
+                                next.desktop.reduce_motion = *enabled;
+                                this.commit_application(next, cx);
+                            })),
+                    )),
                 ),
-            )))
+        )
     }
     fn application_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
@@ -1977,18 +2122,38 @@ impl Desktop {
             .child(
                 group("about-heading", "关于")
                     .child(setting_surface().child(self.about_page(cx)))
-                    .child(settings_row(
-                "restart-onboarding-label",
-                icons::book_open(),
-                "用户引导",
-                "",
-                outline_pill("restart-onboarding")
-                    .label("重新开始用户引导")
-                    .icon(icons::restart())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.start_onboarding(window, cx);
-                    })),
-            )),
+                    .child(
+                        setting_surface().child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .gap_4()
+                                .items_center()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .child(text("restart-onboarding-label", "用户引导"))
+                                        .child(
+                                            text(
+                                                "restart-onboarding-help",
+                                                "重新了解应用的基本使用方式",
+                                            )
+                                            .text_size(TEXT_AUX)
+                                            .text_color(color(MUTED)),
+                                        ),
+                                )
+                                .child(
+                                    outline_pill("restart-onboarding")
+                                        .label("重新开始用户引导")
+                                        .icon(icons::restart())
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.start_onboarding(window, cx);
+                                        })),
+                                ),
+                        ),
+                    ),
             )
             .into_any_element()
     }
@@ -2017,7 +2182,6 @@ impl Desktop {
     fn environment_page(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         // 全部可用时只给一个结论；有问题时每项能力一个分组条目
         let mut checks = group("diagnostics-heading", "运行检查");
-        let mut all_ready = false;
         let open = self.settings_ui.diagnostics_details_open;
         let mut toggle_details = Some(cx.listener(|this, _, _, cx| {
             this.settings_ui.diagnostics_details_open = !this.settings_ui.diagnostics_details_open;
@@ -2044,145 +2208,188 @@ impl Desktop {
                 ("读取在线视频", e.ytdlp, false),
                 ("本机识别环境", local_ready, speech_service),
             ];
-            all_ready = capabilities
+            let all_ready = capabilities
                 .iter()
                 .all(|(_, ready, optional)| *ready || *optional);
             if all_ready {
                 // As on the canvas: one conclusion with its re-check, and the
                 // capabilities it covers as quiet chips on the label ruler.
-                checks = checks.child(
-                    setting_surface()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .min_w_0()
-                                .min_h(CONTROL_HEIGHT)
-                                .items_center()
-                                .gap_4()
-                                .child(
-                                    div().flex_1().min_w_0().child(semantic_label(
-                                        "diagnostic-summary",
-                                        "一切正常",
-                                        icons::check_circle()
-                                            .size(rems(20. / 14.))
-                                            .text_color(color(SUCCESS)),
-                                    )),
-                                )
-                                .child(
-                                    quiet("refresh-environment")
-                                        .mr(-crate::theme::QUIET_INSET)
-                                        .icon(icons::refresh())
-                                        .label("重新检查")
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.refresh_environment(cx)),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .min_w_0()
-                                .pl(crate::theme::LABEL_INSET)
-                                .gap_2()
-                                .flex_wrap()
-                                .children(
-                                    capabilities
-                                        .iter()
-                                        .filter(|(_, _, optional)| !optional)
-                                        .map(|(label, _, _)| {
-                                            badge(BadgeKind::Neutral).child(*label)
-                                        }),
-                                ),
-                        )
-                        .children(toggle_details.take().map(|toggle| {
-                            crate::theme::item_disclosure(
-                                "toggle-diagnostics-details",
-                                "诊断详情",
-                                open,
+                checks = checks
+                    .child(
+                        setting_surface()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .min_h(CONTROL_HEIGHT)
+                                    .items_center()
+                                    .gap_4()
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap(px(16.))
+                                            .child(settings_resource_icon(
+                                                icons::check_circle().text_color(color(SUCCESS)),
+                                            ))
+                                            .child(
+                                                v_flex()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .gap_1()
+                                                    .child(
+                                                        text("diagnostic-summary", "一切正常")
+                                                            .font_weight(FontWeight::SEMIBOLD),
+                                                    )
+                                                    .child(
+                                                        text(
+                                                            "diagnostic-summary-detail",
+                                                            format!(
+                                                                "{} 项检查全部通过",
+                                                                capabilities
+                                                                    .iter()
+                                                                    .filter(|(_, _, optional)| {
+                                                                        !optional
+                                                                    })
+                                                                    .count()
+                                                            ),
+                                                        )
+                                                        .text_size(TEXT_AUX)
+                                                        .text_color(color(MUTED)),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        quiet("refresh-environment")
+                                            .icon(icons::refresh())
+                                            .label("重新检查")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.refresh_environment(cx)
+                                            })),
+                                    ),
                             )
-                            .on_click(toggle)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .pl(px(56.))
+                                    .gap_2()
+                                    .flex_wrap()
+                                    .children(
+                                        capabilities
+                                            .iter()
+                                            .filter(|(_, _, optional)| !optional)
+                                            .map(|(label, _, _)| {
+                                                badge(BadgeKind::Neutral)
+                                                    .child(icons::check().size(px(14.)))
+                                                    .child(*label)
+                                            }),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        setting_surface().children(toggle_details.take().map(|toggle| {
+                            quiet("toggle-diagnostics-details")
+                                .w_full()
+                                .label("诊断详情")
+                                .child(div().flex_1())
+                                .child(if open {
+                                    icons::chevron_up()
+                                } else {
+                                    icons::chevron_right()
+                                })
+                                .on_click(toggle)
                         })),
+                    );
+            }
+            for (index, (label, ready, optional)) in
+                capabilities.into_iter().enumerate().filter(|_| !all_ready)
+            {
+                checks = checks.child(
+                    setting_surface().child(settings_status_row(
+                        ("diagnostic-capability", index),
+                        label,
+                        badge(if optional {
+                            BadgeKind::Neutral
+                        } else if ready {
+                            BadgeKind::Success
+                        } else {
+                            BadgeKind::Warning
+                        })
+                        .child(if optional {
+                            "当前未使用"
+                        } else if ready {
+                            "可用"
+                        } else {
+                            "待修复"
+                        }),
+                    )),
                 );
             }
-            for (index, (label, ready, optional)) in capabilities
-                .into_iter()
-                .enumerate()
-                .filter(|_| !all_ready)
-            {
-                checks = checks.child(setting_surface().child(settings_status_row(
-                    ("diagnostic-capability", index),
-                    label,
-                    badge(if optional {
-                        BadgeKind::Neutral
-                    } else if ready {
-                        BadgeKind::Success
-                    } else {
-                        BadgeKind::Warning
-                    })
-                    .child(if optional {
-                        "当前未使用"
-                    } else if ready {
-                        "可用"
-                    } else {
-                        "待修复"
-                    }),
-                )));
-            }
             if !e.engine {
-                checks = checks.child(setting_surface()
-                    .child(info_callout(
-                        "repair-bundled-engine",
-                        "转换程序无法运行，重新安装应用后笔记仍会保留",
-                    ))
-                    .child(
-                        control("download-repair-app")
-                            .icon(icons::download())
-                            .label("下载安装包")
-                            .self_start()
-                            .on_click(|_, _, cx| {
-                                cx.open_url("https://github.com/mizorewww/course2md/releases")
-                            }),
-                    ));
+                checks = checks.child(
+                    setting_surface()
+                        .child(info_callout(
+                            "repair-bundled-engine",
+                            "转换程序无法运行，重新安装应用后笔记仍会保留",
+                        ))
+                        .child(
+                            control("download-repair-app")
+                                .icon(icons::download())
+                                .label("下载安装包")
+                                .self_start()
+                                .on_click(|_, _, cx| {
+                                    cx.open_url("https://github.com/mizorewww/course2md/releases")
+                                }),
+                        ),
+                );
             }
         } else {
-            checks = checks.child(setting_surface().child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(crate::motion::spinner("diagnostic-checking-spinner", cx))
-                    .child(settings_value("diagnostic-checking", "正在检查本机能力…")),
-            ));
+            checks = checks.child(
+                setting_surface().child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(crate::motion::spinner("diagnostic-checking-spinner", cx))
+                        .child(settings_value("diagnostic-checking", "正在检查本机能力…")),
+                ),
+            );
         }
         if let Some(toggle_details) = toggle_details {
-            checks = checks.child(setting_surface().child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .flex_wrap()
-                .child(
-                    control("refresh-environment")
-                        .icon(icons::refresh())
-                        .label("重新检查环境")
-                        .loading(self.environment.is_none())
-                        .disabled(self.environment.is_none())
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_environment(cx))),
-                )
-                .child(
-                    quiet("toggle-diagnostics-details")
-                        .icon(icons::info())
-                        .label(if open {
-                            "收起诊断详情"
-                        } else {
-                            "查看诊断详情"
-                        })
-                        .on_click(toggle_details),
+            checks = checks.child(
+                setting_surface().child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(
+                            control("refresh-environment")
+                                .icon(icons::refresh())
+                                .label("重新检查环境")
+                                .loading(self.environment.is_none())
+                                .disabled(self.environment.is_none())
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.refresh_environment(cx)),
+                                ),
+                        )
+                        .child(
+                            quiet("toggle-diagnostics-details")
+                                .icon(icons::info())
+                                .label(if open {
+                                    "收起诊断详情"
+                                } else {
+                                    "查看诊断详情"
+                                })
+                                .on_click(toggle_details),
+                        ),
                 ),
-            ));
+            );
         }
         let mut details = v_flex().w_full().min_w_0().gap_6().pt_3();
         if let Some(e) = &self.environment {
-            let mut programs = settings_detail_group("diagnostic-programs-heading", icons::computer(), "所需程序");
+            let mut programs =
+                settings_detail_group("diagnostic-programs-heading", icons::computer(), "所需程序");
             let needs_llama = matches!(
                 self.preferences
                     .generation()
@@ -2213,20 +2420,14 @@ impl Desktop {
             }
             if !e.ffmpeg || !e.ffprobe || !e.ytdlp {
                 let (help, command) = if cfg!(target_os = "macos") {
-                    (
-                        "在终端运行",
-                        "brew install ffmpeg yt-dlp",
-                    )
+                    ("在终端运行", "brew install ffmpeg yt-dlp")
                 } else if cfg!(target_os = "windows") {
                     (
                         "在 PowerShell 运行",
                         "winget install Gyan.FFmpeg; winget install yt-dlp.yt-dlp",
                     )
                 } else {
-                    (
-                        "用系统包管理器安装 ffmpeg，再运行",
-                        "pipx install yt-dlp",
-                    )
+                    ("用系统包管理器安装 ffmpeg，再运行", "pipx install yt-dlp")
                 };
                 programs = programs.child(settings_detail_row(
                     "media-tools-repair-label",

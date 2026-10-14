@@ -103,10 +103,7 @@ fn inspect_location(location: &workspace::LibraryLocation) -> LocationCheck {
     }
     match std::fs::read_to_string(location.root.join(".course2md-library-id")) {
         Ok(identity) if identity.trim() == location.id => {}
-        Ok(_) => {
-            check.problem =
-                Some("此位置属于其他课程库，请恢复原位置或重新登记".into())
-        }
+        Ok(_) => check.problem = Some("此位置属于其他课程库，请恢复原位置或重新登记".into()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             check.needs_reassociation = true
         }
@@ -159,17 +156,9 @@ impl State {
     /// (title, cancel_label, cancel_message) for the active operation kind.
     fn operation_kind(&self) -> (&'static str, &'static str, &'static str) {
         if self.relocation.is_some() {
-            (
-                "重新定位课程库",
-                "取消重新定位",
-                "正在取消…",
-            )
+            ("重新定位课程库", "取消重新定位", "正在取消…")
         } else if self.association {
-            (
-                "重新关联保存位置",
-                "取消重新关联",
-                "正在取消…",
-            )
+            ("重新关联保存位置", "取消重新关联", "正在取消…")
         } else if self.cleanup {
             ("清理旧位置备份", "取消清理", "正在取消…")
         } else {
@@ -517,9 +506,7 @@ impl Desktop {
         self.storage_ui.error = None;
         self.storage_ui.progress = Progress::default();
         if self.job.is_some() || self.preview_workers > 0 {
-            self.storage_ui.error = Some(
-                "正在处理内容，结束或停止后再重新定位".into(),
-            );
+            self.storage_ui.error = Some("正在处理内容，结束或停止后再重新定位".into());
             self.open_storage_dialog(window, cx);
             return;
         }
@@ -688,10 +675,7 @@ impl Desktop {
             let mut names = Vec::new();
             let mut unreadable = 0;
             for course in courses {
-                ensure!(
-                    !worker_cancel.load(Ordering::Relaxed),
-                    "已取消重新关联"
-                );
+                ensure!(!worker_cancel.load(Ordering::Relaxed), "已取消重新关联");
                 let title = course.title.clone();
                 if crate::notes::read_preview(course).is_ok() {
                     names.push(title);
@@ -703,10 +687,7 @@ impl Desktop {
                 storage::directory_stamp(&root)? == stamp,
                 "保存位置在读取期间已经变化，请重新检查"
             );
-            ensure!(
-                !worker_cancel.load(Ordering::Relaxed),
-                "已取消重新关联"
-            );
+            ensure!(!worker_cancel.load(Ordering::Relaxed), "已取消重新关联");
             Ok::<_, anyhow::Error>((stamp, names, unreadable))
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -746,9 +727,7 @@ impl Desktop {
                 detail.push('\n');
             }
             if unreadable > 0 {
-                detail.push_str(&format!(
-                    "另有 {unreadable} 份笔记无法读取。\n"
-                ));
+                detail.push_str(&format!("另有 {unreadable} 份笔记无法读取。\n"));
             }
             let detail = detail.trim_end().to_owned();
             let answer = this.update_in(cx, |this, window, cx| {
@@ -794,10 +773,7 @@ impl Desktop {
                 match result {
                     Ok(()) => {
                         this.storage_ui.error = None;
-                        this.message = Some(format!(
-                            "已重新关联「{}」",
-                            location.name
-                        ));
+                        this.message = Some(format!("已重新关联「{}」", location.name));
                     }
                     Err(error) => {
                         this.storage_ui.error = Some(format!("尚未重新关联：{error:#}"));
@@ -815,8 +791,7 @@ impl Desktop {
 
     pub fn restore_storage_state(&mut self, cx: &mut Context<Self>) {
         // 半残/损坏的迁移记录不能静默消失：在存储页给出可见错误与文件位置
-        let (pending, corrupt) =
-            storage::scan_journals(&self.preferences.root().join("storage"));
+        let (pending, corrupt) = storage::scan_journals(&self.preferences.root().join("storage"));
         self.storage_ui.pending = pending;
         if !corrupt.is_empty() {
             self.storage_ui.error = Some(format!(
@@ -1128,10 +1103,7 @@ impl Desktop {
                 match result {
                     Ok(mut prepared) => {
                         if this.closing || cancel.load(Ordering::Relaxed) {
-                            this.finish_storage_error(
-                                "副本已核验，保存位置尚未切换".into(),
-                                cx,
-                            );
+                            this.finish_storage_error("副本已核验，保存位置尚未切换".into(), cx);
                             return;
                         }
                         let committed = this
@@ -1521,7 +1493,6 @@ impl Desktop {
         view.when(!has_content, |view| view.hidden())
     }
 
-
     /// Storage locations listed in the settings page; per-location operations
     /// live in this module alongside the migration flow.
     pub(super) fn storage_settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1532,7 +1503,7 @@ impl Desktop {
             .gap_6()
             .child(self.storage_status_panel(cx));
         let mut locations =
-            crate::settings_ui::SettingsGroup::new("storage-locations-heading", "保存位置");
+            crate::settings_ui::SettingsGroup::new("storage-locations-heading", "课程库位置");
 
         // The default is only a choice once there is more than one location.
         let several = self
@@ -1593,19 +1564,54 @@ impl Desktop {
                 locations = locations.child(
                     crate::settings_ui::setting_surface()
                         .min_w_0()
-                        .child(crate::settings_ui::account_title_row(
-                            ("storage-location-name", index),
-                            icons::folder_open(),
-                            library.name.clone(),
-                            trailing,
-                            true,
-                        ))
-                        .child(theme::item_detail(("storage-location-path", index), root.display().to_string(), MUTED))
-                        .when_some(check.and_then(|check| check.problem.clone()), |card, problem| {
-                            card.child(theme::item_detail(("storage-location-problem", index), problem, DANGER))
-                        })
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .gap(px(16.))
+                                .child(crate::settings_ui::settings_resource_icon(
+                                    icons::folder_open(),
+                                ))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .child(
+                                            accessible_text(
+                                                ("storage-location-name", index),
+                                                library.name.clone(),
+                                            )
+                                            .font_weight(FontWeight::SEMIBOLD),
+                                        )
+                                        .child(
+                                            accessible_text(
+                                                ("storage-location-path", index),
+                                                root.display().to_string(),
+                                            )
+                                            .text_size(TEXT_AUX)
+                                            .text_color(color(MUTED)),
+                                        ),
+                                )
+                                .child(trailing.max_w(relative(0.55))),
+                        )
+                        .when_some(
+                            check.and_then(|check| check.problem.clone()),
+                            |card, problem| {
+                                card.child(theme::item_detail(
+                                    ("storage-location-problem", index),
+                                    problem,
+                                    DANGER,
+                                ))
+                            },
+                        )
                         .when(needs_reassociation, |card| {
-                            card.child(theme::item_detail(("storage-association-needed", index), "关联记录缺失", WARNING))
+                            card.child(theme::item_detail(
+                                ("storage-association-needed", index),
+                                "关联记录缺失",
+                                WARNING,
+                            ))
                         }),
                 );
             }
@@ -1618,14 +1624,16 @@ impl Desktop {
                     .gap_4()
                     .items_center()
                     .flex_wrap()
-                    .child(div().flex_1().min_w(rems(12.)).when(several, |lead| {
-                        lead.child(theme::supporting_info(
-                            "storage-policy",
-                            "更改默认位置只影响后续生成的笔记",
-                        ))
-                    }))
+                    .when(several, |row| {
+                        row.child(div().flex_1().min_w(rems(12.)).map(|lead| {
+                            lead.child(theme::supporting_info(
+                                "storage-policy",
+                                "更改默认位置只影响后续生成的笔记",
+                            ))
+                        }))
+                    })
                     .child(
-                        outline_pill("register-storage-location")
+                        quiet("register-storage-location")
                             .icon(icons::add())
                             .label("添加课程库位置")
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1636,7 +1644,6 @@ impl Desktop {
         );
         view.child(locations).into_any_element()
     }
-
 
     fn begin_backup_cleanup(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.storage_ui.busy {
@@ -1661,7 +1668,8 @@ impl Desktop {
         if self.preferences.references_storage_path(&backup.path) {
             self.storage_ui.cleanup = true;
             self.storage_ui.progress = Progress::default();
-            self.storage_ui.error = Some("模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份".into());
+            self.storage_ui.error =
+                Some("模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份".into());
             self.open_storage_dialog(window, cx);
             return;
         }
@@ -1724,8 +1732,7 @@ impl Desktop {
                                 Ok(())
                             }) {
                                 Ok(()) => {
-                                    this.storage_ui.progress.message =
-                                        "旧位置备份已清理".into();
+                                    this.storage_ui.progress.message = "旧位置备份已清理".into();
                                 }
                                 Err(error) => {
                                     this.storage_ui.error =

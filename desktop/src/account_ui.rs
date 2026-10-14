@@ -253,18 +253,14 @@ impl Desktop {
             .gap_2()
             .items_center()
             .flex_wrap()
-            .when(self.account.checking, |row| {
-                row.child(crate::motion::spinner("account-checking", cx))
-            })
-            .child(badge(kind).child(label))
             .when_some(login_action, |view, label| {
                 view.child(
                     outline_pill("account-login")
                         .icon(icons::bilibili())
                         .label(label)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_account_dialog(window, cx)
-                        })),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_account_dialog(window, cx)),
+                        ),
                 )
             })
             // Only a saved login has anything to re-verify.
@@ -283,40 +279,62 @@ impl Desktop {
                         .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx))),
                 )
             });
-        v_flex()
+        h_flex()
             .w_full()
             .min_w_0()
-            .gap_2()
-            .child(crate::settings_ui::account_title_row(
-                "bilibili-account-identity",
-                icons::bilibili(),
-                if onboarding {
-                    "账号状态"
-                } else {
-                    "Bilibili 账号"
-                },
-                trailing,
-                saved,
-            ))
-            .when(show_detail, |view| {
-                view.child(crate::theme::item_detail(
-                    "bilibili-account-status",
-                    detail.clone(),
-                    MUTED,
-                ))
-            })
-            .when_some(
-                if saved {
-                    Some("退出登录不会删除课程和笔记")
-                } else if onboarding {
-                    Some("登录后可读取账号有权访问的视频与字幕")
-                } else {
-                    None
-                },
-                |view, policy| view.child(supporting_info("bilibili-account-policy", policy)),
+            .gap(px(16.))
+            .items_center()
+            .child(crate::settings_ui::settings_resource_icon(icons::bilibili()))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .flex_wrap()
+                            .child(
+                                accessible_text(
+                                    "bilibili-account-identity",
+                                    if onboarding {
+                                        "账号状态"
+                                    } else {
+                                        "Bilibili 账号"
+                                    },
+                                )
+                                .font_weight(FontWeight::SEMIBOLD),
+                            )
+                            .when(self.account.checking, |row| {
+                                row.child(crate::motion::spinner("account-checking", cx))
+                            })
+                            .child(badge(kind).child(label)),
+                    )
+                    .when(show_detail, |view| {
+                        view.child(
+                            accessible_text("bilibili-account-status", detail)
+                                .text_size(TEXT_AUX)
+                                .text_color(color(MUTED)),
+                        )
+                    })
+                    .when(saved || onboarding, |view| {
+                        view.child(
+                            accessible_text(
+                                "bilibili-account-policy",
+                                if saved {
+                                    "退出登录不会删除课程和笔记"
+                                } else {
+                                    "登录后可读取账号有权访问的视频与字幕"
+                                },
+                            )
+                            .text_size(TEXT_AUX)
+                            .text_color(color(MUTED)),
+                        )
+                    }),
             )
+            .child(trailing.max_w(relative(0.5)))
     }
-
 
     /// Status text without the「Bilibili：」prefix and the「已登录 · 」name
     /// separator; the single source for the summary row, the compact source
@@ -584,10 +602,9 @@ impl Desktop {
             ),
             QrDialogState::Expired => ("二维码已过期".into(), String::new()),
             QrDialogState::Error(error) => ("登录未完成".into(), error.clone()),
-            QrDialogState::Success(profile) => (
-                "已登录 Bilibili".into(),
-                profile.name.trim().to_owned(),
-            ),
+            QrDialogState::Success(profile) => {
+                ("已登录 Bilibili".into(), profile.name.trim().to_owned())
+            }
         };
         let retry = matches!(state, QrDialogState::Expired | QrDialogState::Error(_));
         let success = matches!(state, QrDialogState::Success(_));
@@ -718,7 +735,8 @@ impl Desktop {
             .when(layout.side_by_side, |view| view.flex_row())
             .child(crate::motion::enter(
                 SharedString::from(format!("qr-visual-{}-{phase}", self.account.generation)),
-                visual))
+                visual,
+            ))
             .child(explanation)
             .into_any_element()
     }
