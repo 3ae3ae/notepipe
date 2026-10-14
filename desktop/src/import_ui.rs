@@ -2842,6 +2842,25 @@ impl Desktop {
         .into_any_element()
     }
 
+    /// Attach last to the full-window `workbench-drop` group, outside scrolling content.
+    pub(super) fn workbench_drop_overlay(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div().id("workbench-drop-overlay").absolute().inset_0()
+            .invisible()
+            .group_drag_over::<gpui::ExternalPaths>("workbench-drop", |style| style.visible())
+            .bg(color(CANVAS).opacity(0.88)).p(rems(24. / 14.))
+            .child(v_flex().size_full().items_center().justify_center().gap_4()
+                .rounded(RADIUS_HERO).border_2().border_dashed().border_color(color(ACCENT_STRONG))
+                .child(h_flex().size(rems(88. / 14.)).rounded_full()
+                    .items_center().justify_center().bg(color(SECONDARY_CONTAINER))
+                    .child(icons::file_upload().size(rems(40. / 14.)).text_color(color(ACCENT_STRONG))))
+                .child(div().text_size(rems(28. / 14.)).font_weight(FontWeight::SEMIBOLD).child("松开以添加视频"))
+                .child(div().text_center().text_size(TEXT_BODY).text_color(color(MUTED))
+                    .child("读取视频信息后，确认选项即可开始转换")))
+            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                this.drop_source_files(paths.paths(), window, cx);
+            }))
+    }
+
     /// Only unresolved choices interrupt a submitted conversion.
     fn conversion_recovery(&mut self, cx: &mut Context<Self>) -> Div {
         let busy = self.job.is_some()
