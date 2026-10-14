@@ -1933,9 +1933,11 @@ impl Desktop {
             let mut detail = v_flex().flex_1().min_w_0().gap_2()
                 .child(quiet(SharedString::from(format!("workbench-task-open-{id}")))
                     .w_full().h_auto().p_0().justify_start()
-                    .child(div().min_w_0().text_size(rems(16. / 14.))
-                        .font_weight(FontWeight::SEMIBOLD).whitespace_nowrap().text_ellipsis()
-                        .child(task.plan.title.clone()))
+                    // The component centers its internal content wrapper; a full-width
+                    // text child owns the shared title/status leading edge.
+                    .child(div().w_full().min_w_0().text_left().text_color(color(INK))
+                        .text_size(rems(16. / 14.)).font_weight(FontWeight::SEMIBOLD)
+                        .whitespace_nowrap().text_ellipsis().child(task.plan.title.clone()))
                     .on_click(cx.listener({ let id = id.clone(); move |this, _, _, cx| {
                         this.select_task(&id, cx); this.navigate(Page::Task, cx);
                     }})))
