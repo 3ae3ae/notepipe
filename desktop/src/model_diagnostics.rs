@@ -13,11 +13,11 @@ fn model_status_row(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     value: impl IntoElement,
+    divider: bool,
 ) -> Div {
     settings_status_row(id, label, value)
         .min_h(px(56.))
-        .border_b_1()
-        .border_color(color(HAIRLINE))
+        .when(divider, |row| row.border_b_1().border_color(color(HAIRLINE)))
 }
 
 #[derive(Clone)]
@@ -523,7 +523,7 @@ impl Desktop {
         let device_issue = self.model_device_issue(provider);
         let mut cache_details = None;
         let mut cache_action = None;
-        let mut view = v_flex().w_full().min_w_0().gap_3();
+        let mut view = v_flex().w_full().min_w_0();
         if provider_row {
             view = view.child(model_status_row(
                 SharedString::from(format!("model-provider-label-{key}")),
@@ -533,6 +533,7 @@ impl Desktop {
                     provider_name(provider),
                 )
                 .w_auto(),
+                true,
             ));
         }
         view = view.child(model_status_row(
@@ -543,6 +544,7 @@ impl Desktop {
                 model_display_name(&request.model),
             )
             .w_auto(),
+            true,
         ));
         if let Some(issue) = &device_issue {
             view = view
@@ -580,6 +582,7 @@ impl Desktop {
                         .w_auto()
                         .role(Role::Status),
                     ),
+                false,
             ));
         }
         if let Some(Err(error)) = entry.and_then(Entry::result) {
@@ -620,6 +623,7 @@ impl Desktop {
                 SharedString::from(format!("model-state-label-{key}")),
                 "模型状态",
                 badge(kind).child(label),
+                false,
             ));
             if let Some(description) = description {
                 view = view.child(

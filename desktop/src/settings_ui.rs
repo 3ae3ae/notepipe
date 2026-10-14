@@ -370,6 +370,13 @@ pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, contr
         .child(processing_switch(control).accessibility_label(label))
 }
 
+/// Compact outlined chips used for capabilities and license links in settings.
+pub(super) fn settings_chip<T: Styled>(element: T) -> T {
+    element.rounded(RADIUS_SMALL).h(rems(32. / 14.)).min_h(rems(32. / 14.))
+        .px(rems(8. / 14.)).border_1().border_color(color(HAIRLINE))
+        .bg(gpui::transparent_black()).font_weight(FontWeight::NORMAL)
+}
+
 /// Status rows inside an existing card: label on the shared axis, value trailing.
 /// Do not wrap these in `settings_row`; that would give each item its own surface.
 pub(super) fn settings_status_row(
@@ -2295,7 +2302,7 @@ impl Desktop {
                                             .iter()
                                             .filter(|(_, _, optional)| !optional)
                                             .map(|(label, _, _)| {
-                                                badge(BadgeKind::Neutral)
+                                                settings_chip(badge(BadgeKind::Neutral))
                                                     .child(icons::check().size(px(14.)))
                                                     .child(*label)
                                             }),

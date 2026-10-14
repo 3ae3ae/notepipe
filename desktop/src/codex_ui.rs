@@ -379,7 +379,7 @@ impl Desktop {
                 vec![
                     quiet(SharedString::from(format!("{id}-authorize")))
                         .icon(icons::external_link())
-                        .label("浏览器授权…")
+                        .label("浏览器授权")
                         .disabled(disabled || busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.codex_authorize(surface, cx)

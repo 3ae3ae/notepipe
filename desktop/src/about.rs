@@ -1,6 +1,7 @@
 //! Product identity and build provenance, kept separate from operational settings.
 use super::*;
 use crate::theme::*;
+use crate::settings_ui::settings_chip;
 
 impl Desktop {
     pub fn about_page(&self, _: &mut Context<Self>) -> AnyElement {
@@ -25,11 +26,11 @@ impl Desktop {
             .child(v_flex().w_full().min_w_0().gap_3()
                 .child(accessible_text("about-license-title", "开源许可"))
                 .child(h_flex().gap_2().flex_wrap()
-                    .child(outline_pill("about-license").icon(icons::code()).label("course2md · MIT")
+                    .child(settings_chip(outline_pill("about-license")).icon(icons::code()).label("course2md · MIT")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/blob/main/LICENSE")))
-                    .child(outline_pill("about-lucide-license").icon(icons::code()).label("Lucide · ISC")
+                    .child(settings_chip(outline_pill("about-lucide-license")).icon(icons::code()).label("Lucide · ISC")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/lucide-icons/lucide/blob/main/LICENSE")))
-                    .child(outline_pill("about-icons-license").icon(icons::code()).label("Material Icons · Apache 2.0")
+                    .child(settings_chip(outline_pill("about-icons-license")).icon(icons::code()).label("Material Icons · Apache 2.0")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/google/material-design-icons/blob/master/LICENSE")))))
             .into_any_element()
     }
