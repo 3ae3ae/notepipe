@@ -1902,8 +1902,76 @@ impl Desktop {
             )
     }
 
+    /// Every queued/running task remains visible without replacing the source input.
+    pub fn workbench_active_tasks_section(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        use crate::workspace::{Intent, TaskState};
+        let tasks: Vec<_> = self.workspace.as_ref()?.state.tasks.iter()
+            .filter(|task| task.handled_by.is_none() && (matches!(task.state,
+                TaskState::Queued | TaskState::Running | TaskState::Pausing)
+                || self.is_running_task(&task.id)))
+            .collect();
+        if tasks.is_empty() { return None; }
+        let mut list = v_flex().w_full().min_w_0().rounded(RADIUS_CARD).bg(color(SURFACE));
+        for (index, task) in tasks.into_iter().enumerate() {
+            let id = task.id.clone();
+            let queued = task.state == TaskState::Queued && !self.is_running_task(&id);
+            let cancelling = task.intent == Intent::Cancel;
+            let progress = self.compact_task_progress(task);
+            let status = if cancelling { "正在取消…".to_owned() }
+                else if task.state == TaskState::Pausing { "正在保存进度…".to_owned() }
+                else if queued { "排队中".to_owned() }
+                else { progress.as_ref().map(|(label, _)| label.clone()).unwrap_or_else(|| "正在准备…".into()) };
+            if index > 0 {
+                list = list.child(h_flex().w_full().pl_4().gap_4()
+                    .child(div().w(rems(128. / 14.)).max_w(relative(0.28)).flex_shrink_0())
+                    .child(div().flex_1().h(px(1.)).bg(color(HAIRLINE))));
+            }
+            let mut detail = v_flex().flex_1().min_w_0().gap_2()
+                .child(quiet(SharedString::from(format!("workbench-task-open-{id}")))
+                    .w_full().h_auto().p_0().justify_start()
+                    .child(div().min_w_0().text_size(rems(16. / 14.))
+                        .font_weight(FontWeight::SEMIBOLD).whitespace_nowrap().text_ellipsis()
+                        .child(task.plan.title.clone()))
+                    .on_click(cx.listener({ let id = id.clone(); move |this, _, _, cx| {
+                        this.select_task(&id, cx); this.navigate(Page::Task, cx);
+                    }})))
+                .child(div().text_size(TEXT_BODY).text_color(color(GRAY)).child(status));
+            if !queued && !cancelling {
+                detail = detail.child(if let Some(fraction) = progress.and_then(|(_, fraction)| fraction) {
+                    crate::motion::progress(SharedString::from(format!("workbench-task-progress-{id}")), fraction, window, cx)
+                } else {
+                    crate::motion::spinner(SharedString::from(format!("workbench-task-spinner-{id}")), cx)
+                });
+            }
+            let mut cover = h_flex().w(rems(128. / 14.)).max_w(relative(0.28))
+                .aspect_ratio(16. / 9.).flex_shrink_0().items_center().justify_center()
+                .rounded(RADIUS_SMALL).bg(color(SECONDARY_CONTAINER)).overflow_hidden();
+            if queued {
+                cover = cover.child(icons::schedule().size_6().text_color(color(GRAY)));
+            } else if let Some(path) = task.plan.source.cover.clone() {
+                cover = cover.child(img(path).size_full().rounded(RADIUS_SMALL).object_fit(ObjectFit::Cover));
+            }
+            list = list.child(h_flex().w_full().min_w_0().p_4().gap_4().items_center()
+                .child(cover).child(detail)
+                .child(quiet(SharedString::from(format!("workbench-task-cancel-{id}")))
+                    .icon(icons::close()).tooltip("取消任务").disabled(cancelling)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_task_intent(id.clone(), Intent::Cancel, cx);
+                    }))));
+        }
+        Some(v_flex().w_full().min_w_0().gap_3()
+            .child(theme::accessible_text("workbench-active-title", "正在处理")
+                .role(Role::Heading).text_size(rems(24. / 14.))
+                .line_height(rems(32. / 14.)).font_weight(FontWeight::SEMIBOLD))
+            .child(list))
+    }
+
     /// Workbench "最近笔记": attention tasks first, then recent readable notes.
-    /// An empty library renders nothing at all (the hero plus box are the empty state).
+    /// First use keeps a compact explanation below the source input.
     pub fn recent_notes_section(&self, _columns: usize, cx: &mut Context<Self>) -> Option<Div> {
         let linked = self.current_input_task(cx).map(|task| task.id.clone());
         let mut attention: Vec<_> = self
@@ -1939,7 +2007,35 @@ impl Desktop {
             .cloned()
             .collect();
         if attention.is_empty() && notes.is_empty() {
-            return None;
+            let access = self.cached_library_access();
+            let checking = self.loading || access.is_none();
+            let unavailable = !self.library_issues.is_empty() || access.as_ref().is_some_and(|access| !access.unavailable.is_empty());
+            let title = if checking { "正在读取笔记库" } else if unavailable { "暂时无法读取笔记库" } else { "还没有笔记" };
+            let description = if checking { "正在检查保存位置…" } else if unavailable {
+                "检查保存位置后，即可继续查看已有笔记"
+            } else { "整理好的笔记会出现在这里，也会保存到笔记库" };
+            let mut empty = v_flex().w_full().min_w_0().items_center().justify_center()
+                .py(rems(40. / 14.)).px_4().gap_4().rounded(RADIUS_CARD).bg(color(SURFACE))
+                .child(h_flex().size(rems(72. / 14.)).items_center().justify_center()
+                    .rounded_full().bg(color(SECONDARY_CONTAINER))
+                    .child(icons::book_open().size(rems(32. / 14.)).text_color(color(GRAY))))
+                .child(v_flex().items_center().gap_2()
+                    .child(div().text_size(rems(24. / 14.)).font_weight(FontWeight::SEMIBOLD).child(title))
+                    .child(div().text_center().text_size(TEXT_BODY).text_color(color(GRAY)).child(description)));
+            if unavailable {
+                empty = empty.child(quiet("recent-unavailable-library").label("查看笔记库")
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Library, cx))));
+            } else if !checking {
+                empty = empty.child(h_flex().justify_center().flex_wrap().gap_3().children([
+                    "粘贴链接或拖入视频", "读取字幕或识别语音", "AI 校对并生成笔记",
+                ].into_iter().enumerate().map(|(index, label)| h_flex().gap_2().pl_1().pr_3().py_1().rounded_full()
+                    .border_1().border_color(color(HAIRLINE)).text_size(TEXT_BODY)
+                    .child(h_flex().size(rems(24. / 14.)).justify_center().items_center()
+                        .rounded_full().bg(color(SECONDARY_CONTAINER)).text_color(color(ACCENT_STRONG))
+                        .child((index + 1).to_string()))
+                    .child(label))));
+            }
+            return Some(empty);
         }
         let mut section = v_flex().w_full().min_w_0().gap_3();
         section = section.child(
@@ -2108,6 +2204,12 @@ impl Desktop {
                 .map(course2md::render::fmt_ts);
             let metadata = self.course_meta(course).split(" · ")
                 .filter(|part| duration.as_deref() != Some(*part))
+                .map(|part| {
+                    use chrono::Datelike;
+                    chrono::NaiveDate::parse_from_str(part, "%Y-%m-%d")
+                        .map(|date| format!("{}月{}日", date.month(), date.day()))
+                        .unwrap_or_else(|_| part.to_owned())
+                })
                 .collect::<Vec<_>>().join(" · ");
             if index > 0 || has_attention {
                 list = list.child(h_flex().w_full().min_w_0().pl_4().gap_4()

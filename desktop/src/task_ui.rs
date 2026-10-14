@@ -3060,6 +3060,17 @@ impl Desktop {
             .collect()
     }
 
+    /// Compact workbench status uses the same measured progress as task details.
+    pub(crate) fn compact_task_progress(&self, task: &TaskRecord) -> Option<(String, Option<f32>)> {
+        self.task_stage_rows(task).into_iter()
+            .find(|stage| matches!(stage.status, StageStatus::Running | StageStatus::Pausing | StageStatus::Stopping))
+            .map(|stage| {
+                let label = if stage.detail.is_empty() { stage.title }
+                    else { format!("{} · {}", stage.title, stage.detail) };
+                (label, stage.fraction)
+            })
+    }
+
     fn task_progress_sections(
         &mut self,
         task: &TaskRecord,
