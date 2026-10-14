@@ -1939,7 +1939,7 @@ impl Desktop {
                     .on_click(cx.listener({ let id = id.clone(); move |this, _, _, cx| {
                         this.select_task(&id, cx); this.navigate(Page::Task, cx);
                     }})))
-                .child(div().text_size(TEXT_BODY).text_color(color(GRAY)).child(status));
+                .child(div().min_w_0().whitespace_normal().text_size(TEXT_BODY).text_color(color(GRAY)).child(status));
             if !queued && !cancelling {
                 detail = detail.child(if let Some(fraction) = progress.and_then(|(_, fraction)| fraction) {
                     crate::motion::progress(SharedString::from(format!("workbench-task-progress-{id}")), fraction, window, cx)
@@ -2022,7 +2022,7 @@ impl Desktop {
                 .child(v_flex().items_center().gap_2()
                     .child(div().text_size(rems(24. / 14.)).font_weight(FontWeight::SEMIBOLD).child(title))
                     .child(div().text_center().text_size(TEXT_BODY).text_color(color(GRAY)).child(description)));
-            if unavailable {
+            if unavailable && !checking {
                 empty = empty.child(quiet("recent-unavailable-library").label("查看笔记库")
                     .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Library, cx))));
             } else if !checking {
