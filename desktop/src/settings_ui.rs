@@ -1254,7 +1254,7 @@ impl Desktop {
                             .min_w_0()
                             .when(editing_service, |view| view.h_full().min_h_0())
                             .when(!editing_service, |view| view.pb(px(24.)))
-                            .child(v_flex().w_full().min_w_0().gap(px(32.))
+                            .child(v_flex().w_full().min_w_0().gap(px(22.))
                                 .child(v_flex().gap_2()
                                     .child(theme::page_heading("settings-category-heading", settings_tab_label(self.settings_tab)))
                                     .when(self.settings_tab == 0, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_AUX).text_color(color(MUTED)))))
@@ -1266,8 +1266,12 @@ impl Desktop {
                     crate::backend::vertical_scrollbar(&self.scrolls[Page::Settings as usize]),
                 )
             });
+        // Wide references reserve 56 px after the content; center that complete
+        // box so the navigation and panel share the same left ruler.
+        let wide_trailing_space = if f32::from(window.viewport_size().width) >= 1200. { 56. } else { 0. };
         let body = div()
-            .max_w(px(layout_width))
+            .max_w(px(layout_width + wide_trailing_space))
+            .pr(px(wide_trailing_space))
             .mx_auto()
             .flex()
             .w_full()

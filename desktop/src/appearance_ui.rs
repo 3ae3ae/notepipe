@@ -379,7 +379,7 @@ impl Desktop {
                 div()
                     .rounded(RADIUS_SMALL)
                     .overflow_hidden()
-                    .child(sample(palette)),
+                    .child(sample(palette).rounded(RADIUS_CARD)),
             )
             .child(outlined_field_label(
                 ("palette-preset-field", usize::from(dark)),
@@ -388,6 +388,8 @@ impl Desktop {
                     .w_full()
                     .h(px(56.))
                     .rounded(RADIUS_SMALL)
+                    .text_size(rems(16. / 14.))
+                    .font_weight(FontWeight::NORMAL)
                     .accessibility_label(format!("{label}：{}，选择主题", palette.name()))
                     .label(palette.name())
                     .child(div().flex_1())
