@@ -37,6 +37,7 @@ pub struct SingleChoiceGroup {
     icons: BTreeMap<SharedString, Icon>,
     full_width: bool,
     segmented: bool,
+    segment_icons: bool,
     tabs: bool,
     activate_selected: bool,
     vertical: bool,
@@ -55,6 +56,7 @@ impl SingleChoiceGroup {
             icons: BTreeMap::new(),
             full_width: false,
             segmented: false,
+            segment_icons: false,
             tabs: false,
             activate_selected: false,
             vertical: false,
@@ -92,6 +94,12 @@ impl SingleChoiceGroup {
     pub fn segmented(mut self) -> Self {
         self.segmented = true;
         self.full_width = true;
+        self
+    }
+    /// In connected segments, display each option's icon instead of the selection check.
+    /// Options without an icon retain the checkmark; selection remains tonal.
+    pub fn segment_icons(mut self) -> Self {
+        self.segment_icons = true;
         self
     }
     /// Navigation uses the same surfaces, with tab semantics and optional leading layout.
@@ -389,11 +397,11 @@ impl RenderOnce for SingleChoiceGroup {
                 .gap(rems(8. / 14.))
                 .items_center()
                 .when(vertical, |row| row.w_full())
-                .when(segmented, |row| row.child(
+                .when(segmented && !(self.segment_icons && self.icons.contains_key(&value)), |row| row.child(
                     crate::icons::check().size(rems(18. / 14.)).flex_shrink_0()
                         .opacity(if checked { 1. } else { 0. }),
                 ))
-                .when_some(self.icons.get(&value).filter(|_| !segmented).cloned(), |row, icon| {
+                .when_some(self.icons.get(&value).filter(|_| !segmented || self.segment_icons).cloned(), |row, icon| {
                     row.child(icon.size(rems(18. / 14.)).flex_shrink_0())
                 })
                 .child(

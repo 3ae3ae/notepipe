@@ -367,7 +367,7 @@ pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, contr
                     )
                 }),
         )
-        .child(processing_switch(control))
+        .child(processing_switch(control).accessibility_label(label))
 }
 
 /// Status rows inside an existing card: label on the shared axis, value trailing.
@@ -791,7 +791,7 @@ impl Desktop {
         label: impl Into<SharedString>,
     ) -> SingleChoiceGroup {
         let (reveals, editor_scroll) = self.active_editor_scroll();
-        SingleChoiceGroup::new(id, label).when(reveals, |group| {
+        SingleChoiceGroup::new(id, label).segmented().when(reveals, |group| {
             group.reveal_in(
                 editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
             )

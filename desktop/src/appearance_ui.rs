@@ -406,7 +406,8 @@ impl Desktop {
         let preference = self.preferences.application().appearance.clone();
         let width = crate::views::settings_content_width(window);
         let modes = SingleChoiceGroup::new("appearance-mode", "外观模式")
-            .full_width()
+            .segmented()
+            .segment_icons()
             .options([("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
             .icon("system", icons::computer())
             .icon("light", icons::sun())
