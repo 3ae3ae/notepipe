@@ -1,5 +1,5 @@
 //! Model evidence is loaded in the background; preparation uses the existing model job.
-use super::{settings_detail_group, settings_detail_row, settings_status_row, settings_value};
+use super::{settings_detail_group, settings_detail_row, settings_status_row, settings_value, control, quiet, outline_pill, badge, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
 use crate::theme::*;
 use crate::*;
 use course2md::{

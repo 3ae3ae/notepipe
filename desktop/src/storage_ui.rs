@@ -1496,6 +1496,7 @@ impl Desktop {
     /// Storage locations listed in the settings page; per-location operations
     /// live in this module alongside the migration flow.
     pub(super) fn storage_settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::settings_ui::{quiet, outline_pill, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
         let view = v_flex()
             .w_full()
             .min_w_0()

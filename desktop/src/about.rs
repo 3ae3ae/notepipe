@@ -1,7 +1,7 @@
 //! Product identity and build provenance, kept separate from operational settings.
 use super::*;
 use crate::theme::*;
-use crate::settings_ui::settings_chip;
+use crate::settings_ui::{settings_chip, outline_pill, quiet, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
 
 impl Desktop {
     pub fn about_page(&self, _: &mut Context<Self>) -> AnyElement {

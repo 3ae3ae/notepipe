@@ -1010,6 +1010,15 @@ pub fn outlined_field_label(
     label: impl Into<gpui::SharedString>,
     content: impl gpui::IntoElement,
 ) -> gpui::Div {
+    outlined_field_label_sized(id, label, content, TEXT_AUX)
+}
+
+pub fn outlined_field_label_sized(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+    content: impl gpui::IntoElement,
+    label_size: gpui::Rems,
+) -> gpui::Div {
     use gpui::{prelude::*, *};
     div().relative().w_full().min_w_0().mt(rems(8. / 14.))
         .child(content)
@@ -1017,7 +1026,7 @@ pub fn outlined_field_label(
             .absolute().top(rems(-8. / 14.)).left(rems(12. / 14.))
             .px(rems(4. / 14.))
             .bg(color(SURFACE)).text_color(color(MUTED))
-            .text_size(TEXT_AUX).line_height(rems(16. / 14.))
+            .text_size(label_size).line_height(rems(16. / 14.))
             .font_weight(FontWeight::NORMAL))
 }
 

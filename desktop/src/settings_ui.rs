@@ -25,6 +25,24 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+/// Settings reference typography, scoped independently from navigation and the workbench.
+pub(crate) const SETTINGS_TEXT_BODY: Rems = rems(16. / 14.);
+pub(crate) const SETTINGS_TEXT_SUPPORT: Rems = rems(1.);
+use self::{SETTINGS_TEXT_BODY as TEXT_BODY, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
+
+pub(crate) fn settings_button(button: gpui_component::button::Button) -> gpui_component::button::Button {
+    button.label_text_size(SETTINGS_TEXT_BODY)
+}
+pub(super) fn control(id: impl Into<ElementId>) -> gpui_component::button::Button { settings_button(theme::control(id)) }
+pub(super) fn quiet(id: impl Into<ElementId>) -> gpui_component::button::Button { settings_button(theme::quiet(id)) }
+pub(super) fn outline_pill(id: impl Into<ElementId>) -> gpui_component::button::Button { settings_button(theme::outline_pill(id)) }
+pub(super) fn filter_chip(id: impl Into<ElementId>, selected: bool, cx: &App) -> gpui_component::button::Button { settings_button(theme::filter_chip(id, selected, cx)) }
+pub(super) fn text_input(state: &Entity<InputState>) -> gpui_component::input::Input { theme::text_input(state).text_size(SETTINGS_TEXT_BODY) }
+pub(super) fn badge(kind: BadgeKind) -> Div { theme::badge(kind).text_size(SETTINGS_TEXT_SUPPORT) }
+pub(super) fn outlined_field_label(id: impl Into<ElementId>, label: impl Into<SharedString>, content: impl IntoElement) -> Div {
+    theme::outlined_field_label_sized(id, label, content, SETTINGS_TEXT_SUPPORT)
+}
+
 actions!(
     course2md_settings,
     [
@@ -694,7 +712,7 @@ pub(crate) fn settings_card() -> Div {
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .bg(color(SURFACE))
+        .bg(color(SURFACE)).text_size(SETTINGS_TEXT_BODY)
         .rounded(SETTINGS_CARD_RADIUS)
         .overflow_hidden()
 }
@@ -807,7 +825,7 @@ impl Desktop {
         label: impl Into<SharedString>,
     ) -> SingleChoiceGroup {
         let (reveals, editor_scroll) = self.active_editor_scroll();
-        SingleChoiceGroup::new(id, label).segmented().when(reveals, |group| {
+        SingleChoiceGroup::new(id, label).label_text_size(SETTINGS_TEXT_BODY).segmented().when(reveals, |group| {
             group.reveal_in(
                 editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
             )
@@ -901,7 +919,7 @@ impl Desktop {
                     .when_some(error, |view, error| {
                         view.child(
                             text(("setting-error", field as usize), error)
-                                .text_sm()
+                                .text_size(TEXT_AUX)
                                 .text_color(color(DANGER)),
                         )
                     }),
@@ -1109,7 +1127,7 @@ impl Desktop {
                             .child(icon)
                             .child(
                                 div()
-                                    .text_size(if rail { TEXT_AUX } else { TEXT_BODY })
+                                    .text_size(if rail { theme::TEXT_AUX } else { theme::TEXT_BODY })
                                     .child(label),
                             ),
                     )
@@ -1228,7 +1246,7 @@ impl Desktop {
                             .flex_1()
                             .min_w_0()
                             .text_color(color(DANGER))
-                            .text_sm(),
+                            .text_size(TEXT_AUX),
                         )
                         .child(
                             control(("open-failed-settings-group", target))
@@ -1985,7 +2003,7 @@ impl Desktop {
                                     .w_full()
                                     .min_w_0()
                                     .whitespace_normal()
-                                    .text_sm()
+                                    .text_size(TEXT_AUX)
                                     .text_color(color(MUTED)),
                             ),
                     );

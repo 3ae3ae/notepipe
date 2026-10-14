@@ -219,6 +219,8 @@ impl Desktop {
     }
 
     fn account_summary(&self, onboarding: bool, cx: &mut Context<Self>) -> Div {
+        let in_settings = self.page == Page::Settings;
+        let support_size = if in_settings { crate::settings_ui::SETTINGS_TEXT_SUPPORT } else { TEXT_AUX };
         let status = self.account_status_text();
         let saved = self.account.has_saved_login;
         let expired = matches!(self.account.status, Some(AccountStatus::Expired));
@@ -255,7 +257,7 @@ impl Desktop {
             .flex_wrap()
             .when_some(login_action, |view, label| {
                 view.child(
-                    outline_pill("account-login")
+                    outline_pill("account-login").when(in_settings, crate::settings_ui::settings_button)
                         .icon(icons::bilibili())
                         .label(label)
                         .on_click(
@@ -266,14 +268,14 @@ impl Desktop {
             // Only a saved login has anything to re-verify.
             .when(saved, |view| {
                 view.child(
-                    quiet("account-refresh")
+                    quiet("account-refresh").when(in_settings, crate::settings_ui::settings_button)
                         .icon(icons::refresh())
                         .label("重新检查")
                         .disabled(self.account.checking)
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
                 )
                 .child(
-                    quiet("account-logout")
+                    quiet("account-logout").when(in_settings, crate::settings_ui::settings_button)
                         .icon(icons::logout())
                         .label("退出登录")
                         .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx))),
@@ -309,12 +311,12 @@ impl Desktop {
                             .when(self.account.checking, |row| {
                                 row.child(crate::motion::spinner("account-checking", cx))
                             })
-                            .child(badge(kind).child(label)),
+                            .child(badge(kind).child(label).when(in_settings, |tag| tag.text_size(support_size))),
                     )
                     .when(show_detail, |view| {
                         view.child(
                             accessible_text("bilibili-account-status", detail)
-                                .text_size(TEXT_AUX)
+                                .text_size(support_size)
                                 .text_color(color(MUTED)),
                         )
                     })
@@ -328,7 +330,7 @@ impl Desktop {
                                     "登录后可读取账号有权访问的视频与字幕"
                                 },
                             )
-                            .text_size(TEXT_AUX)
+                            .text_size(support_size)
                             .text_color(color(MUTED)),
                         )
                     }),

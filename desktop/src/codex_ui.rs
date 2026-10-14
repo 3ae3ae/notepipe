@@ -377,7 +377,7 @@ impl Desktop {
             cx,
             if !connected {
                 vec![
-                    quiet(SharedString::from(format!("{id}-authorize")))
+                    quiet(SharedString::from(format!("{id}-authorize"))).when(surface == CodexSurface::Settings, crate::settings_ui::settings_button)
                         .icon(icons::external_link())
                         .label("浏览器授权")
                         .disabled(disabled || busy)
@@ -385,7 +385,7 @@ impl Desktop {
                             this.codex_authorize(surface, cx)
                         }))
                         .into_any_element(),
-                    tonal_pill(SharedString::from(format!("{id}-import")), cx)
+                    tonal_pill(SharedString::from(format!("{id}-import")), cx).when(surface == CodexSurface::Settings, crate::settings_ui::settings_button)
                         .icon(icons::login())
                         .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
                             "重新导入 Codex 登录"
@@ -401,7 +401,7 @@ impl Desktop {
             } else {
                 // 与 Bilibili 账号同序：重新检查在前、退出登录在后
                 vec![
-                    quiet(SharedString::from(format!("{id}-recheck")))
+                    quiet(SharedString::from(format!("{id}-recheck"))).when(surface == CodexSurface::Settings, crate::settings_ui::settings_button)
                         .icon(icons::refresh())
                         .label("重新检查")
                         .disabled(disabled || busy)
@@ -409,7 +409,7 @@ impl Desktop {
                             this.codex_refresh_status(surface, cx)
                         }))
                         .into_any_element(),
-                    quiet(SharedString::from(format!("{id}-logout")))
+                    quiet(SharedString::from(format!("{id}-logout"))).when(surface == CodexSurface::Settings, crate::settings_ui::settings_button)
                         .icon(icons::logout())
                         .label("退出登录")
                         .disabled(disabled || busy)

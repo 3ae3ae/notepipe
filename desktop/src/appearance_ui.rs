@@ -2,7 +2,7 @@
 use super::*;
 use crate::palettes::{ALL, Appearance, PaletteId};
 use crate::preferences::PreferenceGroup;
-use crate::settings_ui::{field_label, settings_stacked_row};
+use crate::settings_ui::{field_label, settings_stacked_row, control, outline_pill, outlined_field_label, SETTINGS_TEXT_BODY as TEXT_BODY};
 use crate::theme::*;
 
 const PALETTE_GAP: f32 = 16.;
@@ -410,6 +410,7 @@ impl Desktop {
         let modes = SingleChoiceGroup::new("appearance-mode", "外观模式")
             .segmented()
             .segment_icons()
+            .label_text_size(TEXT_BODY)
             .options([("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
             .icon("system", icons::computer())
             .icon("light", icons::sun())

@@ -128,6 +128,7 @@ impl Desktop {
                                     "自定义语言优先级",
                                     self.settings_ui.language_details_open,
                                 )
+                                .label_text_size(SETTINGS_TEXT_BODY)
                                 .on_click(cx.listener(
                                     |this, _, _, cx| {
                                         this.settings_ui.language_details_open =
@@ -703,7 +704,7 @@ impl Desktop {
                     "unavailable-fixed-model",
                     format!("{selected} 不适用于当前识别方式，请重新选择"),
                 )
-                .text_sm()
+                .text_size(TEXT_AUX)
                 .text_color(color(DANGER)),
             );
         }
@@ -743,7 +744,7 @@ impl Desktop {
                         "selected-device-unavailable",
                         "所选识别方式的运行环境未就绪，详见「应用」诊断",
                     )
-                    .text_sm()
+                    .text_size(TEXT_AUX)
                     .text_color(color(WARNING)),
                 );
             }
