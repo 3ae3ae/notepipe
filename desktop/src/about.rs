@@ -27,6 +27,8 @@ impl Desktop {
                 .child(h_flex().gap_2().flex_wrap()
                     .child(outline_pill("about-license").icon(icons::code()).label("course2md · MIT")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/blob/main/LICENSE")))
+                    .child(outline_pill("about-lucide-license").icon(icons::code()).label("Lucide · ISC")
+                        .on_click(|_, _, cx| cx.open_url("https://github.com/lucide-icons/lucide/blob/main/LICENSE")))
                     .child(outline_pill("about-icons-license").icon(icons::code()).label("Material Icons · Apache 2.0")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/google/material-design-icons/blob/master/LICENSE")))))
             .into_any_element()
