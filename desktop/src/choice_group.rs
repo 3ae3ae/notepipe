@@ -36,6 +36,7 @@ pub struct SingleChoiceGroup {
     options: Vec<OptionItem>,
     icons: BTreeMap<SharedString, Icon>,
     full_width: bool,
+    segmented: bool,
     tabs: bool,
     activate_selected: bool,
     vertical: bool,
@@ -53,6 +54,7 @@ impl SingleChoiceGroup {
             options: Vec::new(),
             icons: BTreeMap::new(),
             full_width: false,
+            segmented: false,
             tabs: false,
             activate_selected: false,
             vertical: false,
@@ -82,6 +84,13 @@ impl SingleChoiceGroup {
     }
     /// Fill the parent's width with equal segments and one moving selection surface.
     pub fn full_width(mut self) -> Self {
+        self.full_width = true;
+        self
+    }
+    /// Connected equal-width segments with a shared outline and selected checkmark.
+    /// Radio/tab semantics, focus navigation and pointer feedback are unchanged.
+    pub fn segmented(mut self) -> Self {
+        self.segmented = true;
         self.full_width = true;
         self
     }
@@ -262,8 +271,9 @@ impl RenderOnce for SingleChoiceGroup {
         let last = navigation;
         let count = self.options.len();
         let scale = f32::from(window.rem_size()) / 14.;
-        let inset = 2. * scale;
-        let item_height = px(36. * scale);
+        let segmented = self.segmented && !self.vertical;
+        let inset = if segmented { 0. } else { 2. * scale };
+        let item_height = px(if segmented { 40. * scale } else { 36. * scale });
         let vertical = self.vertical;
         let position = crate::motion::selection_value(
             ElementId::NamedChild(self.id.clone().into(), "selection-position".into()),
@@ -292,8 +302,8 @@ impl RenderOnce for SingleChoiceGroup {
                     .text_system()
                     .shape_line(option.label.clone(), window.rem_size(), &[run], None)
                     .width;
-                let padding = f32::from(rems(12. / 14.).to_pixels(window.rem_size())) * 2.;
-                let icon_and_gap = if self.icons.contains_key(&option.value) {
+                let padding = f32::from(rems(if segmented { 4. / 14. } else { 12. / 14. }).to_pixels(window.rem_size())) * 2.;
+                let icon_and_gap = if segmented || self.icons.contains_key(&option.value) {
                     f32::from(rems(18. / 14.).to_pixels(window.rem_size()))
                         + f32::from(rems(8. / 14.).to_pixels(window.rem_size()))
                 } else {
@@ -310,6 +320,7 @@ impl RenderOnce for SingleChoiceGroup {
             .w_full()
             .min_w_0()
             .items_stretch()
+            .when(segmented, |lane| lane.rounded_full().overflow_hidden())
             .when(vertical, |lane| lane.flex_col().gap(px(4. * scale)))
             .when(cfg!(test), |lane| {
                 lane.debug_selector(|| "full-choice-lane".into())
@@ -318,7 +329,16 @@ impl RenderOnce for SingleChoiceGroup {
             lane = lane.child(
                 div()
                     .absolute()
-                    .rounded_full()
+                    .when(!segmented, |fill| fill.rounded_full())
+                    // GPUI overflow clips the rectangle, not rounded corners. Paint
+                    // the indicator's end caps explicitly; use the animated position
+                    // so leaving/entering an end segment never flashes a square cap.
+                    .when(segmented, |fill| {
+                        let radius = f32::from(item_height) / 2.;
+                        let left = (1. - position).clamp(0., 1.);
+                        let right = (1. - (count.saturating_sub(1) as f32 - position)).clamp(0., 1.);
+                        fill.rounded_l(px(radius * left)).rounded_r(px(radius * right))
+                    })
                     // M3 segmented buttons and navigation share the tonal
                     // secondary container as the selected surface.
                     .bg(super::color(super::SECONDARY_CONTAINER))
@@ -338,6 +358,13 @@ impl RenderOnce for SingleChoiceGroup {
                         fill.debug_selector(|| "full-choice-indicator".into())
                     }),
             );
+        }
+        if segmented && count > 1 {
+            for index in 1..count {
+                lane = lane.child(div().absolute().top_0().bottom_0()
+                    .left(relative(index as f32 / count as f32)).w(px(1.))
+                    .bg(super::color(super::CONTROL)));
+            }
         }
         for (index, option) in self.options.into_iter().enumerate() {
             let checked = selected == Some(index);
@@ -362,7 +389,11 @@ impl RenderOnce for SingleChoiceGroup {
                 .gap(rems(8. / 14.))
                 .items_center()
                 .when(vertical, |row| row.w_full())
-                .when_some(self.icons.get(&value).cloned(), |row, icon| {
+                .when(segmented, |row| row.child(
+                    crate::icons::check().size(rems(18. / 14.)).flex_shrink_0()
+                        .opacity(if checked { 1. } else { 0. }),
+                ))
+                .when_some(self.icons.get(&value).filter(|_| !segmented).cloned(), |row, icon| {
                     row.child(icon.size(rems(18. / 14.)).flex_shrink_0())
                 })
                 .child(
@@ -380,6 +411,9 @@ impl RenderOnce for SingleChoiceGroup {
             if self.tabs {
                 let click_focus = focus.clone();
                 let tab = item_style(gpui_base::Tab::new(value.clone()), vertical, item_height)
+                    .when(segmented, |item| item.px(rems(4. / 14.)).rounded_none()
+                        .when(index == 0, |item| item.rounded_l_full())
+                        .when(index + 1 == count, |item| item.rounded_r_full()))
                     .selected(checked)
                     .disabled(option.disabled)
                     .accessibility_label(label)
@@ -398,6 +432,9 @@ impl RenderOnce for SingleChoiceGroup {
                 lane = lane.child(tab);
             } else {
                 let radio = item_style(gpui_base::Radio::new(value.clone()), vertical, item_height)
+                    .when(segmented, |item| item.px(rems(4. / 14.)).rounded_none()
+                        .when(index == 0, |item| item.rounded_l_full())
+                        .when(index + 1 == count, |item| item.rounded_r_full()))
                     .checked(checked)
                     .disabled(option.disabled)
                     .accessibility_label(label)
@@ -441,7 +478,7 @@ impl RenderOnce for SingleChoiceGroup {
                 group
                     .rounded_full()
                     .border_1()
-                    .border_color(super::color(super::HAIRLINE))
+                    .border_color(super::color(if segmented { super::CONTROL } else { super::HAIRLINE }))
             })
             .bg(gpui::transparent_black())
             .when(self.full_width, |group| group.w_full())
@@ -557,6 +594,63 @@ mod tests {
                     })),
             )
         }
+    }
+
+    struct SegmentedHarness { selected: usize, changes: usize }
+
+    impl Render for SegmentedHarness {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            window.set_rem_size(px(14.));
+            div().w(px(312.)).child(
+                SingleChoiceGroup::new("connected-choice", "文字来源")
+                    .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
+                    .segmented()
+                    .selected(self.selected.to_string())
+                    .on_change(cx.listener(|this, next: &SharedString, _, cx| {
+                        this.selected = next.parse().unwrap();
+                        this.changes += 1;
+                        cx.notify();
+                    })),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn connected_segments_fill_track_and_keep_labels_still_on_selection(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (view, cx) = cx.add_window_view(|_, _| SegmentedHarness { selected: 0, changes: 0 });
+        draw_choice(cx);
+        let track = choice_bounds(cx, "full-choice-track");
+        let lane = choice_bounds(cx, "full-choice-lane");
+        assert_eq!(lane.left() - track.left(), px(1.));
+        assert_eq!(track.right() - lane.right(), px(1.));
+        let labels = ["full-choice-label-0", "full-choice-label-1", "full-choice-label-2"];
+        let before = labels.map(|selector| choice_bounds(cx, selector));
+        // Medium reference: a 360px panel minus two 24px insets must show the full label.
+        let required = cx.update(|window, _| {
+            let mut font = window.text_style().font();
+            font.weight = FontWeight::MEDIUM;
+            window.text_system().shape_line("语音识别".into(), px(14.), &[TextRun {
+                len: "语音识别".len(), font, color: gpui::black().into(),
+                background_color: None, underline: None, strikethrough: None,
+            }], None).width.ceil()
+        });
+        assert!(before[2].size.width >= required, "label bounds: {:?}, needed: {:?}", before[2], required);
+        let last = choice_bounds(cx, "full-choice-option-2");
+        let first = choice_bounds(cx, "full-choice-option-0");
+        assert!((first.size.width - last.size.width).abs() < px(0.5));
+        cx.simulate_click(last.center(), Modifiers::default());
+        draw_choice(cx);
+        cx.update(|_, cx| { assert_eq!(view.read(cx).selected, 2); assert_eq!(view.read(cx).changes, 1); });
+        let fill = choice_bounds(cx, "full-choice-indicator");
+        assert!((fill.left() - last.left()).abs() < px(0.5));
+        assert_eq!(fill.top(), lane.top());
+        assert_eq!(fill.bottom(), lane.bottom());
+        for (selector, bounds) in labels.into_iter().zip(before) {
+            assert_eq!(choice_bounds(cx, selector), bounds);
+        }
+        cx.simulate_click(last.center(), Modifiers::default());
+        cx.update(|_, cx| assert_eq!(view.read(cx).changes, 1));
     }
 
     const OPTION_SELECTORS: [&str; 4] = [

@@ -1001,11 +1001,34 @@ pub fn badge(kind: BadgeKind) -> gpui::Div {
     view
 }
 
+/// A floating label for an outlined control. The control owns its border;
+/// supporting status stays in normal flow below it and can grow naturally.
+pub fn outlined_field_label(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+    content: impl gpui::IntoElement,
+) -> gpui::Div {
+    use gpui::{prelude::*, *};
+    div().relative().w_full().min_w_0().mt(rems(8. / 14.))
+        .child(content)
+        .child(accessible_text(id, label)
+            .absolute().top(rems(-8. / 14.)).left(rems(12. / 14.))
+            .px(rems(4. / 14.))
+            .bg(color(SURFACE)).text_color(color(MUTED))
+            .text_size(TEXT_AUX).line_height(rems(16. / 14.))
+            .font_weight(FontWeight::NORMAL))
+}
+
 /// Preference switches share the accent and scale their geometry with UI text.
 pub fn coral_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
     switch
         .color(color(ACCENT_STRONG))
         .track_height(rems(20. / 14.))
+}
+
+/// Larger switches for a full-width processing panel's preference rows.
+pub fn processing_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
+    coral_switch(switch).track_height(rems(30. / 14.))
 }
 
 /// GPUI Component's Root resets rem size from Theme on every render. Update that
