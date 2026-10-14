@@ -49,13 +49,15 @@ With existing reduced motion, show settled state directly, suppress decorative m
 | State | User sees / can do | Transition |
 | --- | --- | --- |
 | Empty input | One clear source input and primary import action | No empty document-management task |
-| Resolving / prerequisites | Stable input context, live status and cancellation where supported | Continue automatically after ordinary checks succeed |
+| Reading preview | Input stays visible; show metadata/card directly beneath it, loading status and cancellation | Stop at preview; never submit without confirmation |
+| Preview ready | Video card, editable options and an explicit “开始转换” | Submit only on that action |
+| Confirmed prerequisites | Keep the confirmed task context and actionable obstacles visible | Continue the confirmed intent once checks succeed |
 | Decision needed | Exact obstacle/consequence, current values and a direct choice/repair | Resume the original intent with its data intact |
 | Processing | Real phase and one primary loading/progress treatment | Permit background continuation and navigation |
 | Partial / failed | Existing input/results, specific reason and scoped recovery | Retry failed work when supported |
 | Complete | Open the usable note when still following this task; otherwise update its status quietly | No planning approval or completion landing page before reading |
 
-This is a state model, not six pages. An internal plan can remain in details if useful; it does not create a mandatory second start button. Removing planning/completion intermediates applies to alternate source routes and restored tasks too.
+These states stay on the workbench. Preview and conversion are distinct user actions; alternate source routes and restored drafts must preserve that boundary. Internal plan details and completion history must not add extra pages.
 
 Determinate progress represents actual measured completion, never a timer or equal fractions assigned to unequal backend stages. Without a meaningful denominator, show indeterminate progress and the real phase. Switch when measurements become available without resetting surrounding content.
 
