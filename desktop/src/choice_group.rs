@@ -38,6 +38,7 @@ pub struct SingleChoiceGroup {
     full_width: bool,
     segmented: bool,
     segment_icons: bool,
+    label_text_size: Option<Rems>,
     tabs: bool,
     activate_selected: bool,
     vertical: bool,
@@ -57,6 +58,7 @@ impl SingleChoiceGroup {
             full_width: false,
             segmented: false,
             segment_icons: false,
+            label_text_size: None,
             tabs: false,
             activate_selected: false,
             vertical: false,
@@ -100,6 +102,11 @@ impl SingleChoiceGroup {
     /// Options without an icon retain the checkmark; selection remains tonal.
     pub fn segment_icons(mut self) -> Self {
         self.segment_icons = true;
+        self
+    }
+    /// Override option text for a page-specific typography role.
+    pub fn label_text_size(mut self, size: Rems) -> Self {
+        self.label_text_size = Some(size);
         self
     }
     /// Navigation uses the same surfaces, with tab semantics and optional leading layout.
@@ -308,7 +315,7 @@ impl RenderOnce for SingleChoiceGroup {
                 };
                 let width = window
                     .text_system()
-                    .shape_line(option.label.clone(), window.rem_size(), &[run], None)
+                    .shape_line(option.label.clone(), self.label_text_size.map(|size| size.to_pixels(window.rem_size())).unwrap_or(window.rem_size()), &[run], None)
                     .width;
                 let padding = f32::from(rems(if segmented { 4. / 14. } else { 12. / 14. }).to_pixels(window.rem_size())) * 2.;
                 let icon_and_gap = if segmented || self.icons.contains_key(&option.value) {
@@ -419,6 +426,7 @@ impl RenderOnce for SingleChoiceGroup {
             if self.tabs {
                 let click_focus = focus.clone();
                 let tab = item_style(gpui_base::Tab::new(value.clone()), vertical, item_height)
+                    .when_some(self.label_text_size, |item, size| item.text_size(size))
                     .when(segmented, |item| item.px(rems(4. / 14.)).rounded_none()
                         .when(index == 0, |item| item.rounded_l_full())
                         .when(index + 1 == count, |item| item.rounded_r_full()))
@@ -440,6 +448,7 @@ impl RenderOnce for SingleChoiceGroup {
                 lane = lane.child(tab);
             } else {
                 let radio = item_style(gpui_base::Radio::new(value.clone()), vertical, item_height)
+                    .when_some(self.label_text_size, |item, size| item.text_size(size))
                     .when(segmented, |item| item.px(rems(4. / 14.)).rounded_none()
                         .when(index == 0, |item| item.rounded_l_full())
                         .when(index + 1 == count, |item| item.rounded_r_full()))
