@@ -15,7 +15,7 @@ impl Desktop {
             _ => "custom",
         };
         let languages = group("language-settings", "文字来源")
-            .child(settings_row(
+            .child(settings_stacked_row(
                 "default-text-source-label",
                 icons::subtitles(),
                 "文字来源",
@@ -50,7 +50,7 @@ impl Desktop {
                         this.commit_generation(next, cx);
                     })),
             ))
-            .child(settings_row(
+            .child(settings_outlined_row(
                 "subtitle-language-label",
                 icons::subtitles(),
                 "字幕语言",
@@ -63,6 +63,8 @@ impl Desktop {
                         let current = language.to_owned();
                         let entity = cx.weak_entity();
                         control("default-subtitle-language")
+                            .h(px(56.))
+                            .rounded(RADIUS_SMALL)
                             .w_full()
                             .label(match language {
                                 "zh-Hans" => "简体中文",
@@ -175,63 +177,66 @@ impl Desktop {
                         cx,
                     )),
             ));
-        let mut recognition = group("asr-default-settings", "语音识别").child(settings_row(
-            "asr-method-label",
-            icons::microphone(),
-            "识别方式",
-            if provider == "api" {
-                "音频会发送到所选服务"
-            } else {
-                ""
-            },
-            self.reveal_setting("default-asr-device-reveal", {
-                let online = provider == "api";
-                let entity = cx.weak_entity();
-                control("default-asr-device")
-                    .w_full()
-                    .label(if online {
-                        "在线语音服务"
-                    } else {
-                        "本机"
-                    })
-                    .child(div().flex_1())
-                    .when(!online, |button| {
-                        button.child(
-                            text(
-                                "default-asr-engine-value",
-                                match provider {
-                                    "coreml" => "Apple 原生",
-                                    "gpu" => "GPU",
-                                    "cpu" => "CPU",
-                                    "npu" => "Intel NPU",
-                                    _ => "自动选择引擎",
-                                },
-                            )
-                            .text_color(color(MUTED))
-                            .font_weight(FontWeight::NORMAL),
-                        )
-                    })
-                    .child(icons::chevron_down().size_4())
-                    .dropdown_menu(move |menu, _, _| {
-                        [(false, "本机识别"), (true, "在线语音服务")]
-                            .into_iter()
-                            .fold(menu, |menu, (use_online, label)| {
-                                let entity = entity.clone();
-                                menu.item(
-                                    PopupMenuItem::new(label)
-                                        .checked(online == use_online)
-                                        .on_click(move |_, _, cx| {
-                                            let _ = entity.update(cx, |this, cx| {
-                                                let mut next = this.generation_edit_base();
-                                                next.select_recognition_location(use_online);
-                                                this.commit_generation(next, cx);
-                                            });
-                                        }),
+        let mut recognition =
+            group("asr-default-settings", "语音识别").child(settings_outlined_row(
+                "asr-method-label",
+                icons::microphone(),
+                "识别方式",
+                if provider == "api" {
+                    "音频会发送到所选服务"
+                } else {
+                    ""
+                },
+                self.reveal_setting("default-asr-device-reveal", {
+                    let online = provider == "api";
+                    let entity = cx.weak_entity();
+                    control("default-asr-device")
+                        .h(px(56.))
+                        .rounded(RADIUS_SMALL)
+                        .w_full()
+                        .label(if online {
+                            "在线语音服务"
+                        } else {
+                            "本机"
+                        })
+                        .child(div().flex_1())
+                        .when(!online, |button| {
+                            button.child(
+                                text(
+                                    "default-asr-engine-value",
+                                    match provider {
+                                        "coreml" => "Apple 原生",
+                                        "gpu" => "GPU",
+                                        "cpu" => "CPU",
+                                        "npu" => "Intel NPU",
+                                        _ => "自动选择引擎",
+                                    },
                                 )
-                            })
-                    })
-            }),
-        ));
+                                .text_color(color(MUTED))
+                                .font_weight(FontWeight::NORMAL),
+                            )
+                        })
+                        .child(icons::chevron_down().size_4())
+                        .dropdown_menu(move |menu, _, _| {
+                            [(false, "本机识别"), (true, "在线语音服务")]
+                                .into_iter()
+                                .fold(menu, |menu, (use_online, label)| {
+                                    let entity = entity.clone();
+                                    menu.item(
+                                        PopupMenuItem::new(label)
+                                            .checked(online == use_online)
+                                            .on_click(move |_, _, cx| {
+                                                let _ = entity.update(cx, |this, cx| {
+                                                    let mut next = this.generation_edit_base();
+                                                    next.select_recognition_location(use_online);
+                                                    this.commit_generation(next, cx);
+                                                });
+                                            }),
+                                    )
+                                })
+                        })
+                }),
+            ));
         if provider == "api" {
             recognition = recognition.child(self.service_picker(ServicePurpose::Speech, false, cx));
         } else {
@@ -294,17 +299,12 @@ impl Desktop {
             ));
         }
         let mut ai = group("ai-default-settings", "AI 处理")
-            .child(settings_row(
-                "default-ai-processing-label",
-                icons::auto_fix(),
-                "AI 处理",
-                "",
-                v_flex()
-                    .w_full()
-                    .min_w_0()
-                    .child(settings_checkbox_row(
-                        Checkbox::new("default-ai-proofread")
-                            .label("校对文字和标点")
+            .child(
+                setting_surface()
+                    .child(settings_switch_row(
+                        "校对文字和标点",
+                        "",
+                        Switch::new("default-ai-proofread")
                             .checked(value.ai_proofread)
                             .on_click(cx.listener(|this, enabled, _, cx| {
                                 let mut next = this.generation_edit_base();
@@ -312,9 +312,10 @@ impl Desktop {
                                 this.commit_generation(next, cx);
                             })),
                     ))
-                    .child(settings_checkbox_row(
-                        Checkbox::new("default-ai-summary")
-                            .label("在开头生成摘要")
+                    .child(settings_switch_row(
+                        "在开头生成摘要",
+                        "",
+                        Switch::new("default-ai-summary")
                             .checked(value.ai_summary)
                             .on_click(cx.listener(|this, enabled, _, cx| {
                                 let mut next = this.generation_edit_base();
@@ -322,9 +323,10 @@ impl Desktop {
                                 this.commit_generation(next, cx);
                             })),
                     ))
-                    .child(settings_checkbox_row(
-                        Checkbox::new("default-ai-vision")
-                            .label("校对时附带对应截图")
+                    .child(settings_switch_row(
+                        "校对时附带对应截图",
+                        "",
+                        Switch::new("default-ai-vision")
                             .checked(value.vision)
                             .disabled(!value.ai_proofread)
                             .on_click(cx.listener(|this, enabled, _, cx| {
@@ -333,7 +335,7 @@ impl Desktop {
                                 this.commit_generation(next, cx);
                             })),
                     )),
-            ))
+            )
             .child(self.service_picker(ServicePurpose::Ai, false, cx));
         // The rule only applies to proofreading, so it appears with it.
         if value.ai_proofread {
@@ -436,46 +438,59 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .flex_shrink_0()
-            .gap_6()
+            .gap(px(32.))
             .child(languages)
             .child(recognition)
             .child(ai)
             .child(
                 group("export-default-settings", "保存")
-                    .child(settings_row(
-                        "settings-save-location",
-                        icons::folder(),
-                        "保存位置",
-                        "",
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .gap_3()
-                            .items_center()
-                            .child(
-                                text(
-                                    "settings-current-location",
-                                    self.workspace
-                                        .as_ref()
-                                        .and_then(|workspace| {
-                                            workspace.state.libraries.iter().find(|library| {
-                                                library.id == workspace.state.default_library
-                                            })
-                                        })
-                                        .map(|library| library.root.display().to_string())
-                                        .unwrap_or_else(|| "尚未设置".into()),
+                    .child(
+                        setting_surface().child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .gap_3()
+                                .items_center()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .child(text("settings-save-location", "保存位置"))
+                                        .child(
+                                            text(
+                                                "settings-current-location",
+                                                self.workspace
+                                                    .as_ref()
+                                                    .and_then(|workspace| {
+                                                        workspace.state.libraries.iter().find(
+                                                            |library| {
+                                                                library.id
+                                                                    == workspace
+                                                                        .state
+                                                                        .default_library
+                                                            },
+                                                        )
+                                                    })
+                                                    .map(|library| {
+                                                        library.root.display().to_string()
+                                                    })
+                                                    .unwrap_or_else(|| "尚未设置".into()),
+                                            )
+                                            .text_size(TEXT_AUX)
+                                            .text_color(color(MUTED))
+                                            .min_w_0(),
+                                        ),
                                 )
-                                .flex_1()
-                                .min_w_0(),
-                            )
-                            .child(
-                                outline_pill("settings-manage-storage")
-                                    .label("更改")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.select_settings_tab(2, window, cx);
-                                    })),
-                            ),
-                    ))
+                                .child(
+                                    outline_pill("settings-manage-storage")
+                                        .label("更改")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.select_settings_tab(2, window, cx);
+                                        })),
+                                ),
+                        ),
+                    )
                     .child(settings_row(
                         "export-format-label",
                         icons::download(),
@@ -512,22 +527,19 @@ impl Desktop {
                             }),
                         ),
                     ))
-                    .child(settings_row(
-                        "default-keep-video-label",
-                        icons::movie(),
-                        "原视频",
-                        "",
-                        h_flex().w_full().child(
-                            Checkbox::new("default-keep-video")
-                                .label("保留下载的视频，可离线播放")
+                    .child(
+                        setting_surface().child(settings_switch_row(
+                            "保留下载的视频",
+                            "可离线播放，会占用更多磁盘空间",
+                            Switch::new("default-keep-video")
                                 .checked(value.options.keep_video.unwrap_or(false))
                                 .on_click(cx.listener(|this, enabled, _, cx| {
                                     let mut next = this.generation_edit_base();
                                     next.options.keep_video = Some(*enabled);
                                     this.commit_generation(next, cx);
                                 })),
-                        ),
-                    )),
+                        )),
+                    ),
             )
             .into_any_element()
     }
@@ -624,8 +636,8 @@ impl Desktop {
             .flex_wrap()
             .child(
                 h_flex()
-                    .flex_1()
-                    .min_w(rems(12.))
+                    .w_full()
+                    .min_w_0()
                     .gap_2()
                     .items_center()
                     .when(!settled, |status| {
@@ -672,7 +684,7 @@ impl Desktop {
                         cx.notify();
                     })),
             );
-        let mut view = v_flex().w_full().min_w_0().child(settings_row(
+        let mut view = v_flex().w_full().min_w_0().child(settings_stacked_row(
             "local-model-heading",
             icons::storage(),
             "识别模型",
