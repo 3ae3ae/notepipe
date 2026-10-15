@@ -230,13 +230,12 @@ pub async fn summarize(
         .map(|e| e.text.chars().count() + PER_EVENT_OVERHEAD)
         .sum();
     // 空转写直接报错：发给模型只会得到编造内容或报错，浪费请求
-    if events.is_empty() || total_chars == 0 {
+    if events.is_empty() {
         bail!("转写为空，无法总结 / Transcript is empty; cannot summarize");
     }
     llm::validate(s)?;
     let ctx = meta_context(meta);
     let transcript = format!("{ctx}{}", build_transcript(events));
-    // 整个总结任务共享一个 agent（clone 共享连接池），map-reduce 各段复用 TCP+TLS
     let agent = llm::chat_agent();
     if total_chars <= DIRECT_CHAR_LIMIT {
         let t = transcript;
@@ -248,7 +247,7 @@ pub async fn summarize(
         );
         return tokio::task::spawn_blocking(move || summarize_text(&agent, &s2, &t, &description))
             .await
-            .context("总结线程 join 失败 / Summary thread join failed")?;
+            .context("生成摘要时意外中断 / Summary generation was interrupted")?;
     }
     // ---- map-reduce：分段按 SUMMARIZE_CONCURRENCY 分批并发 ----
     let chunks = split_chunks(events, CHUNK_CHAR_LIMIT);
@@ -325,7 +324,7 @@ pub async fn summarize(
         )
     })
     .await
-    .context("合并线程 join 失败 / Merge thread join failed")?;
+    .context("生成摘要时意外中断 / Summary generation was interrupted")?;
     let combined = combined?;
     parse_summary(&combined).context(
         "摘要合并未完成，已保存各段已确认结果 / Summary merge failed; completed parts retained",

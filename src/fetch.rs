@@ -18,12 +18,6 @@ fn ytdlp_base(cmd: &mut Command) -> &mut Command {
     cmd.args(["--ignore-config", "--socket-timeout", YTDLP_SOCKET_TIMEOUT])
 }
 
-/// 轮询任务控制文件，意图不再是 run 时返回 Err（已提升为 dispatch::watch_control）。
-/// 配合 `tokio::select!` 打断长时间运行的子进程分支。
-async fn watch_control() -> anyhow::Error {
-    crate::dispatch::watch_control().await
-}
-
 /// 确定性错误（重试无意义）：4xx 拒绝、不支持的 URL、私有/不可用视频等。
 /// 只匹配 yt-dlp 的错误文本；未列出的错误按网络类处理，仍由外层循环重试。
 fn is_deterministic_download_error(error_text: &str) -> bool {
@@ -200,7 +194,7 @@ pub fn parse_online_probe(bytes: &[u8], input: &str, diagnostics: &str) -> Resul
         serde_json::from_slice(bytes).context("无法读取视频信息，请重新读取 / Cannot read video info; probe again")?;
     if info.kind == "multi_video" {
         return Ok(OnlineProbe::Unresolved {
-            message: "这个来源由多个媒体片段组成，暂时无法确认完整的视频范围。请选择本地完整视频。 / This source consists of multiple media segments, so the full video range cannot be confirmed yet. Choose a complete local video."
+            message: "这个视频被分成了多段，暂不支持。请下载完整视频后导入。 / This video is split into several parts and is not supported yet. Download the full video and import it."
                 .into(),
         });
     }
@@ -259,9 +253,9 @@ pub fn parse_online_probe(bytes: &[u8], input: &str, diagnostics: &str) -> Resul
     let id = info
         .id
         .as_deref()
-        .context("来源没有提供可确认的视频身份，请复制具体视频的链接 / The source did not provide a verifiable video identity; paste the link to a specific video")?;
+        .context("无法识别这个链接对应的视频，请粘贴具体视频的链接 / Cannot identify the video for this link; paste the link to a specific video")?;
     let identity = online_identity(&extractor, id)
-        .context("来源没有提供可确认的视频身份，请复制具体视频的链接 / The source did not provide a verifiable video identity; paste the link to a specific video")?;
+        .context("无法识别这个链接对应的视频，请粘贴具体视频的链接 / Cannot identify the video for this link; paste the link to a specific video")?;
     let input = concrete_url(&info).unwrap_or_else(|| input.to_owned());
     // The original concrete part link is authoritative if the extractor returns a
     // canonical base URL: do not erase an explicitly selected Bilibili part.
@@ -336,6 +330,8 @@ struct BilibiliPage {
 
 /// 单个探测最多补充的不同 BV 数：异常巨大的合集列表不放大请求量
 const BILIBILI_ENRICH_LIMIT: usize = 32;
+/// 分集信息补充的并发请求数
+const BILIBILI_ENRICH_CONCURRENCY: usize = 4;
 
 /// `/video/BVxxxxxxxxxx` 路径段中的 BV 号（"BV" + 10 位）。
 fn bilibili_bvid(url: &str) -> Option<String> {
@@ -378,12 +374,8 @@ pub fn candidate_identity(candidate: &SourceCandidate) -> Option<String> {
     online_identity("bilibili", &id)
 }
 
-fn bilibili_view(bvid: &str) -> Result<BilibiliViewData> {
-    let response = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(3))
-        .timeout_read(std::time::Duration::from_secs(3))
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
+fn bilibili_view(agent: &ureq::Agent, bvid: &str) -> Result<BilibiliViewData> {
+    let response = agent
         .get(&format!(
             "https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
         ))
@@ -454,10 +446,27 @@ pub fn enrich_bilibili_candidates(candidates: &mut [SourceCandidate]) {
             break;
         }
     }
-    for bvid in bvids {
-        match bilibili_view(&bvid) {
-            Ok(view) => apply_bilibili_view(candidates, &bvid, &view),
-            Err(error) => tracing::debug!(bvid, "分集信息补充失败：{error:#}"),
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(3))
+        .timeout_read(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(8))
+        .build();
+    // 每个请求最长 8s：分批并发，避免几十个分集串行等待
+    for batch in bvids.chunks(BILIBILI_ENRICH_CONCURRENCY) {
+        let views: Vec<_> = std::thread::scope(|scope| {
+            batch
+                .iter()
+                .map(|bvid| scope.spawn(|| bilibili_view(&agent, bvid)))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().unwrap_or_else(|_| anyhow::bail!("分集信息线程异常")))
+                .collect()
+        });
+        for (bvid, view) in batch.iter().zip(views) {
+            match view {
+                Ok(view) => apply_bilibili_view(candidates, bvid, &view),
+                Err(error) => tracing::debug!(bvid, "分集信息补充失败：{error:#}"),
+            }
         }
     }
 }
@@ -606,14 +615,8 @@ pub fn local_content_identity(
 
 impl VideoMeta {
     pub fn save(&self, path: &Path) -> Result<()> {
-        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
-        Ok(())
+        crate::checkpoint::atomic_write(path, serde_json::to_string_pretty(self)?.as_bytes())
     }
-}
-
-/// 抓取元数据（不下载）。
-pub async fn fetch_meta(url: &str) -> Result<VideoMeta> {
-    Ok(probe_video(url).await?.meta)
 }
 
 /// Probe once and return the single video; collection/unresolved links are errors.
@@ -675,7 +678,7 @@ pub async fn fetch_subtitle(video: &OnlineVideo, out_dir: &Path) -> Result<Optio
                 .map(Some)
         }
         SubtitleEvidence::Failed { message } => {
-            anyhow::bail!("字幕未读取成功，尚不能确认是否可用 / Subtitles were not read successfully, so availability cannot be confirmed yet: {message}")
+            anyhow::bail!("读取字幕失败 / Could not read subtitles: {message}")
         }
         SubtitleEvidence::Unchecked => anyhow::bail!("尚未检查字幕，请重新读取视频信息 / Subtitles not checked yet; probe the video info again"),
         SubtitleEvidence::NoneFound | SubtitleEvidence::Unsupported { .. } => Ok(None),
@@ -764,7 +767,7 @@ pub async fn fetch_selected_subtitle(
             _ => anyhow::bail!("无法确认字幕对应的视频，请重新读取 / Cannot confirm the video for the subtitle; probe again"),
         }
         let path = crate::subtitle::pick_subtitle_file(temp.path())
-            .context("所选字幕没有下载成功，请重新读取字幕或明确选择其他文字来源 / The selected subtitle was not downloaded; probe subtitles again or explicitly choose another text source")?;
+            .context("所选字幕下载失败，请重新读取字幕，或改用语音识别 / The selected subtitle could not be downloaded; read subtitles again or use speech recognition")?;
         crate::subtitle::read_subtitle_text(&path)?
     };
     let events = crate::subtitle::parse_subtitle(&text);
@@ -786,12 +789,13 @@ pub fn sidecar_subtitle(video: &Path) -> Option<SubtitleFetch> {
     crate::subtitle::sidecar_subtitle(video).map(|path| SubtitleFetch { path, auto: false })
 }
 
-/// 下载视频到 `dest`（默认 1080p 上限，mp4 合并）。已存在则跳过。
+/// 下载视频到 `dest`（默认 1080p 上限，mp4 合并）。
+/// 调用方先处理已有文件（校验或归档）：这里绝不把未校验的旧文件当作下载结果。
 pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) -> Result<()> {
-    if dest.is_file() {
-        tracing::info!(path = %dest.display(), "media exists, skip download");
-        return Ok(());
-    }
+    ensure!(
+        !dest.exists(),
+        "视频位置已有未校验的文件 / An unverified file already exists at the video location"
+    );
     if let Some(p) = dest.parent() {
         tokio::fs::create_dir_all(p).await?;
     }
@@ -808,7 +812,7 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
             let delay = next_delay.unwrap_or(DOWNLOAD_RETRY_DELAY);
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {}
-                e = watch_control() => return Err(e),
+                e = crate::dispatch::watch_control() => return Err(e),
             }
         }
         let mut cmd = Command::new(crate::ytdlp::program());
@@ -838,7 +842,7 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
                 status.map_err(|e| crate::auth::with_bilibili_login_tip(url, e))
             }
             // 取消/暂停：drop run_download 分支即 kill_on_drop 终止当前 yt-dlp
-            e = watch_control() => return Err(e),
+            e = crate::dispatch::watch_control() => return Err(e),
         };
         match outcome {
             Ok(()) => {
@@ -908,7 +912,7 @@ pub fn bilibili_retry_delay(stderr: &str, retries: usize) -> Option<std::time::D
         .map(std::time::Duration::from_secs)
 }
 
-pub const BILIBILI_412_HINT: &str = "Bilibili 暂时限制了请求（HTTP 412）。请稍后重试；若持续失败，请运行 course2md --login bilibili 登录或重新登录，更新 yt-dlp，并确认该链接能在浏览器播放，也可以导入已下载的本地视频。 / Bilibili is rate-limiting requests (HTTP 412). Retry later; if it keeps failing, run course2md --login bilibili to log in again, update yt-dlp, and confirm the link plays in a browser, or import a downloaded local video.";
+pub const BILIBILI_412_HINT: &str = "B 站暂时限制了访问。请稍后重试；若持续失败，运行 course2md --login bilibili 重新登录，或导入本地视频。 / Bilibili is temporarily limiting access. Retry later; if it keeps failing, run course2md --login bilibili to log in again, or import a local video.";
 
 #[cfg(all(test, unix))]
 async fn run(cmd: &mut Command) -> Result<String> {
@@ -930,8 +934,11 @@ async fn run_output(cmd: &mut Command) -> Result<std::process::Output> {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if let Some(delay) = bilibili_retry_delay(&stderr, retries) {
             retries += 1;
-            tracing::warn!(retries, "Bilibili HTTP 412，等待后重试 / Bilibili HTTP 412; retrying after a wait");
-            tokio::time::sleep(delay).await;
+            tracing::warn!(retries, "B 站暂时限制了访问，稍后重试 / Bilibili is limiting requests; retrying shortly");
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                e = crate::dispatch::watch_control() => return Err(e),
+            }
             continue;
         }
         let error = crate::error::cmd_error("yt-dlp", out.status.code(), &stderr);
@@ -1318,9 +1325,10 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires yt-dlp and Bilibili network access"]
     async fn live_example_metadata() {
-        let meta = fetch_meta("https://www.bilibili.com/video/BV1pb8o6yE8f")
+        let meta = probe_video("https://www.bilibili.com/video/BV1pb8o6yE8f")
             .await
-            .unwrap();
+            .unwrap()
+            .meta;
         assert!(meta.title.contains("欢迎来到未来"));
         assert!(meta.duration > 0.);
         assert!(!meta.uploader.is_empty());
