@@ -1166,7 +1166,6 @@ pub fn normalize_segments(
     wav: &Path,
     dur: f64,
 ) -> Result<Vec<Seg>> {
-    let energy = Energy::load(wav).ok();
     // VAD 成功但无语音（或全被短段过滤）→ 空分段。
     // 不把整段音频当语音兜底：静音课件会诱发 ASR 幻觉。
     let mut raw = speech;
@@ -1174,6 +1173,18 @@ pub fn normalize_segments(
     if raw.is_empty() {
         return Ok(vec![]);
     }
+    // 能量曲线只在有超长段需要切分时才读（要流式扫描整个音频）
+    let energy = if raw.iter().any(|(a, b)| b - a > max_speech) {
+        Energy::load(wav)
+            .inspect_err(|e| {
+                tracing::warn!(
+                    "无法读取音频能量，长段将按固定长度切分 / Could not read audio energy; long segments are split at fixed lengths: {e:#}"
+                )
+            })
+            .ok()
+    } else {
+        None
+    };
 
     let mut pieces: Vec<(f64, f64)> = vec![];
     for &(s, e) in &raw {

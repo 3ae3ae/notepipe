@@ -166,9 +166,9 @@ pub fn run_bounded(
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
     let mut child = ManagedChild::spawn(name, cmd)?;
-    let status = child.wait_within(timeout).map_err(|e| {
+    let status = child.wait_within(timeout).map_err(|_| {
         anyhow::anyhow!(
-            "{name} 超过 {:.0}s 未完成，已终止 / did not finish within the time limit and was killed: {e:#}",
+            "{name} 超过 {0:.0} 秒未完成，已终止 / {name} did not finish within {0:.0}s and was stopped",
             timeout.as_secs_f64()
         )
     })?;
