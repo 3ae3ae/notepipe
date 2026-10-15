@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build and package the native app and its matching CLI on the current platform."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -37,6 +38,18 @@ def run(*args):
     subprocess.run(args, cwd=PROJECT, check=True)
 
 
+# Bundled yt-dlp is pinned so release archives are reproducible. To update, take
+# the version and hashes from that release's SHA2-256SUMS.
+YTDLP_VERSION = "2026.08.19"
+YTDLP_SHA256 = {
+    "yt-dlp_macos": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202",
+    "yt-dlp.exe": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+    "yt-dlp_arm64.exe": "05b438997bafc3affdfda9d041353c9d73e04dc842207254b655b0887c4445b0",
+    "yt-dlp_linux": "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a",
+    "yt-dlp_linux_aarch64": "b16e4dab368a816cd05d477d698a605a6ae87ccee1c8ffd38fa21d7254141fcc",
+}
+
+
 def ytdlp_asset(system, machine):
     """Standalone binary asset name in yt-dlp's GitHub releases, or None."""
     if system == "Darwin":
@@ -48,11 +61,11 @@ def ytdlp_asset(system, machine):
     return None
 
 
-def bundle_ytdlp(dest):
-    """Place a standalone yt-dlp beside the app binaries.
+def bundle_ytdlp(dest, required):
+    """Place the pinned standalone yt-dlp beside the app binaries.
 
     COURSE2MD_YTDLP points at a local build to bundle instead of downloading.
-    Failure is non-fatal: the app still resolves yt-dlp from PATH at runtime.
+    Release builds fail without it; development builds fall back to PATH.
     """
     try:
         local = os.environ.get("COURSE2MD_YTDLP")
@@ -62,19 +75,22 @@ def bundle_ytdlp(dest):
             asset = ytdlp_asset(platform.system(), platform.machine())
             if not asset:
                 return None
-            url = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{asset}"
+            url = f"https://github.com/yt-dlp/yt-dlp/releases/download/{YTDLP_VERSION}/{asset}"
             tmp = dest.parent / (dest.name + ".download")
             try:
                 with urllib.request.urlopen(url, timeout=300) as response, tmp.open("wb") as out:
                     shutil.copyfileobj(response, out)
-                if tmp.stat().st_size < 1_000_000:
-                    raise OSError(f"{asset} download is suspiciously small")
+                digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
+                if digest != YTDLP_SHA256[asset]:
+                    raise OSError(f"{asset} {YTDLP_VERSION} checksum mismatch: {digest}")
                 tmp.replace(dest)
             finally:
                 tmp.unlink(missing_ok=True)
         dest.chmod(0o755)
         return dest
     except OSError as error:
+        if required:
+            raise SystemExit(f"Release builds must bundle yt-dlp: {error}") from error
         print(f"warning: yt-dlp not bundled ({error}); the app will use yt-dlp from PATH")
         return None
 
@@ -152,15 +168,16 @@ def main():
             shutil.copy2(ROOT / "assets/icon.png", base / "course2md.png")
     shutil.copy2(PROJECT / "target" / profile / f"course2md{suffix}", binaries / f"course2md{suffix}")
     shutil.copy2(ROOT / "target" / profile / f"course2md-desktop{suffix}", binaries / f"course2md-desktop{suffix}")
-    # 自带 yt-dlp：与可执行文件同目录是运行时搜索清单的一档；COURSE2MD_NO_YTDLP=1 可跳过。
+    # The runtime searches beside the executable for yt-dlp; COURSE2MD_NO_YTDLP=1 skips bundling.
     if not os.environ.get("COURSE2MD_NO_YTDLP"):
-        bundled = bundle_ytdlp(binaries / f"yt-dlp{suffix}")
+        bundled = bundle_ytdlp(binaries / f"yt-dlp{suffix}", required=not args.debug)
         if bundled:
             print(f"bundled {bundled.name}")
     if system == "Windows":
         verify_windows_icon(binaries / "course2md-desktop.exe")
     shutil.copy2(PROJECT / "LICENSE", base / "LICENSE")
     shutil.copy2(ROOT / "assets/material/LICENSE", base / "LICENSE-material-icons")
+    shutil.copy2(ROOT / "assets/outline/LICENSE", base / "LICENSE-lucide-icons")
     shutil.copytree(ROOT / "assets/themes/licenses", base / "design-licenses", dirs_exist_ok=True)
     shutil.copy2(ROOT / "README.md", base / "README.md")
     # A development archive follows main and must not claim the previous release
@@ -169,6 +186,7 @@ def main():
     if system == "Darwin":
         shutil.copy2(PROJECT / "LICENSE", resources / "LICENSE")
         shutil.copy2(ROOT / "assets/material/LICENSE", resources / "LICENSE-material-icons")
+        shutil.copy2(ROOT / "assets/outline/LICENSE", resources / "LICENSE-lucide-icons")
         shutil.copytree(ROOT / "assets/themes/licenses", resources / "design-licenses", dirs_exist_ok=True)
         shutil.copy2(base / "sources.lock.json", resources / "sources.lock.json")
         identity = os.environ.get("APPLE_SIGNING_IDENTITY", "-")
@@ -177,7 +195,7 @@ def main():
             signing.extend(["--options", "runtime", "--timestamp"])
         run("codesign", *signing, str(binaries / "course2md"))
         run("codesign", *signing, str(binaries / "course2md-desktop"))
-        # 自带 yt-dlp 作为嵌套代码一并签名（--deep verify 与公证要求包内代码均可校验）
+        # Sign the bundled yt-dlp as nested code; --deep verification and notarization require it.
         ytdlp = binaries / "yt-dlp"
         if ytdlp.is_file():
             run("codesign", *signing, str(ytdlp))
@@ -186,8 +204,9 @@ def main():
         notarization = [os.environ.get(key) for key in ("APPLE_API_KEY_PATH", "APPLE_API_KEY_ID", "APPLE_API_ISSUER")]
         if identity != "-" and not all(notarization):
             raise SystemExit(
-                "已设置签名身份但公证材料不全（APPLE_API_KEY_PATH/APPLE_API_ISSUER/APPLE_API_ID），"
-                "产出的 DMG 会被 Gatekeeper 拦截；请补全材料或改用 '-' 跳过签名"
+                "Signing identity is set but notarization credentials are incomplete "
+                "(APPLE_API_KEY_PATH/APPLE_API_KEY_ID/APPLE_API_ISSUER); the DMG would be "
+                "blocked by Gatekeeper. Provide them or set APPLE_SIGNING_IDENTITY to '-'."
             )
         if identity != "-" and all(notarization):
             upload = base.parent / "notarization.zip"
