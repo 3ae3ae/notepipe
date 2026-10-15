@@ -1,9 +1,8 @@
-//! 长驻子进程生命周期管理（llama-server / NPU worker）。
-//!
-//! 统一三件此前散落在 asr.rs / npu.rs 的重复实现：
+//! 子进程与本地服务的共用原语（llama-server / NPU worker / ffmpeg）：
 //! - `ManagedChild`：Drop 保证 kill+wait，任何错误路径（含 `?` 早退）不泄漏进程
-//! - `wait_ready`：健康轮询期间监视子进程，秒退立即报错而不是傻等 300s 超时
-//! - `which` / `free_port` / `TempWorkDir`：单一实现
+//! - `run_bounded`：短命令的超时与输出捕获
+//! - `wait_ready`：健康轮询期间监视子进程，秒退立即报错而不是等满超时
+//! - `retry_backoff` / `interruptible_sleep`：可取消的重试退避
 
 use anyhow::{Context, Result};
 use std::net::TcpListener;
@@ -59,7 +58,6 @@ impl ManagedChild {
     }
 
     /// 轮询等待进程退出，最多 `timeout`；Err = 超时（进程仍由 Drop 兜底 kill+wait）。
-    /// 收拢此前 asr.rs / npu.rs 各自手写的「try_wait 轮询 + 截止时间」。
     pub fn wait_within(&mut self, timeout: Duration) -> Result<ExitStatus> {
         let t0 = Instant::now();
         loop {
@@ -280,7 +278,7 @@ pub fn http_agent(timeout: Duration) -> ureq::Agent {
 
 /// 在 PATH 上查找可执行文件。
 /// 用 `which` crate 而非手写 PATH 遍历：正确处理 Windows PATHEXT
-/// （旧实现只试 `.exe`，`.bat`/`.cmd` 会漏检）。
+/// （PATHEXT 含 `.bat`/`.cmd` 等）。
 pub fn which(cmd: &str) -> Option<PathBuf> {
     which::which(cmd).ok()
 }

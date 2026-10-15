@@ -462,7 +462,7 @@ fn build_chat_body(
 }
 
 /// 从模型输出提取润色结果。约定契约为顶层对象 {"segments":[{"id":n,"text":"..."}]}
-/// （与 response_format=json_object 一致，issue #11）；兼容模型无视指令仍返回
+/// （与 response_format=json_object 一致）；兼容模型无视指令仍返回
 /// 顶层数组的情况。两者都容忍代码围栏、前后杂文与尾逗号。
 pub fn parse_segments(content: &str) -> Option<Vec<(usize, String)>> {
     // 1) 契约路径：{"segments":[...]}
@@ -755,7 +755,7 @@ fn effective_prompt(s: &LlmSettings) -> &str {
 }
 
 /// 1×1 PNG 测试图：vision=true 时连接测试附带，
-/// 避免「文本请求通了但实际图片请求不可用」的假阳性（issue #11）。
+/// 避免「文本请求通了但实际图片请求不可用」的假阳性。
 const TEST_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 /// 用最小请求验证端点与凭据可用；vision=true 时附带测试图片，
@@ -807,7 +807,7 @@ pub fn test_connection(s: &LlmSettings) -> Result<()> {
 
 /// `llm setup`：交互式补齐缺失项并写盘。
 /// 使用 dialoguer（console 行编辑）：支持左右箭头/Home/End 移动、
-/// 退格/删除等标准编辑键——裸 read_line 无法处理方向键转义序列（issue #3）。
+/// 退格/删除等标准编辑键（裸 read_line 无法处理方向键转义序列）。
 pub fn setup_interactive(
     mut cfg: crate::settings::ConfigFile,
     base_url: Option<String>,

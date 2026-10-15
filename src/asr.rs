@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-// ---------- 超参数 ----------
+// ---------- 超参数（VAD 切分参数见 normalize_segments 附近） ----------
 
 /// ffmpeg 静音检测：低于 -28dB 且持续 0.4s 视为静音（课件停顿切分点）
 const SILENCEDETECT_AF: &str = "silencedetect=noise=-28dB:d=0.4";
@@ -327,7 +327,7 @@ fn run_blocking(
 
     crate::progress::stage("model-load", "done");
 
-    // 共享 agent（连接复用），不再每个 chunk 新建
+    // 共享 agent：各 chunk 复用连接
     let client = ureq::AgentBuilder::new()
         .timeout(LLAMA_HTTP_TIMEOUT)
         .build();
@@ -338,7 +338,7 @@ fn run_blocking(
             (!t.is_empty()).then_some(t)
         })
     });
-    // llama-server 退出清理双保险（issue #12：孤儿进程占着 /dev/kfd 会加剧 ROCm 问题）：
+    // llama-server 退出清理双保险（孤儿进程会占住 GPU 设备）：
     // 成功路径在这里主动 kill+wait；错误路径（? 早退 / panic unwind 经过的 drop）
     // 由 ManagedChild 的 Drop 兜底 kill+wait，任何离开 run_blocking 的路径都不孤儿。
     child.kill();
@@ -360,7 +360,7 @@ fn run_blocking(
 /// Ok(None) = 后端确认无语音内容（同样记录完成，避免静音段反复重跑）。
 ///
 /// 双缓冲流水线：转写当前 chunk 期间由后台线程预切下一个未完成 chunk
-///（ffmpeg 切音频约 30-80ms，不再占用串行路径）；失败语义与 checkpoint
+///（ffmpeg 切音频约 30-80ms，不占用串行路径）；失败语义与 checkpoint
 /// record 顺序与纯串行版完全一致。
 pub(crate) fn run_chunks(
     wav: &Path,
@@ -806,7 +806,7 @@ fn find_llama_server() -> Result<PathBuf> {
         .context("未找到 llama-server / llama-server not found. 安装 llama.cpp 并加入 PATH / Install llama.cpp and add it to PATH.")
 }
 
-/// llama-server 对 offload 相关新 flag 的支持情况（issue #12）。
+/// llama-server 对 offload 相关新 flag 的支持情况。
 /// --no-mmproj-offload / --no-op-offload / --device 都是新版 llama.cpp 才有的；
 /// 盲目附加会让发行版仓库的旧 llama-server 直接启动失败，故逐条按 --help 探测。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -861,7 +861,7 @@ fn probe_help_text(bin: &Path) -> Option<String> {
         .then(|| format!("{}\n{}", out.stdout, out.stderr))
 }
 
-/// llama-server GPU 卸载控制（由 PipelineConfig 解析而来，issue #12）。
+/// llama-server GPU 卸载控制（由 PipelineConfig 解析而来）。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OffloadOpts {
     pub provider: crate::config::AsrProvider,
@@ -869,7 +869,7 @@ pub(crate) struct OffloadOpts {
     pub mmproj_offload: bool,
 }
 
-/// 最近一次 llama-server spawn 的完整参数（诊断用：失败 run.json 附带，issue #12）。
+/// 最近一次 llama-server spawn 的完整参数（诊断用：失败 run.json 附带）。
 /// 单进程同一时刻只有一个 llama-server 实例，静态足够。
 static LAST_LLAMA_SPAWN_ARGS: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
 
@@ -884,7 +884,7 @@ pub(crate) fn last_llama_spawn_args() -> Option<Vec<String>> {
     LAST_LLAMA_SPAWN_ARGS.lock().ok().and_then(|g| g.clone())
 }
 
-/// 组装 llama-server 启动参数（纯函数，便于单测；issue #12）：
+/// 组装 llama-server 启动参数（纯函数，便于单测）：
 /// - gpu 后端：`-ngl <gpu_layers>`；mmproj_offload=false 且 llama.cpp 支持时
 ///   追加 `--no-mmproj-offload`
 /// - cpu 后端：`-ngl 0`，并按探测结果追加 `--device none --no-op-offload
@@ -940,7 +940,7 @@ fn spawn_server(bin: &Path, args: &[String]) -> Result<crate::runtime::ManagedCh
     cmd.args(args)
         .stdout(Stdio::null())
         // stderr 不能 inherit：llama-server 每个 chunk 都打 slot timing 日志，
-        // 会插在进度条重绘中间，破坏 indicatif 的原地更新（issue #4）。
+        // 会插在进度条重绘中间，破坏 indicatif 的原地更新。
         // 改为 piped + 后台 drain，尾部缓存用于失败诊断，debug 日志可转发。
         .stderr(Stdio::piped());
     crate::runtime::ManagedChild::spawn("llama-server", &mut cmd)
@@ -977,7 +977,7 @@ fn transcribe_file(client: &ureq::Agent, base: &str, wav: &Path) -> Result<Strin
 }
 
 pub(crate) fn ffmpeg_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
-    // stdin 关闭 + 超时强制 kill：ffmpeg 在 GUI/管道 stdin 上可能挂死（issue 审查）
+    // run_bounded：stdin 关闭 + 超时强制 kill（ffmpeg 在 GUI/管道 stdin 上可能挂死）
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-hide_banner", "-nostdin", "-i"]).arg(wav).args([
         "-af",
@@ -1053,7 +1053,7 @@ pub struct Energy {
 impl Energy {
     /// 流式读取 16k 单声道 s16 wav（extract_audio 的固定产物）：
     /// 分块读入并滑动累计每个 100ms 窗口的平方和，只保留 rms 数组——
-    /// 不再整文件读入 + 全样本 Vec（2h 音频旧实现峰值约 1GB）。
+    /// 不把整文件和全部样本读进内存（2h 音频约 1GB）。
     pub fn load(wav: &Path) -> Result<Self> {
         use std::io::{BufReader, Read, Seek};
         let file = std::fs::File::open(wav)
@@ -1168,7 +1168,7 @@ pub fn normalize_segments(
 ) -> Result<Vec<Seg>> {
     let energy = Energy::load(wav).ok();
     // VAD 成功但无语音（或全被短段过滤）→ 空分段。
-    // 不再把整段音频当语音兜底：静音课件会诱发 ASR 幻觉。
+    // 不把整段音频当语音兜底：静音课件会诱发 ASR 幻觉。
     let mut raw = speech;
     raw.retain(|(a, b)| b - a >= 0.2);
     if raw.is_empty() {
@@ -1385,7 +1385,7 @@ mod tests {
         assert_eq!(parse_chat_content(&v), "");
     }
 
-    // ---------- issue #12：GPU 卸载控制 ----------
+    // ---------- GPU 卸载控制 ----------
 
     fn args_of(
         provider: crate::config::AsrProvider,

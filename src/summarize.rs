@@ -455,7 +455,7 @@ pub fn render_standalone_md(title: &str, sm: &Summary) -> String {
 }
 
 /// 导出文件名净化（= 共享净化原语，空名回退 "summary"）。
-/// 与 config::sanitize_component 同一规则，同类导出文件名不再取决于走哪条路径。
+/// 与 config::sanitize_component 同一规则。
 pub fn sanitize_filename(name: &str) -> String {
     crate::config::sanitize_filename_with_fallback(name, "summary")
 }
