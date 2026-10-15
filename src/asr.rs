@@ -133,15 +133,10 @@ pub fn sanitize_qwen_text(s: &str) -> String {
     if let Some(p) = t.rfind("<asr_text>") {
         t = t[p + "<asr_text>".len()..].trim();
     }
-    let lower = t.to_ascii_lowercase();
-    if let Some(rest) = lower.strip_prefix("language ")
-        && let Some(i) = rest.find(char::is_whitespace)
+    if t.get(..9).is_some_and(|p| p.eq_ignore_ascii_case("language "))
+        && let Some((_, rest)) = t[9..].split_once(char::is_whitespace)
     {
-        // 原串对齐
-        let skip = "language ".len() + i + 1;
-        if skip <= t.len() {
-            t = t[skip..].trim();
-        }
+        t = rest.trim();
     }
     t.to_string()
 }
@@ -1422,6 +1417,8 @@ mod tests {
             "你好世界。"
         );
         assert_eq!(sanitize_qwen_text("内容</asr_text>尾巴"), "内容");
+        // 语言名后跟多字节空白（全角空格）时不得在字符中间切片
+        assert_eq!(sanitize_qwen_text("language Chinese\u{3000}你好"), "你好");
         let s = invert_silence(10.0, &[(0.0, 1.0), (4.0, 5.0)]);
         assert!((s[0].0 - 1.0).abs() < 1e-6 && (s[0].1 - 4.0).abs() < 1e-6);
     }
