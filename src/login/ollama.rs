@@ -5,18 +5,21 @@
 use anyhow::{Context, Result, bail, ensure};
 use std::io::IsTerminal;
 
-use super::{LoginMethod, LoginStatus};
 use crate::llm::LlmProvider;
 
 const DEFAULT_HOST: &str = "http://localhost:11434";
 
 /// Ollama 服务地址：环境变量 OLLAMA_HOST > 默认 localhost:11434。
 fn host() -> String {
-    let raw = std::env::var("OLLAMA_HOST")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_HOST.into());
-    let raw = raw.trim().trim_end_matches('/');
+    normalize_host(std::env::var("OLLAMA_HOST").ok().as_deref())
+}
+
+fn normalize_host(raw: Option<&str>) -> String {
+    let raw = raw
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(DEFAULT_HOST)
+        .trim_end_matches('/');
     if raw.contains("://") {
         raw.to_string()
     } else {
@@ -58,104 +61,94 @@ pub fn discover_for_desktop() -> Result<(String, Vec<String>)> {
     Ok((host, names))
 }
 
-pub(super) struct OllamaLogin;
-impl LoginMethod for OllamaLogin {
-    fn id(&self) -> &'static str {
-        "ollama"
-    }
-    fn label(&self) -> &'static str {
-        "Ollama 本地服务 / Local Ollama"
-    }
-
-    fn login(&self) -> Result<()> {
-        let host = host();
-        let names = models(&host)?;
-        ensure!(
-            !names.is_empty(),
-            "Ollama 中没有已下载的模型，请先运行 ollama pull <模型名> / No downloaded models found; run ollama pull <model> first"
+/// `course2md --login ollama`：探测本机服务、选模型并启用 AI 润色。
+pub(super) fn login() -> Result<()> {
+    let host = host();
+    let names = models(&host)?;
+    ensure!(
+        !names.is_empty(),
+        "Ollama 中没有已下载的模型，请先运行 ollama pull <模型名> / No downloaded models found; run ollama pull <model> first"
+    );
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let model = if names.len() == 1 {
+        names.into_iter().next().unwrap_or_default()
+    } else if interactive {
+        let pick = dialoguer::Select::new()
+            .with_prompt("选择用于润色的模型 / Choose a model for proofreading")
+            .items(&names)
+            .default(0)
+            .interact_opt()?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "已取消登录，未保存配置。 / Login cancelled; no configuration saved."
+                )
+            })?;
+        names.into_iter().nth(pick).unwrap_or_default()
+    } else {
+        bail!(
+            "Ollama 有多个模型可用，请在终端中运行 course2md --login ollama 以选择 / Multiple Ollama models available; run course2md --login ollama in a terminal to choose"
         );
-        let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-        let model = if names.len() == 1 {
-            names.into_iter().next().unwrap_or_default()
-        } else if interactive {
-            let pick = dialoguer::Select::new()
-                .with_prompt("选择用于润色的模型 / Choose a model for proofreading")
-                .items(&names)
-                .default(0)
-                .interact_opt()?
-                .ok_or_else(|| anyhow::anyhow!("已取消登录，未保存配置。 / Login cancelled; no configuration saved."))?;
-            names.into_iter().nth(pick).unwrap_or_default()
-        } else {
-            bail!(
-                "Ollama 有多个模型可用，请在终端中运行 course2md --login ollama 以选择 / Multiple Ollama models available; run course2md --login ollama in a terminal to choose"
-            );
-        };
+    };
 
-        let mut cfg = crate::settings::load()?;
-        cfg.llm.provider = LlmProvider::Ollama;
-        cfg.llm.base_url = format!("{host}/v1");
-        cfg.llm.api_key.clear();
-        cfg.llm.model = model.clone();
-        if cfg.llm.vision {
-            // 本地模型多数不支持图片输入；登录时回落纯文本，需要时可在 llm setup 重开
-            cfg.llm.vision = false;
-            println!("已关闭截图辅助润色（本地模型通常不支持图片输入）。/ Slide-assisted polish disabled (local models usually do not accept images).");
-        }
-        cfg.llm.enabled = true;
-        crate::llm::validate(&cfg.llm)?;
-        let path = crate::settings::save(&cfg)?;
-        let saved = path.display().to_string();
+    let mut cfg = crate::settings::load()?;
+    cfg.llm.provider = LlmProvider::Ollama;
+    cfg.llm.base_url = format!("{host}/v1");
+    cfg.llm.api_key.clear();
+    cfg.llm.model = model.clone();
+    if cfg.llm.vision {
+        // 本地模型多数不支持图片输入；登录时回落纯文本，需要时可在 llm setup 重开
+        cfg.llm.vision = false;
         println!(
-            "已登录 Ollama（{host}），模型 {model}，配置已保存并启用：{saved} / Logged in to Ollama; settings saved and enabled: {saved}"
+            "已关闭截图辅助润色（本地模型通常不支持图片输入）。/ Image-assisted proofreading disabled (local models usually do not accept images)."
         );
-        match crate::llm::test_connection(&cfg.llm) {
-            Ok(()) => println!("连接测试通过 / Connection test passed."),
-            Err(e) => bail!(
-                "配置已保存，但连接测试失败；请确认模型 {model} 可正常对话 / Settings saved, but the connection test failed; make sure {model} can chat: {e:#}"
-            ),
-        }
-        Ok(())
     }
+    cfg.llm.enabled = true;
+    crate::llm::validate(&cfg.llm)?;
+    let path = crate::settings::save(&cfg)?;
+    let saved = path.display().to_string();
+    println!(
+        "已登录 Ollama（{host}），模型 {model}，配置已保存并启用：{saved} / Logged in to Ollama; settings saved and enabled: {saved}"
+    );
+    match crate::llm::test_connection(&cfg.llm) {
+        Ok(()) => println!("连接测试通过 / Connection test passed."),
+        Err(e) => bail!(
+            "配置已保存，但连接测试失败；请确认模型 {model} 可正常对话 / Settings saved, but the connection test failed; make sure {model} can chat: {e:#}"
+        ),
+    }
+    Ok(())
+}
 
-    fn logout(&self) -> Result<()> {
-        let mut cfg = crate::settings::load()?;
-        if cfg.llm.provider != LlmProvider::Ollama {
-            println!("当前 LLM 配置不是 Ollama，未做改动。/ The current LLM configuration is not Ollama; nothing changed.");
-            return Ok(());
-        }
-        cfg.llm = crate::llm::LlmSettings::default();
-        crate::settings::save(&cfg)?;
-        println!("已清除 Ollama 登录配置并关闭 AI 润色。/ Ollama login removed and AI proofreading disabled.");
-        Ok(())
+/// `course2md --logout ollama`：当前 AI 润色使用 Ollama 时重置配置。
+pub(super) fn logout() -> Result<()> {
+    let mut cfg = crate::settings::load()?;
+    if cfg.llm.provider != LlmProvider::Ollama {
+        println!(
+            "当前 LLM 配置不是 Ollama，未做改动。/ The current LLM configuration is not Ollama; nothing changed."
+        );
+        return Ok(());
     }
-
-    fn status(&self) -> Result<LoginStatus> {
-        let cfg = crate::settings::load()?;
-        if cfg.llm.provider != LlmProvider::Ollama {
-            return Ok(LoginStatus::Disconnected);
-        }
-        let host = cfg
-            .llm
-            .base_url
-            .trim()
-            .trim_end_matches('/')
-            .strip_suffix("/v1")
-            .unwrap_or(cfg.llm.base_url.trim())
-            .to_string();
-        let names = models(&host)?;
-        Ok(LoginStatus::Connected(format!(
-            "{}（{} 个模型 / {} models）",
-            cfg.llm.base_url,
-            names.len(),
-            names.len()
-        )))
-    }
+    cfg.llm = crate::llm::LlmSettings::default();
+    crate::settings::save(&cfg)?;
+    println!(
+        "已清除 Ollama 登录配置并关闭 AI 润色。/ Ollama login removed and AI proofreading disabled."
+    );
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn host_normalization() {
-        assert_eq!(super::DEFAULT_HOST, "http://localhost:11434");
+    fn host_accepts_bare_addresses_and_trailing_slashes() {
+        use super::normalize_host;
+        assert_eq!(normalize_host(None), "http://localhost:11434");
+        assert_eq!(normalize_host(Some("  ")), "http://localhost:11434");
+        assert_eq!(
+            normalize_host(Some("127.0.0.1:1234/")),
+            "http://127.0.0.1:1234"
+        );
+        assert_eq!(
+            normalize_host(Some("https://ollama.lan")),
+            "https://ollama.lan"
+        );
     }
 }

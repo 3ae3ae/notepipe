@@ -59,17 +59,6 @@ pub enum LoginPlatform {
     Codex,
 }
 
-impl LoginPlatform {
-    /// 登录方法注册表（crate::login::methods）中的稳定标识
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::Bilibili => "bilibili",
-            Self::Ollama => "ollama",
-            Self::Codex => "codex",
-        }
-    }
-}
-
 #[derive(Args, Clone, Debug, Default)]
 pub struct RunOpts {
     /// 输出根目录（按平台/标题/ID 建目录）/ Output root (platform/title/ID)

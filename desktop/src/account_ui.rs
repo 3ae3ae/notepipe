@@ -425,7 +425,7 @@ impl Desktop {
         self.account.status_generation = self.account.status_generation.wrapping_add(1);
         self.account.checking = false;
         match course2md::auth::clear_bilibili_login() {
-            Ok(()) => {
+            Ok(_) => {
                 self.account.has_saved_login = false;
                 self.account.status = Some(AccountStatus::Disconnected);
                 self.account.status_error = None;

@@ -109,14 +109,14 @@ fn main() -> std::process::ExitCode {
 
 fn run(cli: Cli) -> anyhow::Result<()> {
     if let Some(platform) = cli.logout {
-        return course2md::login::for_platform(platform).logout();
+        return course2md::login::logout(platform);
     }
     if let Some(platform) = cli.login {
         anyhow::ensure!(
             cli.source.as_deref().is_none_or(config::looks_like_source),
             "--login 后只能跟视频链接或本地视频路径 / After --login, provide only a video URL or local file path"
         );
-        course2md::login::for_platform(platform).login()?;
+        course2md::login::login(platform)?;
         if cli.source.is_none() {
             return Ok(());
         }

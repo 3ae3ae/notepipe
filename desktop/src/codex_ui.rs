@@ -4,7 +4,7 @@
 use super::*;
 use crate::preferences::{ServiceProtocol, ServicePurpose};
 use crate::theme::*;
-use course2md::login::LoginStatus;
+use course2md::login::codex::LoginStatus;
 
 /// 识别根 crate 的登录缺失/失效标记，替换为界面内的连接引导。
 fn login_required(error: &anyhow::Error) -> bool {
@@ -97,9 +97,7 @@ impl Desktop {
         }
         let generation = self.codex.begin(surface, CodexWork::Checking);
         let task = crate::spawn_blocking_io(|| {
-            course2md::login::for_platform(course2md::cli::LoginPlatform::Codex)
-                .status()
-                .map_err(|error| error.to_string())
+            course2md::login::codex::status().map_err(|error| error.to_string())
         });
         cx.spawn(async move |this, cx| {
             let Ok(result) = task.recv().await else { return };
@@ -271,7 +269,7 @@ impl Desktop {
             return;
         }
         let generation = self.codex.begin(surface, CodexWork::LoggingOut);
-        let task = crate::spawn_blocking_io(course2md::login::codex::logout_for_desktop);
+        let task = crate::spawn_blocking_io(course2md::login::codex::remove_credentials);
         cx.spawn(async move |this, cx| {
             let Ok(result) = task.recv().await else { return };
             let _ = this.update(cx, |this, cx| {

@@ -15,7 +15,6 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{LoginMethod, LoginStatus};
 use crate::llm::LlmProvider;
 
 /// codex CLI 的公开 OAuth client_id（login/src/auth/manager.rs `CLIENT_ID`）。
@@ -44,9 +43,10 @@ fn fetch_models(tokens: &CodexTokens) -> Result<Vec<(String, String)>> {
     if let Some(account_id) = &tokens.account_id {
         request = request.set("ChatGPT-Account-ID", account_id);
     }
-    let response = request
-        .call()
-        .map_err(|_| anyhow::anyhow!("无法获取 Codex 模型目录 / Cannot fetch the Codex model catalog"))?;
+    let response = request.call().map_err(|e| match e {
+        ureq::Error::Status(401 | 403, _) => anyhow::Error::new(CodexLoginRequired),
+        _ => anyhow::anyhow!("无法获取 Codex 模型目录 / Cannot fetch the Codex model catalog"),
+    })?;
     let value: Value = response
         .into_json()
         .context("Codex 模型目录无法解析 / Cannot parse the Codex model catalog")?;
@@ -155,11 +155,8 @@ pub fn load_tokens() -> Result<Option<CodexTokens>> {
 }
 
 fn save_tokens(tokens: &CodexTokens) -> Result<()> {
-    crate::checkpoint::atomic_write(
-        &credential_path(),
-        &serde_json::to_vec_pretty(tokens)?,
-    )
-    .context("保存 Codex 登录状态失败 / Failed to save Codex login state")
+    crate::checkpoint::atomic_write(&credential_path(), &serde_json::to_vec_pretty(tokens)?)
+        .context("保存 Codex 登录状态失败 / Failed to save Codex login state")
 }
 
 /// JWT payload 解析（只读 claim，不做签名校验——令牌由本机持有）。
@@ -278,7 +275,9 @@ fn import_from_codex_cli() -> Result<CodexTokens> {
     let value: Value = serde_json::from_slice(&bytes)
         .context("codex CLI 登录态无法解析 / Cannot parse the codex CLI login state")?;
     if value["auth_mode"].as_str() == Some("apikey") {
-        bail!("codex CLI 当前是 API key 模式；请在 codex 中用 ChatGPT 账号登录后重试 / The codex CLI is in API-key mode; log in with a ChatGPT account in codex and retry");
+        bail!(
+            "codex CLI 当前是 API key 模式；请在 codex 中用 ChatGPT 账号登录后重试 / The codex CLI is in API-key mode; log in with a ChatGPT account in codex and retry"
+        );
     }
     let tokens = &value["tokens"];
     let access = tokens["access_token"].as_str().unwrap_or_default();
@@ -307,14 +306,6 @@ const OAUTH_SCOPE: &str =
     "openid profile email offline_access api.connectors.read api.connectors.invoke";
 /// 等待用户完成浏览器授权的总时限（与扫码登录一致）。
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
-
-fn random_b64url(len: usize) -> Result<String> {
-    use base64::Engine as _;
-    let mut buf = vec![0u8; len];
-    getrandom::getrandom(&mut buf)
-        .map_err(|_| anyhow::anyhow!("无法生成安全随机数 / Cannot generate secure random bytes"))?;
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf))
-}
 
 /// PKCE S256：BASE64URL-NO-PAD(SHA256(verifier))。
 fn pkce_challenge(verifier: &str) -> String {
@@ -359,7 +350,10 @@ fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let opened = std::process::Command::new("open").arg(url).spawn().is_ok();
     #[cfg(target_os = "linux")]
-    let opened = std::process::Command::new("xdg-open").arg(url).spawn().is_ok();
+    let opened = std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .is_ok();
     #[cfg(target_os = "windows")]
     let opened = std::process::Command::new("rundll32")
         .args(["url.dll,FileProtocolHandler", url])
@@ -385,9 +379,13 @@ fn exchange_code(code: &str, verifier: &str, port: u16) -> Result<CodexTokens> {
             ),
             ("code_verifier", verifier),
         ])
-        .map_err(|_| {
+        .map_err(|e| {
+            let status = match e {
+                ureq::Error::Status(code, _) => format!(" (HTTP {code})"),
+                _ => String::new(),
+            };
             anyhow::anyhow!(
-                "授权码交换失败，请重试登录 / Authorization code exchange failed; retry the login"
+                "授权码交换失败，请重试登录{status} / Authorization code exchange failed; retry the login{status}"
             )
         })?;
     let value: Value = response
@@ -429,14 +427,17 @@ fn browser_authorization() -> Result<CodexTokens> {
     let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
 
-    let verifier = random_b64url(64)?;
-    let state = random_b64url(32)?;
+    let verifier = crate::random_b64url(64)?;
+    let state = crate::random_b64url(32)?;
     let url = format!(
         "{AUTHORIZE_URL}?response_type=code&client_id={CLIENT_ID}&redirect_uri=http://localhost:{port}/auth/callback&code_challenge={}&code_challenge_method=S256&state={state}&scope={}&id_token_add_organizations=true&codex_cli_simplified_flow=true&originator=codex_cli_rs",
         pkce_challenge(&verifier),
         OAUTH_SCOPE.replace(' ', "%20"),
     );
-    println!("正在打开浏览器完成 ChatGPT 授权（{CALLBACK_TIMEOUT:?} 内有效，Ctrl+C 取消）/ Opening the browser for ChatGPT authorization…");
+    println!(
+        "正在打开浏览器完成 ChatGPT 授权（{0} 分钟内有效，Ctrl+C 取消）/ Opening the browser for ChatGPT authorization ({0} minutes; Ctrl+C to cancel)…",
+        CALLBACK_TIMEOUT.as_secs() / 60
+    );
     open_browser(&url);
 
     let deadline = std::time::Instant::now() + CALLBACK_TIMEOUT;
@@ -512,9 +513,8 @@ pub fn refresh_models_for_desktop() -> Result<Vec<(String, String)>> {
     fetch_models(&tokens)
 }
 
-/// 桌面端使用：仅删除 course2md 自有的 Codex 凭据副本，不改写 CLI 配置
-/// （桌面端的服务解绑由桌面自己的设置存储负责）。返回是否确有凭据被删除。
-pub fn logout_for_desktop() -> Result<bool> {
+/// 只删除 course2md 自有的 Codex 凭据副本，不改写配置。返回是否确有凭据被删除。
+pub fn remove_credentials() -> Result<bool> {
     match std::fs::remove_file(credential_path()) {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -522,131 +522,138 @@ pub fn logout_for_desktop() -> Result<bool> {
     }
 }
 
-pub(super) struct CodexLogin;impl LoginMethod for CodexLogin {
-    fn id(&self) -> &'static str {
-        "codex"
-    }
-    fn label(&self) -> &'static str {
-        "OpenAI Codex 订阅 / OpenAI Codex subscription"
-    }
+fn interactive() -> bool {
+    std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+}
 
-    fn login(&self) -> Result<()> {
-        let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-        let mut tokens = match import_from_codex_cli() {
-            Ok(tokens) => tokens,
-            Err(import_err) => {
-                if !interactive {
-                    return Err(import_err);
-                }
-                println!("{import_err:#}");
-                let browser = dialoguer::Confirm::new()
-                    .with_prompt("改用浏览器授权登录（ChatGPT 账号）？/ Authorize with a ChatGPT account in the browser instead?")
-                    .default(true)
-                    .interact_opt()?
-                    .unwrap_or(false);
-                if !browser {
-                    bail!("已取消登录。/ Login cancelled.");
-                }
-                browser_authorization()?
-            }
-        };
-        // 导入即验证并取新令牌：过期令牌现场刷新（同时验证 refresh token 可用）
-        if needs_refresh(&tokens) {
-            save_tokens(&tokens)?; // 刷新互斥的锁内复查需要文件已存在
-            match refresh(&tokens) {
-                Ok(refreshed) => tokens = refreshed,
-                // codex CLI 侧登录已失效（refresh 4xx）：交互终端提供浏览器授权兜底
-                Err(e)
-                    if interactive
-                        && e.chain()
-                            .any(|c| c.downcast_ref::<CodexLoginRequired>().is_some()) =>
-                {
-                    println!("{e:#}");
-                    let browser = dialoguer::Confirm::new()
-                        .with_prompt("codex CLI 的登录已失效。改用浏览器授权登录（ChatGPT 账号）？/ The codex CLI login expired. Authorize in the browser instead?")
-                        .default(true)
-                        .interact_opt()?
-                        .unwrap_or(false);
-                    if !browser {
-                        bail!("已取消登录。/ Login cancelled.");
-                    }
-                    tokens = browser_authorization()?;
-                }
-                Err(e) => return Err(e),
-            }
+fn confirm_browser(prompt: &str) -> Result<CodexTokens> {
+    let browser = dialoguer::Confirm::new()
+        .with_prompt(prompt)
+        .default(true)
+        .interact_opt()?
+        .unwrap_or(false);
+    if !browser {
+        bail!("已取消登录。/ Login cancelled.");
+    }
+    browser_authorization()
+}
+
+/// `course2md --login codex`：导入 codex CLI 登录态（失败时可改用浏览器授权），选模型并启用 AI 润色。
+pub(super) fn login() -> Result<()> {
+    let interactive = interactive();
+    let mut tokens = match import_from_codex_cli() {
+        Ok(tokens) => tokens,
+        Err(import_err) if interactive => {
+            println!("{import_err:#}");
+            confirm_browser(
+                "改用浏览器授权登录（ChatGPT 账号）？/ Authorize with a ChatGPT account in the browser instead?",
+            )?
         }
-        save_tokens(&tokens)?;
+        Err(import_err) => return Err(import_err),
+    };
+    // 导入即验证：过期令牌现场刷新（同时验证 refresh token 可用），成功后才落盘
+    if needs_refresh(&tokens) {
+        match refresh(&tokens) {
+            Ok(refreshed) => tokens = refreshed,
+            Err(e)
+                if interactive
+                    && e.chain()
+                        .any(|c| c.downcast_ref::<CodexLoginRequired>().is_some()) =>
+            {
+                println!("{e:#}");
+                tokens = confirm_browser(
+                    "codex CLI 的登录已失效。改用浏览器授权登录（ChatGPT 账号）？/ The codex CLI login expired. Authorize in the browser instead?",
+                )?;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    save_tokens(&tokens)?;
 
-        let mut cfg = crate::settings::load()?;
-        cfg.llm.provider = LlmProvider::Codex;
-        cfg.llm.base_url.clear();
-        cfg.llm.api_key.clear();
-        // Codex 的模型目录与其他 provider 不通用：登录时按账号实际可用目录选择
-        let catalog = fetch_models(&tokens).unwrap_or_else(|e| {
+    let mut cfg = crate::settings::load()?;
+    cfg.llm.provider = LlmProvider::Codex;
+    cfg.llm.base_url.clear();
+    cfg.llm.api_key.clear();
+    let catalog = match fetch_models(&tokens) {
+        Ok(catalog) => catalog,
+        Err(e) => {
             tracing::warn!("{e:#}");
+            println!(
+                "无法获取账号可用的模型列表，已使用默认模型 {DEFAULT_MODEL}。/ Could not fetch the account's models; using {DEFAULT_MODEL}."
+            );
             Vec::new()
-        });
-        let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-        cfg.llm.model = if catalog.is_empty() {
-            DEFAULT_MODEL.to_string()
-        } else if interactive {
-            let labels: Vec<String> = catalog.iter().map(|(_, label)| label.clone()).collect();
-            let pick = dialoguer::Select::new()
-                .with_prompt("选择 Codex 模型 / Choose a Codex model")
-                .items(&labels)
-                .default(0)
-                .interact_opt()?
-                .ok_or_else(|| anyhow::anyhow!("已取消登录，未保存配置。 / Login cancelled; no configuration saved."))?;
-            catalog.into_iter().nth(pick).map(|(slug, _)| slug).unwrap_or_default()
-        } else {
-            catalog.into_iter().next().map(|(slug, _)| slug).unwrap_or_default()
-        };
-        cfg.llm.enabled = true;
-        crate::llm::validate(&cfg.llm)?;
+        }
+    };
+    cfg.llm.model = if catalog.is_empty() {
+        DEFAULT_MODEL.to_string()
+    } else if interactive {
+        let labels: Vec<&str> = catalog.iter().map(|(_, label)| label.as_str()).collect();
+        let pick = dialoguer::Select::new()
+            .with_prompt("选择 Codex 模型 / Choose a Codex model")
+            .items(&labels)
+            .default(0)
+            .interact_opt()?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "已取消登录，未保存配置。 / Login cancelled; no configuration saved."
+                )
+            })?;
+        catalog[pick].0.clone()
+    } else {
+        catalog[0].0.clone()
+    };
+    cfg.llm.enabled = true;
+    crate::llm::validate(&cfg.llm)?;
+    crate::settings::save(&cfg)?;
+    println!(
+        "已导入 Codex 登录态并启用 AI 润色（模型 {0}）。/ Codex login imported and AI proofreading enabled (model {0}).",
+        cfg.llm.model
+    );
+    match crate::llm::test_connection(&cfg.llm) {
+        Ok(()) => println!("连接测试通过 / Connection test passed."),
+        Err(e) => bail!(
+            "登录态已保存，但连接测试失败；可用 course2md llm setup 调整模型 / Login saved, but the connection test failed; adjust the model with course2md llm setup: {e:#}"
+        ),
+    }
+    Ok(())
+}
+
+/// Codex 登录状态（桌面账号卡片用）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoginStatus {
+    Disconnected,
+    /// 已连接：展示用说明
+    Connected(String),
+    /// 凭据存在但无法再刷新，需要重新登录
+    Expired,
+}
+
+/// 本地判断登录状态（不触网）。access token 过期不算失效：只要有 refresh token，
+/// 下次请求会自动刷新；刷新被拒时请求路径会返回 [`CodexLoginRequired`]。
+pub fn status() -> Result<LoginStatus> {
+    Ok(match load_tokens()? {
+        None => LoginStatus::Disconnected,
+        Some(tokens) if tokens.refresh_token.is_empty() => LoginStatus::Expired,
+        Some(_) => LoginStatus::Connected("Codex".into()),
+    })
+}
+
+/// `course2md --logout codex`：删除凭据；当前 AI 润色使用 Codex 时一并重置。
+pub(super) fn logout() -> Result<()> {
+    if remove_credentials()? {
+        println!("已清除 Codex 登录状态。/ Codex login removed.");
+    } else {
+        println!("尚未登录 Codex。/ No Codex login saved.");
+    }
+    let mut cfg = crate::settings::load()?;
+    if cfg.llm.provider == LlmProvider::Codex {
+        cfg.llm = crate::llm::LlmSettings::default();
         crate::settings::save(&cfg)?;
         println!(
-            "已导入 Codex 登录态并启用 AI 润色（模型 {}）。/ Codex login imported and AI proofreading enabled (model {}).",
-            cfg.llm.model, cfg.llm.model
+            "已关闭 AI 润色并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset."
         );
-        match crate::llm::test_connection(&cfg.llm) {
-            Ok(()) => println!("连接测试通过 / Connection test passed."),
-            Err(e) => bail!(
-                "登录态已保存，但连接测试失败；可用 course2md llm setup 调整模型 / Login saved, but the connection test failed; adjust the model with course2md llm setup: {e:#}"
-            ),
-        }
-        Ok(())
     }
-
-    fn logout(&self) -> Result<()> {
-        match std::fs::remove_file(credential_path()) {
-            Ok(()) => println!("已清除 Codex 登录状态。/ Codex login removed."),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                println!("尚未登录 Codex。/ No Codex login saved.")
-            }
-            Err(e) => return Err(e).context("清除 Codex 登录状态失败 / Could not remove Codex login"),
-        }
-        let mut cfg = crate::settings::load()?;
-        if cfg.llm.provider == LlmProvider::Codex {
-            cfg.llm = crate::llm::LlmSettings::default();
-            crate::settings::save(&cfg)?;
-            println!("已关闭 AI 润色并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset.");
-        }
-        Ok(())
-    }
-
-    fn status(&self) -> Result<LoginStatus> {
-        // 本地判断（不触网）：文件存在且未过期即视为已连接
-        let Some(tokens) = load_tokens()? else {
-            return Ok(LoginStatus::Disconnected);
-        };
-        if needs_refresh(&tokens) && jwt_exp(&tokens.access_token).is_some_and(|exp| exp <= now_secs()) {
-            return Ok(LoginStatus::Expired);
-        }
-        Ok(LoginStatus::Connected(match tokens.account_id {
-            Some(id) => format!("Codex（account {id}）"),
-            None => "Codex".into(),
-        }))
-    }
+    Ok(())
 }
 
 #[cfg(test)]
