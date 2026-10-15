@@ -1,14 +1,14 @@
 name: brew-tap
 
 on:
-  # release 由 GITHUB_TOKEN 创建，不会触发 release 事件（防递归），故用链式触发
+  # Releases created with GITHUB_TOKEN emit no release event, so chain on the workflow.
   workflow_run:
     workflows: [release]
     types: [completed]
   workflow_dispatch:
     inputs:
       version:
-        description: "要发布的版本（如 1.7.0 或 2.0.0-alpha.1；预发布使用独立通道）"
+        description: 'Version to publish, for example 2.0.0 or 2.0.0-rc.9 (prereleases use their own channel)'
         required: true
 
 concurrency:
@@ -23,13 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success') }}
     steps:
-      - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y ruby
-
       - uses: actions/checkout@v4
-
-      - name: Test release resolution
-        run: python3 -m unittest discover -s packaging -p 'test_*.py'
 
       - name: Resolve published release
         id: release
@@ -45,6 +39,7 @@ jobs:
         if: steps.release.outputs.publish == 'true'
         uses: Homebrew/actions/setup-homebrew@1f8e202ffddf94def7f42f6fa3a482e821489f9c # 2026.07.10.1
 
+      # TODO: switch to a dedicated tap deploy key; this reuses the AUR key authorized on GitHub.
       - name: Setup GitHub SSH
         if: steps.release.outputs.publish == 'true'
         env:

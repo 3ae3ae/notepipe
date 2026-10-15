@@ -147,7 +147,9 @@ def main():
         source = args.developer_dir / ("gpui-component" if name == "component" else "zed")
         if not source.exists():
             source.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["git", "clone", f"https://github.com/{remote}.git", str(source)], check=True)
+            # A blobless clone keeps CI and first-time setup from downloading all of Zed's history.
+            subprocess.run(["git", "clone", "--filter=blob:none", f"https://github.com/{remote}.git", str(source)],
+                           check=True)
         if not args.locked and not args.no_pull:
             if git(source, "status", "--porcelain", capture=True):
                 raise SystemExit(f"Commit or stash changes in {source} before pulling main")

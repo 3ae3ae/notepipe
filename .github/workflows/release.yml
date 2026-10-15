@@ -13,26 +13,28 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION: ${{ inputs.version || github.ref_name }}
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Verify release version
-        env:
-          RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
         run: |
           python3 - <<'PYCODE'
           import os, pathlib, tomllib
           root = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
           desktop = tomllib.loads(pathlib.Path('desktop/Cargo.toml').read_text())['package']['version']
-          assert root == desktop and os.environ['RELEASE_VERSION'] == 'v' + root
-          assert pathlib.Path('docs/releases', 'v' + root + '.md').is_file()
+          assert root == desktop and os.environ['VERSION'] == 'v' + root, (root, desktop)
+          assert pathlib.Path('docs/releases', 'v' + root + '.md').is_file(), 'missing release notes'
           PYCODE
       - name: Test release packaging
         run: |
           python3 -m unittest discover -s packaging -p 'test_*.py'
           python3 -m unittest discover -s desktop/scripts -p 'test_*.py'
+
   build:
     needs: validate
     strategy:
@@ -45,11 +47,10 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset: course2md-linux-aarch64
-          # macOS arm64：macos-26（Xcode 27/Swift 6.4，与开发环境一致）
           - os: macos-26
             target: aarch64-apple-darwin
             asset: course2md-macos-arm64
-          # x86_64 macOS 不编译 Apple 原生模块（build.rs 按 target_arch 跳过）
+          # build.rs skips the Apple speech module on x86_64 macOS.
           - os: macos-26
             target: x86_64-apple-darwin
             asset: course2md-macos-x86_64
@@ -57,60 +58,44 @@ jobs:
             target: x86_64-pc-windows-msvc
             asset: course2md-windows-x86_64.exe
             exe: true
-
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package (unix)
-        if: matrix.exe != true
-        run: |
-          cp "target/${{ matrix.target }}/release/course2md" "${{ matrix.asset }}"
-          chmod +x "${{ matrix.asset }}"
-          if [[ "$RUNNER_OS" != "macOS" ]]; then exit 0; fi
-          if [ -z "${{ secrets.MACOS_CERT_P12 }}" ]; then
-            # 无证书时退回 ad-hoc（ARM64 无签名会被 SIGKILL）
-            codesign --force --sign - "${{ matrix.asset }}"
-            exit 0
-          fi
-          echo "${{ secrets.MACOS_CERT_P12 }}" | base64 -d > /tmp/cert.p12
-          security create-keychain -p build /tmp/build.keychain
-          security set-keychain-settings -lut 21600 /tmp/build.keychain
-          security unlock-keychain -p build /tmp/build.keychain
-          security import /tmp/cert.p12 -k /tmp/build.keychain -P "${{ secrets.MACOS_CERT_PASS }}" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -k build /tmp/build.keychain
-          security list-keychains -d user -s /tmp/build.keychain login.keychain-db
-          curl -fsSL -o /tmp/g2.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer || true
-          security import /tmp/g2.cer -k /tmp/build.keychain || true
-          IDENTITY="$(security find-identity -v -p codesigning /tmp/build.keychain | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')"
-          codesign --force --options runtime --timestamp -s "$IDENTITY" "${{ matrix.asset }}"
-          codesign --verify --verbose=2 "${{ matrix.asset }}"
-          security delete-keychain /tmp/build.keychain
-
-      - name: Package (windows)
-        if: matrix.exe == true
+      - name: Collect binary
         shell: bash
-        run: |
-          cp "target/${{ matrix.target }}/release/course2md.exe" "${{ matrix.asset }}"
+        run: cp "target/${{ matrix.target }}/release/course2md${{ matrix.exe && '.exe' || '' }}" "${{ matrix.asset }}"
 
-      # MLX Metal kernels（CoreML 推理运行时需要，与二进制同目录）
-      - name: Collect mlx.metallib (macos arm64)
-        if: matrix.target == 'aarch64-apple-darwin'
+      - uses: ./.github/actions/macos-signing
+        if: runner.os == 'macOS'
+        with:
+          certificate: ${{ secrets.MACOS_CERT_P12 }}
+          password: ${{ secrets.MACOS_CERT_PASS }}
+
+      - name: Sign macOS binary
+        if: runner.os == 'macOS'
         run: |
-          if [ -f native/apple-asr/mlx.metallib ]; then
-            cp native/apple-asr/mlx.metallib mlx-macos-arm64.metallib
+          # Without a certificate, sign ad hoc: unsigned arm64 binaries are killed on launch.
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            codesign --force --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "${{ matrix.asset }}"
           else
-            src="$(find native/apple-asr/.build -name default.metallib | head -1)"
-            test -n "$src"
-            cp "$src" mlx-macos-arm64.metallib
+            codesign --force --sign - "${{ matrix.asset }}"
           fi
+          codesign --verify --verbose=2 "${{ matrix.asset }}"
+
+      # MLX Metal kernels for Apple speech recognition, installed beside the CLI.
+      - name: Collect mlx.metallib
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: cp target/aarch64-apple-darwin/release/mlx.metallib mlx-macos-arm64.metallib
 
       - uses: actions/upload-artifact@v4
         with:
@@ -118,6 +103,10 @@ jobs:
           path: |
             ${{ matrix.asset }}
             mlx-macos-arm64.metallib
+
+      - name: Remove signing material
+        if: always() && runner.os == 'macOS'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain" 2>/dev/null || true
 
   desktop:
     needs: validate
@@ -127,61 +116,24 @@ jobs:
         os: [macos-26, ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
-      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-      MACOS_CERT_PASS: ${{ secrets.MACOS_CERT_PASS }}
       APPLE_API_P8: ${{ secrets.APPLE_API_KEY }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/desktop-deps
+      # Desktop tests already ran on the pull request for this revision.
+      - name: Build CLI engine and desktop app
+        run: |
+          cargo build --release --locked
+          cargo build --release --locked --manifest-path desktop/Cargo.toml
+      - uses: ./.github/actions/macos-signing
+        if: runner.os == 'macOS'
         with:
-          python-version: '3.12'
-      - name: Native packaging tools
-        run: python -m pip install -r desktop/scripts/requirements-packaging.txt
-      - name: Linux native dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libx11-xcb-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig1-dev libssl-dev libclang-dev libgit2-dev libstdc++-14-dev
-      - name: Windows LLVM
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install llvm --no-progress -y
-          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
-      - name: Prepare tested GPUI sources
-        run: python desktop/scripts/sources.py --locked
-      - name: Desktop regression tests
-        run: cargo test --release --manifest-path desktop/Cargo.toml --locked
-      - name: Build CLI engine
-        run: cargo build --release --locked
-      - name: Build desktop app
-        run: cargo build --release --manifest-path desktop/Cargo.toml --locked
-      - name: Import signing certificate
-        if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          keychain="$RUNNER_TEMP/desktop.keychain"
-          printf '%s' "$MACOS_CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
-          security create-keychain -p build "$keychain"
-          # Keep the temporary CI keychain unlocked through signing and notarization.
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p build "$keychain"
-          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASS" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -k build "$keychain"
-          security list-keychains -d user -s "$keychain" login.keychain-db
-          rm -f "$RUNNER_TEMP/cert.p12"
-          curl -fsSL -o "$RUNNER_TEMP/g2.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-          security import "$RUNNER_TEMP/g2.cer" -k "$keychain"
-          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
-          test -n "$identity"
-          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          certificate: ${{ secrets.MACOS_CERT_P12 }}
+          password: ${{ secrets.MACOS_CERT_PASS }}
       - name: Prepare notarization
-        if: runner.os == 'macOS' && env.MACOS_CERT_P12 != '' && env.APPLE_API_P8 != ''
-        shell: bash
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != '' && env.APPLE_API_P8 != ''
         run: |
           p8="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
           printf '%s' "$APPLE_API_P8" > "$p8"
@@ -200,10 +152,9 @@ jobs:
           if-no-files-found: error
       - name: Remove signing material
         if: always() && runner.os == 'macOS'
-        shell: bash
         run: |
-          security delete-keychain "$RUNNER_TEMP/desktop.keychain" 2>/dev/null || true
-          rm -f "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP/cert.p12"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8
 
   release:
     needs: [build, desktop]
@@ -215,15 +166,17 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.version || github.ref_name }}
+          tag_name: ${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           files: dist/*
-          body_path: docs/releases/${{ inputs.version || github.ref_name }}.md
+          body_path: docs/releases/${{ env.VERSION }}.md
           fail_on_unmatched_files: true
           generate_release_notes: true
-          prerelease: ${{ contains(inputs.version || github.ref_name, '-') }}
-          make_latest: ${{ contains(inputs.version || github.ref_name, '-') && 'false' || 'true' }}
+          prerelease: ${{ contains(env.VERSION, '-') }}
+          make_latest: ${{ !contains(env.VERSION, '-') }}

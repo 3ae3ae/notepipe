@@ -1,0 +1,39 @@
+name: macOS signing keychain
+description: >-
+  Import the Developer ID certificate into a temporary keychain and export
+  APPLE_SIGNING_IDENTITY. Does nothing when no certificate is configured.
+  Run the cleanup step of the calling job with `security delete-keychain
+  "$RUNNER_TEMP/signing.keychain"` under `if: always()`.
+inputs:
+  certificate:
+    description: Base64-encoded Developer ID Application .p12
+    required: true
+  password:
+    description: Password of the .p12
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Import signing certificate
+      if: inputs.certificate != ''
+      shell: bash
+      env:
+        CERT_P12: ${{ inputs.certificate }}
+        CERT_PASS: ${{ inputs.password }}
+      run: |
+        set -euo pipefail
+        keychain="$RUNNER_TEMP/signing.keychain"
+        printf '%s' "$CERT_P12" | base64 -d > "$RUNNER_TEMP/cert.p12"
+        security create-keychain -p build "$keychain"
+        # Keep the temporary keychain unlocked through signing and notarization.
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p build "$keychain"
+        security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PASS" -T /usr/bin/codesign
+        rm -f "$RUNNER_TEMP/cert.p12"
+        security set-key-partition-list -S apple-tool:,apple: -k build "$keychain"
+        security list-keychains -d user -s "$keychain" login.keychain-db
+        curl -fsSL -o "$RUNNER_TEMP/g2.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+        security import "$RUNNER_TEMP/g2.cer" -k "$keychain"
+        identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+        test -n "$identity"
+        echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"

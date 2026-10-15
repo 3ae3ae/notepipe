@@ -3,7 +3,13 @@ name: ci
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'desktop/**', 'packaging/**', 'install.sh']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'desktop/**', 'packaging/**', 'install.sh']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -13,10 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-          - os: macos-26
-          - os: windows-latest
+        os: [ubuntu-latest, macos-26, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +27,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install ffmpeg (ubuntu)
         if: runner.os == 'Linux'
@@ -50,5 +55,3 @@ jobs:
         if: runner.os != 'Windows'
         run: cargo test --features integration --test scene_synthetic
 
-      - name: Smoke build
-        run: cargo build --release

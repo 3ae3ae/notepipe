@@ -1,14 +1,14 @@
 name: aur
 
 on:
-  # release 由 GITHUB_TOKEN 创建，不会触发 release 事件（防递归），故用链式触发
+  # Releases created with GITHUB_TOKEN emit no release event, so chain on the workflow.
   workflow_run:
     workflows: [release]
     types: [completed]
   workflow_dispatch:
     inputs:
       version:
-        description: "要发布的版本（不带 v 前缀，如 0.4.0）"
+        description: 'Stable version to publish, without the v prefix (for example 2.0.0)'
         required: true
       dry_run:
         description: 'Build and validate both packages without publishing to AUR'
@@ -35,9 +35,6 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Test release resolution
-        run: python3 -m unittest discover -s packaging -p 'test_release_version.py'
-
       - name: Resolve published release
         id: release
         env:
@@ -56,9 +53,9 @@ jobs:
           printf '%s\n' "$AUR_KEY" > /home/builder/.ssh/aur_key
           chmod 600 /home/builder/.ssh/aur_key
           chown builder:builder /home/builder/.ssh/aur_key
-          ssh-keyscan -t ed25519 aur.archlinux.org > /home/builder/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -t ed25519 aur.archlinux.org > /home/builder/.ssh/known_hosts
+          test -s /home/builder/.ssh/known_hosts
           chown builder:builder /home/builder/.ssh/known_hosts
-          chmod +x packaging/aur/update-aur.sh
           su builder -s /bin/bash -c "
             git config --global user.name 'mizorewww (ci)'
             git config --global user.email 'mizorewww@users.noreply.github.com'
