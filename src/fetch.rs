@@ -588,29 +588,19 @@ pub fn local_content_identity(
     path: &Path,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<String> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    use std::sync::atomic::Ordering;
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("无法读取视频文件 {0} / Cannot read video file {0}", path.display()))?;
-    let before = file.metadata()?;
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0; 1024 * 1024];
-    loop {
-        ensure!(!cancel.load(Ordering::Relaxed), "已取消读取视频 / Video reading cancelled");
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取视频 / Video reading cancelled");
-    let after = file.metadata()?;
+    let metadata = |path: &Path| {
+        std::fs::metadata(path)
+            .with_context(|| format!("无法读取视频文件 {0} / Cannot read video file {0}", path.display()))
+    };
+    let before = metadata(path)?;
+    let digest = crate::execution::file_digest_cancellable(path, cancel)?;
+    ensure!(!cancel.load(std::sync::atomic::Ordering::Relaxed), "已取消读取文件 / File reading cancelled");
+    let after = metadata(path)?;
     ensure!(
         before.len() == after.len() && before.modified().ok() == after.modified().ok(),
         "视频文件在读取时发生变化，请重新读取 / The video file changed while reading; read it again"
     );
-    Ok(format!("local:sha256:{:x}", hash.finalize()))
+    Ok(format!("local:sha256:{digest}"))
 }
 
 impl VideoMeta {

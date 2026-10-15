@@ -309,12 +309,25 @@ pub fn digest(bytes: &[u8]) -> String {
 }
 
 pub fn file_digest(path: &Path) -> Result<String> {
+    file_digest_cancellable(path, &std::sync::atomic::AtomicBool::new(false))
+}
+
+/// Streaming SHA-256 that stops at the next 1 MiB block once `cancel` is set.
+pub fn file_digest_cancellable(
+    path: &Path,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
     use sha2::{Digest, Sha256};
-    let mut file =
-        std::fs::File::open(path).with_context(|| format!("无法读取 {0} / Cannot read {0}", path.display()))?;
+    use std::sync::atomic::Ordering;
+    let mut file = std::fs::File::open(path)
+        .with_context(|| format!("无法读取 {0} / Cannot read {0}", path.display()))?;
     let mut hash = Sha256::new();
-    let mut buffer = [0u8; 128 * 1024];
+    let mut buffer = vec![0u8; 1024 * 1024];
     loop {
+        anyhow::ensure!(
+            !cancel.load(Ordering::Relaxed),
+            "已取消读取文件 / File reading cancelled"
+        );
         let n = file.read(&mut buffer)?;
         if n == 0 {
             break;
