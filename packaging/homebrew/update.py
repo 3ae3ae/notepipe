@@ -5,10 +5,14 @@ import hashlib
 import re
 from pathlib import Path
 import subprocess
+import sys
 import urllib.request
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from versioning import PRERELEASE_CHANNELS, parse_release  # noqa: E402
+
 TEMPLATES = Path(__file__).resolve().parent
-CHANNELS = ("stable", "alpha", "beta", "rc")
+CHANNELS = ("stable", *PRERELEASE_CHANNELS)
 ASSETS = {
     "SHA_ARM": "course2md-macos-arm64",
     "SHA_INTEL": "course2md-macos-x86_64",
@@ -17,31 +21,6 @@ ASSETS = {
     "SHA_LINUX_ARM": "course2md-linux-aarch64",
     "SHA_DMG": "course2md-gui-macos-arm64.dmg",
 }
-
-
-# 与 packaging/release-version.py、packaging/aur/update-aur.sh 同一校验口径：
-# semver.org 官方文法（核心版本拒绝前导零，如 01.2.3；预发布标识符按官方
-# 规范，如 1.2.3-rc.1）。发布版本不使用 build 元数据（+build 段），三方统一
-# 拒绝。预发布通道仅限 alpha/beta/rc.N（N ≥ 1），与发布矩阵一致。
-PRERELEASE_CHANNELS = ("alpha", "beta", "rc")
-SEMVER = re.compile(
-    r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
-)
-
-
-def parse_release(version):
-    """Return (channel, number) for a release version, or None if invalid."""
-    match = SEMVER.fullmatch(version)
-    if match is None:
-        return None
-    prerelease = match[4]
-    if prerelease is None:
-        return "stable", None
-    channel, dot, number = prerelease.partition(".")
-    if channel not in PRERELEASE_CHANNELS or not dot or not number.isdigit() or int(number) < 1:
-        return None
-    return channel, number
 
 
 def checksum(url):
