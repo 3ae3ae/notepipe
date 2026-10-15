@@ -135,11 +135,10 @@ pub fn credential_path() -> PathBuf {
 
 /// codex CLI 的登录态文件（~/.codex/auth.json）。
 fn codex_cli_auth_path() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".codex").join("auth.json")
+    crate::config::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex")
+        .join("auth.json")
 }
 
 pub fn load_tokens() -> Result<Option<CodexTokens>> {

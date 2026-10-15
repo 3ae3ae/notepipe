@@ -37,12 +37,23 @@ fn main() {
     // mlx-swift Cmlx 里的 .metal shader，产不出 default.metallib，
     // CoreML 推理运行时必挂（CI macos-26 默认 Xcode 较老时踩中）。
     // 工具链不支持 swiftbuild 时回退默认构建系统。
-    let ok = run(Command::new("swift")
+    // 只在两种构建系统都失败时才打印输出，回退成功不留误导性的警告。
+    let first = run(Command::new("swift")
         .args(["build", "-c", "release", "--build-system", "swiftbuild"])
-        .current_dir(&pkg))
-        || run(Command::new("swift")
+        .current_dir(&pkg));
+    let ok = first.is_ok()
+        || match run(Command::new("swift")
             .args(["build", "-c", "release"])
-            .current_dir(&pkg));
+            .current_dir(&pkg))
+        {
+            Ok(()) => true,
+            Err(second) => {
+                for report in [first.unwrap_err(), second] {
+                    println!("cargo:warning={report}");
+                }
+                false
+            }
+        };
     if !ok {
         println!(
             "cargo:warning=swift build 失败（见上方输出），跳过 Apple 原生模块；coreml 后端不可用"
@@ -225,39 +236,22 @@ fn swiftc_available() -> bool {
         .unwrap_or(false)
 }
 
-fn run(cmd: &mut Command) -> bool {
+fn tail(text: &str, lines: usize) -> String {
+    let all: Vec<&str> = text.lines().collect();
+    all[all.len().saturating_sub(lines)..].join("\n")
+}
+
+/// 运行构建命令；失败时返回可直接打印的输出尾部。
+fn run(cmd: &mut Command) -> Result<(), String> {
     match cmd.output() {
-        Ok(out) => {
-            if !out.status.success() {
-                let so = String::from_utf8_lossy(&out.stdout);
-                let se = String::from_utf8_lossy(&out.stderr);
-                println!(
-                    "cargo:warning=swift build 退出码 {:?}（stdout 尾部）:\n{}\n（stderr 尾部）:\n{}",
-                    out.status.code(),
-                    so.lines()
-                        .rev()
-                        .take(40)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    se.lines()
-                        .rev()
-                        .take(40)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                );
-            }
-            out.status.success()
-        }
-        Err(e) => {
-            println!("cargo:warning=无法执行 {:?}: {e}", cmd.get_program());
-            false
-        }
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(format!(
+            "swift build 退出码 {:?}（stdout 尾部）:\n{}\n（stderr 尾部）:\n{}",
+            out.status.code(),
+            tail(&String::from_utf8_lossy(&out.stdout), 40),
+            tail(&String::from_utf8_lossy(&out.stderr), 40),
+        )),
+        Err(e) => Err(format!("无法执行 {:?}: {e}", cmd.get_program())),
     }
 }
 

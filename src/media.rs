@@ -2,7 +2,17 @@
 
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::time::Duration;
 use tokio::process::Command;
+
+/// ffprobe 读元数据的上限：损坏或卡住的输入不能挂住流程。
+const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 有界运行 ffprobe；超时或启动失败返回 None（探测失败均非致命）。
+async fn probe_output(cmd: &mut Command) -> Option<std::process::Output> {
+    let output = cmd.kill_on_drop(true).stdin(std::process::Stdio::null()).output();
+    tokio::time::timeout(PROBE_TIMEOUT, output).await.ok()?.ok()
+}
 
 /// 跑子进程并检查退出码；失败时返回带 stderr 尾部摘要的错误（供各模块复用）。
 pub(crate) async fn run_cmd(cmd: &mut Command, what: &str) -> Result<std::process::Output> {
@@ -76,21 +86,21 @@ struct ProbeFormat {
 
 /// 视频宽高与时长。用 `-of json` 结构化输出，取代按逗号/空白切分的文本解析。
 pub async fn probe_video(media: &Path) -> Option<VideoInfo> {
-    let out = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height:format=duration",
-            "-of",
-            "json",
-        ])
-        .arg(media)
-        .output()
-        .await
-        .ok()?;
+    let out = probe_output(
+        Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height:format=duration",
+                "-of",
+                "json",
+            ])
+            .arg(media),
+    )
+    .await?;
     if !out.status.success() {
         return None;
     }
@@ -132,21 +142,17 @@ fn parse_duration(out: &std::process::Output) -> Option<f64> {
 
 /// 用 ffprobe 拿时长（秒）。失败时返回 None（非致命）。
 pub async fn probe_duration(media: &Path) -> Option<f64> {
-    let out = Command::new("ffprobe")
-        .args(duration_args())
-        .arg(media)
-        .output()
-        .await
-        .ok()?;
+    let out = probe_output(Command::new("ffprobe").args(duration_args()).arg(media)).await?;
     parse_duration(&out)
 }
 
 /// [`probe_duration`] 的同步版（供阻塞线程使用）。
 pub fn probe_duration_blocking(media: &Path) -> Option<f64> {
-    let out = std::process::Command::new("ffprobe")
-        .args(duration_args())
-        .arg(media)
-        .output()
-        .ok()?;
-    parse_duration(&out)
+    let mut cmd = std::process::Command::new("ffprobe");
+    cmd.args(duration_args()).arg(media);
+    let out = crate::runtime::run_bounded("ffprobe", &mut cmd, PROBE_TIMEOUT).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    out.stdout.trim().parse::<f64>().ok()
 }

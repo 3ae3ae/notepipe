@@ -18,25 +18,34 @@ pub fn cmd_error(program: &str, code: Option<i32>, stderr: &str) -> anyhow::Erro
     anyhow::anyhow!("{program} 运行失败 / failed (code={code:?}):\n{tail}")
 }
 
-/// 校验外部工具存在。yt-dlp 走共享搜索清单（随包自带/PATH/常见安装目录），
-/// 其余工具仍只查 PATH。
+/// 校验 PATH 上的外部工具存在（yt-dlp 请用 [`require_ytdlp`]）。
 pub fn require_cmd(cmd: &str) -> Result<()> {
-    let missing = if cmd == "yt-dlp" {
-        crate::ytdlp::resolve().is_none()
-    } else {
-        crate::runtime::which(cmd).is_none()
-    };
-    if missing {
-        anyhow::bail!(
-            "未找到 {cmd}，请先安装 / {cmd} is not installed. {}",
-            install_hint(cmd)
-        );
+    if cmd == "yt-dlp" {
+        return require_ytdlp();
+    }
+    if crate::runtime::which(cmd).is_none() {
+        return Err(missing_tool(cmd));
     }
     Ok(())
 }
 
-/// 按平台附一行安装命令（常见包管理器；ffprobe 随 ffmpeg 包提供）。
-fn install_hint(cmd: &str) -> String {
+/// 校验 yt-dlp 可用（随包自带 / PATH / 常见安装目录，见 [`crate::ytdlp::resolve`]）。
+pub fn require_ytdlp() -> Result<()> {
+    if crate::ytdlp::resolve().is_none() {
+        return Err(missing_tool("yt-dlp"));
+    }
+    Ok(())
+}
+
+fn missing_tool(cmd: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "未找到 {cmd}，请先安装 / {cmd} is not installed. {}",
+        install_hint(cmd)
+    )
+}
+
+/// 按平台给一行安装命令（常见包管理器；ffprobe 随 ffmpeg 包提供）。
+pub fn install_hint(cmd: &str) -> String {
     let pkg = if cmd == "ffprobe" { "ffmpeg" } else { cmd };
     let media_tool = matches!(cmd, "ffmpeg" | "ffprobe" | "yt-dlp");
     if cfg!(target_os = "macos") {

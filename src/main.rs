@@ -325,7 +325,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 llm::validate(&initial.llm)?;
             }
             if !std::path::Path::new(&source).is_file() {
-                course2md::error::require_cmd("yt-dlp")?;
+                course2md::error::require_ytdlp()?;
             }
             // 首次使用向导：未配置转写方式 + 交互终端时引导配置并写盘（非交互原样返回）；
             // json 模式显式跳过——stdout 必须保持纯 NDJSON，不能混进交互提示

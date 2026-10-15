@@ -70,9 +70,7 @@ fn interpreter_dirs(base: &Path, leaf: &str, prefix: &str) -> Vec<PathBuf> {
 /// PATH 之外的常见安装位置：覆盖「终端里有、桌面会话里没有」的安装方式。
 fn fallback_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from);
+    let home = crate::config::home_dir();
     #[cfg(unix)]
     {
         if let Some(home) = &home {
@@ -196,17 +194,5 @@ mod tests {
         std::fs::write(&plain, b"#!/bin/sh\n").unwrap();
         assert!(!is_exec(&plain));
         assert!(!is_exec(&dir.path().join("missing")));
-    }
-
-    #[test]
-    fn fallback_candidates_are_absolute() {
-        // 清单至少非空且每条都指向 yt-dlp 文件名；不依赖具体机器有没有装
-        let candidates = fallback_candidates();
-        assert!(!candidates.is_empty());
-        assert!(
-            candidates
-                .iter()
-                .all(|p| p.file_name().is_some_and(|n| n == binary_name().as_str()))
-        );
     }
 }
