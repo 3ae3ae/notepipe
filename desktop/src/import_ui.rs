@@ -1919,6 +1919,13 @@ impl Desktop {
             let mut options = v_flex().gap_2().child(
                 div().child(
                     SingleChoiceGroup::new("import-text-source", "笔记的文字来源")
+                        .map(|group| choices.iter().fold(group, |group, (value, _)| {
+                            group.icon(value.clone(), if value == "speech" {
+                                icons::microphone()
+                            } else {
+                                icons::subtitles()
+                            })
+                        }))
                         .options(choices)
                         .when_some(selected, |group, value| group.selected(value))
                         .on_change(cx.listener(move |this, value: &SharedString, _, cx| {
@@ -2014,6 +2021,9 @@ impl Desktop {
         let selector = SingleChoiceGroup::new("conversion-text-mode", "文字来源方式")
             .segmented()
             .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
+            .icon("0", icons::auto_fix())
+            .icon("1", icons::subtitles())
+            .icon("2", icons::microphone())
             .selected(self.task_options.source_mode.to_string())
             .on_change(cx.listener(|this, value: &SharedString, _, cx| {
                 let Ok(mode) = value.parse::<usize>() else {

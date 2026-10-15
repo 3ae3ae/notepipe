@@ -1780,6 +1780,8 @@ impl Desktop {
                         SingleChoiceGroup::new("setup-speech-protocol", "语音接口类型")
                             .full_width()
                             .options([("transcriptions", "语音转录"), ("chat", "音频聊天")])
+                            .icon("transcriptions", icons::microphone())
+                            .icon("chat", icons::article())
                             .selected(
                                 if service.draft.protocol
                                     == preferences::ServiceProtocol::SpeechChat
@@ -1824,6 +1826,9 @@ impl Desktop {
                                 .into_iter()
                                 .map(|candidate| (candidate.label(), candidate.ai_kind_label())),
                             )
+                            .icon(preferences::ServiceProtocol::AiChat.label(), icons::cloud())
+                            .icon(preferences::ServiceProtocol::OllamaChat.label(), icons::server())
+                            .icon(preferences::ServiceProtocol::CodexResponses.label(), icons::sparkles())
                             .selected(service.draft.protocol.label())
                             .disabled(busy)
                             .on_change(cx.listener(
@@ -1863,6 +1868,8 @@ impl Desktop {
                         )
                         .full_width()
                         .options([("key", "API Key"), ("none", "无需认证")])
+                        .icon("key", icons::shield())
+                        .icon("none", icons::web())
                         .selected(if service.draft.authentication == Authentication::ApiKey {
                             "key"
                         } else {
