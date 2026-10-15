@@ -82,8 +82,7 @@ struct EmptyResultTracker {
 }
 
 impl EmptyResultTracker {
-    /// 处理一个 chunk 的转写结果。返回 Ok(true) = 非空结果已落账；Ok(false) =
-    /// 空结果已缓冲（两条路径对进度条的推进语义不同，由调用方按返回值决定）；
+    /// 处理一个 chunk 的转写结果：非空结果落账，空结果缓冲。
     /// Err = 需要中止（熔断触发或 checkpoint 写盘失败），错误原样上抛。
     fn record_outcome(
         &mut self,
@@ -91,7 +90,7 @@ impl EmptyResultTracker {
         start: f64,
         end: f64,
         text: &str,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let empty = text.trim().is_empty();
         if self.tripwire.record(empty) {
             // 熔断不落账（见 struct 注释）
@@ -99,10 +98,10 @@ impl EmptyResultTracker {
         }
         if empty {
             self.pending_empty.push((start, end));
-            return Ok(false);
+            return Ok(());
         }
         self.flush_pending(cp)?;
-        cp.record(start, end, text).map(|_| true)
+        cp.record(start, end, text)
     }
 
     /// 正常收尾：把缓冲的空结果（真实静音）落 checkpoint，避免静音 chunk 反复重跑。
@@ -421,11 +420,7 @@ pub(crate) fn run_chunks(
             match transcribe(i, seg, &chunk) {
                 Ok(text) => {
                     let text = text.as_deref().unwrap_or("");
-                    // 串行路径：空结果缓冲也推进进度（与原实现一致）
-                    if let Err(e) = tracker
-                        .record_outcome(cp, start, end, text)
-                        .map(|_| ())
-                    {
+                    if let Err(e) = tracker.record_outcome(cp, start, end, text) {
                         err = Some(e);
                         break;
                     }
@@ -542,14 +537,9 @@ fn run_api(
                 _ if err.is_some() => {} // 已熔断/已出错：丢弃迟到结果
                 Ok(text) => {
                     let text = text.as_deref().unwrap_or("");
-                    // 并行路径：空结果缓冲与熔断都不推进进度（与原实现的 continue 一致）
-                    match tracker.record_outcome(cp, segs[i].start, segs[i].end, text) {
-                        Ok(true) => pb.inc(1),
-                        Ok(false) => {}
-                        Err(e) => {
-                            err = Some(e);
-                            abort.store(true, std::sync::atomic::Ordering::Relaxed);
-                        }
+                    if let Err(e) = tracker.record_outcome(cp, segs[i].start, segs[i].end, text) {
+                        err = Some(e);
+                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                 }
                 Err(e) => {
@@ -559,6 +549,7 @@ fn run_api(
                     abort.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+            // 每个回收的结果（含空结果）恰好推进一次，与串行路径一致
             pb.inc(1);
         }
         // 正常收尾：缓冲的空结果（真实静音）落 checkpoint，避免静音 chunk 反复重跑
