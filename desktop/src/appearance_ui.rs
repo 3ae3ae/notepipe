@@ -448,7 +448,7 @@ impl Desktop {
         v_flex()
             .w_full()
             .min_w_0()
-            .gap(px(28.))
+            .gap(px(23.))
             .child(
                 crate::settings_ui::SettingsGroup::new("appearance-theme", "主题")
                     .child(settings_stacked_row(
@@ -459,7 +459,10 @@ impl Desktop {
                         modes,
                     ))
                     .child(
-                        crate::settings_ui::setting_surface().gap(px(12.)).child(
+                        crate::settings_ui::setting_surface()
+                            .pt(rems(11. / 14.))
+                            .pb(rems(24. / 14.))
+                            .gap(px(12.)).child(
                             div()
                                 .grid()
                                 .grid_cols(columns)

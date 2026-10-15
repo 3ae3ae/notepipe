@@ -2139,7 +2139,7 @@ impl Desktop {
                         )),
                 ))
                 .child(
-                    setting_surface().child(settings_switch_row(
+                    setting_surface().py(rems(10. / 14.)).child(settings_switch_row(
                         "减少动态效果",
                         "关闭过渡动画和进度条的流动效果",
                         Switch::new("app-reduce-motion")
