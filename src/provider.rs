@@ -1,5 +1,5 @@
 //! LLM 服务方言：每个 provider 的 endpoint、认证头、请求体与响应提取集中于此
-//!（单一事实源，对照 docs/ENGINEERING-AUDIT.md H6）。登录方法见 crate::login。
+//!（单一事实源）。登录方法见 crate::login。
 //!
 //! OpenAiCompatible 与 Ollama 共用 chat/completions 方言；Codex 走 ChatGPT 后端
 //! Responses API（SSE 流），SSE 聚合为 chat/completions 形状的 JSON 后，

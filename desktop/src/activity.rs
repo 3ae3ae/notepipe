@@ -323,7 +323,7 @@ pub(crate) fn is_model_transfer_stage(stage: &str) -> bool {
 /// 准备阶段文案：诊断面板与引导页同一来源。
 /// 阶段名来自结构化的 stage；消息关键词只用于细分文件类型。
 /// 注意：关键词嗅探依赖 worker 输出文案——上游改文案时退化为 stage 标题（可接受的降级，
-/// 彻底修法是引擎发结构化阶段事件，记录在 docs/ENGINEERING-AUDIT.md 后续建议）。
+/// 彻底修法是引擎发结构化阶段事件）。
 const PREPARATION_PHASE_HINTS: &[(&str, &str)] = &[
     ("silero", "下载语音检测文件"),
     ("compil", "编译识别模型"),
