@@ -1066,17 +1066,11 @@ pub(crate) fn ffmpeg_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
         );
     }
     let log = &out.stderr;
-    // 时长只探测一次，传入 normalize_segments（此前两处各 ffprobe 一次）；
-    // 失败至少告警——静默落 0.0 会让末段语音丢失。
-    let dur = match crate::media::probe_duration_blocking(wav) {
-        Some(d) => d,
-        None => {
-            tracing::warn!(
-                "无法读取音频时长，末段语音可能不完整 / Could not read audio duration; the final transcript segment may be incomplete"
-            );
-            0.0
-        }
-    };
+    // 时长缺失时不能按 0 处理：末段语音（或整段无停顿的音频）会被当成静音丢掉
+    let dur = ffmpeg_input_duration(log)
+        .or_else(|| crate::media::probe_duration_blocking(wav))
+        .filter(|d| d.is_finite() && *d > 0.0)
+        .context("无法读取音频时长 / Could not read the audio duration")?;
     let mut silences: Vec<(f64, f64)> = vec![];
     let mut start: Option<f64> = None;
     for line in log.lines() {
@@ -1102,6 +1096,15 @@ pub(crate) fn ffmpeg_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
         }
     }
     normalize_segments(invert_silence(dur, &silences), max_speech as f64, wav, dur)
+}
+
+/// ffmpeg 输入信息里的 `Duration: HH:MM:SS.xx`（秒）。
+fn ffmpeg_input_duration(log: &str) -> Option<f64> {
+    let rest = log.split("Duration:").nth(1)?.trim_start();
+    let stamp = rest.split([',', ' ', '\n']).next()?;
+    let mut parts = stamp.split(':');
+    let (h, m, s) = (parts.next()?, parts.next()?, parts.next()?);
+    Some(h.parse::<f64>().ok()? * 3600.0 + m.parse::<f64>().ok()? * 60.0 + s.parse::<f64>().ok()?)
 }
 
 /// 最终送入 ASR 的分段：`start/end` 是事件时间（用于时间线），`cut_*` 是切音频范围（含静音填充）。
@@ -1401,6 +1404,15 @@ mod tests {
         assert!(body.windows(audio.len()).any(|slice| slice == audio));
         assert!(body.ends_with(format!("\r\n--{boundary}--\r\n").as_bytes()));
         assert!(String::from_utf8_lossy(&body).contains("name=\"file\"; filename=\"audio.wav\""));
+    }
+
+    #[test]
+    fn vad_reads_duration_from_ffmpeg_and_keeps_speech_without_pauses() {
+        let log = "Input #0, wav, from 'a.wav':\n  Duration: 00:01:02.50, bitrate: 256 kb/s\n";
+        assert_eq!(ffmpeg_input_duration(log), Some(62.5));
+        assert_eq!(ffmpeg_input_duration("  Duration: N/A, bitrate: N/A"), None);
+        // 整段没有停顿：只要时长已知，就是一整段语音而不是空结果
+        assert_eq!(invert_silence(62.5, &[]), vec![(0.0, 62.5)]);
     }
 
     #[test]
