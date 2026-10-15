@@ -252,14 +252,7 @@ impl TaskPlan {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Intent {
-    Run,
-    Pause,
-    Cancel,
-    Quit,
-}
+pub use course2md::dispatch::Intent;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -1099,7 +1092,7 @@ fn pause_recovered_control(task: &TaskRecord) -> Result<()> {
     } else {
         serde_json::json!({})
     };
-    control["intent"] = serde_json::json!("pause");
+    control["intent"] = serde_json::to_value(Intent::Pause)?;
     control["resend"] = serde_json::json!([]);
     course2md::checkpoint::atomic_write(&path, &serde_json::to_vec(&control)?)
 }

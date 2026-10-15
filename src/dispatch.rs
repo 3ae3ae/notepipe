@@ -1,8 +1,7 @@
 //! Durable external-request receipts. A lost response is never permission to resend.
 
-/// Receipt「结果不确定」阻断原因的写入权威：block() 写入 receipt 的 reason、
-/// Failure.uncertain 的判定，都以这一处常量为准（桌面端续跑 UI 亦引用它），
-/// 不再散落字面量。
+/// 「结果不确定」阻断原因：block() 写入的 reason 与 Failure.uncertain 的判定
+/// 共用此常量，桌面端续跑 UI 亦引用它。
 pub const REASON_UNCERTAIN: &str = "uncertain";
 
 use crate::{checkpoint::atomic_write, execution};
@@ -15,22 +14,24 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+/// 任务运行意图：桌面端写入 control.json，引擎在每个安全边界读取。
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Intent {
+    #[default]
+    Run,
+    Pause,
+    Cancel,
+    Quit,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Control {
-    pub intent: String,
+    pub intent: Intent,
     pub stopped_services: Vec<String>,
     /// IDs identify an exact previous attempt, so persistent authorization is consumed once.
     pub resend: Vec<String>,
-}
-impl Default for Control {
-    fn default() -> Self {
-        Self {
-            intent: "run".into(),
-            stopped_services: vec![],
-            resend: vec![],
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -83,13 +84,22 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 impl Failure {
-    fn local(error: impl std::fmt::Display) -> Self {
+    /// A definite, non-retryable failure that no service status explains.
+    pub fn local(error: impl std::fmt::Display) -> Self {
         Self {
             status: None,
             retryable: false,
             uncertain: false,
             message: error.to_string(),
             unsupported_response_format: false,
+        }
+    }
+    fn with_status(status: Option<u16>, retryable: bool, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            retryable,
+            message: message.into(),
+            ..Self::local("")
         }
     }
 }
@@ -198,7 +208,7 @@ pub fn install(
         .get_or_init(|| Mutex::new(None))
         .lock()
         .map_err(|_| {
-            anyhow::anyhow!("任务请求状态锁不可用 / Task request ledger lock unavailable")
+            anyhow::anyhow!("任务状态异常，请重启应用 / Task state is unavailable; restart the app")
         })?;
     anyhow::ensure!(
         current.is_none(),
@@ -217,7 +227,7 @@ pub fn check_control() -> Result<()> {
 }
 
 /// 轮询任务控制文件，意图不再是 run 时返回 Err。配合 `tokio::select!` 打断
-/// 长时间运行的分支（子进程句谋 kill_on_drop 随分支 dropped 生效）。
+/// 长时间运行的分支（子进程句柄的 kill_on_drop 随分支 drop 生效）。
 /// 无活动任务账本时 check_control 恒 Ok，此 future 永不完成，不影响 CLI 独立调用。
 pub async fn watch_control() -> anyhow::Error {
     loop {
@@ -240,7 +250,7 @@ fn read_receipts(dir: &Path) -> Result<Vec<Receipt>> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         if path.extension().is_some_and(|e| e == "json") {
-            result.push(serde_json::from_slice(&std::fs::read(path)?).context("外部请求记录损坏；没有重新发送 / Request receipt is damaged; no request was resent")?);
+            result.push(serde_json::from_slice(&std::fs::read(path)?).context("已保存的服务请求记录已损坏；为避免重复扣费，没有重新发送 / A saved service request record is damaged; nothing was resent to avoid duplicate charges")?);
         }
     }
     Ok(result)
@@ -265,7 +275,7 @@ impl Ledger {
     fn control(&self) -> Result<Control> {
         match &self.control_path {
             Some(path) if path.exists() => serde_json::from_slice(&std::fs::read(path)?)
-                .context("任务控制状态无法读取；已停止派发 / Cannot read task control"),
+                .context("任务状态无法识别，已暂停 / Task state is unreadable; paused"),
             _ => Ok(Control::default()),
         }
     }
@@ -287,32 +297,25 @@ impl Ledger {
             );
         }
         Failure {
-            status: None,
-            retryable: false,
             uncertain: reason == REASON_UNCERTAIN,
-            message,
-            unsupported_response_format: false,
+            ..Failure::local(message)
         }
     }
     fn check_intent(&self, service_version: Option<&str>) -> std::result::Result<Control, Failure> {
         let control = self.control().map_err(Failure::local)?;
-        let reason = match control.intent.as_str() {
-            "run" => None,
-            "pause" => Some((
+        let reason = match control.intent {
+            Intent::Run => None,
+            Intent::Pause => Some((
                 "paused",
                 "生成已暂停，进度已保留 / Generation paused; progress retained",
             )),
-            "cancel" => Some((
+            Intent::Cancel => Some((
                 "cancelled",
                 "任务已取消，已有成果已保留 / Task cancelled; saved results retained",
             )),
-            "quit" => Some((
+            Intent::Quit => Some((
                 "quit",
                 "已保存进度，等待下次继续 / Progress saved; waiting to continue",
-            )),
-            _ => Some((
-                "paused",
-                "任务运行意图无效，已停止派发 / Invalid task intent; dispatch stopped",
             )),
         };
         if let Some((reason, message)) = reason {
@@ -409,26 +412,23 @@ impl Ledger {
                 self.save(&uncertain)?;
                 return Err(self.block(REASON_UNCERTAIN, Some(old), "未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges"));
             }
-            if old.state == State::Failed && !authorized {
+            let settled = match old.state {
+                State::Failed => Some("此请求未完成 / Request failed"),
+                State::Rejected if old.http_status != Some(429) => {
+                    Some("服务拒绝了此请求 / Service rejected this request")
+                }
+                _ => None,
+            };
+            if let Some(fallback) = settled
+                && !authorized
+            {
                 return Err(Failure {
-                    status: old.http_status,
-                    retryable: false,
-                    uncertain: false,
-                    message: old.message.clone().unwrap_or_else(|| {
-                        "此请求未完成，已保留响应 / Request failed; response retained".into()
-                    }),
                     unsupported_response_format: old.unsupported_response_format,
-                });
-            }
-            if old.state == State::Rejected && old.http_status != Some(429) && !authorized {
-                return Err(Failure {
-                    status: old.http_status,
-                    retryable: false,
-                    uncertain: false,
-                    message: old.message.clone().unwrap_or_else(|| {
-                        "服务拒绝了此请求 / Service rejected this request".into()
-                    }),
-                    unsupported_response_format: old.unsupported_response_format,
+                    ..Failure::with_status(
+                        old.http_status,
+                        false,
+                        old.message.clone().unwrap_or_else(|| fallback.into()),
+                    )
                 });
             }
         }
@@ -477,13 +477,7 @@ impl Ledger {
                     receipt.state = State::NotSent;
                     receipt.message = Some(error.message.clone());
                     self.save(&receipt)?;
-                    return Err(Failure {
-                        status: None,
-                        retryable: true,
-                        uncertain: false,
-                        message: error.message,
-                        unsupported_response_format: false,
-                    });
+                    return Err(Failure::with_status(None, true, error.message));
                 }
                 receipt.state = State::Uncertain;
                 receipt.message = Some(error.message);
@@ -500,14 +494,15 @@ impl Ledger {
             receipt.message = Some(rejection_message(response.status));
             // Error bodies may echo credentials. Keep status, not the untrusted body.
             self.save(&receipt)?;
+            // Each caller bounds its retry loop; a later task continuation may retry
+            // a confirmed rejection without requiring uncertain-request authorization.
             return Err(Failure {
-                status: Some(response.status),
-                // Each caller bounds its retry loop; a later task continuation may retry
-                // a confirmed rejection without requiring uncertain-request authorization.
-                retryable: response.status == 429,
-                uncertain: false,
-                message: receipt.message.unwrap(),
                 unsupported_response_format: receipt.unsupported_response_format,
+                ..Failure::with_status(
+                    Some(response.status),
+                    response.status == 429,
+                    receipt.message.unwrap_or_default(),
+                )
             });
         }
         if !(200..300).contains(&response.status) {
@@ -520,7 +515,7 @@ impl Ledger {
             Err(_) => {
                 receipt.state = State::Failed;
                 receipt.message = Some(
-                    "服务已回应，但返回的内容不是有效 JSON / Service returned invalid JSON".into(),
+                    "服务返回的内容无法读取 / The service response could not be read".into(),
                 );
                 self.save(&receipt)?;
                 return Err(Failure::local(receipt.message.unwrap()));
@@ -561,24 +556,23 @@ pub fn json_request_described(
     }
     // The CLI has no durable task context. Only confirmed unsent/429 are retryable.
     let response = send().map_err(|e| Failure {
-        status: None,
-        retryable: e.definitely_unsent,
         uncertain: !e.definitely_unsent,
-        message: e.message,
-        unsupported_response_format: false,
+        ..Failure::with_status(None, e.definitely_unsent, e.message)
     })?;
     if !(200..300).contains(&response.status) {
         return Err(Failure {
-            status: Some(response.status),
-            retryable: response.status == 429,
             uncertain: response.status >= 500,
-            message: rejection_message(response.status),
             unsupported_response_format: rejects_response_format(
                 response.status,
                 serde_json::from_slice::<Value>(&response.body)
                     .ok()
                     .as_ref(),
             ),
+            ..Failure::with_status(
+                Some(response.status),
+                response.status == 429,
+                rejection_message(response.status),
+            )
         });
     }
     let value = serde_json::from_slice(&response.body).map_err(Failure::local)?;
@@ -920,7 +914,7 @@ mod tests {
         let ledger = Ledger::new(dir.path(), Some(&path), &versions).unwrap();
         for control in [
             Control {
-                intent: "pause".into(),
+                intent: Intent::Pause,
                 ..Default::default()
             },
             Control {
