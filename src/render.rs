@@ -1,8 +1,7 @@
-//! 输出渲染：course.md / course.html / structured.json。
+//! 笔记渲染：Markdown 与独立 HTML。
 
 use crate::fetch::VideoMeta;
 use crate::timeline::Section;
-use anyhow::Result;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -168,21 +167,9 @@ pub fn render_html(meta: &VideoMeta, sections: &[Section]) -> String {
         body.push_str("</section>\n");
     }
     format!(
-        "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{title}</title>\n<style>\n:root {{ color-scheme: light dark; }}\nbody {{ max-width: 920px; margin: 0 auto; padding: 1rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; }}\nheader h1 {{ font-size: 1.5rem; }}\nheader p {{ color: #888; }}\nsection {{ margin: 2rem 0; }}\nsection h2 {{ font-size: 1rem; font-weight: 600; }}\nsection h2 a {{ color: #0969da; text-decoration: none; }}\nimg {{ max-width: 100%; border: 1px solid #8884; border-radius: 6px; }}\np {{ margin: .4rem 0; }}\np.mute {{ color: #888; }}\n</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
+        "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{title}</title>\n<style>\n:root {{ color-scheme: light dark; }}\nbody {{ max-width: 920px; margin: 0 auto; padding: 1rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; }}\nheader h1 {{ font-size: 1.5rem; }}\nheader p {{ color: #888; }}\nsection {{ margin: 2rem 0; }}\nsection h2 {{ font-size: 1rem; font-weight: 600; }}\nsection h2 a {{ color: #0969da; text-decoration: none; }}\nimg {{ max-width: 100%; border: 1px solid #8884; border-radius: 6px; }}\np {{ margin: .4rem 0; }}\n</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
         title = esc(&meta.title),
     )
-}
-
-pub fn render_json(meta: &VideoMeta, sections: &[Section]) -> Result<String> {
-    Ok(serde_json::to_string_pretty(&crate::timeline::CourseDoc {
-        schema_version: 1,
-        generator: crate::timeline::Generator {
-            name: env!("CARGO_PKG_NAME"),
-            version: env!("CARGO_PKG_VERSION"),
-        },
-        meta,
-        sections,
-    })?)
 }
 
 pub(crate) fn esc(s: &str) -> String {
@@ -198,42 +185,6 @@ pub(crate) fn esc(s: &str) -> String {
         }
     }
     out
-}
-
-/// 按 formats 集合写文件；summary 非空时插入 md/html（元信息之后）。
-pub async fn write_outputs(
-    out_dir: &Path,
-    meta: &VideoMeta,
-    sections: &[Section],
-    formats: &[crate::config::OutputFormat],
-    summary: Option<&crate::summarize::Summary>,
-) -> Result<()> {
-    for f in formats {
-        match f {
-            crate::config::OutputFormat::Md => {
-                let mut md = render_markdown(meta, sections);
-                if let Some(sm) = summary {
-                    md = crate::summarize::insert_into_md(&md, sm);
-                }
-                // 与全库同一崩溃安全纪律：崩溃不留半截笔记文件
-                crate::checkpoint::atomic_write(&out_dir.join("course.md"), md.as_bytes())?;
-            }
-            crate::config::OutputFormat::Html => {
-                let mut html = render_html(meta, sections);
-                if let Some(sm) = summary {
-                    html = crate::summarize::insert_into_html(&html, sm);
-                }
-                crate::checkpoint::atomic_write(&out_dir.join("course.html"), html.as_bytes())?;
-            }
-            crate::config::OutputFormat::Json => {
-                crate::checkpoint::atomic_write(
-                    &out_dir.join("structured.json"),
-                    render_json(meta, sections)?.as_bytes(),
-                )?;
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

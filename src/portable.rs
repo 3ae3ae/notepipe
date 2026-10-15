@@ -33,6 +33,41 @@ pub fn export(version_dir: &Path, format: OutputFormat, destination: &Path) -> R
     write_document(version_dir, &document, format, destination)
 }
 
+#[derive(serde::Serialize)]
+struct PortableJson<'a> {
+    schema: u32,
+    title: &'a str,
+    author: &'a str,
+    duration: Option<f64>,
+    source: PortableSource,
+    summary: Option<&'a crate::summarize::Summary>,
+    sections: Vec<PortableSection<'a>>,
+    images: Vec<PortableImage<'a>>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum PortableSource {
+    Local { file_name: String },
+    Online { url: String },
+    Unknown,
+}
+
+#[derive(serde::Serialize)]
+struct PortableSection<'a> {
+    t: f64,
+    end: f64,
+    image_id: Option<&'a str>,
+    speech: &'a [crate::timeline::TranscriptEvent],
+}
+
+#[derive(serde::Serialize)]
+struct PortableImage<'a> {
+    id: &'a str,
+    mime_type: &'static str,
+    sha256: &'a str,
+}
+
 struct ImageAsset {
     id: String,
     path: String,
@@ -114,9 +149,19 @@ pub(crate) fn write_document(
     } else {
         None
     };
+    // HTML 内嵌图片：渲染前直接把路径换成 data URI，避免对整份文档逐图做字符串替换
+    let inline = format == OutputFormat::Html;
     for section in &mut portable.sections {
         if let Some(image) = images.get(&section.image) {
-            section.image = image.path.clone();
+            section.image = if inline {
+                format!(
+                    "data:{};base64,{}",
+                    image.mime,
+                    base64::engine::general_purpose::STANDARD.encode(&image.bytes)
+                )
+            } else {
+                image.path.clone()
+            };
         }
     }
     match format {
@@ -147,22 +192,41 @@ pub(crate) fn write_document(
             if let Some(summary) = &portable.summary {
                 text = crate::summarize::insert_into_html(&text, summary);
             }
-            for image in images.values() {
-                text = text.replace(
-                    &format!("src=\"{}\"", render::esc(&image.path)),
-                    &format!(
-                        "src=\"data:{};base64,{}\"",
-                        image.mime,
-                        base64::engine::general_purpose::STANDARD.encode(&image.bytes)
-                    ),
-                );
-            }
             file.write_all(text.as_bytes())?;
         }
         OutputFormat::Json => {
-            let sections = document.sections.iter().map(|section| serde_json::json!({"t":section.t,"end":section.end,"image_id":images.get(&section.image).map(|image|&image.id),"speech":section.speech})).collect::<Vec<_>>();
-            let image_data = images.values().map(|image| serde_json::json!({"id":image.id,"mime_type":image.mime,"sha256":image.sha256})).collect::<Vec<_>>();
-            file.write_all(&serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"title":document.meta.title,"author":document.meta.uploader,"duration":if document.meta.duration > 0. { Some(document.meta.duration) } else { None },"source":if let Some(name) = local_file {serde_json::json!({"kind":"local","file_name":name})} else if document.meta.webpage_url.is_empty() {serde_json::json!({"kind":"unknown"})}else{serde_json::json!({"kind":"online","url":document.meta.webpage_url})},"summary":document.summary,"sections":sections,"images":image_data}))?)?;
+            let source = match (local_file, document.meta.webpage_url.as_str()) {
+                (Some(file_name), _) => PortableSource::Local { file_name },
+                (None, "") => PortableSource::Unknown,
+                (None, url) => PortableSource::Online { url: url.to_owned() },
+            };
+            let export = PortableJson {
+                schema: 1,
+                title: &document.meta.title,
+                author: &document.meta.uploader,
+                duration: (document.meta.duration > 0.).then_some(document.meta.duration),
+                source,
+                summary: document.summary.as_ref(),
+                sections: document
+                    .sections
+                    .iter()
+                    .map(|section| PortableSection {
+                        t: section.t,
+                        end: section.end,
+                        image_id: images.get(&section.image).map(|image| image.id.as_str()),
+                        speech: &section.speech,
+                    })
+                    .collect(),
+                images: images
+                    .values()
+                    .map(|image| PortableImage {
+                        id: &image.id,
+                        mime_type: image.mime,
+                        sha256: &image.sha256,
+                    })
+                    .collect(),
+            };
+            file.write_all(&serde_json::to_vec_pretty(&export)?)?;
         }
     }
     file.as_file().sync_all()?;

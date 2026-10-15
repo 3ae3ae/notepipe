@@ -1,6 +1,5 @@
 //! 时间线：事件类型、frame/speech 合并成 Section、timeline.jsonl 读写。
 
-use crate::fetch::VideoMeta;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -261,21 +260,19 @@ fn is_standalone_filler(text: &str) -> bool {
     )
 }
 
-// 注：此处用同步 std::fs——事件量小（KB 级）且为单次落盘；
-// 改 tokio::fs 需把签名改 async 并牵连 pipeline.rs，收益不抵成本。
+/// 原子写入 timeline.jsonl（该文件会被复制进发布版本，不能留半截）。
 pub fn write_jsonl(path: &Path, frames: &[FrameEvent], speech: &[TranscriptEvent]) -> Result<()> {
-    use std::io::Write;
     let mut events: Vec<TimelineEvent> = vec![];
     events.extend(frames.iter().cloned().map(TimelineEvent::Frame));
     events.extend(speech.iter().cloned().map(TimelineEvent::Speech));
-    // total_cmp：对 NaN 也有全序定义，避免 partial_cmp().unwrap() 在外部数据下 panic
+    // total_cmp：对 NaN 也有全序定义，外部数据不会让排序 panic
     events.sort_by(|a, b| time_of(a).total_cmp(&time_of(b)));
-    let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let mut bytes = Vec::new();
     for ev in &events {
-        serde_json::to_writer(&mut f, ev)?;
-        f.write_all(b"\n")?;
+        serde_json::to_writer(&mut bytes, ev)?;
+        bytes.push(b'\n');
     }
-    Ok(())
+    crate::checkpoint::atomic_write(path, &bytes)
 }
 
 fn time_of(e: &TimelineEvent) -> f64 {
@@ -283,22 +280,6 @@ fn time_of(e: &TimelineEvent) -> f64 {
         TimelineEvent::Frame(f) => f.t,
         TimelineEvent::Speech(s) => s.start,
     }
-}
-
-/// 全量结构化输出（structured.json 的主体）。
-/// schema_version 标记字段语义版本；后续任何破坏性变更必须递增此值。
-#[derive(Debug, Serialize)]
-pub struct CourseDoc<'a> {
-    pub schema_version: u32,
-    pub generator: Generator,
-    pub meta: &'a VideoMeta,
-    pub sections: &'a [Section],
-}
-
-#[derive(Debug, Serialize)]
-pub struct Generator {
-    pub name: &'static str,
-    pub version: &'static str,
 }
 
 #[cfg(test)]

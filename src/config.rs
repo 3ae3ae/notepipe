@@ -270,16 +270,6 @@ pub enum OutputFormat {
     Json,
 }
 
-impl OutputFormat {
-    pub fn output_name(&self) -> &'static str {
-        match self {
-            Self::Md => "course.md",
-            Self::Html => "course.html",
-            Self::Json => "structured.json",
-        }
-    }
-}
-
 impl fmt::Display for OutputFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
