@@ -1592,6 +1592,11 @@ fn main() {
                     }
                 });
                 window.on_window_should_close(cx, move |_, cx| {
+                    // macOS keeps the app running with its window hidden. Other
+                    // platforms cannot hide, so closing the window quits the app.
+                    if !cfg!(target_os = "macos") {
+                        return weak.update(cx, |this, cx| this.request_close(cx)).unwrap_or(true);
+                    }
                     let saved = weak
                         .update(cx, |this, cx| {
                             this.save_reading_position(cx);
