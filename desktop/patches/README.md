@@ -37,7 +37,14 @@ Developer checkouts are never patched.
   proportions, and the existing switch owns input, focus and thumb motion.
   Without an override, its original pixel sizes are unchanged. The app's
   shared switch adapter opts into 20/14 rem, preserving 36×20 at 100% and
-  scaling to 72×40 at 200%.
+  scaling to 72×40 at 200%. The opt-in `reference_geometry()` used by
+  processing switches instead uses a 52×32 track, a 24px selected / 16px
+  unselected thumb and a 2px unselected outline. These measurements scale
+  together with the requested track height; ordinary switches retain the
+  proportional mode above. Input, focus and reduced-motion behavior stay shared.
+- `component-button-text-size.patch` adds an opt-in `label_text_size` to the
+  internal button label. Settings use it for their 16px reference typography;
+  callers without an override retain the original size behavior.
 - `zed-metal-frame-lifetime.patch` scopes Metal drawing to one autorelease pool
   per frame. `CAMetalLayer::nextDrawable` returns an autoreleased object from a
   finite pool; keeping it alive across successive display callbacks can delay
