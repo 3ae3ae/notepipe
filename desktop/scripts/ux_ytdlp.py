@@ -12,10 +12,20 @@ import sys
 import time
 from urllib.parse import urlsplit, parse_qs
 
+
+
+def real_tool(name):
+    """The installed tool on PATH, skipping the fixture directory that holds this wrapper."""
+    here = Path(__file__).resolve().parent
+    path = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+                           if d and Path(d).resolve() != here)
+    return shutil.which(name, path=path)
+
+
 args = sys.argv[1:]
 source = next((arg for arg in args if "bilibili.com/video/BV1UX" in arg), None)
 if source is None:
-    binary = shutil.which("yt-dlp", path="/opt/homebrew/bin:/usr/local/bin:/usr/bin")
+    binary = real_tool("yt-dlp")
     if binary is None:
         sys.exit("Real yt-dlp is unavailable")
     os.execv(binary, [binary, *args])

@@ -31,6 +31,15 @@ cargo test --manifest-path desktop/Cargo.toml
 
 UI changes follow the [design skill](../.agents/skills/course2md-design/SKILL.md) and are verified in the running app. Use a separate `XDG_CONFIG_HOME` so tests do not touch your own configuration.
 
+For native UX checks on macOS, `desktop/scripts/ux_fixture.py` builds an isolated validation app with its own configuration, synthetic media and a local fake AI service. Synthetic `BV1UX…` links and fault modes come from `ux_ytdlp.py` and `ux_ffmpeg.py`; every other request uses the real tools.
+
+```sh
+cargo build && cargo build --manifest-path desktop/Cargo.toml
+python3 desktop/scripts/ux_fixture.py prepare
+python3 desktop/scripts/ux_fixture.py serve &   # fake OpenAI-compatible service
+python3 desktop/scripts/ux_fixture.py bundle --label check1
+```
+
 ## Package
 
 ```sh

@@ -11,9 +11,19 @@ import shutil
 import sys
 import time
 
+
+
+def real_tool(name):
+    """The installed tool on PATH, skipping the fixture directory that holds this wrapper."""
+    here = Path(__file__).resolve().parent
+    path = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+                           if d and Path(d).resolve() != here)
+    return shutil.which(name, path=path)
+
+
 args = sys.argv[1:]
 root = Path(os.environ.get("COURSE2MD_UX_FIXTURE_ROOT", "/tmp/course2md-ux-validation"))
-binary = shutil.which("ffmpeg", path="/opt/homebrew/bin:/usr/local/bin:/usr/bin")
+binary = real_tool("ffmpeg")
 if binary is None:
     sys.exit("Installed ffmpeg is unavailable")
 
