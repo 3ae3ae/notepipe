@@ -24,6 +24,43 @@ pub enum Operation {
     },
 }
 
+/// A version component that a reprocess task can redo. The wire format stays the
+/// lowercase name so stored desktop plans keep loading.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Component {
+    Screenshots,
+    Proofreading,
+    Summary,
+    Exports,
+}
+
+impl Component {
+    pub const ALL: [Self; 4] = [Self::Screenshots, Self::Proofreading, Self::Summary, Self::Exports];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Screenshots => "screenshots",
+            Self::Proofreading => "proofreading",
+            Self::Summary => "summary",
+            Self::Exports => "exports",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.as_str() == name)
+    }
+
+    /// Parse a requested component list; unknown names are an invalid task.
+    pub fn parse_all(names: &[String]) -> Result<Vec<Self>> {
+        names
+            .iter()
+            .map(|name| Self::parse(name))
+            .collect::<Option<Vec<_>>>()
+            .filter(|parsed| !parsed.is_empty())
+            .context("补做内容无效 / Invalid requested components")
+    }
+}
+
 /// Sent once over stdin. Do not derive Debug: config contains decrypted credentials.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -137,14 +174,7 @@ impl Request {
                 base_version_dir.is_absolute(),
                 "原笔记版本需要绝对路径 / Base version requires an absolute path"
             );
-            anyhow::ensure!(
-                !components.is_empty()
-                    && components.iter().all(|c| matches!(
-                        c.as_str(),
-                        "screenshots" | "proofreading" | "summary" | "exports"
-                    )),
-                "补做内容无效 / Invalid requested components"
-            );
+            Component::parse_all(components)?;
             anyhow::ensure!(
                 prior_work_dir
                     .as_ref()
@@ -208,7 +238,8 @@ impl Request {
             None
         };
         let needs_source = generating
-            || matches!(&self.operation, Operation::Reprocess { components, .. } if components.iter().any(|c| c == "screenshots"));
+            || matches!(&self.operation, Operation::Reprocess { components, .. }
+                if components.iter().any(|c| Component::parse(c) == Some(Component::Screenshots)));
         let local_digest = if needs_source && Path::new(&self.source).is_file() {
             Some(file_digest(Path::new(&self.source))?)
         } else {
@@ -307,7 +338,7 @@ pub fn bind_work_dir(work_dir: &Path, binding: &serde_json::Value) -> Result<()>
     } else {
         anyhow::ensure!(
             !work_dir.join("asr.jsonl").exists() && !work_dir.join("media.mp4").exists(),
-            "此工作目录包含身份不明的旧进度 / Existing work has no verified task identity"
+            "此文件夹里有无法确认来源的旧进度，请换一个位置 / This folder contains earlier progress of unknown origin; choose another location"
         );
         crate::checkpoint::atomic_write(&path, &serde_json::to_vec_pretty(binding)?)?;
     }

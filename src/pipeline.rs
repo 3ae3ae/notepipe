@@ -118,26 +118,30 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     std::fs::create_dir_all(&cfg.out_dir)?;
     let _lock = crate::runtime::lock_file(&cfg.out_dir.join(".task.lock"))?;
     execution::bind_work_dir(&cfg.out_dir, &binding)?;
-    if let Some(error) = local_duration_error {
-        // 与 run_prepared 失败同等待遇：失败诊断 run.json 照样落盘
-        write_failure_run_json(&cfg, is_local, &platform, &meta.id, &error, started);
-        return Err(error);
-    }
-    let result = run_prepared(
-        &cfg,
-        &meta,
-        &target,
+    let record = FailureRecord {
+        cfg: &cfg,
         is_local,
-        SubtitleInput::Discover(probed),
-        false,
-        false,
+        platform: &platform,
+        id: &meta.id,
         started,
-    )
-    .await;
-    if let Err(error) = &result {
-        write_failure_run_json(&cfg, is_local, &platform, &meta.id, error, started);
-    }
-    result
+    };
+    record
+        .around(async {
+            if let Some(error) = local_duration_error {
+                return Err(error);
+            }
+            run_prepared(
+                &cfg,
+                &meta,
+                &target,
+                is_local,
+                SubtitleInput::Discover(probed),
+                Credentials::Cli,
+                started,
+            )
+            .await
+        })
+        .await
 }
 
 /// Desktop entry: all mutable configuration and credentials have already been resolved.
@@ -153,7 +157,7 @@ pub async fn run_task(request: &execution::Request, cfg: &PipelineConfig) -> Res
     };
     execution::bind_work_dir(&cfg.out_dir, &binding)?;
     let is_local = Path::new(&request.source).is_file();
-    let mut meta = VideoMeta {
+    let meta = VideoMeta {
         title: request.title.clone(),
         uploader: request.author.clone(),
         duration: request.duration,
@@ -165,26 +169,41 @@ pub async fn run_task(request: &execution::Request, cfg: &PipelineConfig) -> Res
         },
         id: request.source_id.clone(),
     };
+    let record = FailureRecord {
+        cfg,
+        is_local,
+        platform: &meta.extractor.clone(),
+        id: &request.source_id,
+        started,
+    };
+    record.around(run_task_inner(request, cfg, &target, meta, is_local, started)).await
+}
+
+async fn run_task_inner(
+    request: &execution::Request,
+    cfg: &PipelineConfig,
+    target: &Target,
+    mut meta: VideoMeta,
+    is_local: bool,
+    started: Instant,
+) -> Result<()> {
     if let execution::Operation::Reprocess {
         base_version_dir,
         components,
         prior_work_dir,
     } = &request.operation
     {
-        let result = reprocess(
+        let components = execution::Component::parse_all(components)?;
+        return reprocess(
             request,
             cfg,
-            &target,
+            target,
             base_version_dir,
-            components,
+            &components,
             prior_work_dir.as_deref(),
             started,
         )
         .await;
-        if let Err(error) = &result {
-            write_failure_run_json(cfg, is_local, &meta.extractor, &meta.id, error, started);
-        }
-        return result;
     }
     let subtitle = if let Some(events) = &request.subtitle_events {
         Some(events.clone())
@@ -196,48 +215,33 @@ pub async fn run_task(request: &execution::Request, cfg: &PipelineConfig) -> Res
         None
     };
     // 批量入队的任务不带预选字幕：Auto/强制字幕模式下在任务内探测一次并自行发现
-    // 字幕，语义与 CLI 一致；桌面单视频流程的 transcript_source 已被确定为
-    // Subtitle/Asr 且必带字幕内容，不会进入此分支。探测补齐笔记所需的 UP 主与时长，
-    // 标题保持入队时用户看到的候选标题。
-    let mut discovered = None;
-    if discovers_subtitles_at_runtime(&subtitle, cfg, is_local) {
+    // 字幕，语义与 CLI 一致。探测补齐笔记所需的 UP 主与时长，标题保持入队时的候选标题。
+    let subtitle_input = if discovers_subtitles_at_runtime(&subtitle, cfg, is_local) {
         progress::stage("fetch", "start");
-        match fetch::probe_video(&request.source).await {
-            Ok(video) => {
-                progress::stage("fetch", "done");
-                if meta.uploader.trim().is_empty() {
-                    meta.uploader = video.meta.uploader.clone();
-                }
-                if !meta.duration.is_finite() || meta.duration <= 0. {
-                    meta.duration = video.meta.duration;
-                }
-                discovered = Some(Box::new(video));
-            }
-            Err(error) => {
-                write_failure_run_json(cfg, is_local, &meta.extractor, &meta.id, &error, started);
-                return Err(error);
-            }
+        let video = fetch::probe_video(&request.source).await?;
+        progress::stage("fetch", "done");
+        if meta.uploader.trim().is_empty() {
+            meta.uploader = video.meta.uploader.clone();
         }
-    }
-    let subtitle_input = match discovered {
-        Some(video) => SubtitleInput::Discover(Some(video)),
-        None => SubtitleInput::Selected(subtitle),
+        if !meta.duration.is_finite() || meta.duration <= 0. {
+            meta.duration = video.meta.duration;
+        }
+        SubtitleInput::Discover(Some(Box::new(video)))
+    } else {
+        SubtitleInput::Selected(subtitle)
     };
-    let result = run_prepared(
+    run_prepared(
         cfg,
         &meta,
-        &target,
+        target,
         is_local,
         subtitle_input,
-        true,
-        request.allow_unauthenticated_asr,
+        Credentials::Task {
+            allow_unauthenticated_asr: request.allow_unauthenticated_asr,
+        },
         started,
     )
-    .await;
-    if let Err(error) = &result {
-        write_failure_run_json(cfg, is_local, &meta.extractor, &meta.id, error, started);
-    }
-    result
+    .await
 }
 
 async fn reprocess(
@@ -245,7 +249,7 @@ async fn reprocess(
     cfg: &PipelineConfig,
     target: &Target,
     base_dir: &Path,
-    components: &[String],
+    components: &[execution::Component],
     prior_work: Option<&Path>,
     started: Instant,
 ) -> Result<()> {
@@ -266,17 +270,18 @@ async fn reprocess(
             .and_then(|path| execution::file_digest(&path))
             .is_ok_and(|digest| digest == markdown.sha256);
         if !unchanged {
-            tracing::info!("原版 Markdown 已有改动；本次补做使用软件保存的正文，原文件保留 / The original Markdown has been modified; this reprocessing uses the software-saved document, and the original file is kept");
+            tracing::info!("笔记文件已被手动修改；这次补做以原始记录为准，你修改的文件不会被覆盖 / The note file was edited by hand; this run uses the original record and leaves your edited file untouched");
         }
     }
     anyhow::ensure!(
         base.source_id == request.source_id && base.course_id == request.course_id,
         "补做任务与原笔记来源不一致 / Reprocessing source does not match the base note"
     );
-    let has = |name: &str| components.iter().any(|component| component == name);
+    use execution::Component;
+    let has = |component: Component| components.contains(&component);
     let mut document: artifact::Document =
         serde_json::from_slice(&std::fs::read(base_dir.join(&base.document))?)?;
-    if components.iter().all(|component| component == "exports") {
+    if components.iter().all(|&component| component == Component::Exports) {
         anyhow::ensure!(
             !cfg.formats.is_empty(),
             "请选择需要导出的文件格式 / Select an export format"
@@ -319,7 +324,7 @@ async fn reprocess(
         emit_done(target, &existing, &document.sections, started);
         return Ok(());
     }
-    if has("proofreading") || has("summary") {
+    if has(Component::Proofreading) || has(Component::Summary) {
         crate::llm::validate(&cfg.llm)?;
     }
     if let Some(prior) = prior_work {
@@ -338,8 +343,8 @@ async fn reprocess(
         let ledger_dir = cfg.out_dir.join("requests");
         std::fs::create_dir_all(&ledger_dir)?;
         for mut receipt in crate::dispatch::receipts(prior)? {
-            let needed = (has("proofreading") && receipt.purpose == "proofreading")
-                || (has("summary") && receipt.purpose == "summary");
+            let needed = Component::parse(&receipt.purpose)
+                .is_some_and(|c| matches!(c, Component::Proofreading | Component::Summary) && has(c));
             let matching_service = request.service_versions.get("llm").map_or(
                 receipt.service_version.starts_with("snapshot:"),
                 |version| version == &receipt.service_version,
@@ -398,7 +403,7 @@ async fn reprocess(
     let mut outcomes = base.outcomes.clone();
     outcomes.exports.clear();
     document.meta.title = request.title.clone();
-    if has("screenshots") {
+    if has(Component::Screenshots) {
         crate::dispatch::check_control()?;
         crate::error::require_cmd("ffmpeg")?;
         crate::error::require_cmd("ffprobe")?;
@@ -438,13 +443,13 @@ async fn reprocess(
                 });
                 if components.len() == 1 {
                     anyhow::bail!(
-                        "截图尚未完成；原笔记保持可用 / Screenshot extraction failed; the original note remains available"
+                        "截图失败，原笔记不受影响 / Screenshot extraction failed; the original note is unaffected"
                     );
                 }
             }
         }
     }
-    if has("proofreading") {
+    if has(Component::Proofreading) {
         progress::stage("llm", "start");
         crate::dispatch::check_control()?;
         // The original complete transcript is an immutable version asset. Rebuild the
@@ -497,12 +502,12 @@ async fn reprocess(
         outcomes.proofreading = Outcome::from_report(&report);
         progress::stage("llm", "done");
     }
-    if has("summary") {
+    if has(Component::Summary) {
         document.summary =
             summarize_step(cfg, &document.sections, &document.meta, &mut outcomes).await?;
     }
     crate::dispatch::check_control()?;
-    let formats = if has("exports") {
+    let formats = if has(Component::Exports) {
         cfg.formats.as_slice()
     } else {
         &[]
@@ -632,16 +637,21 @@ struct TranscriptCache {
     events: Vec<timeline::TranscriptEvent>,
 }
 
-// These arguments keep resolved inputs and credential policy separate from mutable config.
-#[allow(clippy::too_many_arguments)]
+/// Where cloud credentials come from: the CLI may read the environment; a desktop task
+/// carries fully resolved credentials and an explicit no-auth decision.
+#[derive(Clone, Copy)]
+enum Credentials {
+    Cli,
+    Task { allow_unauthenticated_asr: bool },
+}
+
 async fn run_prepared(
     cfg: &PipelineConfig,
     meta: &VideoMeta,
     target: &Target,
     is_local: bool,
     input: SubtitleInput,
-    strict_credentials: bool,
-    allow_unauthenticated_asr: bool,
+    credentials: Credentials,
     started: Instant,
 ) -> Result<()> {
     asr::reset_llama_spawn_args();
@@ -672,7 +682,11 @@ async fn run_prepared(
     let selected = subtitles(cfg, is_local, input).await?;
     progress::stage("subtitle", "done");
     if selected.is_none() {
-        cfg.validate_asr_with_auth(!allow_unauthenticated_asr, !strict_credentials)?;
+        let (require_key, allow_environment) = match credentials {
+            Credentials::Cli => (true, true),
+            Credentials::Task { allow_unauthenticated_asr } => (!allow_unauthenticated_asr, false),
+        };
+        cfg.validate_asr_with_auth(require_key, allow_environment)?;
         if !matches!(
             cfg.provider,
             config::AsrProvider::Coreml | config::AsrProvider::Api | config::AsrProvider::Npu
@@ -706,7 +720,7 @@ async fn run_prepared(
     if !is_local && !media_existed {
         anyhow::ensure!(
             !cfg.no_download,
-            "找不到已保存的视频 / Cached video missing"
+            "找不到已下载的视频，请允许重新下载 / The downloaded video is missing; allow downloading it again"
         );
         progress::stage("download", "start");
         fetch::download(
@@ -804,9 +818,9 @@ async fn run_prepared(
         Err(error) => {
             let completed = match crate::checkpoint::Checkpoint::saved_events(&cfg.out_dir) {
                 Ok(events) => events,
-                Err(_) => {
+                Err(read_error) => {
                     tracing::warn!(
-                        "已保存的部分文字无法读取，原文件已保留 / Saved partial text could not be read; original files retained"
+                        "已保存的部分文字无法读取，原文件已保留 / Saved partial text could not be read; original files retained: {read_error:#}"
                     );
                     Vec::new()
                 }
@@ -897,7 +911,7 @@ async fn run_prepared(
         );
         if !cfg.llm.enabled && !cfg.llm.disable_hint {
             eprintln!(
-                "提示：可运行 course2md llm setup 开启 AI 润色与总结；--no-llm-hint 可关闭此提示。 / Tip: run course2md llm setup to enable AI proofreading and summaries; use --no-llm-hint to hide this tip."
+                "提示：运行 course2md llm setup 可开启 AI 润色与总结 / Tip: run course2md llm setup to enable AI proofreading and summaries"
             );
         }
     }
@@ -1167,10 +1181,28 @@ fn verified_cache_files(out_dir: &Path, files: &[(String, String)]) -> bool {
     })
 }
 
-/// 失败诊断 run.json（issue #12 复测：只有成功才写 run.json 是诊断缺口）。
+/// 失败诊断 run.json 的上下文：任何在工作目录确定后失败的路径都写一份。
+struct FailureRecord<'a> {
+    cfg: &'a PipelineConfig,
+    is_local: bool,
+    platform: &'a str,
+    id: &'a str,
+    started: Instant,
+}
+
+impl FailureRecord<'_> {
+    async fn around(&self, work: impl std::future::Future<Output = Result<()>>) -> Result<()> {
+        let result = work.await;
+        if let Err(error) = &result {
+            write_failure_run_json(self.cfg, self.is_local, self.platform, self.id, error, self.started);
+        }
+        result
+    }
+}
+
 /// 记录版本/来源/最终 provider/asr_model/错误全文/耗时；若 llama-server 已
-/// spawn 过，附带实际启动参数（GPU hang 类问题的关键证据）。
-/// 写失败只告警——原错误才是主角，诊断记录绝不能反过来搞砸错误路径。
+/// spawn 过，附带实际启动参数（GPU 卡死类问题的关键证据）。
+/// 写失败只告警：原错误才是主角，诊断记录不能反过来搞砸错误路径。
 fn write_failure_run_json(
     cfg: &PipelineConfig,
     is_local: bool,
@@ -1303,7 +1335,7 @@ mod tests {
         assert!(should_delete_media(false, false, false, false));
     }
 
-    /// issue #12：失败也写诊断 run.json（success:false + 错误全文）。
+    /// 失败也写诊断 run.json（success:false + 错误全文）。
     /// 用损坏的本地视频让 pipeline 在 out_dir 确定之后（场景检测阶段）必然失败。
     #[test]
     fn failure_writes_diagnostic_run_json() {
