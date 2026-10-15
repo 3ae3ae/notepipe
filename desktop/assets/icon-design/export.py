@@ -1,5 +1,7 @@
 """Render the layered icon with Apple's ictool and update platform package assets.
 
+Intermediate renders and the preview board go to exports/, which is not tracked.
+
 Requires macOS, Xcode with Icon Composer, and Pillow.
 """
 from io import BytesIO
@@ -47,6 +49,7 @@ def main():
                 ImageCms.createProfile('sRGB'), outputMode='RGBA')
         return im.convert('RGBA')
 
+    assets = ROOT.parent
     light = normalized(EXPORTS / 'Course2MD-Light.png')
     dark = normalized(EXPORTS / 'Course2MD-Dark.png')
     def legacy_icon(im, size):
@@ -67,13 +70,11 @@ def main():
                 legacy_icon(light, size * scale).save(
                     iconset / f'icon_{size}x{size}{suffix}.png', icc_profile=srgb)
         subprocess.run(['iconutil', '--convert', 'icns', '--output',
-                        str(EXPORTS / 'Course2MD.icns'), str(iconset)], check=True)
+                        str(assets / 'icon.icns'), str(iconset)], check=True)
     legacy_icon(light, 1024).save(EXPORTS / 'Course2MD-macOS.png', icc_profile=srgb)
 
     # Windows reads resource 1 embedded from this multi-resolution ICO.
     # Linux uses the same artwork as a freestanding PNG.
-    assets = ROOT.parent
-    (assets / 'icon.icns').write_bytes((EXPORTS / 'Course2MD.icns').read_bytes())
     light.save(assets / 'icon.png', icc_profile=srgb)
     light.save(assets / 'icon.ico', sizes=[(s, s) for s in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)])
     for name, size in (('32x32.png', 32), ('128x128.png', 128), ('128x128@2x.png', 256)):
