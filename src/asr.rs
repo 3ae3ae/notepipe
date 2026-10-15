@@ -11,19 +11,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-// ---------- 超参数（审查后统一收拢到文件顶部） ----------
+// ---------- 超参数 ----------
 
 /// ffmpeg 静音检测：低于 -28dB 且持续 0.4s 视为静音（课件停顿切分点）
 const SILENCEDETECT_AF: &str = "silencedetect=noise=-28dB:d=0.4";
 /// llama-server 上下文长度（token）：chunk 已被 VAD 限长在 max_speech 内，4096 足够
 const LLAMA_CTX: &str = "4096";
-/// llama-server 单 chunk 生成上限（token）
-const LLAMA_MAX_GEN: &str = "256";
-/// 采样参数：转写要确定性输出（temperature 0）。
-/// max_tokens 与 server 的 -n 对齐；apple CoreML shim 用 448，因为那是
-/// speech-swift 侧 Qwen3 模型的既有默认，两条后端各自调优，勿盲目对齐。
-const LLAMA_TEMPERATURE: f64 = 0.0;
+/// 单 chunk 生成上限（token），server 的 -n 与请求的 max_tokens 共用。
+/// apple CoreML shim 用 448（speech-swift 侧 Qwen3 的既有默认），两条后端各自调优。
 const LLAMA_MAX_TOKENS: u32 = 256;
+/// 采样参数：转写要确定性输出
+const LLAMA_TEMPERATURE: f64 = 0.0;
+/// HTTP 请求最多尝试次数（1 次首发 + 2 次重试）
+const MAX_ATTEMPTS: u32 = 3;
+/// `llama-server --help` / `--list-devices` 探测超时
+const HELP_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const GPU_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// llama-server /health 就绪等待上限（首次加载模型较慢）
 const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(300);
 /// 云端 STT 单次请求超时
@@ -119,10 +122,6 @@ impl EmptyResultTracker {
         Ok(())
     }
 }
-/// HTTP 重试：最多 3 次（1 次首发 + 2 次重试），指数退避 1s → 2s；
-/// 4xx 是确定性错误（鉴权/参数）不重试，5xx 与网络错误重试
-const MAX_ATTEMPTS: u32 = 3;
-const RETRY_BACKOFF_BASE: Duration = Duration::from_secs(1);
 
 /// 清洗 Qwen3 转写中的提示词残留。
 pub fn sanitize_qwen_text(s: &str) -> String {
@@ -133,7 +132,8 @@ pub fn sanitize_qwen_text(s: &str) -> String {
     if let Some(p) = t.rfind("<asr_text>") {
         t = t[p + "<asr_text>".len()..].trim();
     }
-    if t.get(..9).is_some_and(|p| p.eq_ignore_ascii_case("language "))
+    if t.get(..9)
+        .is_some_and(|p| p.eq_ignore_ascii_case("language "))
         && let Some((_, rest)) = t[9..].split_once(char::is_whitespace)
     {
         t = rest.trim();
@@ -141,8 +141,7 @@ pub fn sanitize_qwen_text(s: &str) -> String {
     t.to_string()
 }
 
-/// 打开 checkpoint → spawn_blocking 执行 → 成功才 finish → join。
-/// 四个 provider 分支共享这套骨架（coreml 此前写法不一致，统一为「成功才 finish」）。
+/// 打开 checkpoint → spawn_blocking 执行 → 成功才 finish → join（各 provider 共用）。
 async fn run_with_cp<F>(
     cfg: &PipelineConfig,
     identity: &crate::checkpoint::AsrIdentity,
@@ -210,7 +209,7 @@ pub async fn run(cfg: &PipelineConfig, wav: &std::path::Path) -> Result<Vec<Tran
         #[cfg(not(apple_native))]
         {
             anyhow::bail!(
-                "此构建不含 Apple 识别后端 / This build does not include Apple transcription. 使用 / Use --provider gpu or cpu (requires llama-server)."
+                "此版本不支持 Apple 识别，请改用 GPU 或 CPU 识别 / This build lacks Apple transcription; use GPU or CPU transcription."
             );
         }
     }
@@ -262,7 +261,7 @@ fn run_blocking(
         let devices = gpu_devices(&bin)?;
         anyhow::ensure!(
             !devices.is_empty(),
-            "选择了 GPU 识别，但 llama-server 未检测到可用 GPU / GPU transcription selected, but llama-server detected no usable GPU. {}",
+            "选择了 GPU 识别，但没有找到可用的显卡 / GPU transcription is selected, but no usable GPU was found. {}",
             GPU_SETUP_HINT
         );
         tracing::info!(devices = %devices.join(", "), "GPU backend detected");
@@ -272,16 +271,16 @@ fn run_blocking(
     let cpu_only = offload.provider == crate::config::AsrProvider::Cpu;
     if cpu_only && !(caps.device && caps.no_op_offload && caps.no_mmproj_offload) {
         let devices = gpu_devices(&bin).context(
-            "无法确认当前 llama-server 能严格禁用 GPU，请更新 llama.cpp 后重试 CPU 模式 / Cannot confirm the current llama-server can strictly disable GPU; update llama.cpp and retry CPU mode",
+            "当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry",
         )?;
         anyhow::ensure!(
             devices.is_empty(),
-            "当前 llama-server 缺少严格禁用 GPU 所需的参数，请升级 llama.cpp 或使用 CPU-only 构建后重试 --provider cpu / The current llama-server lacks the flags required to strictly disable GPU; upgrade llama.cpp or use a CPU-only build, then retry --provider cpu"
+            "当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry"
         );
     } else if !cpu_only && !offload.mmproj_offload {
         anyhow::ensure!(
             caps.no_mmproj_offload,
-            "当前 llama-server 不支持 --no-mmproj-offload，请升级 llama.cpp 后重试 / The current llama-server does not support --no-mmproj-offload; upgrade llama.cpp and retry"
+            "当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试 / This llama.cpp is too old for this GPU setting; upgrade and retry"
         );
     }
     let args = build_server_args(model, mmproj, offload, caps, threads, port);
@@ -316,7 +315,10 @@ fn run_blocking(
         if e.downcast_ref::<crate::dispatch::Failure>().is_some() {
             return Err(e); // 暂停/取消不是启动故障
         }
-        return Err(stderr_tail.attach(e, "无法启动识别服务 / Could not start the speech recognition service"));
+        return Err(stderr_tail.attach(
+            e,
+            "无法启动识别服务 / Could not start the speech recognition service",
+        ));
     }
     tracing::info!(
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
@@ -453,16 +455,8 @@ fn run_api(
     cp: &mut crate::checkpoint::Checkpoint,
 ) -> Result<Vec<TranscriptEvent>> {
     let t0 = Instant::now();
-    // key 解析（非递归）：配置 > 非空环境变量；空值不覆盖（防无限递归）
-    let api_key = if !api.api_key.trim().is_empty() {
-        api.api_key.clone()
-    } else if crate::dispatch::is_active() {
-        // The task preflight distinguished missing credentials from explicit no-auth.
-        String::new()
-    } else {
-        crate::config::asr_api_key_from_env()
-            .context("云端识别未设置密钥 / Cloud speech API key missing. 设置 / Set COURSE2MD_ASR_API_KEY or [asr_api].api_key.")?
-    };
+    // 凭据已在任务预检时解析（含环境变量）；空 key = 明确选择的无鉴权服务
+    let api_key = api.api_key.trim().to_string();
     let segs = ffmpeg_vad(wav, max_speech as f32)?;
     tracing::info!(segs = segs.len(), endpoint = %api.base_url, model = %api.model, "api vad");
     if segs.is_empty() {
@@ -568,116 +562,103 @@ fn run_api(
     Ok(events)
 }
 
-/// POST JSON（带重试）：网络错误与 5xx 按 RETRY_BACKOFF_BASE 指数退避、
-/// 共尝试 MAX_ATTEMPTS 次；4xx 是确定性错误（鉴权/参数），重试无意义直接失败。
-fn post_json_retry(
-    agent: &ureq::Agent,
-    url: &str,
-    key: Option<&str>,
-    body: &serde_json::Value,
-) -> Result<serde_json::Value> {
-    post_bytes_retry(
-        agent,
-        url,
-        key,
-        "application/json",
-        &serde_json::to_vec(body)?,
-        Some(body),
-    )
+/// 有界重试：可重试错误按 [`crate::runtime::retry_backoff`] 退避（退避期间可取消），
+/// 共尝试 MAX_ATTEMPTS 次；确定性错误（鉴权/参数）直接返回。
+fn with_retry<T>(
+    mut attempt_once: impl FnMut() -> std::result::Result<T, crate::dispatch::Failure>,
+) -> Result<T> {
+    let mut attempt = 1;
+    loop {
+        crate::dispatch::check_control()?;
+        match attempt_once() {
+            Ok(value) => return Ok(value),
+            Err(error) if error.retryable && attempt < MAX_ATTEMPTS => {
+                crate::runtime::interruptible_sleep(crate::runtime::retry_backoff(attempt))?;
+                attempt += 1;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
-fn post_bytes_retry(
+/// 本机 llama-server：私有本地服务，不计费，不走请求账本。
+fn post_local_json(
     agent: &ureq::Agent,
     url: &str,
-    key: Option<&str>,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    use crate::dispatch::Failure;
+    let bytes = serde_json::to_vec(body)?;
+    with_retry(|| {
+        let request = agent.post(url).set("Content-Type", "application/json");
+        match crate::dispatch::receive(request.send_bytes(&bytes)) {
+            Ok(response) if (200..300).contains(&response.status) => {
+                serde_json::from_slice(&response.body).map_err(Failure::local)
+            }
+            Ok(response) => Err(Failure {
+                status: Some(response.status),
+                retryable: response.status == 429 || response.status >= 500,
+                ..Failure::local(format!(
+                    "本机识别请求失败（HTTP {0}） / Local transcription request failed (HTTP {0})",
+                    response.status
+                ))
+            }),
+            Err(error) => Err(Failure {
+                retryable: true,
+                ..Failure::local(error.message)
+            }),
+        }
+    })
+}
+
+/// 云端识别：每次发送前先落请求账本（结果不确定时绝不自动重发）。
+/// 响应在账本里按模式校验，取值时不必再检查一遍。
+fn post_cloud(
+    t: &ApiTarget,
+    seg: Seg,
     content_type: &str,
     body: &[u8],
-    identity: Option<&serde_json::Value>,
+    identity: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let mut delay = RETRY_BACKOFF_BASE;
-    for attempt in 1..=MAX_ATTEMPTS {
-        crate::dispatch::check_control()?;
+    let description = format!(
+        "识别视频 {0}–{1} 的声音 / Transcribe video audio {0}–{1}",
+        crate::render::fmt_ts(seg.start),
+        crate::render::fmt_ts(seg.end)
+    );
+    with_retry(|| {
         let send = || {
-            let request = agent.post(url).set("Content-Type", content_type);
-            let request = if let Some(key) = key.filter(|key| !key.is_empty()) {
-                request.set("Authorization", &format!("Bearer {key}"))
-            } else {
+            let request = t.client.post(t.url).set("Content-Type", content_type);
+            let request = if t.key.is_empty() {
                 request
+            } else {
+                request.set("Authorization", &format!("Bearer {}", t.key))
             };
             crate::dispatch::receive(request.send_bytes(body))
         };
-        // No key argument means the private local model server, not a cloud API.
-        // Cloud no-auth mode still passes Some("") and gets a durable request receipt.
-        let result = if key.is_some() {
-            let fallback = serde_json::json!({"payload_sha256": crate::execution::digest(body)});
-            let scope = identity.unwrap_or(&fallback);
-            let description = match (
-                scope["segment_start"].as_f64(),
-                scope["segment_end"].as_f64(),
-            ) {
-                (Some(start), Some(end)) => format!(
-                    "识别视频 {0}–{1} 的声音 / Transcribe video audio {0}–{1}",
-                    crate::render::fmt_ts(start),
-                    crate::render::fmt_ts(end)
-                ),
-                _ => "识别视频声音 / Transcribe video audio".into(),
-            };
-            crate::dispatch::json_request_described(
-                "asr",
-                "transcription",
-                &description,
-                url,
-                scope,
-                send,
-                |value| {
-                    anyhow::ensure!(
-                        value.get("error").is_none_or(serde_json::Value::is_null),
-                        "语音服务返回错误内容 / Speech service returned an error"
-                    );
-                    anyhow::ensure!(
-                        value["text"].is_string() || chat_content_has_text(value),
-                        "语音服务响应缺少文字，不能当作静音 / Speech response is missing text"
-                    );
-                    Ok(())
-                },
-            )
-        } else {
-            match send() {
-                Ok(response) if (200..300).contains(&response.status) => {
-                    serde_json::from_slice(&response.body).map_err(|e| crate::dispatch::Failure {
-                        status: None,
-                        retryable: false,
-                        uncertain: false,
-                        message: e.to_string(),
-                        unsupported_response_format: false,
-                    })
-                }
-                Ok(response) => Err(crate::dispatch::Failure {
-                    status: Some(response.status),
-                    retryable: response.status == 429 || response.status >= 500,
-                    uncertain: false,
-                    message: format!("本机识别请求失败（HTTP {0}） / Local transcription request failed (HTTP {0})", response.status),
-                    unsupported_response_format: false,
-                }),
-                Err(error) => Err(crate::dispatch::Failure {
-                    status: None,
-                    retryable: true,
-                    uncertain: false,
-                    message: error.message,
-                    unsupported_response_format: false,
-                }),
-            }
-        };
-        match result {
-            Ok(value) => return Ok(value),
-            Err(error) if error.retryable && attempt < MAX_ATTEMPTS => {
-                std::thread::sleep(delay);
-                delay *= 2;
-            }
-            Err(error) => return Err(anyhow::Error::new(error)),
-        }
-    }
-    unreachable!()
+        crate::dispatch::json_request_described(
+            "asr",
+            "transcription",
+            &description,
+            t.url,
+            identity,
+            send,
+            |value| {
+                anyhow::ensure!(
+                    value.get("error").is_none_or(serde_json::Value::is_null),
+                    "语音服务返回了错误 / The speech service returned an error"
+                );
+                let has_text = match t.mode {
+                    crate::settings::AsrApiMode::Transcriptions => value["text"].is_string(),
+                    crate::settings::AsrApiMode::Chat => chat_content_has_text(value),
+                };
+                anyhow::ensure!(
+                    has_text,
+                    "语音服务没有返回文字 / The speech service returned no text"
+                );
+                Ok(())
+            },
+        )
+    })
 }
 
 /// chat 模式下让多模态 LLM 转录的指令（保持与本地 ASR 输出风格一致：忠实、带自然标点）。
@@ -704,14 +685,7 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
     let v = match t.mode {
         crate::settings::AsrApiMode::Transcriptions => {
             let (content_type, body) = transcription_form(t.model, &bytes);
-            post_bytes_retry(
-                t.client,
-                t.url,
-                Some(t.key),
-                &content_type,
-                &body,
-                Some(&identity),
-            )?
+            post_cloud(t, seg, &content_type, &body, &identity)?
         }
         crate::settings::AsrApiMode::Chat => {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -723,36 +697,20 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
                     {"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}}
                 ]}]
             });
-            post_bytes_retry(
-                t.client,
-                t.url,
-                Some(t.key),
+            post_cloud(
+                t,
+                seg,
                 "application/json",
                 &serde_json::to_vec(&body)?,
-                Some(&identity),
+                &identity,
             )?
         }
     };
-    if let Some(e) = v
-        .get("error")
-        .and_then(|e| e.get("message"))
-        .and_then(|m| m.as_str())
-    {
-        anyhow::bail!("语音服务返回错误 / Speech API returned an error: {e}");
-    }
     let text = match t.mode {
-        crate::settings::AsrApiMode::Transcriptions => v["text"]
-            .as_str()
-            .context("识别响应缺少文字，请检查服务的 API 兼容性 / Transcription response is missing text; check API compatibility")?
-            .trim()
-            .to_string(),
-        crate::settings::AsrApiMode::Chat => {
-            anyhow::ensure!(
-                chat_content_has_text(&v),
-                "转写响应缺少文本内容，不能当作静音 / Transcription response is missing text; cannot treat it as silence"
-            );
-            parse_chat_content(&v).trim().to_string()
+        crate::settings::AsrApiMode::Transcriptions => {
+            v["text"].as_str().unwrap_or_default().trim().to_string()
         }
+        crate::settings::AsrApiMode::Chat => parse_chat_content(&v).trim().to_string(),
     };
     let _ = std::fs::remove_file(chunk);
     Ok(if text.is_empty() { None } else { Some(text) })
@@ -776,7 +734,6 @@ fn transcription_form(model: &str, audio: &[u8]) -> (String, Vec<u8>) {
 
 /// chat/completions 响应的 message.content 是否携带文本：字符串形式，或
 /// 多模态分片数组 [{type:"text", text:...}] 中任一片含 text 字段。
-/// post_bytes_retry 的预校验与 transcribe_api 的取值前校验共用同一判定。
 fn chat_content_has_text(v: &serde_json::Value) -> bool {
     let content = &v["choices"][0]["message"]["content"];
     content.is_string()
@@ -804,33 +761,20 @@ fn parse_chat_content(v: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-pub const GPU_SETUP_HINT: &str = "Arch/CachyOS 的 Intel/AMD 显卡可安装 ggml-vulkan 和对应 Vulkan 驱动；其他平台请安装支持显卡的 llama.cpp 构建及驱动。用 llama-server --list-devices 检查；如需 CPU 识别，请显式使用 --provider cpu。 / On Arch/CachyOS with Intel/AMD GPUs, install ggml-vulkan and the matching Vulkan driver; on other platforms install a GPU-capable llama.cpp build and drivers. Check with llama-server --list-devices; for CPU transcription, explicitly use --provider cpu.";
+pub const GPU_SETUP_HINT: &str = "请安装支持显卡的 llama.cpp 和驱动，或改用 CPU 识别。 / Install a GPU-capable llama.cpp and driver, or use CPU transcription.";
 
 /// A positive -ngl is only a request: CPU-only llama.cpp builds ignore it.
-/// Probe with a deadline and file-backed output so a failing driver cannot hang
-/// either the doctor command or fill a pipe while we wait for the child.
+/// Probe with a deadline so a failing driver cannot hang the task or doctor.
 pub fn gpu_devices(bin: &Path) -> Result<Vec<String>> {
-    use std::io::{Read, Seek};
-    let mut stdout = tempfile::tempfile()?;
-    let stderr = tempfile::tempfile()?;
     let mut cmd = Command::new(bin);
-    cmd.arg("--list-devices")
-        .stdin(Stdio::null())
-        .stdout(stdout.try_clone()?)
-        .stderr(stderr);
-    let mut child = crate::runtime::ManagedChild::spawn("llama-server", &mut cmd)?;
-    let status = child
-        .wait_within(Duration::from_secs(15))
-        .map_err(|_| anyhow::anyhow!("llama-server GPU 检测超时 / llama-server GPU detection timed out. {}", GPU_SETUP_HINT))?;
+    cmd.arg("--list-devices");
+    let out = crate::runtime::run_bounded("llama-server", &mut cmd, GPU_PROBE_TIMEOUT)
+        .with_context(|| format!("无法检测显卡 / Could not detect the GPU. {GPU_SETUP_HINT}"))?;
     anyhow::ensure!(
-        status.success(),
-        "llama-server --list-devices 执行失败，请更新 llama.cpp 并检查驱动 / llama-server --list-devices failed; update llama.cpp and check the driver. {}",
-        GPU_SETUP_HINT
+        out.status.success(),
+        "无法检测显卡，请更新 llama.cpp 和显卡驱动 / Could not detect the GPU; update llama.cpp and the GPU driver. {GPU_SETUP_HINT}"
     );
-    stdout.rewind()?;
-    let mut output = String::new();
-    stdout.take(1024 * 1024).read_to_string(&mut output)?;
-    parse_gpu_devices(&output)
+    parse_gpu_devices(&out.stdout)
 }
 
 /// `--list-devices` 也会报告 BLAS/Accelerate 这类 CPU 后端行；只有这些前缀才是 GPU。
@@ -843,7 +787,7 @@ pub fn is_gpu_device_id(id: &str) -> bool {
 
 fn parse_gpu_devices(output: &str) -> Result<Vec<String>> {
     let (_, rows) = output.split_once("Available devices:").context(
-        "无法解析 llama-server GPU 列表，请更新 llama.cpp 后运行 llama-server --list-devices 检查 / Cannot parse the llama-server GPU list; update llama.cpp and check with llama-server --list-devices",
+        "无法读取显卡列表，请更新 llama.cpp / Could not read the GPU list; update llama.cpp",
     )?;
     Ok(rows
         .lines()
@@ -861,9 +805,6 @@ fn find_llama_server() -> Result<PathBuf> {
     crate::runtime::which("llama-server")
         .context("未找到 llama-server / llama-server not found. 安装 llama.cpp 并加入 PATH / Install llama.cpp and add it to PATH.")
 }
-
-/// `llama-server --help` 探测超时：进程启动很快，5s 足够；超时按不支持处理
-const HELP_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// llama-server 对 offload 相关新 flag 的支持情况（issue #12）。
 /// --no-mmproj-offload / --no-op-offload / --device 都是新版 llama.cpp 才有的；
@@ -910,28 +851,14 @@ fn llama_server_caps(bin: &Path) -> LlamaServerCaps {
     })
 }
 
-/// File-backed capture avoids pipe-capacity deadlocks with modern, long help output.
+/// 超时或非零退出返回 None（按旧版处理）。
 fn probe_help_text(bin: &Path) -> Option<String> {
-    use std::io::{Read, Seek};
-    let mut out = tempfile::tempfile().ok()?;
-    let mut err = tempfile::tempfile().ok()?;
     let mut cmd = Command::new(bin);
-    cmd.arg("--help")
-        .stdin(Stdio::null())
-        .stdout(out.try_clone().ok()?)
-        .stderr(err.try_clone().ok()?);
-    let mut child = crate::runtime::ManagedChild::spawn("llama-server", &mut cmd).ok()?;
-    match child.wait_within(HELP_PROBE_TIMEOUT) {
-        Ok(status) if status.success() => {}
-        _ => return None, // 超时或非零退出：按旧版处理
-    }
-    out.rewind().ok()?;
-    err.rewind().ok()?;
-    let mut text = String::new();
-    out.take(1024 * 1024).read_to_string(&mut text).ok()?;
-    text.push('\n');
-    err.take(1024 * 1024).read_to_string(&mut text).ok()?;
-    Some(text)
+    cmd.arg("--help");
+    let out = crate::runtime::run_bounded("llama-server", &mut cmd, HELP_PROBE_TIMEOUT).ok()?;
+    out.status
+        .success()
+        .then(|| format!("{}\n{}", out.stdout, out.stderr))
 }
 
 /// llama-server GPU 卸载控制（由 PipelineConfig 解析而来，issue #12）。
@@ -984,7 +911,7 @@ fn build_server_args(
         "-c".into(),
         LLAMA_CTX.into(),
         "-n".into(),
-        LLAMA_MAX_GEN.into(),
+        LLAMA_MAX_TOKENS.to_string(),
         "-t".into(),
         threads.to_string(),
         "--port".into(),
@@ -1034,29 +961,35 @@ fn transcribe_file(client: &ureq::Agent, base: &str, wav: &Path) -> Result<Strin
             ]
         }]
     });
-    let v = post_json_retry(client, &format!("{base}/v1/chat/completions"), None, &body)
+    let v = post_local_json(client, &format!("{base}/v1/chat/completions"), &body)
         .context("本地语音识别请求失败 / Local transcription request failed")?;
     let choice = &v["choices"][0];
-    if choice.is_null() {
-        // 协议错误才失败：响应缺少 choices
-        anyhow::bail!("本地识别响应缺少 choices / Local transcription response missing choices: {v}");
-    }
+    anyhow::ensure!(
+        !choice.is_null(),
+        "本机识别服务返回的内容无法读取 / The local speech service response could not be read"
+    );
     // 空文本按无语音处理（与云端 transcribe_api 的 Ok(None) 同语义）：
     // VAD 切出的近静音段在 llama-server 上常返回空，不该把整次 ASR 判死
-    Ok(choice["message"]["content"].as_str().unwrap_or("").to_string())
+    Ok(choice["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string())
 }
 
 pub(crate) fn ffmpeg_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
     // stdin 关闭 + 超时强制 kill：ffmpeg 在 GUI/管道 stdin 上可能挂死（issue 审查）
     let mut cmd = Command::new("ffmpeg");
-    cmd.args(["-hide_banner", "-nostdin", "-i"])
-        .arg(wav)
-        .args(["-af", SILENCEDETECT_AF, "-f", "null", "-"]);
+    cmd.args(["-hide_banner", "-nostdin", "-i"]).arg(wav).args([
+        "-af",
+        SILENCEDETECT_AF,
+        "-f",
+        "null",
+        "-",
+    ]);
     let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, VAD_TIMEOUT)?;
     if !out.status.success() {
         anyhow::bail!(
-            "ffmpeg silencedetect 失败（{0}）：{1} / ffmpeg silencedetect failed ({0}): {1}",
-            out.status,
+            "无法分析音频中的停顿：{0} / Could not analyze pauses in the audio: {0}",
             crate::error::tail_lines(&out.stderr, 3)
         );
     }
@@ -1333,14 +1266,21 @@ fn invert_silence(dur: f64, sil: &[(f64, f64)]) -> Vec<(f64, f64)> {
 pub fn cut_wav(src: &Path, start: f64, end: f64, dest: &Path) -> Result<()> {
     let dur = (end - start).max(0.05);
     let mut cmd = Command::new("ffmpeg");
-    cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss"])
-        .arg(format!("{start:.3}"))
-        .arg("-t")
-        .arg(format!("{dur:.3}"))
-        .arg("-i")
-        .arg(src)
-        .args(["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
-        .arg(dest);
+    cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-ss",
+    ])
+    .arg(format!("{start:.3}"))
+    .arg("-t")
+    .arg(format!("{dur:.3}"))
+    .arg("-i")
+    .arg(src)
+    .args(["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
+    .arg(dest);
     let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, CUT_TIMEOUT)?;
     if !out.status.success() {
         anyhow::bail!("无法切分音频 / ffmpeg could not split audio");
@@ -1364,7 +1304,13 @@ mod tests {
         let devices = super::parse_gpu_devices("Available devices:\n  BLAS: Accelerate (0 MiB, 0 MiB free)\n  MTL0: Apple M3 Max (110100 MiB, 110100 MiB free)\n").unwrap();
         assert_eq!(devices.len(), 1);
         assert!(devices[0].contains("Apple M3 Max"));
-        assert!(super::parse_gpu_devices("Available devices:\n  BLAS: Accelerate (0 MiB, 0 MiB free)\n").unwrap().is_empty());
+        assert!(
+            super::parse_gpu_devices(
+                "Available devices:\n  BLAS: Accelerate (0 MiB, 0 MiB free)\n"
+            )
+            .unwrap()
+            .is_empty()
+        );
         assert!(super::parse_gpu_devices("unknown option --list-devices").is_err());
     }
 

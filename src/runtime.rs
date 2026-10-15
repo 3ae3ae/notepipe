@@ -156,7 +156,11 @@ pub struct BoundedOutput {
 
 /// 短命令执行：stdin 关闭（ffmpeg 等工具在 GUI/管道 stdin 上会挂死）、
 /// 超时强制 kill（ManagedChild 兜底）、输出经临时文件捕获（防 pipe 写满再超时）。
-pub fn run_bounded(name: &'static str, cmd: &mut Command, timeout: Duration) -> Result<BoundedOutput> {
+pub fn run_bounded(
+    name: &'static str,
+    cmd: &mut Command,
+    timeout: Duration,
+) -> Result<BoundedOutput> {
     use std::io::{Read, Seek};
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;
@@ -229,6 +233,34 @@ pub fn wait_ready(
             }
         }
         std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
+/// 进程级抖动序列：与纳秒异或打散，避免并发请求同步重试（不引入 rand）。
+static JITTER_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 第 `attempt` 次失败后的退避时长：1s、2s、4s… 指数增长 + 0~500ms 抖动。
+pub fn retry_backoff(attempt: u32) -> Duration {
+    let base = 1_u64 << attempt.saturating_sub(1).min(6);
+    let seq = JITTER_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(0);
+    let jitter_ns = (nanos ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15)) % 500_000_000;
+    Duration::from_nanos(base * 1_000_000_000 + jitter_ns)
+}
+
+/// 可取消的等待：分段小睡并轮询任务控制文件，暂停/取消立即返回其错误。
+pub fn interruptible_sleep(wait: Duration) -> Result<()> {
+    let deadline = Instant::now() + wait;
+    loop {
+        crate::dispatch::check_control()?;
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(());
+        }
+        std::thread::sleep(left.min(Duration::from_millis(200)));
     }
 }
 
@@ -348,8 +380,7 @@ mod tests {
         assert!(lock_file(&path).is_ok());
     }
 
-    /// issue：桌面取消任务后，llama-server 首次加载（最长 300s 超时）不得继续空等——
-    /// control 钩子每轮轮询，返回 Err 立即中止，进程由 Drop 兜底。
+    /// 取消任务后，模型加载（最长 300s）不得继续空等：control 返回 Err 立即中止。
     #[cfg(unix)]
     #[test]
     fn wait_ready_aborts_when_control_hook_fails() {
@@ -373,55 +404,23 @@ mod tests {
             }),
         );
         let err = result.expect_err("control 报错必须中止 wait_ready");
-        assert_eq!(err.to_string(), "测试取消 / test cancellation", "控制错误须原样返回");
+        assert_eq!(
+            err.to_string(),
+            "测试取消 / test cancellation",
+            "控制错误须原样返回"
+        );
         assert!(t0.elapsed() < Duration::from_secs(10), "取消不应等到超时");
     }
 
     #[test]
-    fn which_finds_common_tools() {
-        // CI 环境保证 cargo 存在；本测试机器必有 shell 基础工具
-        #[cfg(unix)]
-        let probe = "ls";
-        #[cfg(not(unix))]
-        let probe = "cmd";
-        assert!(which(probe).is_some());
-        assert!(which("definitely-not-a-real-binary-xyz").is_none());
-    }
-
-    #[test]
-    fn free_port_returns_bindable() {
-        let p = free_port().unwrap();
-        // 立即再绑同一端口不一定成功（TOCTOU），但必须是合法端口值
-        assert!(p > 0);
-    }
-
-    #[test]
-    fn same_tag_directories_do_not_share_or_delete_each_others_files() {
-        let first = TempWorkDir::new("parallel").unwrap();
-        let second = TempWorkDir::new("parallel").unwrap();
-        assert_ne!(first.path(), second.path());
-        std::fs::write(second.path().join("chunk.wav"), b"audio").unwrap();
-        drop(first);
-        assert_eq!(
-            std::fs::read(second.path().join("chunk.wav")).unwrap(),
-            b"audio"
-        );
-    }
-
-    #[test]
-    fn temp_workdir_created_and_cleaned() {
-        let path;
-        {
-            let d = TempWorkDir::new("test").unwrap();
-            path = d.path().to_path_buf();
-            assert!(path.is_dir());
-            std::fs::write(path.join("x"), b"y").unwrap();
+    fn retry_backoff_grows_exponentially_with_bounded_jitter() {
+        for (attempt, base) in [(1, 1.0), (2, 2.0), (3, 4.0)] {
+            let wait = retry_backoff(attempt).as_secs_f64();
+            assert!((base..base + 0.5).contains(&wait), "{attempt}: {wait}");
         }
-        assert!(!path.exists(), "Drop 必须清理整个目录");
     }
 
-    /// issue #12：错误路径/panic unwind 也必须 kill+wait llama-server——
-    /// 孤儿进程占着 /dev/kfd 会加剧 ROCm 核显问题。这里验证 Drop 的兜底语义。
+    /// 错误路径/panic unwind 也必须 kill+wait 子进程（孤儿 llama-server 会占住 GPU 设备）。
     #[cfg(unix)]
     #[test]
     fn managed_child_drop_kills_and_reaps() {

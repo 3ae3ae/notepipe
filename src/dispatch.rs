@@ -178,9 +178,6 @@ static ACTIVE: OnceLock<Mutex<Option<Arc<Ledger>>>> = OnceLock::new();
 fn active() -> Option<Arc<Ledger>> {
     ACTIVE.get_or_init(|| Mutex::new(None)).lock().ok()?.clone()
 }
-pub fn is_active() -> bool {
-    active().is_some()
-}
 pub struct Guard(Arc<Ledger>);
 impl Drop for Guard {
     fn drop(&mut self) {
@@ -514,9 +511,8 @@ impl Ledger {
             Ok(value) => value,
             Err(_) => {
                 receipt.state = State::Failed;
-                receipt.message = Some(
-                    "服务返回的内容无法读取 / The service response could not be read".into(),
-                );
+                receipt.message =
+                    Some("服务返回的内容无法读取 / The service response could not be read".into());
                 self.save(&receipt)?;
                 return Err(Failure::local(receipt.message.unwrap()));
             }
