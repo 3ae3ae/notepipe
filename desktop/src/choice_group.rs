@@ -37,7 +37,6 @@ pub struct SingleChoiceGroup {
     icons: BTreeMap<SharedString, Icon>,
     full_width: bool,
     segmented: bool,
-    segment_icons: bool,
     label_text_size: Option<Rems>,
     tabs: bool,
     activate_selected: bool,
@@ -57,7 +56,6 @@ impl SingleChoiceGroup {
             icons: BTreeMap::new(),
             full_width: false,
             segmented: false,
-            segment_icons: false,
             label_text_size: None,
             tabs: false,
             activate_selected: false,
@@ -91,17 +89,11 @@ impl SingleChoiceGroup {
         self.full_width = true;
         self
     }
-    /// Connected equal-width segments with a shared outline and selected checkmark.
+    /// Connected equal-width segments with a shared outline and persistent option icons.
     /// Radio/tab semantics, focus navigation and pointer feedback are unchanged.
     pub fn segmented(mut self) -> Self {
         self.segmented = true;
         self.full_width = true;
-        self
-    }
-    /// In connected segments, display each option's icon instead of the selection check.
-    /// Options without an icon retain the checkmark; selection remains tonal.
-    pub fn segment_icons(mut self) -> Self {
-        self.segment_icons = true;
         self
     }
     /// Override option text for a page-specific typography role.
@@ -301,7 +293,7 @@ impl RenderOnce for SingleChoiceGroup {
         // while the selected surface moves, including in content-sized toolbars.
         let mut font = window.text_style().font();
         font.weight = FontWeight::MEDIUM;
-        let slot_width = self
+        let label_width = self
             .options
             .iter()
             .map(|option| {
@@ -317,19 +309,18 @@ impl RenderOnce for SingleChoiceGroup {
                     .text_system()
                     .shape_line(option.label.clone(), self.label_text_size.map(|size| size.to_pixels(window.rem_size())).unwrap_or(window.rem_size()), &[run], None)
                     .width;
-                let padding = f32::from(rems(if segmented { 4. / 14. } else { 12. / 14. }).to_pixels(window.rem_size())) * 2.;
-                let icon_and_gap = if segmented || self.icons.contains_key(&option.value) {
-                    f32::from(rems(18. / 14.).to_pixels(window.rem_size()))
-                        + f32::from(rems(8. / 14.).to_pixels(window.rem_size()))
-                } else {
-                    0.
-                };
-                // TextLayout rounds the shaped label up. Reserve that same
-                // width, both actual paddings and the fixed 2px borders, then
-                // close each slot before the track is split into equal shares.
-                (f32::from(width.ceil()) + padding + 4. + icon_and_gap).ceil()
+                f32::from(width.ceil())
             })
             .fold(0_f32, f32::max);
+        // All options use the same content column, measured from the longest
+        // label. Different text lengths and selection never move the icon/text
+        // origins within an equal-width cell.
+        let icon_size = rems(18. / 14.);
+        let icon_and_gap = f32::from(rems(26. / 14.).to_pixels(window.rem_size()));
+        let content_width = label_width + icon_and_gap;
+        let padding = f32::from(rems(if segmented { 4. / 14. } else { 12. / 14. })
+            .to_pixels(window.rem_size())) * 2.;
+        let slot_width = (content_width + padding + 4.).ceil();
         let mut lane = gpui_base::h_flex()
             .relative()
             .w_full()
@@ -400,20 +391,27 @@ impl RenderOnce for SingleChoiceGroup {
             );
             let debug_kind = if self.full_width { "full" } else { "content" };
             let content = gpui_base::h_flex()
+                .w(px(content_width))
+                .max_w_full()
                 .min_w_0()
                 .gap(rems(8. / 14.))
                 .items_center()
                 .when(vertical, |row| row.w_full())
-                .when(segmented && !(self.segment_icons && self.icons.contains_key(&value)), |row| row.child(
-                    crate::icons::check().size(rems(18. / 14.)).flex_shrink_0()
-                        .opacity(if checked { 1. } else { 0. }),
-                ))
-                .when_some(self.icons.get(&value).filter(|_| !segmented || self.segment_icons).cloned(), |row, icon| {
-                    row.child(icon.size(rems(18. / 14.)).flex_shrink_0())
-                })
+                .child(
+                    div().w(icon_size).h(icon_size).flex_shrink_0()
+                        .flex().items_center().justify_center()
+                        .when(cfg!(test), |icon| icon.debug_selector(move || {
+                            format!("{debug_kind}-choice-icon-{index}").into()
+                        }))
+                        .when_some(self.icons.get(&value).cloned(), |slot, icon| {
+                            slot.child(icon.size(icon_size))
+                        }),
+                )
                 .child(
                     div()
                         .min_w_0()
+                        .flex_1()
+                        .text_left()
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .when(cfg!(test), |label| {
@@ -621,6 +619,9 @@ mod tests {
             div().w(px(312.)).child(
                 SingleChoiceGroup::new("connected-choice", "文字来源")
                     .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
+                    .icon("0", crate::icons::settings())
+                    .icon("1", crate::icons::file())
+                    .icon("2", crate::icons::mic())
                     .segmented()
                     .selected(self.selected.to_string())
                     .on_change(cx.listener(|this, next: &SharedString, _, cx| {
@@ -643,6 +644,17 @@ mod tests {
         assert_eq!(track.right() - lane.right(), px(1.));
         let labels = ["full-choice-label-0", "full-choice-label-1", "full-choice-label-2"];
         let before = labels.map(|selector| choice_bounds(cx, selector));
+        let icons = ["full-choice-icon-0", "full-choice-icon-1", "full-choice-icon-2"];
+        let icon_before = icons.map(|selector| choice_bounds(cx, selector));
+        let options = ["full-choice-option-0", "full-choice-option-1", "full-choice-option-2"]
+            .map(|selector| choice_bounds(cx, selector));
+        for index in 0..3 {
+            assert!(((before[index].left() - options[index].left())
+                - (before[0].left() - options[0].left())).abs() <= px(0.5), "labels: {before:?}; options: {options:?}; icons: {icon_before:?}");
+            assert!((before[index].top() - before[0].top()).abs() < px(0.5));
+            assert_eq!(icon_before[index].size, gpui::size(px(18.), px(18.)));
+            assert!((before[index].left() - icon_before[index].right() - px(8.)).abs() < px(0.5));
+        }
         // Medium reference: a 360px panel minus two 24px insets must show the full label.
         let required = cx.update(|window, _| {
             let mut font = window.text_style().font();
@@ -664,6 +676,9 @@ mod tests {
         assert_eq!(fill.top(), lane.top());
         assert_eq!(fill.bottom(), lane.bottom());
         for (selector, bounds) in labels.into_iter().zip(before) {
+            assert_eq!(choice_bounds(cx, selector), bounds);
+        }
+        for (selector, bounds) in icons.into_iter().zip(icon_before) {
             assert_eq!(choice_bounds(cx, selector), bounds);
         }
         cx.simulate_click(last.center(), Modifiers::default());
