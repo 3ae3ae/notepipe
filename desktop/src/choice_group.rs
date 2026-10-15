@@ -616,7 +616,7 @@ mod tests {
                 SingleChoiceGroup::new("connected-choice", "文字来源")
                     .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
                     .icon("0", crate::icons::settings())
-                    .icon("1", crate::icons::file())
+                    .icon("1", crate::icons::article())
                     .icon("2", crate::icons::mic())
                     .segmented()
                     .selected(self.selected.to_string())

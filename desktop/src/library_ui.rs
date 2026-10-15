@@ -478,7 +478,7 @@ impl Desktop {
                         .justify_end()
                         .child(
                             control("cancel-folder")
-                                .icon(IconName::Close)
+                                .icon(crate::icons::close())
                                 .h_auto()
                                 .min_h(rems(2.6))
                                 .ghost()
@@ -705,7 +705,7 @@ impl Desktop {
                 let origin = origin.clone();
                 menu.item(
                     PopupMenuItem::new(name)
-                        .icon(IconName::Folder)
+                        .icon(crate::icons::folder())
                         .checked(id == current)
                         .on_click(move |_, _, cx| {
                             let _ = entity.update(cx, |this, cx| {
@@ -762,7 +762,7 @@ impl Desktop {
             .when(!has_course, |button| button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL))
             .py_2()
             .disabled(self.loading || load_error.is_some())
-            .icon(IconName::Folder)
+            .icon(crate::icons::folder())
             .accessibility_label(format!("保存到文件夹：{label}"))
             .tooltip(label.clone())
             .child(
@@ -774,7 +774,7 @@ impl Desktop {
                     .line_clamp(2)
                     .child(label),
             )
-            .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
+            .child(crate::icons::chevron_down().size_4().flex_shrink_0())
             .dropdown_menu(Self::folder_menu(
                 cx.entity().downgrade(),
                 context.origin,

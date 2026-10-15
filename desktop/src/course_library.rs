@@ -173,9 +173,9 @@ impl RenderOnce for LibraryDiagnostics {
                 )))
                 .self_start()
                 .icon(if open {
-                    IconName::ChevronUp
+                    crate::icons::chevron_up()
                 } else {
-                    IconName::Info
+                    crate::icons::info()
                 })
                 .label(if open { "收起诊断" } else { "查看诊断" })
                 .on_click(move |_, _, cx| {
@@ -353,7 +353,7 @@ impl Render for CourseRenameDialog {
                     .gap_2()
                     .child(
                         control("cancel-note-rename")
-                            .icon(IconName::Close)
+                            .icon(crate::icons::close())
                             .label("取消")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
@@ -464,7 +464,7 @@ impl Desktop {
         let folder_context = self.folder_context(Some(course.dir.clone()));
         control(("course-actions", index))
             .ghost()
-            .icon(IconName::Ellipsis)
+            .icon(crate::icons::ellipsis())
             .min_h(rems(2.))
             .tooltip("笔记操作")
             .accessibility_label(format!("《{}》的笔记操作", course.title))
@@ -484,7 +484,7 @@ impl Desktop {
                     )
                     .item(
                         PopupMenuItem::new("打开笔记保存位置")
-                            .icon(IconName::FolderOpen)
+                            .icon(crate::icons::folder_open())
                             .on_click(move |_, _, cx| cx.open_with_system(&path)),
                     )
                     .separator();
@@ -609,7 +609,7 @@ impl Desktop {
                     .child(
                         control(("show-classification-files", index))
                             .ghost()
-                            .icon(IconName::FolderOpen)
+                            .icon(crate::icons::folder_open())
                             .label("打开保存位置")
                             .on_click(move |_, _, cx| cx.open_with_system(&folder)),
                     );
@@ -1069,7 +1069,7 @@ impl Desktop {
                     .items_center()
                     .text_center()
                     .child(
-                        Icon::new(IconName::BookOpen)
+                        crate::icons::book_open()
                             .size(px(32.))
                             .text_color(color(MUTED)),
                     )
@@ -1090,7 +1090,7 @@ impl Desktop {
                     .when(!query.is_empty(), |empty| {
                         empty.child(
                             outline_pill("clear-search")
-                                .icon(IconName::Close)
+                                .icon(crate::icons::close())
                                 .label("清除搜索")
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.inputs[&Field::Search]
@@ -1102,7 +1102,7 @@ impl Desktop {
                     .when(query.is_empty() && self.folder_filter.is_none(), |empty| {
                         empty.child(
                             primary_pill("empty-library-add")
-                                .icon(IconName::Plus)
+                                .icon(crate::icons::plus())
                                 .label("导入视频")
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.begin_add(window, cx)),
@@ -1112,7 +1112,7 @@ impl Desktop {
                     .when(query.is_empty() && self.folder_filter.is_some(), |empty| {
                         empty.child(
                             outline_pill("empty-folder-all-notes")
-                                .icon(IconName::BookOpen)
+                                .icon(crate::icons::book_open())
                                 .label("浏览全部笔记")
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.folder_filter = None;
@@ -1141,7 +1141,7 @@ impl Desktop {
                 )
                 .child(
                     quiet("clear-search-scope")
-                        .icon(IconName::Close)
+                        .icon(crate::icons::close())
                         .label("清空搜索")
                         .min_h(rems(1.6))
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -1180,9 +1180,9 @@ impl Desktop {
                             .items_baseline()
                             .child(
                                 Icon::new(if collapsed {
-                                    IconName::ChevronRight
+                                    crate::icons::chevron_right()
                                 } else {
-                                    IconName::ChevronDown
+                                    crate::icons::chevron_down()
                                 })
                                 .size(px(12.))
                                 .text_color(color(GRAY))
@@ -1857,7 +1857,7 @@ impl Desktop {
             .when(layout.stacked, |row| row.w_full().flex_wrap())
             .child(
                 outline_pill(("read-course-action", *index))
-                    .icon(IconName::BookOpen)
+                    .icon(crate::icons::book_open())
                     .when(!layout.compact || layout.stacked, |button| {
                         button.label(if self.course_has_reading_position(course) {
                             "继续阅读"
@@ -2055,7 +2055,7 @@ impl Desktop {
                     quiet("recent-all")
                         .mr(-crate::theme::QUIET_INSET)
                         .label("查看全部")
-                        .child(Icon::new(IconName::ChevronRight).size_4())
+                        .child(crate::icons::chevron_right().size_4())
                         .text_color(color(ACCENT_STRONG))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.folder_filter = None;
@@ -2263,7 +2263,7 @@ impl Desktop {
                                     h_flex().child(badge(BadgeKind::Warning).child("部分内容待补全")))),
                         )
                         .child(
-                            Icon::new(IconName::ChevronRight)
+                            crate::icons::chevron_right()
                                 .size_4()
                                 .flex_shrink_0()
                                 .text_color(color(GRAY)),

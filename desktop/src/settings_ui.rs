@@ -1420,7 +1420,7 @@ impl Desktop {
                         .items_center()
                         .flex_wrap()
                         .when(purpose == ServicePurpose::Speech, |row| {
-                            row.child(settings_resource_icon(icons::microphone()))
+                            row.child(settings_resource_icon(icons::mic()))
                                 .child(
                                     v_flex()
                                         .flex_1()
@@ -1456,7 +1456,7 @@ impl Desktop {
                             } else {
                                 outline_pill(("add-service", purpose as usize))
                             })
-                            .icon(icons::add())
+                            .icon(icons::plus())
                             .label(add_label)
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
@@ -1559,7 +1559,7 @@ impl Desktop {
                     .flex_wrap()
                     .child(
                         (if purpose == ServicePurpose::Speech {
-                            icons::microphone()
+                            icons::mic()
                         } else {
                             icons::science()
                         })

@@ -247,7 +247,7 @@ impl Desktop {
                     .child(
                         control("dismiss-task-result")
                             .ghost()
-                            .icon(IconName::Close)
+                            .icon(crate::icons::close())
                             .accessibility_label("关闭这条任务提示")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.transient_task_result = None;
@@ -498,7 +498,7 @@ impl Render for Desktop {
                             .child(
                                 control("dismiss-message")
                                     .ghost()
-                                    .icon(IconName::Close)
+                                    .icon(crate::icons::close())
                                     .accessibility_label("关闭提示")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.message = None;

@@ -584,9 +584,9 @@ impl Desktop {
                 view.child(
                     quiet(id.clone())
                         .icon(if expanded {
-                            IconName::ChevronUp
+                            crate::icons::chevron_up()
                         } else {
-                            IconName::ChevronDown
+                            crate::icons::chevron_down()
                         })
                         .self_start()
                         .label(if expanded {
@@ -1118,7 +1118,7 @@ impl Desktop {
                             .text_size(TEXT_BODY).text_color(color(MUTED)))
                         .child(div().w(relative(0.72)).h(rems(12. / 14.)).rounded_full().bg(color(INSET)))
                         .child(div().w(relative(0.45)).h(rems(10. / 14.)).rounded_full().bg(color(INSET))))
-                    .child(quiet("cancel-source-read").icon(IconName::Close)
+                    .child(quiet("cancel-source-read").icon(crate::icons::close())
                         .accessibility_label("取消读取视频").tooltip("取消读取视频")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.invalidate_source(); cx.notify();
@@ -1477,7 +1477,7 @@ impl Desktop {
                             .gap_2()
                             .items_start()
                             .child(
-                                Icon::new(IconName::CircleX)
+                                crate::icons::error()
                                     .size(px(20.))
                                     .text_color(color(DANGER))
                                     .flex_shrink_0(),
@@ -1532,9 +1532,9 @@ impl Desktop {
                             .child(
                                 quiet("source-error-details")
                                     .icon(if self.show_preview_details {
-                                        IconName::ChevronUp
+                                        crate::icons::chevron_up()
                                     } else {
-                                        IconName::ChevronDown
+                                        crate::icons::chevron_down()
                                     })
                                     .label(if self.show_preview_details {
                                         "收起详情"
@@ -1580,7 +1580,7 @@ impl Desktop {
                     )
                     .child(
                         primary_pill("choose-video")
-                            .icon(IconName::FolderOpen)
+                            .icon(crate::icons::folder_open())
                             .label("选择视频")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.pick(false, window, cx)),
@@ -1630,7 +1630,7 @@ impl Desktop {
                             .items_center()
                             .child(
                                 outline_pill("choose-video")
-                                    .icon(IconName::FolderOpen)
+                                    .icon(crate::icons::folder_open())
                                     .label("更换视频")
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.pick(false, window, cx)
@@ -1710,7 +1710,7 @@ impl Desktop {
                         this.invalidate_source(); this.save_current_draft(cx); cx.notify();
                     })))
                 .child(h_flex().gap_1()
-                    .child(quiet("source-details").icon(if self.show_preview_details { IconName::ChevronUp } else { IconName::ChevronDown })
+                    .child(quiet("source-details").icon(if self.show_preview_details { crate::icons::chevron_up() } else { crate::icons::chevron_down() })
                         .w(rems(32. / 14.)).h(rems(32. / 14.)).px_0()
                         .accessibility_label("来源详情").tooltip("来源详情")
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -1799,9 +1799,9 @@ impl Desktop {
                     row.child(
                         quiet("change-text-source")
                             .icon(if self.show_options {
-                                IconName::ChevronUp
+                                crate::icons::chevron_up()
                             } else {
-                                IconName::ChevronDown
+                                crate::icons::chevron_down()
                             })
                             .label(if self.show_options {
                                 "收起"
@@ -1818,7 +1818,7 @@ impl Desktop {
         if self.subtitle_loading {
             view = view.child(
                 quiet("cancel-subtitle-read")
-                    .icon(IconName::Close)
+                    .icon(crate::icons::close())
                     .self_start()
                     .label("取消读取字幕")
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1851,7 +1851,7 @@ impl Desktop {
                             .gap_2()
                             .items_start()
                             .child(
-                                Icon::new(IconName::TriangleAlert)
+                                crate::icons::warning()
                                     .size(px(20.))
                                     .text_color(color(WARNING))
                                     .flex_shrink_0(),
@@ -1921,7 +1921,7 @@ impl Desktop {
                     SingleChoiceGroup::new("import-text-source", "笔记的文字来源")
                         .map(|group| choices.iter().fold(group, |group, (value, _)| {
                             group.icon(value.clone(), if value == "speech" {
-                                icons::microphone()
+                                icons::mic()
                             } else {
                                 icons::subtitles()
                             })
@@ -2023,7 +2023,7 @@ impl Desktop {
             .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
             .icon("0", icons::auto_fix())
             .icon("1", icons::subtitles())
-            .icon("2", icons::microphone())
+            .icon("2", icons::mic())
             .selected(self.task_options.source_mode.to_string())
             .on_change(cx.listener(|this, value: &SharedString, _, cx| {
                 let Ok(mode) = value.parse::<usize>() else {
@@ -2062,7 +2062,7 @@ impl Desktop {
         if self.task_options.source_mode != 1 {
             view = view.child(import_option_field(
                 "conversion-speech-label",
-                icons::microphone(),
+                icons::mic(),
                 "语音识别",
                 "",
                 self.import_speech_options(window, cx),
@@ -2207,7 +2207,7 @@ impl Desktop {
                     .font_weight(FontWeight::NORMAL)
                     .child(engine),
             )
-            .child(Icon::new(IconName::ChevronDown).size_4())
+            .child(crate::icons::chevron_down().size_4())
             .dropdown_menu(move |menu, _, _| {
                 providers.iter().fold(menu, |menu, &(index, label)| {
                     let entity = entity.clone();
@@ -2399,7 +2399,7 @@ impl Desktop {
                 .unwrap_or_else(|| "选择保存位置".into());
             view = view.child(
                 control("import-library")
-                    .icon(IconName::FolderOpen)
+                    .icon(crate::icons::folder_open())
                     .w_full()
                     .min_w_0()
                     .accessibility_label(format!("保存到：{label}"))
@@ -2412,7 +2412,7 @@ impl Desktop {
                             .text_ellipsis()
                             .child(label),
                     )
-                    .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
+                    .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                     .dropdown_menu(move |menu, _, _| {
                         libraries.iter().fold(menu, |menu, library| {
                             let id = library.id.clone();
@@ -2787,7 +2787,7 @@ impl Desktop {
                     .child(h_flex().w_full().items_center()
                         .child(div().flex_1().text_size(rems(24. / 14.))
                             .line_height(rems(32. / 14.)).font_weight(FontWeight::MEDIUM).child("处理选项"))
-                        .child(quiet("close-generation-options").icon(IconName::Close)
+                        .child(quiet("close-generation-options").icon(crate::icons::close())
                             .w(CONTROL_HEIGHT).px_0().accessibility_label("收起处理选项")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.generation_options_open = false; cx.notify();
@@ -2947,7 +2947,7 @@ impl Desktop {
             let id = library.id.clone();
             actions = actions.child(
                 outline_pill("reassociate-import-location")
-                    .icon(IconName::FolderOpen)
+                    .icon(crate::icons::folder_open())
                     .label("重新关联此保存位置")
                     .disabled(self.storage_ui.busy)
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -2993,7 +2993,7 @@ impl Desktop {
                     .flex_wrap()
                     .child(
                         primary_pill("open-existing-note")
-                            .icon(IconName::BookOpen)
+                            .icon(crate::icons::book_open())
                             .label("打开已有笔记")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.save_current_draft(cx);

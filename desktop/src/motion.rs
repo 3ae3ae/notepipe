@@ -5,7 +5,7 @@ use crate::theme::{
     color,
 };
 use gpui::{prelude::*, *};
-use gpui_component::{Icon, Sizable, h_flex, v_flex};
+use gpui_component::{Sizable, h_flex, v_flex};
 use std::time::Duration;
 
 pub const ENTER_MS: u64 = 160;
@@ -57,8 +57,7 @@ pub fn state_enter<E: IntoElement + Styled + 'static>(
 }
 
 pub fn spinner(id: impl Into<ElementId>, cx: &App) -> AnyElement {
-    let icon = Icon::default()
-        .path("icons/loader-circle.svg")
+    let icon = crate::icons::loader_circle()
         .small()
         .text_color(color(ACCENT));
     if cx.reduce_motion() {

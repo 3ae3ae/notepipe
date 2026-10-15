@@ -145,7 +145,7 @@ impl Desktop {
             ),
             None => actions.push(
                 outline_pill(SharedString::from(format!("{id}-add"))).when(self.page == Page::Settings, crate::settings_ui::settings_button)
-                    .icon(icons::add())
+                    .icon(icons::plus())
                     .label("添加 Ollama 服务")
                     .disabled(working)
                     .on_click(cx.listener(|this, _, window, cx| {

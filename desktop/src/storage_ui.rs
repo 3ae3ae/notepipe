@@ -1637,7 +1637,7 @@ impl Desktop {
                     })
                     .child(
                         quiet("register-storage-location")
-                            .icon(icons::add())
+                            .icon(icons::plus())
                             .label("添加课程库位置")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.register_storage_location(window, cx)

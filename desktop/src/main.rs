@@ -10,9 +10,6 @@ mod codex_ui;
 mod course_library;
 mod credentials;
 mod focus_scroll;
-// Icon helpers ship ahead of the pages that reference them (M3+); same staged
-// token allowance as the theme module.
-#[allow(dead_code)]
 mod icons;
 mod import_ui;
 mod library_ui;
@@ -34,9 +31,6 @@ mod source;
 mod storage;
 mod storage_ui;
 mod task_ui;
-// Token items ship ahead of the page milestones that adopt them (M3+); the
-// module-wide allowance keeps staged tokens from tripping the zero-warning bar.
-#[allow(dead_code)]
 mod theme;
 mod views;
 mod workspace;

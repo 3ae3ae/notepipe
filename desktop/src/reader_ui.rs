@@ -2474,7 +2474,7 @@ impl Desktop {
                 "reader-opening",
                 v_flex().w_full().gap_4().py_4()
                     .child(quiet("reader-loading-back")
-                        .icon(IconName::ArrowLeft).label("返回")
+                        .icon(crate::icons::arrow_left()).label("返回")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.navigate(this.result_origin, cx);
                         })))
@@ -2921,7 +2921,7 @@ impl Desktop {
         let back = reveal(
             "reveal-reader-back",
             quiet("reader-back")
-                .icon(IconName::ArrowLeft)
+                .icon(crate::icons::arrow_left())
                 .w(CONTROL_HEIGHT)
                 .px_0()
                 .accessibility_label(format!("返回{return_label}"))
@@ -3009,7 +3009,7 @@ impl Desktop {
                             .child(reveal(
                                 "reveal-relocate-reader-source",
                                 quiet("relocate-reader-source")
-                                    .icon(IconName::FolderOpen)
+                                    .icon(crate::icons::folder_open())
                                     .label(if self.reader_ui.source_loading {
                                         "正在核对视频…"
                                     } else {
@@ -3077,7 +3077,7 @@ impl Desktop {
                     (quiet("choose-note-version")
                         .icon(icons::history())
                         .label(format!("版本 {}", manifest.revision))
-                        .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
+                        .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                         .min_h(rems(1.6))
                         .disabled(self.reading)
                         .dropdown_menu(move |menu, _, _| {
@@ -3193,8 +3193,8 @@ impl Desktop {
             );
             if reading_note {
                 for (id, label, icon, delta) in [
-                    ("previous-match", "上一处", IconName::ArrowUp, -1),
-                    ("next-match", "下一处", IconName::ArrowDown, 1),
+                    ("previous-match", "上一处", crate::icons::arrow_up(), -1),
+                    ("next-match", "下一处", crate::icons::arrow_down(), 1),
                 ] {
                     matches =
                         matches.child(
@@ -3312,7 +3312,7 @@ impl Desktop {
                         "导出"
                     })
                     .accessibility_label("复制或导出整份笔记")
-                    .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
+                    .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                     .loading(exporting_current)
                     .disabled(exporting)
                     .dropdown_menu(move |menu, _, _| {
@@ -3355,7 +3355,7 @@ impl Desktop {
                         "更多"
                     })
                     .when(short_reader, |button| {
-                        button.child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
+                        button.child(crate::icons::chevron_down().size_4().flex_shrink_0())
                     })
                     .tooltip(if short_reader {
                         "切换视图、导出与笔记详情"
@@ -3576,7 +3576,7 @@ impl Desktop {
                     crate::focus_scroll::RevealFocus::new(
                         "reveal-relocate-reader-source-detail",
                         quiet("relocate-reader-source-detail")
-                            .icon(IconName::FolderOpen)
+                            .icon(crate::icons::folder_open())
                             .label(if self.reader_ui.source_loading {
                                 "正在核对视频…"
                             } else {
@@ -3616,12 +3616,12 @@ impl Desktop {
                             .child(semantic_label(
                                 "reader-information-title",
                                 "笔记详情",
-                                Icon::new(IconName::Info),
+                                crate::icons::info(),
                             ))
                             .child(div().flex_1())
                             .child(
                                 quiet("collapse-reader-information")
-                                    .icon(IconName::ChevronUp)
+                                    .icon(crate::icons::chevron_up())
                                     .label("收起")
                                     .accessibility_label("收起笔记详情")
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -3838,7 +3838,7 @@ impl Desktop {
                 actions = actions.child(reveal(
                     "reveal-reader-processing-details",
                     (quiet("reader-processing-details")
-                        .icon(IconName::Info)
+                        .icon(crate::icons::info())
                         .label(if self.reader_ui.processing_details_open {
                             "收起处理详情"
                         } else {
@@ -4575,7 +4575,7 @@ impl Desktop {
                     } else {
                         "缩放".into()
                     })
-                    .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
+                    .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                     .accessibility_label("缩放图片")
                     .dropdown_menu(move |menu, _, _| {
                         let larger = weak.clone();
@@ -4716,7 +4716,7 @@ impl Desktop {
                     .child(div().flex_1())
                     .child(
                         control("image-previous")
-                            .icon(IconName::ChevronLeft)
+                            .icon(crate::icons::chevron_left())
                             .w(CONTROL_HEIGHT)
                             .px_0()
                             .accessibility_label("上一张")
@@ -4738,7 +4738,7 @@ impl Desktop {
                     )
                     .child(
                         control("image-next")
-                            .icon(IconName::ChevronRight)
+                            .icon(crate::icons::chevron_right())
                             .w(CONTROL_HEIGHT)
                             .px_0()
                             .accessibility_label("下一张")
@@ -5028,7 +5028,7 @@ impl Desktop {
             .child(div().flex_1())
             .child(
                 control("image-close")
-                    .icon(IconName::Close)
+                    .icon(crate::icons::close())
                     .label("关闭")
                     .accessibility_label("关闭截图")
                     .on_click(

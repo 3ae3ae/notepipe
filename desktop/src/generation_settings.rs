@@ -36,7 +36,7 @@ impl Desktop {
                     ])
                     .icon("auto", icons::auto_fix())
                     .icon("subtitle", icons::subtitles())
-                    .icon("asr", icons::microphone())
+                    .icon("asr", icons::mic())
                     .full_width()
                     .selected(match value.options.transcript_source {
                         Some(course2md::config::TranscriptSource::Subtitle) => "subtitle",
@@ -184,7 +184,7 @@ impl Desktop {
         let mut recognition =
             group("asr-default-settings", "语音识别").child(settings_outlined_row(
                 "asr-method-label",
-                icons::microphone(),
+                icons::mic(),
                 "识别方式",
                 if provider == "api" {
                     "音频会发送到所选服务"
@@ -595,7 +595,7 @@ impl Desktop {
                 control("default-local-model-menu")
                     .w_full()
                     .label(label)
-                    .child(Icon::new(IconName::ChevronDown).size_4())
+                    .child(crate::icons::chevron_down().size_4())
                     .dropdown_menu(move |menu, _, _| {
                         models.iter().fold(menu, |menu, (id, label)| {
                             let id = (*id).to_owned();
@@ -623,9 +623,9 @@ impl Desktop {
         } else {
             self.setting_choices("default-local-model", "默认识别模型")
                 .options(models)
-                .icon(course2md::config::DEFAULT_ASR_MODEL, icons::microphone())
-                .icon("qwen3-0.6b", icons::microphone())
-                .icon("whisper", icons::microphone())
+                .icon(course2md::config::DEFAULT_ASR_MODEL, icons::mic())
+                .icon("qwen3-0.6b", icons::mic())
+                .icon("whisper", icons::mic())
                 .full_width()
                 .selected(selected.to_owned())
                 .on_change(cx.listener(move |this, id: &SharedString, window, cx| {

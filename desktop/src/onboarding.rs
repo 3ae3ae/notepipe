@@ -981,7 +981,7 @@ impl Desktop {
                 1,
                 "默认识别方式",
                 Some("仅用于没有字幕的视频"),
-                icons::microphone(),
+                icons::mic(),
             ),
             Step::Ai => (
                 2,
@@ -999,7 +999,7 @@ impl Desktop {
                 4,
                 "准备就绪",
                 None,
-                icons::circle_check(),
+                icons::check_circle(),
             ),
             Step::Model => (
                 4,
@@ -1400,7 +1400,7 @@ impl Desktop {
                         ("setup-model-choice", index),
                         label,
                         description,
-                        icons::microphone(),
+                        icons::mic(),
                         self.onboarding.model == id,
                         window,
                         cx,
@@ -1426,7 +1426,7 @@ impl Desktop {
                         .child(semantic_label(
                             "setup-model-label",
                             "识别模型",
-                            icons::microphone(),
+                            icons::mic(),
                         ))
                         .child(settings_value("setup-current-model", current_model).w_auto())
                         // Readiness reads as the model's status, next to its name.
@@ -1771,7 +1771,7 @@ impl Desktop {
                         SingleChoiceGroup::new("setup-speech-protocol", "语音接口类型")
                             .full_width()
                             .options([("transcriptions", "语音转录"), ("chat", "音频聊天")])
-                            .icon("transcriptions", icons::microphone())
+                            .icon("transcriptions", icons::mic())
                             .icon("chat", icons::article())
                             .selected(
                                 if service.draft.protocol
@@ -2010,7 +2010,7 @@ impl Desktop {
                             .gap_2()
                             .child(
                                 if passed {
-                                    icons::circle_check()
+                                    icons::check_circle()
                                 } else {
                                     icons::warning()
                                 }
@@ -2184,7 +2184,7 @@ impl Desktop {
                         .items_start()
                         .gap_2()
                         .child(
-                            icons::microphone()
+                            icons::mic()
                                 .size(rems(20. / 14.))
                                 .mt_1()
                                 .flex_shrink_0()

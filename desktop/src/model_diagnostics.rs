@@ -1081,7 +1081,7 @@ impl Desktop {
                                 "choose-available-model-{}",
                                 provider.as_str()
                             )))
-                            .icon(icons::microphone())
+                            .icon(icons::mic())
                             .label(format!("默认改用 {}", provider_name(provider)))
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {

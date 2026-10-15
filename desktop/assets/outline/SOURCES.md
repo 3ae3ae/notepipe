@@ -19,7 +19,6 @@ Downloaded icons and the upstream license are pinned to Lucide commit `d672fc43d
 | `chevron-right.svg` | `chevron-right` | desktop/.deps/component/crates/assets/assets/icons/chevron-right.svg |
 | `close.svg` | `close` | desktop/.deps/component/crates/assets/assets/icons/close.svg |
 | `circle-x.svg` | `circle-x` | desktop/.deps/component/crates/assets/assets/icons/circle-x.svg |
-| `file.svg` | `file` | desktop/.deps/component/crates/assets/assets/icons/file.svg |
 | `check.svg` | `check` | desktop/.deps/component/crates/assets/assets/icons/check.svg |
 | `external-link.svg` | `external-link` | desktop/.deps/component/crates/assets/assets/icons/external-link.svg |
 | `circle-check.svg` | `circle-check` | desktop/.deps/component/crates/assets/assets/icons/circle-check.svg |
@@ -46,7 +45,6 @@ Downloaded icons and the upstream license are pinned to Lucide commit `d672fc43d
 | `science.svg` | `flask-conical` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/flask-conical.svg |
 | `login.svg` | `log-in` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/log-in.svg |
 | `logout.svg` | `log-out` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/log-out.svg |
-| `qr-code.svg` | `qr-code` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/qr-code.svg |
 | `sun.svg` | `sun` | desktop/.deps/component/crates/assets/assets/icons/sun.svg |
 | `moon.svg` | `moon` | desktop/.deps/component/crates/assets/assets/icons/moon.svg |
 | `restart.svg` | `rotate-ccw` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/rotate-ccw.svg |

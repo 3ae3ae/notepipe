@@ -204,7 +204,7 @@ impl Desktop {
                             )
                         }),
                 )
-                .child(Icon::new(IconName::ChevronDown).size_4().flex_shrink_0())
+                .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                 .dropdown_menu(move |menu, window, _| {
                     let width = (window.bounds().size.width - px(48.)).min(px(560.));
                     menu_choices.iter().fold(
@@ -273,7 +273,7 @@ impl Desktop {
             .icon(if editor_version.is_some() {
                 icons::edit()
             } else {
-                icons::add()
+                icons::plus()
             })
             .ghost()
             .when(current_task && editor_version.is_some(), |button| {
@@ -384,7 +384,7 @@ impl Desktop {
             settings_row(
                 ("default-service-label", purpose as usize),
                 if purpose == ServicePurpose::Speech {
-                    icons::microphone()
+                    icons::mic()
                 } else {
                     icons::science()
                 },
@@ -780,7 +780,7 @@ impl Desktop {
                             )
                             .icon(
                                 ServiceProtocol::SpeechTranscriptions.label(),
-                                icons::microphone(),
+                                icons::mic(),
                             )
                             .icon(ServiceProtocol::SpeechChat.label(), icons::article())
                             .icon(ServiceProtocol::AiChat.label(), icons::cloud())
