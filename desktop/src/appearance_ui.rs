@@ -409,7 +409,6 @@ impl Desktop {
         let width = crate::views::settings_content_width(window);
         let modes = SingleChoiceGroup::new("appearance-mode", "外观模式")
             .segmented()
-            .segment_icons()
             .label_text_size(TEXT_BODY)
             .options([("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
             .icon("system", icons::computer())

@@ -34,6 +34,9 @@ impl Desktop {
                         ("subtitle", "仅字幕"),
                         ("asr", "语音识别"),
                     ])
+                    .icon("auto", icons::auto_fix())
+                    .icon("subtitle", icons::subtitles())
+                    .icon("asr", icons::microphone())
                     .full_width()
                     .selected(match value.options.transcript_source {
                         Some(course2md::config::TranscriptSource::Subtitle) => "subtitle",
@@ -247,7 +250,7 @@ impl Desktop {
                     .detail(crate::motion::disclosure(
                         "asr-advanced-settings",
                         self.settings_ui.asr_details_open,
-                        settings_row(
+                        settings_stacked_row(
                             "asr-hardware-heading",
                             icons::computer(),
                             "本机引擎",
@@ -273,6 +276,11 @@ impl Desktop {
                                             || provider == "npu"
                                     }),
                                 )
+                                .icon("", icons::auto_fix())
+                                .icon("coreml", icons::computer())
+                                .icon("gpu", icons::grid_view())
+                                .icon("cpu", icons::storage())
+                                .icon("npu", icons::sparkles())
                                 .full_width()
                                 .selected(provider.to_owned())
                                 .on_change(cx.listener(|this, id: &SharedString, _, cx| {
@@ -615,6 +623,9 @@ impl Desktop {
         } else {
             self.setting_choices("default-local-model", "默认识别模型")
                 .options(models)
+                .icon(course2md::config::DEFAULT_ASR_MODEL, icons::microphone())
+                .icon("qwen3-0.6b", icons::microphone())
+                .icon("whisper", icons::microphone())
                 .full_width()
                 .selected(selected.to_owned())
                 .on_change(cx.listener(move |this, id: &SharedString, window, cx| {

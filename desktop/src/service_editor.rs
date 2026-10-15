@@ -778,6 +778,14 @@ impl Desktop {
                                     (candidate.label(), short)
                                 }),
                             )
+                            .icon(
+                                ServiceProtocol::SpeechTranscriptions.label(),
+                                icons::microphone(),
+                            )
+                            .icon(ServiceProtocol::SpeechChat.label(), icons::article())
+                            .icon(ServiceProtocol::AiChat.label(), icons::cloud())
+                            .icon(ServiceProtocol::OllamaChat.label(), icons::server())
+                            .icon(ServiceProtocol::CodexResponses.label(), icons::sparkles())
                             .selected(protocol.label())
                             .disabled(awaiting_binding)
                             .on_change(cx.listener(
@@ -828,6 +836,8 @@ impl Desktop {
                         // 分段控件按内容宽度左对齐，不拉满整行
                         self.setting_choices("service-auth-mode", "服务认证方式")
                             .options([("api_key", "API Key"), ("none", "无需认证")])
+                            .icon("api_key", icons::shield())
+                            .icon("none", icons::web())
                             .selected(if auth == Authentication::ApiKey {
                                 "api_key"
                             } else {
@@ -1149,6 +1159,9 @@ impl Desktop {
                                 .into_iter()
                                 .map(|kind| (kind.contract(), kind.label())),
                         )
+                        .icon(TestKind::Proofread.contract(), icons::edit())
+                        .icon(TestKind::Summary.contract(), icons::summarize())
+                        .icon(TestKind::Vision.contract(), icons::image())
                         .selected(editor.test_kind.contract())
                         .disabled(busy)
                         .on_change(cx.listener(move |this, selected: &SharedString, _, cx| {
