@@ -1,19 +1,19 @@
 # course2md
 
-把 **YouTube、Bilibili 或本地视频**转换成带截图的 Markdown / HTML 笔记。在桌面应用里添加视频、生成笔记，再用课程库整理和阅读。
+把 **YouTube、Bilibili 或本地视频**转换成带截图的 Markdown / HTML 笔记。在桌面应用里添加视频、生成笔记，再用笔记库整理和阅读。
 
 [English](readme.md) · **中文** · [GitHub Wiki](https://github.com/mizorewww/course2md/wiki)
 
-**2.0 RC8 试用：**[2.0.0-rc.8 发布说明与安装](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.8)。Homebrew 使用 `course2md-gui@rc`；以下默认安装入口继续提供稳定版。
+**试用 2.0（RC9）：**[发布说明](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.9)。Homebrew 用户运行 `brew install --cask mizorewww/tap/course2md-gui@rc`。下面的安装方式提供的是稳定版。
 
 ## 功能特性
 
 - 幻灯片式笔记：画面变化时自动截图，文字稿按截图组织成段落，导出 `course.md` 与 `course.html`（`--formats` 可加 JSON）。
 - 支持 YouTube、Bilibili 与本地文件。默认优先使用平台字幕，无字幕时自动语音识别（`--transcript-source subtitle|asr` 可强制指定）。
-- 本地语音识别可选后端：Apple Silicon CoreML（零额外运行时）、Intel NPU、llama.cpp GPU/CPU 或云端 API；除云端后端外，识别数据不出本机。
+- 语音识别可在本机完成：Apple 芯片开箱即用；其他系统可用显卡、CPU 或 Intel Core Ultra 的 NPU。也可选择云端服务，只有选择云端时音频才会上传。
 - 可选 AI 润色与总结：兼容任意 OpenAI 接口，也可用本地 Ollama（`--login ollama`）或 ChatGPT 订阅（`--login codex` 导入 codex CLI 登录态），默认关闭；`course2md llm setup` 配置自定义端点。
-- 转换可从检查点恢复（`--resume`），对脚本友好：NDJSON 进度（`--json`）、静默模式、「中文 / English」双语 CLI 帮助。
-- 桌面应用提供可暂停、取消的后台任务，支持文件夹与搜索的课程库，带目录、查找、版本与导出的阅读器，以及 10 套内置主题。
+- 中断的转换可用 `--resume` 继续。供脚本使用：机器可读的进度（`--json`）与静默模式（`-q`）。CLI 帮助为「中文 / English」双语。
+- 桌面应用提供可暂停、取消的后台任务，支持文件夹与搜索的笔记库，带目录、查找、版本与导出的阅读器，以及 10 套内置主题。
 
 ## 安装桌面应用（GUI）
 
@@ -61,8 +61,8 @@ yay -S course2md-gui-bin
 ## 第一次使用
 
 1. 打开 **course2md**，按向导选择笔记保存目录和语音识别方式。
-2. 在「设置 → 运行环境」确认视频工具已被检测到。
-3. 添加视频链接或本地文件，开始生成，完成后在课程库打开笔记。
+2. 在「设置 → 应用」的「运行检查」中确认视频工具已被检测到。
+3. 添加视频链接或本地文件，确认预览后点击「开始转换」，完成后在「笔记库」打开笔记。
 
 本地识别首次使用需要下载模型；应用为各识别后端提供设置入口，详细步骤见 [首次使用指南](https://github.com/mizorewww/course2md/wiki/%E5%AE%89%E8%A3%85%E6%A1%8C%E9%9D%A2%E5%BA%94%E7%94%A8#首次启动)。
 
@@ -78,7 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh
 
 脚本把 `course2md` 装进 `~/bin`（可用 `COURSE2MD_BIN_DIR` 覆盖）并检查依赖；PATH 中没有 yt-dlp 时会自动安装随包版本。也可以选择：Homebrew `brew install mizorewww/tap/course2md`；Arch Linux `yay -S course2md-bin`（x86_64、aarch64）；或用 Rust stable 执行 `cargo install --path .` 从源码安装。
 
-`ffmpeg`（含 `ffprobe`）始终必需；在线链接需要 `yt-dlp`（预编译安装随包自带，也会读取 PATH 及常见安装目录中的版本）；GPU/CPU 识别需要 `llama-server`——macOS Apple Silicon 预编译包含 CoreML 后端，无需额外运行时。运行 `course2md doctor` 可一键检查。
+需要 `ffmpeg`；在线链接还需要 `yt-dlp`（缺少时会自动安装）；非 Apple 系统的本地识别需要 `llama-server`。运行 `course2md doctor` 检查。
 
 ## 快速上手
 
@@ -102,7 +102,6 @@ course2md ./lecture.mp4 -o ./notes             # 指定输出根目录
 | `course2md models list` / `models prepare` | 检查已下载模型 / 预先下载模型 |
 | `course2md llm setup` / `llm status` / `llm disable` | 配置、查看或关闭 AI 润色 |
 | `course2md summarize ./notes` | 为已有笔记生成 AI 总结 |
-| `course2md run-task` | 从标准输入读取 JSON 参数执行已保存任务（GUI 引擎使用） |
 
 使用 `<命令> --help` 查看每个子命令的参数。
 

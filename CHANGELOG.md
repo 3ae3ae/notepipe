@@ -5,6 +5,13 @@
 
 ## [未发布]
 
+## [2.0.0-rc.9] — 2026-10-15
+
+- 先预览再转换：输入链接、按 Enter、选择或拖入本地视频只读取视频信息；点击「开始转换」才创建任务。
+- 首页与设置页按宽、中、窄三档窗口重新排版；保留全部主题和完整设置。
+- 单选与分段选项的图标和文字整体居中；共享导航、操作与设置改用 Lucide 线框图标，并附带其许可证。
+- 发布范围、安装和已知限制见 [RC9 发布说明](docs/releases/v2.0.0-rc.9.md)。
+
 ## [2.0.0-rc.8] — 2026-10-14
 
 - 修复 yt-dlp 定位：CLI 与桌面端共用统一搜索清单（`COURSE2MD_YTDLP` → 可执行文件旁随包版本 → PATH → Homebrew/pipx/mise/asdf/conda/Nix/Scoop/WinGet/Python user-base 等常见目录）。桌面会话拿不到登录 shell 的 PATH 时不再误报「缺少 yt-dlp」；`course2md doctor` 会显示实际使用的 yt-dlp 路径。

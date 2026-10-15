@@ -1,19 +1,19 @@
 # course2md
 
-Turn **YouTube, Bilibili, or local videos** into illustrated Markdown / HTML notes. Add a video in the desktop app, generate notes, then organize and read them in your course library.
+Turn **YouTube, Bilibili, or local videos** into illustrated Markdown / HTML notes. Add a video in the desktop app, generate notes, then organize and read them in your notes library.
 
 **English** · [中文](readme.zh.md) · [GitHub Wiki](https://github.com/mizorewww/course2md/wiki)
 
-**Try 2.0 RC8:** [2.0.0-rc.8 release notes and installation](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.8). Use the `course2md-gui@rc` Homebrew cask; the default installation options below provide the stable release.
+**Preview 2.0 (RC9):** [release notes](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.9). Install with `brew install --cask mizorewww/tap/course2md-gui@rc`. The instructions below install the stable version.
 
 ## Features
 
 - Slide-style notes: screenshots are captured when the picture changes, the transcript is organized into paragraphs under each screenshot, and everything is exported as `course.md` and `course.html` (add JSON with `--formats`).
 - YouTube, Bilibili and local files. Platform subtitles are preferred; speech recognition runs when no subtitles exist (`--transcript-source subtitle|asr` forces either side).
-- Local speech recognition with a choice of backends: Apple Silicon CoreML (no extra runtime), Intel NPU, llama.cpp GPU/CPU, or a cloud API. Recognition data stays on your machine unless you choose the cloud backend.
+- Speech recognition on your own computer: Apple Silicon works out of the box, and other systems can use a graphics card, the CPU, or an Intel Core Ultra NPU. A cloud service is optional; audio leaves your computer only if you choose it.
 - Optional AI proofreading and summaries through any OpenAI-compatible endpoint, a local Ollama server (`--login ollama`), or a ChatGPT subscription via Codex login (`--login codex`) — off by default; `course2md llm setup` configures a custom endpoint.
-- Resumable conversions (speech checkpoints, `--resume`) and script-friendly output: NDJSON progress (`--json`), quiet mode, bilingual 中文 / English CLI help.
-- The desktop app adds background tasks with pause and cancel, a course library with folders and search, a reader with outline, find, version history and export, and 10 built-in themes.
+- Resume interrupted conversions with `--resume`. For scripts: machine-readable progress (`--json`) and quiet mode (`-q`). CLI help is bilingual (中文 / English).
+- The desktop app adds background tasks with pause and cancel, a notes library with folders and search, a reader with outline, find, version history and export, and 10 built-in themes.
 
 ## Install the desktop app (GUI)
 
@@ -61,8 +61,8 @@ The prebuilt package is based on Ubuntu 24.04. **Intel Mac and Linux ARM64 do no
 ## First use
 
 1. Open **course2md** and follow the setup guide to choose a notes folder and speech recognition method.
-2. Check **Settings → Runtime environment** to confirm the video tools are detected.
-3. Add a video URL or local file and start conversion. Open the finished notes in your library.
+2. Open **Settings → App** and check **Runtime checks** to confirm the video tools are detected.
+3. Add a video URL or local file, review the preview, and click **Start conversion**. Open the finished notes from **Notes library**.
 
 Local recognition downloads models on first use; the app provides setup controls for each backend. See the [first-launch guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#first-launch) for details.
 
@@ -78,7 +78,7 @@ curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh
 
 This installs `course2md` into `~/bin` (override with `COURSE2MD_BIN_DIR`), checks dependencies, and installs a bundled `yt-dlp` when none is on PATH. Also available: Homebrew `brew install mizorewww/tap/course2md`; Arch Linux `yay -S course2md-bin` (x86_64, aarch64); or from source with `cargo install --path .` (Rust stable).
 
-`ffmpeg` (including `ffprobe`) is always required, `yt-dlp` for online links (bundled with prebuilt installs; a copy on PATH or at common install locations is also detected), and `llama-server` for GPU/CPU recognition — except on the macOS Apple-Silicon package, whose CoreML backend needs no extra runtime. Run `course2md doctor` to check everything.
+Requires `ffmpeg`. Online links also need `yt-dlp` (installed automatically if missing). Local recognition on non-Apple systems needs `llama-server`. Run `course2md doctor` to check.
 
 ## Quick start
 
@@ -102,7 +102,6 @@ The first conversion in a terminal offers interactive setup; scripts should pass
 | `course2md models list` / `models prepare` | Check downloaded models / pre-download a model |
 | `course2md llm setup` / `llm status` / `llm disable` | Configure, inspect or turn off AI proofreading |
 | `course2md summarize ./notes` | Add AI summaries to existing notes |
-| `course2md run-task` | Execute a saved task from stdin JSON (used by the GUI engine) |
 
 Use `<command> --help` for each command's options.
 
