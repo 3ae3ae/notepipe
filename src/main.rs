@@ -265,11 +265,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             llm::validate(&file.llm)?;
             let mut targets: Vec<std::path::PathBuf> = vec![];
             for dir in &args.dirs {
-                collect_targets(dir, &mut targets, 0)?;
+                collect_targets(dir, &mut targets, 0);
             }
             if targets.is_empty() {
                 anyhow::bail!(
-                    "未找到笔记目录 / No note directories containing timeline.jsonl found: {}. 请先转换视频 / Convert a video first.",
+                    "未找到笔记：{0} / No notes found in: {0}",
                     args.dirs
                         .iter()
                         .map(|d| d.display().to_string())
@@ -278,7 +278,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 );
             }
             for dir in &targets {
-                summarize_dir(&file, dir, args.force, args.out.as_deref())?;
+                summarize_note(&file, dir, args.force, args.out.as_deref())?;
             }
             Ok(())
         }
@@ -375,41 +375,49 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     }
 }
 
-/// 递归收集包含 timeline.jsonl 的输出目录（支持直接传单个输出目录或整个输出根）。
-fn collect_targets(
-    dir: &std::path::Path,
-    out: &mut Vec<std::path::PathBuf>,
-    depth: usize,
-) -> anyhow::Result<()> {
+/// 笔记版本目录：课程目录取 current.json 指向的版本，版本目录直接使用。
+fn note_version_dir(dir: &std::path::Path) -> anyhow::Result<Option<std::path::PathBuf>> {
     if dir.join("current.json").is_file() {
         let current: course2md::artifact::CurrentVersion =
             serde_json::from_slice(&std::fs::read(dir.join("current.json"))?)?;
         let manifest = course2md::artifact::safe_asset_path(dir, &current.manifest)?;
-        out.push(
-            manifest
-                .parent()
-                .context("笔记清单位置无效 / Invalid note manifest location")?
-                .to_path_buf(),
-        );
-        return Ok(());
+        let version = manifest
+            .parent()
+            .context("笔记清单位置无效 / Invalid note manifest location")?;
+        return Ok(Some(version.to_path_buf()));
     }
-    if dir.join("timeline.jsonl").is_file() || dir.join("manifest.json").is_file() {
-        out.push(dir.to_path_buf());
-        return Ok(());
-    }
-    if depth >= 5 || !dir.is_dir() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if entry.path().is_dir() && !entry.file_name().to_string_lossy().starts_with('.') {
-            collect_targets(&entry.path(), out, depth + 1)?;
-        }
-    }
-    Ok(())
+    Ok(dir
+        .join("manifest.json")
+        .is_file()
+        .then(|| dir.to_path_buf()))
 }
 
-fn summarize_version(
+/// 递归收集笔记（可传单份笔记或存放多份笔记的上级目录）；单条目读取失败只告警并跳过。
+fn collect_targets(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
+    match note_version_dir(dir) {
+        Ok(Some(version)) => return out.push(version),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!("跳过无法读取的笔记 / Skipped unreadable note {}: {error:#}", dir.display());
+            return;
+        }
+    }
+    if depth >= 5 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() && !entry.file_name().to_string_lossy().starts_with('.') {
+            collect_targets(&path, out, depth + 1);
+        }
+    }
+}
+
+/// `summarize` 子命令：为一份笔记补写 AI 总结，保存为新版笔记（幂等，--force 重新生成）。
+fn summarize_note(
     file: &settings::ConfigFile,
     dir: &std::path::Path,
     force: bool,
@@ -492,128 +500,20 @@ fn summarize_version(
         outcomes,
     ))??;
     if let Some(out) = out {
-        std::fs::create_dir_all(out)?;
         let file = out.join(format!(
-            "{}.html",
-            config::sanitize_component(&document.meta.title)
+            "{}.summary.md",
+            course2md::summarize::sanitize_filename(&document.meta.title)
         ));
-        course2md::portable::export(&target.version_dir(), config::OutputFormat::Html, &file)?;
+        let text = course2md::summarize::render_standalone_md(&document.meta.title, &summary);
+        course2md::checkpoint::atomic_write(&file, text.as_bytes())?;
+        if !progress::is_quiet() {
+            println!("已导出总结 / Summary exported: {}", file.display());
+        }
     }
     if !progress::is_quiet() {
         println!(
             "摘要已作为新版笔记保存 / Summary saved as a new note version: {}",
             target.version_dir().display()
-        );
-    }
-    Ok(())
-}
-
-/// `summarize` 子命令：对已有输出目录补写 LLM 总结（幂等，--force 可覆盖）。
-fn summarize_dir(
-    file: &settings::ConfigFile,
-    dir: &std::path::Path,
-    force: bool,
-    out: Option<&std::path::Path>,
-) -> anyhow::Result<()> {
-    if dir.join("manifest.json").is_file() {
-        return summarize_version(file, dir, force, out);
-    }
-    use course2md::timeline::TimelineEvent;
-    let timeline_path = dir.join("timeline.jsonl");
-    let md_path = dir.join("course.md");
-    let html_path = dir.join("course.html");
-    anyhow::ensure!(
-        timeline_path.is_file(),
-        "缺少笔记时间线 / Missing note timeline: {}. 请指定转换生成的目录 / Use a converted note directory.",
-        timeline_path.display()
-    );
-    let mut events: Vec<course2md::timeline::TranscriptEvent> = vec![];
-    for line in std::fs::read_to_string(&timeline_path)?.lines() {
-        if let Ok(TimelineEvent::Speech(s)) = serde_json::from_str::<TimelineEvent>(line) {
-            events.push(s);
-        }
-    }
-    anyhow::ensure!(
-        !events.is_empty(),
-        "{} 中没有可总结的文字 / No transcript text to summarize",
-        timeline_path.display()
-    );
-
-    if !force {
-        let has_md = md_path.is_file()
-            && course2md::summarize::contains_summary(&std::fs::read_to_string(&md_path)?);
-        let has_html = html_path.is_file()
-            && course2md::summarize::contains_html_summary(&std::fs::read_to_string(&html_path)?);
-        if has_md && has_html {
-            if !progress::is_quiet() {
-                println!(
-                    "已有总结，跳过 / Summary exists; skipped: {}. 使用 --force 替换 / Use --force to replace.",
-                    dir.display()
-                );
-            }
-            return Ok(());
-        }
-    }
-
-    let meta = course2md::fetch::VideoMeta {
-        title: String::new(),
-        uploader: String::new(),
-        duration: 0.0,
-        webpage_url: String::new(),
-        extractor: String::new(),
-        id: String::new(),
-    };
-    let sm = course2md::runtime::block_on(course2md::summarize::summarize(&file.llm, &events, &meta))??;
-
-    if md_path.is_file() {
-        let md = std::fs::read_to_string(&md_path)?;
-        let md = if course2md::summarize::contains_summary(&md) {
-            course2md::summarize::strip_md_summary(&md)
-        } else {
-            md
-        };
-        std::fs::write(&md_path, course2md::summarize::insert_into_md(&md, &sm))?;
-    }
-    if html_path.is_file() {
-        let html = std::fs::read_to_string(&html_path)?;
-        let html = if course2md::summarize::contains_html_summary(&html) {
-            course2md::summarize::strip_html_summary(&html)
-        } else {
-            html
-        };
-        std::fs::write(
-            &html_path,
-            course2md::summarize::insert_into_html(&html, &sm),
-        )?;
-    }
-    // 可选：导出独立总结文件到 -o 指定目录
-    if let Some(out_dir) = out {
-        std::fs::create_dir_all(out_dir)?;
-        // 输出目录形如 .../<标题>/<id>，取父目录名作为标题
-        let title = dir
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "视频 / Video".into());
-        let fname = format!(
-            "{}.summary.md",
-            course2md::summarize::sanitize_filename(&title)
-        );
-        let target = out_dir.join(fname);
-        std::fs::write(
-            &target,
-            course2md::summarize::render_standalone_md(&title, &sm),
-        )?;
-        if !progress::is_quiet() {
-            println!("已导出总结 / Summary exported: {}", target.display());
-        }
-    }
-    if !progress::is_quiet() {
-        println!(
-            "已写入总结 / Summary saved ({} key points / {} outline sections): {}",
-            sm.key_points.len(),
-            sm.outline.len(),
-            dir.display()
         );
     }
     Ok(())
