@@ -99,11 +99,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--no-build", action="store_true")
+    parser.add_argument("--app-only", action="store_true",
+                        help="macOS: assemble and ad-hoc sign the release .app for local use, "
+                             "without the source lock, notarization or archives")
     args = parser.parse_args()
     system = platform.system()
+    if args.app_only and system != "Darwin":
+        raise SystemExit("--app-only builds a macOS .app")
+    distribution = not args.debug and not args.app_only
     # Fail before expensive builds if the platform's packaging tools are absent.
     try:
-        if system == "Darwin":
+        if system == "Darwin" and not args.app_only:
             import dmgbuild  # noqa: F401
         elif system == "Windows":
             from verify_windows_icon import verify_windows_icon
@@ -111,14 +117,14 @@ def main():
         raise SystemExit("Install packaging tools: python -m pip install -r "
                          "desktop/scripts/requirements-packaging.txt") from error
     profile = "debug" if args.debug else "release"
-    flags = [] if args.debug else ["--release", "--locked"]
+    flags = [] if args.debug else ["--release", *(["--locked"] if distribution else [])]
     revisions = {
         name: subprocess.check_output(
             ["git", "-C", str(ROOT / ".deps" / name), "rev-parse", "HEAD"], text=True
         ).strip()
         for name in ("zed", "component")
     }
-    if not args.debug:
+    if distribution:
         if not (ROOT / "sources.lock.json").is_file():
             raise SystemExit("Freeze the tested source revisions with scripts/sources.py --freeze before release")
         expected = json.loads((ROOT / "sources.lock.json").read_text())
@@ -170,7 +176,7 @@ def main():
     shutil.copy2(ROOT / "target" / profile / f"course2md-desktop{suffix}", binaries / f"course2md-desktop{suffix}")
     # The runtime searches beside the executable for yt-dlp; COURSE2MD_NO_YTDLP=1 skips bundling.
     if not os.environ.get("COURSE2MD_NO_YTDLP"):
-        bundled = bundle_ytdlp(binaries / f"yt-dlp{suffix}", required=not args.debug)
+        bundled = bundle_ytdlp(binaries / f"yt-dlp{suffix}", required=distribution)
         if bundled:
             print(f"bundled {bundled.name}")
     if system == "Windows":
@@ -189,7 +195,7 @@ def main():
         shutil.copy2(ROOT / "assets/outline/LICENSE", resources / "LICENSE-lucide-icons")
         shutil.copytree(ROOT / "assets/themes/licenses", resources / "design-licenses", dirs_exist_ok=True)
         shutil.copy2(base / "sources.lock.json", resources / "sources.lock.json")
-        identity = os.environ.get("APPLE_SIGNING_IDENTITY", "-")
+        identity = "-" if args.app_only else os.environ.get("APPLE_SIGNING_IDENTITY", "-")
         signing = ["--force", "--sign", identity]
         if identity != "-":
             signing.extend(["--options", "runtime", "--timestamp"])
@@ -201,6 +207,9 @@ def main():
             run("codesign", *signing, str(ytdlp))
         run("codesign", *signing, str(bundle))
         run("codesign", "--verify", "--deep", "--strict", str(bundle))
+        if args.app_only:
+            print(bundle)
+            return
         notarization = [os.environ.get(key) for key in ("APPLE_API_KEY_PATH", "APPLE_API_KEY_ID", "APPLE_API_ISSUER")]
         if identity != "-" and not all(notarization):
             raise SystemExit(

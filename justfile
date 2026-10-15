@@ -10,53 +10,12 @@ install:
         echo "Run python3 desktop/scripts/sources.py first." >&2
         exit 1
     fi
-    cargo build --release
-    cargo build --release --manifest-path desktop/Cargo.toml
-
-    app=desktop/target/install/course2md.app
-    bin="$app/Contents/MacOS"
-    res="$app/Contents/Resources"
-    rm -rf "$app"
-    mkdir -p "$bin" "$res"
-    python3 - "$app" <<'PY'
-    from pathlib import Path
-    import plistlib, tomllib, sys
-    sys.path.insert(0, "desktop/scripts")
-    from package import macos_versions
-    app = Path(sys.argv[1])
-    version = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
-    plistlib.dump({
-        "CFBundleName": "course2md",
-        "CFBundleDisplayName": "course2md",
-        "CFBundleIdentifier": "dev.course2md.desktop",
-        "CFBundleExecutable": "course2md-desktop",
-        "CFBundlePackageType": "APPL",
-        **macos_versions(version),
-        "NSHighResolutionCapable": True,
-        "NSPrincipalClass": "NSApplication",
-        "LSMinimumSystemVersion": "15.0",
-        "CFBundleIconFile": "course2md.icns",
-    }, (app / "Contents/Info.plist").open("wb"))
-    PY
-    cp desktop/assets/icon.icns "$res/course2md.icns"
-    cp target/release/course2md "$bin/course2md"
-    cp desktop/target/release/course2md-desktop "$bin/course2md-desktop"
-    chmod 755 "$bin/course2md" "$bin/course2md-desktop"
-    if [[ -f target/release/mlx.metallib ]]; then
-        cp target/release/mlx.metallib "$res/mlx.metallib"
-        ln -s ../Resources/mlx.metallib "$bin/mlx.metallib"
-    elif [[ "$(uname -m)" == arm64 && -z "${COURSE2MD_NO_APPLE:-}" ]]; then
-        echo "missing mlx.metallib from the CLI release build" >&2
-        exit 1
-    fi
-    codesign --force --sign - "$bin/course2md"
-    codesign --force --sign - "$bin/course2md-desktop"
-    codesign --force --sign - "$app"
-    codesign --verify --deep --strict "$app"
+    app="$(python3 desktop/scripts/package.py --app-only | tail -1)"
 
     dest=/Applications/course2md.app
     if pgrep -f "$dest/Contents/MacOS/course2md-desktop" >/dev/null; then
         osascript -e 'tell application "course2md" to quit' >/dev/null 2>&1 || true
+        # Give the running app a moment to save state before it is replaced.
         for _ in {1..30}; do
             pgrep -f "$dest/Contents/MacOS/course2md-desktop" >/dev/null || break
             sleep 0.3
