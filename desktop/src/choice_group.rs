@@ -312,13 +312,13 @@ impl RenderOnce for SingleChoiceGroup {
                 f32::from(width.ceil())
             })
             .fold(0_f32, f32::max);
-        // All options use the same content column, measured from the longest
-        // label. Different text lengths and selection never move the icon/text
-        // origins within an equal-width cell.
+        // Measure the longest label for content-sized tracks. Full-width cells
+        // use a fixed leading inset, so separate groups also share text axes
+        // regardless of label length or selection.
         let icon_size = rems(18. / 14.);
         let icon_and_gap = f32::from(rems(26. / 14.).to_pixels(window.rem_size()));
         let content_width = label_width + icon_and_gap;
-        let padding = f32::from(rems(if segmented { 4. / 14. } else { 12. / 14. })
+        let padding = f32::from(rems(if segmented { 8. / 14. } else { 12. / 14. })
             .to_pixels(window.rem_size())) * 2.;
         let slot_width = (content_width + padding + 4.).ceil();
         let mut lane = gpui_base::h_flex()
@@ -391,12 +391,11 @@ impl RenderOnce for SingleChoiceGroup {
             );
             let debug_kind = if self.full_width { "full" } else { "content" };
             let content = gpui_base::h_flex()
-                .w(px(content_width))
+                .w_full()
                 .max_w_full()
                 .min_w_0()
                 .gap(rems(8. / 14.))
                 .items_center()
-                .when(vertical, |row| row.w_full())
                 .child(
                     div().w(icon_size).h(icon_size).flex_shrink_0()
                         .flex().items_center().justify_center()
@@ -425,7 +424,7 @@ impl RenderOnce for SingleChoiceGroup {
                 let click_focus = focus.clone();
                 let tab = item_style(gpui_base::Tab::new(value.clone()), vertical, item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
-                    .when(segmented, |item| item.px(rems(4. / 14.)).rounded_none()
+                    .when(segmented, |item| item.px(rems(8. / 14.)).rounded_none()
                         .when(index == 0, |item| item.rounded_l_full())
                         .when(index + 1 == count, |item| item.rounded_r_full()))
                     .selected(checked)
@@ -447,7 +446,7 @@ impl RenderOnce for SingleChoiceGroup {
             } else {
                 let radio = item_style(gpui_base::Radio::new(value.clone()), vertical, item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
-                    .when(segmented, |item| item.px(rems(4. / 14.)).rounded_none()
+                    .when(segmented, |item| item.px(rems(8. / 14.)).rounded_none()
                         .when(index == 0, |item| item.rounded_l_full())
                         .when(index + 1 == count, |item| item.rounded_r_full()))
                     .checked(checked)
@@ -651,6 +650,7 @@ mod tests {
         for index in 0..3 {
             assert!(((before[index].left() - options[index].left())
                 - (before[0].left() - options[0].left())).abs() <= px(0.5), "labels: {before:?}; options: {options:?}; icons: {icon_before:?}");
+            assert!((icon_before[index].left() - options[index].left() - px(10.)).abs() <= px(0.5));
             assert!((before[index].top() - before[0].top()).abs() < px(0.5));
             assert_eq!(icon_before[index].size, gpui::size(px(18.), px(18.)));
             assert!((before[index].left() - icon_before[index].right() - px(8.)).abs() < px(0.5));
