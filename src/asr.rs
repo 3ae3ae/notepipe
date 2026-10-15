@@ -226,7 +226,7 @@ pub async fn run(cfg: &PipelineConfig, wav: &std::path::Path) -> Result<Vec<Tran
     // CPU/GPU paths share the same concrete GGUF model identity.
     let id = AsrIdentity::new(
         "llama",
-        crate::models::llama_gguf_identity(),
+        &crate::models::llama_gguf_identity(),
         cfg.max_speech,
     );
     let model = llama.model;
@@ -313,10 +313,10 @@ fn run_blocking(
         Some("\"status\":\"ok\""),
         Some(&crate::dispatch::check_control),
     ) {
-        return Err(e.context(format!(
-            "无法启动识别服务 / Could not start llama-server. Details:\n{}",
-            stderr_tail.tail()
-        )));
+        if e.downcast_ref::<crate::dispatch::Failure>().is_some() {
+            return Err(e); // 暂停/取消不是启动故障
+        }
+        return Err(stderr_tail.attach(e, "无法启动识别服务 / Could not start the speech recognition service"));
     }
     tracing::info!(
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),

@@ -198,10 +198,9 @@ pub fn wait_ready(
     let t0 = Instant::now();
     let url = format!("{base}/health");
     loop {
-        if let Some(check) = control
-            && let Err(e) = check()
-        {
-            anyhow::bail!("{} 启动被中止 / startup aborted: {e:#}", child.name());
+        if let Some(check) = control {
+            // 暂停/取消原样上抛：调用方要据此区分「用户中止」与「启动失败」
+            check()?;
         }
         if let Some(st) = child.try_wait() {
             anyhow::bail!(
@@ -374,7 +373,7 @@ mod tests {
             }),
         );
         let err = result.expect_err("control 报错必须中止 wait_ready");
-        assert!(err.to_string().contains("启动被中止"), "{err:#}");
+        assert_eq!(err.to_string(), "测试取消 / test cancellation", "控制错误须原样返回");
         assert!(t0.elapsed() < Duration::from_secs(10), "取消不应等到超时");
     }
 
