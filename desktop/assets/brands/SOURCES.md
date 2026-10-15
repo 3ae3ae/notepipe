@@ -2,7 +2,7 @@
 
 YouTube and Bilibili marks were obtained from [Simple Icons](https://github.com/simple-icons/simple-icons)
 on 2026-09-08. The SVG paths are unchanged; the application applies the brands'
-red (`#ff0033`) and blue (`#00a1d6`) respectively. They identify supported source
+red (`#ff0000`) and blue (`#00a1d6`) respectively. They identify supported source
 platforms and are not interface action icons.
 
 | Asset | Source | SHA-256 |

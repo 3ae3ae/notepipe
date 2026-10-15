@@ -2,7 +2,7 @@
 
 本文是**转换引擎**的架构说明（管线、模块、非目标）。桌面端 UI 的设计权威是 [.agents/skills/course2md-design](../.agents/skills/course2md-design/SKILL.md)，UI 设计问题一律以该 skill 为准，本文不涉及。
 
-course2md 是单一用途的工具：把 YouTube、Bilibili 或本地网课视频转换为按时间组织的截图与文字稿。
+course2md 是单一用途的工具：把 YouTube、Bilibili 或本地网课视频转换为按时间组织的截图与文字稿。有平台字幕时默认直接使用字幕（`--transcript-source subtitle|asr` 可强制指定），下图的语音识别分支只在没有字幕时运行。
 
 ## 管线
 
@@ -50,46 +50,27 @@ URL ── yt-dlp ─┐
 
 时间线合并：每段语音按时间中点归属截图；跨截图边界时只在边界附近的句读或空格处拆分（保持图文对应），找不到自然断点则整段保留，避免按字符比例从词中间截断。细粒度原始事件先完整写入 `timeline.jsonl`；随后同一截图下短停顿（<3.5s）内的连续片段组织为自然段（上限 420 字），独立出现的无语义填充词被过滤。`course.md`/`course.html`/`structured.json` 使用这些段落；LLM 校对的单位是段落而非 VAD 碎片（视觉润色时另附该节截图），校对后以 `raw` 保留校对前文本。
 
-语音识别支持两种路径：
+语音识别后端（`--provider`）：
 1. **CoreML 原生路径**（macOS Apple Silicon 预编译包默认）：通过静态链接的 `speech-swift` 运行 Silero VAD CoreML（ANE）与 Qwen3-ASR（默认 1.7B MLX 8bit，走 GPU；可选 0.6B CoreML 走 ANE 省电，或 Whisper large-v3-turbo），零外部运行时依赖。若 CoreML 初始化或运行失败，会自动回落至 `llama-server` 并发出警告。
-2. **llama.cpp 路径**（Linux / Windows / 通用兜底）：由 ffmpeg `silencedetect` 分段，逐段提交给本地 `llama-server` 进程。模型为约 2.4GB 的 Qwen3-ASR GGUF，缺失时自动下载。
+2. **llama.cpp 路径**（`gpu` / `cpu`，Linux / Windows / 通用兜底）：由 ffmpeg `silencedetect` 分段，逐段提交给本地 `llama-server` 进程。模型为约 2.4GB 的 Qwen3-ASR GGUF，缺失时自动下载。
+3. **Intel NPU**（`npu`）：通过 OpenVINO GenAI 运行 Whisper 导出模型。
+4. **云端**（`api`）：音频分段上传到 OpenAI 兼容的语音识别接口。
 
-若开启 LLM 润色功能（默认关闭），系统会将识别事件按 20 段一批发送至 OpenAI 兼容端点进行口语修正与同音字纠错，单批失败时自动保留原文且不阻断转换流程。
+若开启 LLM 润色（默认关闭），段落按 20 条一批发送到 OpenAI 兼容端点、本地 Ollama 或 Codex 订阅，做口语修正与同音字纠错；单批失败时保留原文，不阻断转换。可选的 AI 总结（`--summarize`、`course2md summarize`）复用同一服务。
 
-配置优先级遵循：$$\text{命令行参数} > \text{config.toml} > \text{内置默认值}$$。配置文件位于 `~/.config/course2md/config.toml`（Windows 为 `%APPDATA%\course2md\config.toml`）。
+配置优先级：命令行参数 > `config.toml` > 内置默认值。配置文件位于 `~/.config/course2md/config.toml`（Windows 为 `%APPDATA%\course2md\config.toml`）。
 
-时间线合并时，每段语音按时间中点归入当时最近的一张截图。默认生成 Markdown 和 HTML；JSON 通过 `--formats` 启用。对于本地文件输入，直接原地处理且不改动原文件；对于在线下载的 `media.mp4`，转换完成后默认删除。完成摘要会清晰打印各产物路径、统计数据、总耗时以及本进程与子进程（llama-server/ffmpeg）的峰值常驻内存（RSS）。
+默认生成 Markdown 和 HTML；JSON 通过 `--formats` 启用。本地文件原地读取，不改动原文件；在线下载的 `media.mp4` 在转换完成后默认删除。每次生成写入课程目录下的 `versions/<version_id>/`，`current.json` 指向当前版本。
 
 ## 模块
 
-```text
-build.rs       macOS arm64 编译 Swift 模块、静态链接与 mlx.metallib 资源分发
-src/
-  main.rs      CLI 入口、子命令分发与参数/配置归一化
-  cli.rs       命令行参数与子命令定义 (clap)
-  config.rs    运行期配置结构体、ROI 与缓存路径工具
-  settings.rs  配置文件 (config.toml) 加载、保存与 defaults 优先级合并
-  apple.rs     macOS Apple Silicon 原生后端：Silero VAD + Qwen3-ASR (MLX / CoreML)
-  asr.rs       ASR 调度、silencedetect 分段、llama-server 进程管理与转写
-  fetch.rs     yt-dlp 元数据抓取与视频下载
-  ytdlp.rs     yt-dlp 二进制定位：env 覆盖 → 随包自带 → PATH → 常见安装目录
-  media.rs     ffprobe 视频/音频探测与 ffmpeg 音频抽取
-  scene.rs     SSIM 采样、ROI 裁剪、冷却防抖与全分辨率抽帧
-  llm.rs       LLM 字幕润色：OpenAI 兼容客户端、批处理与容错
-  models.rs    Qwen3-ASR GGUF 下载与本地模型状态
-  timeline.rs  截图/语音时间线合并算法与 timeline.jsonl 输出
-  render.rs    Markdown、HTML、JSON 多格式渲染与写入
-  pipeline.rs  全流程编排、清理与完成摘要输出
-  error.rs     外部命令检查与错误格式化
-native/
-  apple-asr/   Swift Package Manager 静态库 (CAppleASR)，封装 speech-swift
-```
+模块清单以 `src/lib.rs` 为准，每个模块文件开头的文档注释说明其职责。主要入口：`main.rs`（CLI 分发）、`cli.rs`（参数定义）、`pipeline.rs`（全流程编排）、`execution.rs`（桌面任务协议 `run-task`）、`artifact.rs`（版本化输出）。`build.rs` 在 macOS arm64 上编译 `native/apple-asr`（封装 speech-swift 的 Swift 静态库）并分发 `mlx.metallib`。
 
-Rust 负责数据契约和异步编排；外部工具（`yt-dlp`、`ffmpeg`、`ffprobe`、`llama-server`）或原生 Swift/CoreML 库在本地完成繁重计算，模型和识别数据完全保留在本地。
+Rust 负责数据契约和异步编排；外部工具（`yt-dlp`、`ffmpeg`、`ffprobe`、`llama-server`）或原生 Swift/CoreML 库在本地完成繁重计算。除非选择云端识别或 AI 服务，模型与识别数据都保留在本地。
 
 ## 非目标
 
-- 不做说话人分离、翻译、摘要或内容改写。
-- 转换内核不做 GUI、服务端、队列或批量任务系统；桌面应用位于 `desktop/`，复用本 CLI 作为转换引擎。
+- 不做说话人分离或翻译；校对与摘要是可选的 LLM 功能，默认关闭。
+- 转换内核不做 GUI 或服务端；任务队列与批量转换由 `desktop/` 的桌面应用负责，它通过 `course2md run-task` 把本 CLI 当作转换引擎。
 - 不接管 CUDA、Vulkan 等繁杂运行时配置；GPU 能力由用户安装的 llama.cpp 决定，`--provider cpu` 可强制 CPU。
 - 不内建视频网站解析、音视频编解码；这些职责分别交给 yt-dlp 与 ffmpeg。

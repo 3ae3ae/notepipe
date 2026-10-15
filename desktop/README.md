@@ -64,8 +64,10 @@ python3 desktop/scripts/package.py
 
 ## 验证
 
+与 CI 相同的检查见 `.github/workflows/ci.yml`（引擎）和 `desktop.yml`（桌面端），至少运行：
+
 ```sh
-cargo test --features integration
+cargo test --lib
 cargo test --manifest-path desktop/Cargo.toml
 ```
 
@@ -73,12 +75,12 @@ cargo test --manifest-path desktop/Cargo.toml
 
 ## 界面与操作
 
-- 标题栏提供工作台、我的笔记、任务与设置。macOS 保留原生窗口控制和拖动区域。
-- 工作台以链接输入栏开始，也支持选择或拖入本地视频。输入栏右侧可展开本次生成选项，最近笔记以缩略图列表呈现；缺少字幕或服务时就地提示。
-- 任务显示当前步骤、真实进度或已用时间，并提供暂停、继续与取消；完成后可直接阅读笔记。后台完成提示不会打断当前页面。
-- 笔记库以封面与标题网格呈现，保留列表、文件夹、搜索和显示菜单。阅读器使用居中正文列和完整截图；目录与查找按需打开，保留版本及导出。
-- 设置概览分为生成笔记默认值、保存、账号与外观。服务管理、存储管理、配色与文字大小、运行检查通过相应入口进入。新笔记默认选项与单篇草稿的修改分别保存；服务测试由用户主动发起，测试结果与保存状态分别显示。
-- 页面、选项展开、加载、进度与主题切换使用共享动效。外观页中的减少动态效果可立即显示最终状态。
+- 标题栏左侧是品牌，右侧是笔记库、任务（有任务时才出现）和设置。macOS 保留原生窗口控制和拖动区域。
+- 首页从链接输入开始，也支持选择或拖入本地视频。输入、选择或拖入只读取视频信息并显示预览；点击「开始转换」才创建任务。
+- 任务显示当前步骤、进度或已用时间，可以暂停、继续或取消；完成后可直接阅读。后台完成提示不会打断当前页面。
+- 设置分为生成笔记、服务与账号、存储、应用、外观五类。
+
+界面规则以[项目设计 skill](../.agents/skills/course2md-design/SKILL.md) 为准，本节只做概述。
 
 ## 长列表
 
@@ -86,15 +88,12 @@ cargo test --manifest-path desktop/Cargo.toml
 
 ## 主题
 
-在设置概览选择跟随系统、浅色或深色，通过「配色与文字大小」选择配色。浅色和深色偏好分别保存，跟随系统时使用对应配色；重启后保留选择。
+在「设置 → 外观」选择跟随系统、浅色或深色，以及配色与文字大小。浅色和深色偏好分别保存，跟随系统时使用对应配色；重启后保留选择。
 
 内置 Paper、Ink、Nord Snow、Nord、Tokyo Day、Tokyo Night，以及 Catppuccin Latte、Frappé、Macchiato、Mocha，共 10 套。主题覆盖标题栏、表单、菜单、对话框、阅读高亮和状态提示。颜色角色与来源见 [主题资源](assets/themes/SOURCES.md)。
 
 ## 界面图标
 
-内嵌 Google Material Icons Rounded SVG，运行时无需网络或安装图标字体。
-导航图标统一为 20px，任务、刷新和加载使用各自对应的图标；共享组件中的
-复选框、展开箭头、密码可见性和窗口控制也使用同套资源。
-来源、版本和 Apache-2.0 许可证见 [图标资源](assets/material/README.md)。YouTube 与 Bilibili 使用独立的 [原品牌标识](assets/brands/SOURCES.md)；主题与品牌资源的许可证随应用打包。
+所有图标都以 SVG 形式内嵌，运行时不需要网络，也不需要图标字体。共享导航、操作与设置使用 Lucide 线框图标（ISC，见[来源](assets/outline/SOURCES.md)），其余语义保留 Google Material Icons Rounded（Apache-2.0，见[来源](assets/material/README.md)）。YouTube 与 Bilibili 使用独立的[品牌标识](assets/brands/SOURCES.md)。图标、主题与品牌资源的许可证都随应用打包。
 
 关于页及应用菜单可查看版本与构建提交。
