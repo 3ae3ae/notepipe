@@ -86,3 +86,7 @@ The reader is a content surface. Use a bounded prose column, ordinary paragraph 
 Record the pane width/text scale, chosen rulers and actual deviations. Compare the title, first group, representative rows, main action, expanded information panel and focused edge control. Include a long mixed-script value. A useful capture shows the complete grouping and its geometry, not just an isolated component.
 
 Repeat at narrow/default/wide windows and offered text scales. Record whether rows wrap, stack or change pane arrangement and whether actions remain associated with their content. “No overlap” is not a complete layout review.
+
+## 2026-10-14 supplied archive override
+
+The user’s 13-group, three-width archive controls current home and settings geometry. Reference-matching outline icons are resolved centrally in `desktop/src/icons.rs`, with Lucide assets and their complete licences under `desktop/assets/outline`. Existing brand and unmatched icons retain their shared fallback. Settings opt into 16px body/control labels and 14px support text; navigation retains 14px. This supersedes the older Material-only icon-family and settings typography assumptions above, while preserving semantic palettes.
