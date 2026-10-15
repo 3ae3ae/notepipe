@@ -11,4 +11,10 @@ For a whole-product UI change, use subagents to independently review every affec
 
 The user has excluded specialist accessibility audits from this redesign. Preserve ordinary keyboard behavior and existing system preferences without expanding the task into an accessibility project.
 
-Keep changes reviewable and make atomic Git commits by concern. Do not change release tags or replace published assets as part of an ordinary UI change.
+## Conventions
+
+CLI help and user-visible engine messages are bilingual, 「中文 / English」, with both halves saying the same thing, as in `src/cli.rs`.
+
+Before merging, run the checks in `.github/workflows/ci.yml` (engine) and `desktop.yml` (desktop). Releases follow [docs/PACKAGING.md](docs/PACKAGING.md).
+
+Keep changes reviewable and make atomic Git commits by concern. Record history in commit messages, not in repository documents. Do not change release tags or replace published assets as part of an ordinary change.

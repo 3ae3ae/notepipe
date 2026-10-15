@@ -1,6 +1,6 @@
 # course2md 应用图标
 
-以用户草图中的「播放三角 + Markdown 向下箭头」为核心，保留横向圆角框。
+核心图形是「播放三角 + Markdown 向下箭头」，外加横向圆角框。
 蓝色底面、半透明玻璃框和两个实心符号形成清晰层次；不加入文字、播放器控件或额外装饰。
 
 ## 文件
@@ -9,16 +9,6 @@
 - `export.py`：导出脚本。原生渲染图和预览板写入 `exports/`（不纳入版本库），打包用的图标写入 `desktop/assets/`。
 
 `.icon` 中的图形保持完整画布，由系统处理外形；传统 ICNS 的主体按 824/1024 比例居中，作为静态文件的视觉留白。最终色彩、折射与高光会随系统版本和外观变化。
-
-## 参考
-
-以下图标只参考了视觉语言，交付的图形是按草图重新绘制的矢量：
-
-- [IINA macOS 27](https://macosicons.com/icon/iina-macos-27-icon-NknuInF4jG)：蓝色立体播放符号、简洁轮廓。
-- [MarkDownload](https://macosicons.com/icon/markdownload-GgUeq6ENxA)：Markdown 标志的左右排列和向下箭头。
-- [Downie — Liquid Glass](https://macosicons.com/icon/downie-liquid-glass-kcamQ8uLyg)：有分量的箭头、深色外观中的材料层次。
-- [Apple：App icons](https://developer.apple.com/design/human-interface-guidelines/app-icons)
-- [Apple：Creating your app icon using Icon Composer](https://developer.apple.com/documentation/xcode/creating-your-app-icon-using-icon-composer)
 
 ## 继续编辑与重新导出
 

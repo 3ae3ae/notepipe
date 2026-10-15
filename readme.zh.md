@@ -121,4 +121,4 @@ course2md ./lecture.mp4 -o ./notes             # 指定输出根目录
 
 [全部文档（GitHub Wiki）](https://github.com/mizorewww/course2md/wiki) · [CLI 安装与使用](https://github.com/mizorewww/course2md/wiki/CLI-%E6%8C%87%E5%8D%97) · [升级与卸载](https://github.com/mizorewww/course2md/wiki/%E5%AE%89%E8%A3%85%E6%A1%8C%E9%9D%A2%E5%BA%94%E7%94%A8#升级与卸载) · [故障排查](https://github.com/mizorewww/course2md/wiki/%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5) · [反馈问题](https://github.com/mizorewww/course2md/issues)
 
-面向开发者：[桌面端构建指南](desktop/README.md) · [开发文档](docs/README.md) · [架构](docs/DESIGN.md) · [性能基准](docs/BENCHMARKS.md) · [打包与发布](docs/PACKAGING.md) · [更新记录](CHANGELOG.md) · [MIT 许可证](LICENSE)
+面向开发者：[贡献约定](AGENTS.md) · [桌面端开发](desktop/README.md) · [引擎架构](docs/DESIGN.md) · [性能基准](docs/BENCHMARKS.md) · [发布](docs/PACKAGING.md) · [更新记录](CHANGELOG.md) · [MIT 许可证](LICENSE)

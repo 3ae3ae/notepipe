@@ -1,6 +1,6 @@
 # Outline icon sources
 
-Lucide outline icons for shared course2md navigation, source actions and settings. Existing public icon paths are preserved. Brand marks and unrelated Material icons remain unchanged.
+Lucide outline icons for shared course2md navigation, source actions and settings, served under the same asset paths as the Material icons they replace.
 
 Downloaded icons and the upstream license are pinned to Lucide commit `d672fc43dbf60962d9d829e35bc3b3e5ed89a178`. Locally available matching icons are copied from the bundled GPUI Kit assets (Lucide SVG metadata retained). See [LICENSE](LICENSE) for upstream notices.
 

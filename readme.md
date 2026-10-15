@@ -121,4 +121,4 @@ The configuration file is `~/.config/course2md/config.toml` (`%APPDATA%\course2m
 
 [All documentation (GitHub Wiki)](https://github.com/mizorewww/course2md/wiki) · [CLI installation and usage](https://github.com/mizorewww/course2md/wiki/CLI-Guide) · [Upgrade and uninstall](https://github.com/mizorewww/course2md/wiki/GUI-Installation#upgrade-and-uninstall) · [Troubleshooting](https://github.com/mizorewww/course2md/wiki/Troubleshooting) · [Report a problem](https://github.com/mizorewww/course2md/issues)
 
-For developers: [desktop build guide](desktop/README.md) · [development docs](docs/README.md) · [architecture](docs/DESIGN.md) · [benchmarks](docs/BENCHMARKS.md) · [packaging and releases](docs/PACKAGING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+For developers: [contributing](AGENTS.md) · [desktop development](desktop/README.md) · [engine architecture](docs/DESIGN.md) · [benchmarks](docs/BENCHMARKS.md) · [releases](docs/PACKAGING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
