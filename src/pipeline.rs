@@ -282,43 +282,7 @@ async fn reprocess(
     let mut document: artifact::Document =
         serde_json::from_slice(&std::fs::read(base_dir.join(&base.document))?)?;
     if components.iter().all(|&component| component == Component::Exports) {
-        anyhow::ensure!(
-            !cfg.formats.is_empty(),
-            "请选择需要导出的文件格式 / Select an export format"
-        );
-        let export_root = target
-            .course_dir
-            .join("exports")
-            .join(&base.version_id)
-            .join(&target.task_id);
-        let mut exports = std::collections::BTreeMap::new();
-        let mut outputs = Vec::new();
-        for format in &cfg.formats {
-            let destination = export_root.join(crate::portable::file_name(*format));
-            match export_for_task(base_dir, *format, &destination, &cfg.out_dir) {
-                Ok(path) => {
-                    outputs.push(path);
-                    exports.insert(format.to_string(), Outcome::succeeded());
-                }
-                Err(error) => {
-                    exports.insert(format.to_string(), Outcome::failed(format!("{error:#}")));
-                }
-            }
-        }
-        let partial = exports
-            .values()
-            .any(|outcome| outcome.status == Status::Failed);
-        crate::checkpoint::atomic_write(
-            &cfg.out_dir.join("export-result.json"),
-            &serde_json::to_vec_pretty(
-                &serde_json::json!({"schema":1,"outputs":outputs,"outcomes":exports}),
-            )?,
-        )?;
-        let (segments, chars) = done_stats(&document.sections);
-        progress::emit(
-            serde_json::json!({"type":"done","operation":"exports","task_id":request.task_id,"course_id":base.course_id,"version_id":base.version_id,"out_dir":base_dir,"manifest":base_dir.join("manifest.json"),"title":document.meta.title,"slides":base.frames.len(),"segments":segments,"chars":chars,"outputs":outputs,"partial":partial,"outcomes":{"exports":exports},"elapsed_secs":started.elapsed().as_secs_f64()}),
-        );
-        return Ok(());
+        return export_only(request, cfg, target, base_dir, &base, &document, started);
     }
     if let Some(existing) = artifact::published(target)? {
         emit_done(target, &existing, &document.sections, started);
@@ -523,6 +487,55 @@ async fn reprocess(
     )
     .await?;
     emit_done(target, &manifest, &document.sections, started);
+    Ok(())
+}
+
+/// Export-only reprocessing writes beside the base version and never publishes a new one.
+fn export_only(
+    request: &execution::Request,
+    cfg: &PipelineConfig,
+    target: &Target,
+    base_dir: &Path,
+    base: &artifact::Manifest,
+    document: &artifact::Document,
+    started: Instant,
+) -> Result<()> {
+    anyhow::ensure!(
+        !cfg.formats.is_empty(),
+        "请选择需要导出的文件格式 / Select an export format"
+    );
+    let export_root = target
+        .course_dir
+        .join("exports")
+        .join(&base.version_id)
+        .join(&target.task_id);
+    let mut exports = std::collections::BTreeMap::new();
+    let mut outputs = Vec::new();
+    for format in &cfg.formats {
+        let destination = export_root.join(crate::portable::file_name(*format));
+        match export_for_task(base_dir, *format, &destination, &cfg.out_dir) {
+            Ok(path) => {
+                outputs.push(path);
+                exports.insert(format.to_string(), Outcome::succeeded());
+            }
+            Err(error) => {
+                exports.insert(format.to_string(), Outcome::failed(format!("{error:#}")));
+            }
+        }
+    }
+    let partial = exports
+        .values()
+        .any(|outcome| outcome.status == Status::Failed);
+    crate::checkpoint::atomic_write(
+        &cfg.out_dir.join("export-result.json"),
+        &serde_json::to_vec_pretty(
+            &serde_json::json!({"schema":1,"outputs":outputs,"outcomes":exports}),
+        )?,
+    )?;
+    let (segments, chars) = done_stats(&document.sections);
+    progress::emit(
+        serde_json::json!({"type":"done","operation":"exports","task_id":request.task_id,"course_id":base.course_id,"version_id":base.version_id,"out_dir":base_dir,"manifest":base_dir.join("manifest.json"),"title":document.meta.title,"slides":base.frames.len(),"segments":segments,"chars":chars,"outputs":outputs,"partial":partial,"outcomes":{"exports":exports},"elapsed_secs":started.elapsed().as_secs_f64()}),
+    );
     Ok(())
 }
 
