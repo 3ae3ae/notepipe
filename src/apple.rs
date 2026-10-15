@@ -4,7 +4,7 @@
 
 #![cfg(apple_native)]
 
-use crate::models::normalize_apple_model as normalize;
+use crate::config::{AsrProvider, DEFAULT_ASR_MODEL, canonical_model};
 use crate::timeline::TranscriptEvent;
 use anyhow::{Context, Result};
 use std::ffi::{CStr, CString};
@@ -52,12 +52,18 @@ extern "C" fn c2m_model_progress(fraction: f64, message: *const std::ffi::c_char
         return;
     }
     let message = unsafe { CStr::from_ptr(message) }.to_string_lossy();
+    let fraction = fraction.clamp(0.0, 1.0);
     if crate::progress::is_json() {
         crate::progress::emit(serde_json::json!({"type":"progress", "stage":"model/apple",
-            "current": (fraction.clamp(0.0, 1.0) * 10000.0) as u64, "total":10000,
+            "current": (fraction * 10000.0) as u64, "total":10000,
             "message":message}));
     } else if !crate::progress::is_quiet() {
-        eprintln!("模型 / Model {:.0}% · {message}", fraction * 100.0);
+        // 终端只在整百分比变化时打印一行，避免下载回调刷屏
+        static LAST: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+        let percent = (fraction * 100.0) as i64;
+        if LAST.swap(percent, std::sync::atomic::Ordering::Relaxed) != percent {
+            eprintln!("模型 / Model {percent}% · {message}");
+        }
     }
 }
 
@@ -115,11 +121,9 @@ pub struct CoremlAsr {
 
 /// MLX 搜索 metallib 的顺序（mlx-swift load_default_library）：
 /// 可执行文件同目录的 mlx.metallib → exe/Resources/mlx.metallib → ……
-/// → CWD 下的 default.metallib（METAL_PATH 编译期常量，相对当前工作目录）。
-/// Tauri sidecar 场景：codesign 把 Contents/MacOS/ 下所有文件都当代码签名，
-/// 数据文件 metallib 只能放 Contents/Resources/（资源密封区）——
-/// 由 GUI 后端在 spawn sidecar 时把 CWD 设为该目录，命中最后一条兜底路径。
-/// doctor 与 ensure_metallib 共用同一搜索清单，结论不再互相矛盾。
+/// → CWD 下的 default.metallib（相对当前工作目录）。
+/// `.app` 包里 codesign 把 Contents/MacOS/ 当代码区，metallib 只能放 Contents/Resources/。
+/// doctor 与 ensure_metallib 共用这份清单。
 pub fn find_metallib() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent().unwrap_or(std::path::Path::new("."));
@@ -143,35 +147,42 @@ fn ensure_metallib() -> Result<()> {
     }
     let exe = std::env::current_exe()?;
     let dir = exe.parent().unwrap_or(std::path::Path::new("."));
-    anyhow::bail!(
-        "缺少 MLX Metal 库（{0}），CoreML 推理不可用。\n\
-         从源码构建：把 native/apple-asr/.build/out/Products/Release/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib \
-         复制为二进制同目录的 mlx.metallib；预编译安装：重跑 install.sh。 / Missing the MLX Metal library ({0}); CoreML inference is unavailable. \
-         From source: copy native/apple-asr/.build/out/Products/Release/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib \
-         to mlx.metallib next to the binary; for prebuilt installs, rerun install.sh.",
+    tracing::debug!(
+        "源码构建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 复制为 {}",
         dir.join("mlx.metallib").display()
+    );
+    anyhow::bail!(
+        "缺少 Apple 识别所需的组件，请重新安装 course2md / Apple speech component missing; reinstall course2md"
     )
 }
 
-/// 解析 coreml 后端用的模型：显式参数（调用方已合并 CLI 与 config.toml
-/// defaults.asr_model）> （交互式终端则询问并写 config.toml）> qwen3-1.7b。
-pub fn resolve_model(explicit: Option<&str>) -> Result<String> {
-    if let Some(m) = explicit {
-        return normalize(m);
-    }
-    let chosen = prompt_model_choice()?;
+fn interactive() -> bool {
     use std::io::IsTerminal as _;
-    if !crate::progress::is_json()
+    !crate::progress::is_json()
         && !crate::progress::is_quiet()
         && std::io::stdin().is_terminal()
         && std::io::stderr().is_terminal()
-    {
-        persist_model_choice(&chosen);
+}
+
+/// 解析 coreml 后端用的模型：显式值（CLI 或 config.toml defaults.asr_model）规范化后返回；
+/// 未设置时交互终端询问一次并写入 config.toml，非交互环境用默认模型。
+/// CLI 在准备模型缓存之前调用，确保下载的正是转写时加载的模型。
+pub fn resolve_model(explicit: Option<&str>) -> Result<String> {
+    if let Some(model) = explicit.filter(|m| !m.trim().is_empty()) {
+        return canonical_model(AsrProvider::Coreml, model);
     }
+    if !interactive() {
+        tracing::info!(
+            "非交互环境，使用默认模型 {DEFAULT_ASR_MODEL}（可用 --asr-model 切换） / Non-interactive; using {DEFAULT_ASR_MODEL} (change with --asr-model)"
+        );
+        return Ok(DEFAULT_ASR_MODEL.into());
+    }
+    let chosen = prompt_model_choice()?;
+    persist_model_choice(&chosen);
     Ok(chosen)
 }
 
-/// 把交互选择的模型写入 config.toml defaults.asr_model（不再写 marker 双轨）。
+/// 把交互选择的模型写入 config.toml defaults.asr_model。
 /// 失败只告警不阻断：本次已拿到选择，下次仍会再询问。
 fn persist_model_choice(model: &str) {
     if let Err(e) = (|| -> Result<()> {
@@ -186,33 +197,28 @@ fn persist_model_choice(model: &str) {
     }
 }
 
-/// 首次使用：让用户选择下载哪个模型（非交互环境默认 qwen3-1.7b）。
-/// dialoguer 提供标准行编辑与方向键选择（裸 read_line 不处理转义序列，issue #3）。
+/// 首次使用：选择下载哪个 Apple 模型。
 fn prompt_model_choice() -> Result<String> {
-    use std::io::IsTerminal as _;
-    if crate::progress::is_json()
-        || crate::progress::is_quiet()
-        || !std::io::stdin().is_terminal()
-        || !std::io::stderr().is_terminal()
-    {
-        tracing::info!(
-            "非交互环境，默认使用 Qwen3-ASR 1.7B 模型（--asr-model qwen3-0.6b/whisper 可切换） / Non-interactive environment; defaulting to the Qwen3-ASR 1.7B model (switch with --asr-model qwen3-0.6b/whisper)"
-        );
-        return Ok("qwen3-1.7b".into());
-    }
+    let models = crate::config::local_models(AsrProvider::Coreml);
+    let items: Vec<String> = models
+        .iter()
+        .map(|m| {
+            let note = match m.id {
+                "qwen3-1.7b" => "（推荐，下载约 2.3GB / Recommended, ~2.3GB）",
+                "qwen3-0.6b" => "（低功耗，约 1GB / Low power, ~1GB）",
+                "whisper" => "（多语种 / Multilingual）",
+                _ => "",
+            };
+            format!("{}{note}", m.label)
+        })
+        .collect();
     let choice = dialoguer::Select::new()
-        .with_prompt("选择识别模型 / Select ASR Model")
-        .items([
-            "qwen3-1.7b — Qwen3-ASR 1.7B MLX（推荐，下载约 2.3GB / Recommended, ~2.3GB download）",
-            "qwen3-0.6b — Qwen3-ASR 0.6B CoreML（低功耗，约 1GB / Low power, ~1GB download）",
-            "whisper — Whisper Large-v3 Turbo（多语种 / Multilingual）",
-        ])
+        .with_prompt("选择识别模型 / Choose a speech model")
+        .items(&items)
         .default(0)
         .interact_opt()?;
     match choice {
-        Some(1) => Ok("qwen3-0.6b".into()),
-        Some(2) => Ok("whisper".into()),
-        Some(_) => Ok("qwen3-1.7b".into()),
+        Some(index) => Ok(models[index].id.to_owned()),
         None => anyhow::bail!(
             "已取消模型选择，未开始下载 / Model selection cancelled; download not started"
         ),
@@ -222,10 +228,10 @@ fn prompt_model_choice() -> Result<String> {
 impl CoremlAsr {
     /// 只加载已准备的缓存；缺失文件由模型准备阶段下载。
     pub fn load(model: &str) -> Result<Self> {
-        let name = CString::new(model)?.into_raw();
-        let mut err = vec![0u8; 1024];
-        let handle = unsafe { ffi::c2m_asr_create(name, err.as_mut_ptr() as *mut _, err.len()) };
-        unsafe { std::mem::drop(CString::from_raw(name)) };
+        let name = CString::new(model)?;
+        let mut err = vec![0u8; 4096];
+        let handle =
+            unsafe { ffi::c2m_asr_create(name.as_ptr(), err.as_mut_ptr() as *mut _, err.len()) };
         if handle.is_null() {
             let msg = CStr::from_bytes_until_nul(&err)
                 .map(|s| s.to_string_lossy().into_owned())
@@ -310,7 +316,9 @@ pub fn prepare_cache(model: &str) -> Result<()> {
             "{}",
             CStr::from_bytes_until_nul(&error)
                 .map(|error| error.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "Apple 模型缓存准备失败 / Apple model cache preparation failed".into())
+                .unwrap_or_else(|_| {
+                    "Apple 模型缓存准备失败 / Apple model cache preparation failed".into()
+                })
         );
     }
     Ok(())
@@ -333,9 +341,7 @@ pub fn run_coreml(
     cp: &mut crate::checkpoint::Checkpoint,
 ) -> Result<Vec<TranscriptEvent>> {
     let t0 = Instant::now();
-    crate::progress::stage("model/apple", "start");
     let raw = vad(wav, 0.25, 0.35)?;
-    crate::progress::stage("model/apple", "done");
     // 时长只探测一次（与 ffmpeg_vad 同样约定：normalize_segments 不再自行 ffprobe）
     let dur = crate::media::probe_duration_blocking(wav).unwrap_or(0.0);
     let segs = crate::asr::normalize_segments(raw, max_speech, wav, dur)?;
@@ -350,7 +356,8 @@ pub fn run_coreml(
     ensure_metallib()?;
     tracing::info!(model, "loading cached Apple native ASR");
     crate::progress::stage("model/apple", "start");
-    let asr = CoremlAsr::load(model).context("CoreML 模型加载失败 / CoreML model loading failed")?;
+    let asr =
+        CoremlAsr::load(model).context("CoreML 模型加载失败 / CoreML model loading failed")?;
     crate::progress::stage("model/apple", "done");
     tracing::info!(
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),

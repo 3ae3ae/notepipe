@@ -25,6 +25,9 @@ pub struct CachePart {
     pub path: PathBuf,
     pub bytes: u64,
     pub missing: Vec<String>,
+    /// 一次遍历得到的 (相对路径, 字节数, 修改时间纳秒)，供指纹复用。
+    #[serde(skip)]
+    files: Vec<(String, u64, u128)>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LocalModelStatus {
@@ -47,10 +50,7 @@ struct Receipt {
 }
 
 pub fn inspect(provider: AsrProvider, model: &str, root: &Path) -> Result<LocalModelStatus> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(crate::config::cache_dir);
+    let home = crate::config::home_dir().unwrap_or_else(crate::config::cache_dir);
     let apple_base = ["QWEN3_CACHE_DIR", "QWEN3_ASR_CACHE_DIR"]
         .into_iter()
         .find_map(|key| {
@@ -73,7 +73,17 @@ pub fn inspect(provider: AsrProvider, model: &str, root: &Path) -> Result<LocalM
                 .unwrap_or_else(|| home.join(".cache/huggingface"))
                 .join("hub")
         });
-    let mut status = inspect_at(provider, model, root, &apple_base, &hf_base)?;
+    Ok(with_receipt(inspect_at(
+        provider,
+        model,
+        root,
+        &apple_base,
+        &hf_base,
+    )?))
+}
+
+/// 合并上次加载验证的结果（指纹与版本一致时才把 Cached 提升为 Loaded）。
+pub fn with_receipt(mut status: LocalModelStatus) -> LocalModelStatus {
     if let Ok(bytes) = fs::read(receipt_path(&status))
         && let Ok(receipt) = serde_json::from_slice::<Receipt>(&bytes)
     {
@@ -88,7 +98,7 @@ pub fn inspect(provider: AsrProvider, model: &str, root: &Path) -> Result<LocalM
             }
         }
     }
-    Ok(status)
+    status
 }
 
 /// Explicit roots make cache checks testable without inspecting the user's model directory.
@@ -99,38 +109,31 @@ pub fn inspect_at(
     apple_base: &Path,
     hf_base: &Path,
 ) -> Result<LocalModelStatus> {
-    let model = if model.trim().is_empty() {
-        crate::config::DEFAULT_ASR_MODEL
-    } else {
-        model.trim()
-    };
     let mut parts = Vec::new();
-    let supported = match provider {
-        AsrProvider::Cpu | AsrProvider::Gpu => model == crate::config::DEFAULT_ASR_MODEL,
-        AsrProvider::Coreml => ["qwen3-1.7b", "qwen3-0.6b", "whisper"].contains(&model),
-        AsrProvider::Npu => !model.is_empty(),
-        AsrProvider::Api => false,
+    let canonical = match crate::config::canonical_model(provider, model) {
+        Ok(model) if provider != AsrProvider::Api => model,
+        _ => {
+            return Ok(LocalModelStatus {
+                provider,
+                model: model.trim().into(),
+                state: CacheState::Unsupported,
+                parts,
+                bytes: 0,
+                can_prepare: false,
+                last_error: None,
+                loaded_at: None,
+                fingerprint: String::new(),
+            });
+        }
     };
-    if !supported {
-        return Ok(LocalModelStatus {
-            provider,
-            model: model.into(),
-            state: CacheState::Unsupported,
-            parts,
-            bytes: 0,
-            can_prepare: false,
-            last_error: None,
-            loaded_at: None,
-            fingerprint: String::new(),
-        });
-    }
+    let model = canonical.as_str();
     match provider {
         AsrProvider::Cpu | AsrProvider::Gpu => {
             let files = super::llama_paths(root);
             let path = files.model.parent().unwrap().to_path_buf();
             let mut missing = Vec::new();
             for file in [&files.model, &files.mmproj] {
-                if !super::file_complete(file) || !gguf_header(file) {
+                if !super::file_complete(file) {
                     missing.push(file.file_name().unwrap().to_string_lossy().into_owned());
                 }
             }
@@ -187,7 +190,7 @@ pub fn inspect_at(
                     ],
                     false,
                 )?),
-                _ => unreachable!(),
+                other => anyhow::bail!("未知的 Apple 模型 / Unknown Apple model: {other}"),
             }
             parts.push(apple_part(
                 apple_base,
@@ -234,9 +237,7 @@ pub fn inspect_at(
             }
             parts.push(cache_part(&repo, path, missing)?);
         }
-        // 依赖上游过滤不变量：inspect() 对 Api 置 supported=false 并已提前返回，
-        // 走不到这里；若上游过滤改动此处会变成 panic。
-        AsrProvider::Api => unreachable!(),
+        AsrProvider::Api => {}
     }
     let bytes = parts.iter().map(|part| part.bytes).sum();
     let missing = parts.iter().any(|part| !part.missing.is_empty());
@@ -252,23 +253,10 @@ pub fn inspect_at(
     hash.update(model);
     for part in &parts {
         hash.update(part.path.to_string_lossy().as_bytes());
-        for file in files_under(&part.path)? {
-            let metadata = fs::metadata(&file)?;
-            hash.update(
-                file.strip_prefix(&part.path)
-                    .unwrap_or(&file)
-                    .to_string_lossy()
-                    .as_bytes(),
-            );
-            hash.update(metadata.len().to_le_bytes());
-            hash.update(
-                metadata
-                    .modified()?
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos()
-                    .to_le_bytes(),
-            );
+        for (name, len, modified) in &part.files {
+            hash.update(name.as_bytes());
+            hash.update(len.to_le_bytes());
+            hash.update(modified.to_le_bytes());
         }
     }
     Ok(LocalModelStatus {
@@ -284,17 +272,27 @@ pub fn inspect_at(
     })
 }
 fn cache_part(name: &str, path: PathBuf, missing: Vec<String>) -> Result<CachePart> {
-    let bytes = files_under(&path)?
-        .into_iter()
-        .map(|path| fs::metadata(path).map(|metadata| metadata.len()))
-        .collect::<std::io::Result<Vec<_>>>()?
-        .into_iter()
-        .sum();
+    let mut files = Vec::new();
+    for file in files_under(&path)? {
+        let metadata = fs::metadata(&file)?;
+        let modified = metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let relative = file.strip_prefix(&path).unwrap_or(&file);
+        files.push((
+            relative.to_string_lossy().into_owned(),
+            metadata.len(),
+            modified,
+        ));
+    }
     Ok(CachePart {
         name: name.into(),
+        bytes: files.iter().map(|(_, len, _)| len).sum(),
         path,
-        bytes,
         missing,
+        files,
     })
 }
 fn apple_part(
@@ -398,15 +396,6 @@ fn apple_uses_legacy_cache(path: &Path) -> Result<bool> {
 fn nonempty(path: &Path) -> bool {
     path.is_file() && fs::metadata(path).is_ok_and(|metadata| metadata.len() > 0)
 }
-fn gguf_header(path: &Path) -> bool {
-    use std::io::Read;
-    let mut header = [0u8; 8];
-    fs::File::open(path)
-        .and_then(|mut file| file.read_exact(&mut header))
-        .is_ok()
-        && &header[..4] == b"GGUF"
-        && matches!(u32::from_le_bytes(header[4..].try_into().unwrap()), 2 | 3)
-}
 fn safe_tensor(path: &Path) -> bool {
     use std::io::Read;
     let checked = || -> Result<bool> {
@@ -422,7 +411,9 @@ fn safe_tensor(path: &Path) -> bool {
         let mut header = vec![0; size as usize];
         file.read_exact(&mut header)?;
         let value: serde_json::Value = serde_json::from_slice(&header)?;
-        let tensors = value.as_object().context("权重索引无效 / Invalid weight index")?;
+        let tensors = value
+            .as_object()
+            .context("权重索引无效 / Invalid weight index")?;
         let mut count = 0;
         for (key, tensor) in tensors {
             if key == "__metadata__" {
@@ -453,14 +444,12 @@ fn files_under(root: &Path) -> Result<Vec<PathBuf>> {
     let mut seen = BTreeSet::new();
     let mut result = Vec::new();
     while let Some(path) = queue.pop() {
-        let canonical = path
-            .canonicalize()
-            .with_context(|| {
-                format!(
-                    "无法读取模型缓存 / Cannot read the model cache: {}",
-                    path.display()
-                )
-            })?;
+        let canonical = path.canonicalize().with_context(|| {
+            format!(
+                "无法读取模型缓存 / Cannot read the model cache: {}",
+                path.display()
+            )
+        })?;
         if !seen.insert(canonical) {
             continue;
         }
@@ -471,7 +460,10 @@ fn files_under(root: &Path) -> Result<Vec<PathBuf>> {
         } else if path.is_file() {
             result.push(path);
         }
-        ensure!(seen.len() < 20_000, "模型缓存包含过多文件，检查未完成 / Model cache contains too many files; check incomplete");
+        ensure!(
+            seen.len() < 20_000,
+            "模型缓存包含过多文件，检查未完成 / Model cache contains too many files; check incomplete"
+        );
     }
     result.sort();
     Ok(result)
@@ -634,6 +626,22 @@ mod tests {
         let unsupported = inspect_model(root.path(), AsrProvider::Cpu, "qwen3-0.6b");
         assert_eq!(unsupported.state, CacheState::Unsupported);
         assert!(!unsupported.can_prepare);
+    }
+    #[test]
+    fn documented_aliases_resolve_to_the_canonical_model() {
+        let root = roots();
+        for (provider, alias, canonical) in [
+            (AsrProvider::Gpu, "qwen3", "qwen3-1.7b"),
+            (AsrProvider::Cpu, " QWEN3-ASR-1.7B ", "qwen3-1.7b"),
+            (AsrProvider::Coreml, "qwen3", "qwen3-1.7b"),
+            (AsrProvider::Coreml, "whisper-large-v3-turbo", "whisper"),
+            (AsrProvider::Coreml, "", "qwen3-1.7b"),
+        ] {
+            let status = inspect_model(root.path(), provider, alias);
+            assert!(status.can_prepare, "{provider} {alias}");
+            assert_eq!(status.model, canonical);
+        }
+        assert!(!inspect_model(root.path(), AsrProvider::Api, "anything").can_prepare);
     }
     #[test]
     fn legacy_directory_choice_matches_loader_before_cache_completeness_is_assessed() {

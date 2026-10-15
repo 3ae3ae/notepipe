@@ -5,8 +5,8 @@ pub mod auth;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
-pub mod doctor;
 pub mod dispatch;
+pub mod doctor;
 pub mod error;
 pub mod execution;
 pub mod fetch;
@@ -29,3 +29,12 @@ pub mod summarize;
 pub mod timeline;
 pub mod wizard;
 pub mod ytdlp;
+
+/// 操作系统随机源生成的 URL-safe base64 串（会话令牌、PKCE 参数）。
+pub(crate) fn random_b64url(bytes: usize) -> anyhow::Result<String> {
+    use base64::Engine as _;
+    let mut buf = vec![0u8; bytes];
+    getrandom::getrandom(&mut buf)
+        .map_err(|_| anyhow::anyhow!("无法生成安全随机数 / Cannot generate secure random bytes"))?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf))
+}

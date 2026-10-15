@@ -263,16 +263,7 @@ fn setup_model_supported(provider: AsrProvider, model: &str) -> bool {
 /// Cache inspection uses canonical names, while the saved selection can retain
 /// a compatible alias. Never normalize an unsupported value into another model.
 fn setup_cache_model(provider: AsrProvider, model: &str) -> String {
-    if !setup_model_supported(provider, model) {
-        return model.to_owned();
-    }
-    match provider {
-        AsrProvider::Cpu | AsrProvider::Gpu => course2md::config::DEFAULT_ASR_MODEL.into(),
-        AsrProvider::Coreml => {
-            course2md::models::normalize_apple_model(model).unwrap_or_else(|_| model.to_owned())
-        }
-        _ => model.to_owned(),
-    }
+    course2md::config::canonical_model(provider, model).unwrap_or_else(|_| model.to_owned())
 }
 
 fn apply_provider_choice(

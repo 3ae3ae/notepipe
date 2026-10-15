@@ -17,54 +17,53 @@ use std::path::{Path, PathBuf};
 #[path = "model_status.rs"]
 pub mod status;
 
-/// Normalize Apple model names without requiring the native Apple runtime.
-/// Configuration and cache inspection also need these names on other platforms.
-/// 精确别名表（不再用子串猜测，未知输入一律报错）；调用方仍须验证后端支持。
-pub fn normalize_apple_model(s: &str) -> Result<String> {
-    let s = s.trim().to_ascii_lowercase();
-    match s.as_str() {
-        "" | "qwen" | "qwen3" | "1.7" | "1.7b" | "qwen3-1.7b" | "qwen3-asr-1.7b"
-        | "qwen3-asr-1.7b-q8_0.gguf" => Ok("qwen3-1.7b".into()),
-        "0.6" | "0.6b" | "qwen3-0.6b" | "qwen3-asr-0.6b" => Ok("qwen3-0.6b".into()),
-        "whisper" | "whisper-large-v3-turbo" => Ok("whisper".into()),
-        _ => anyhow::bail!(
-            "未知的 Apple 模型 / Unknown Apple model: `{s}`. 请选择 / Choose: qwen3-1.7b, qwen3-0.6b, whisper"
-        ),
-    }
+fn unsupported_model(status: &status::LocalModelStatus) -> anyhow::Error {
+    let available = crate::config::local_models(status.provider)
+        .iter()
+        .map(|m| m.id)
+        .collect::<Vec<_>>()
+        .join(", ");
+    anyhow::anyhow!(
+        "所选识别方式不支持模型「{}」。可用：{available} / The {} backend does not support model \"{}\". Available: {available}",
+        status.model,
+        status.provider,
+        status.model
+    )
 }
 
-/// Retrieve missing local model files before a large media download. Cached weights are
-/// loaded by the later transcription stage; subtitle-only work never calls this function.
-pub async fn ensure_cache(
+/// 下载缺失的模型文件（不加载）。`verify` 时额外用正式加载器验证 Apple/NPU 模型可离线加载。
+async fn fetch_model(
     provider: crate::config::AsrProvider,
     model: &str,
     root: &Path,
+    cached: bool,
+    verify: bool,
 ) -> Result<()> {
     use crate::config::AsrProvider;
-    let status = status::inspect(provider, model, root)?;
-    anyhow::ensure!(
-        status.can_prepare,
-        "当前识别方式不支持这个模型，原任务参数已保留 / The current transcription backend does not support this model; task settings kept"
-    );
-    if matches!(
-        status.state,
-        status::CacheState::Cached | status::CacheState::Loaded
-    ) {
-        return Ok(());
-    }
     match provider {
         AsrProvider::Cpu | AsrProvider::Gpu => download_models(root).await,
         AsrProvider::Coreml => {
             #[cfg(apple_native)]
             {
                 let model = model.to_owned();
-                tokio::task::spawn_blocking(move || crate::apple::prepare_cache(&model))
-                    .await
-                    .context("模型缓存准备未完成 / Model cache preparation did not complete")?
+                tokio::task::spawn_blocking(move || {
+                    if !cached {
+                        crate::apple::prepare_cache(&model)?;
+                    }
+                    if verify {
+                        crate::apple::prepare_model(&model)?;
+                    }
+                    Ok(())
+                })
+                .await
+                .context("模型准备未完成 / Model preparation did not complete")?
             }
             #[cfg(not(apple_native))]
             {
-                Err(anyhow::anyhow!("此程序未包含 Apple 原生识别运行时 / This build does not include the Apple native transcription runtime"))
+                let _ = (model, cached, verify);
+                Err(anyhow::anyhow!(
+                    "此程序未包含 Apple 原生识别运行时 / This build does not include the Apple native transcription runtime"
+                ))
             }
         }
         AsrProvider::Npu => {
@@ -77,6 +76,26 @@ pub async fn ensure_cache(
     }
 }
 
+/// Retrieve missing local model files before a large media download. Cached weights are
+/// loaded by the later transcription stage; subtitle-only work never calls this function.
+pub async fn ensure_cache(
+    provider: crate::config::AsrProvider,
+    model: &str,
+    root: &Path,
+) -> Result<()> {
+    let status = status::inspect(provider, model, root)?;
+    if !status.can_prepare {
+        return Err(unsupported_model(&status));
+    }
+    if matches!(
+        status.state,
+        status::CacheState::Cached | status::CacheState::Loaded
+    ) {
+        return Ok(());
+    }
+    fetch_model(provider, &status.model, root, false, false).await
+}
+
 /// Prepare the exact selected backend without sending course content or changing settings.
 pub async fn prepare(
     provider: crate::config::AsrProvider,
@@ -85,45 +104,15 @@ pub async fn prepare(
 ) -> Result<status::LocalModelStatus> {
     use crate::config::AsrProvider;
     let before = status::inspect(provider, model, root)?;
-    anyhow::ensure!(
-        before.can_prepare,
-        "这种识别方式不支持所选模型，请明确选择其他模型 / This transcription backend does not support the selected model; explicitly choose another model"
-    );
+    if !before.can_prepare {
+        return Err(unsupported_model(&before));
+    }
     crate::progress::stage("model/prepare", "start");
-    let result = match provider {
-        AsrProvider::Cpu | AsrProvider::Gpu => download_models(root).await,
-        AsrProvider::Coreml => {
-            #[cfg(apple_native)]
-            {
-                let model = model.to_owned();
-                let cached = matches!(
-                    before.state,
-                    status::CacheState::Cached | status::CacheState::Loaded
-                );
-                tokio::task::spawn_blocking(move || {
-                    if !cached {
-                        crate::apple::prepare_cache(&model)?;
-                    }
-                    crate::apple::prepare_model(&model)
-                })
-                .await
-                .context("模型准备进程未完成 / Model preparation process did not complete")?
-            }
-            #[cfg(not(apple_native))]
-            {
-                Err(anyhow::anyhow!("此转换程序未包含 Apple 原生识别运行时 / This build does not include the Apple native transcription runtime"))
-            }
-        }
-        AsrProvider::Npu => {
-            let model = crate::npu::resolve_npu_model(Some(model));
-            tokio::task::spawn_blocking(move || crate::npu::prepare_npu_model(&model))
-                .await
-                .context("NPU 模型准备进程未完成 / NPU model preparation process did not complete")?
-        }
-        // 依赖上游过滤不变量：inspect() 对 Api 返回 can_prepare=false，
-        // prepare 入口的 ensure!(can_prepare) 已拦截；若上游过滤改动此处会变成 panic。
-        AsrProvider::Api => unreachable!(),
-    };
+    let cached = matches!(
+        before.state,
+        status::CacheState::Cached | status::CacheState::Loaded
+    );
+    let result = fetch_model(provider, &before.model, root, cached, true).await;
     let after = status::inspect(provider, model, root).unwrap_or_else(|error| {
         tracing::warn!("模型二次检查失败，沿用准备前状态 / Post-prepare inspection failed; keeping the pre-prepare status: {error:#}");
         before
@@ -131,30 +120,28 @@ pub async fn prepare(
     let loaded = result.is_ok() && matches!(provider, AsrProvider::Coreml | AsrProvider::Npu);
     let error = result.as_ref().err().map(|error| format!("{error:#}"));
     if let Err(error) = status::record_result(&after, loaded, error) {
-        tracing::warn!("模型检查结果暂时无法保存 / Could not save the model check result: {error:#}");
+        tracing::warn!(
+            "模型检查结果暂时无法保存 / Could not save the model check result: {error:#}"
+        );
     }
     result?;
     crate::progress::stage("model/prepare", "done");
-    status::inspect(provider, model, root)
+    Ok(status::with_receipt(after))
 }
 
 const HF_REPO_PATH: &str = "ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main";
 
-/// llama GGUF 模型 slug：模型目录名由它派生，身份字符串与它同源
-///（concat! 不接受常量，身份字符串用字面量 + 测试守住一致性）。
+/// llama GGUF 模型 slug：模型目录名与 checkpoint 身份都由它派生。
 const LLAMA_MODEL_SLUG: &str = crate::config::DEFAULT_ASR_MODEL;
-const LLAMA_GGUF_IDENTITY: &str = "qwen3-1.7b-gguf";
 const LLAMA_MODEL_FILE: &str = "Qwen3-ASR-1.7B-Q8_0.gguf";
 const LLAMA_MMPROJ_FILE: &str = "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf";
 
 /// 当前 llama GGUF 模型的身份字符串（checkpoint/日志用），与模型目录同源。
-pub fn llama_gguf_identity() -> &'static str {
-    LLAMA_GGUF_IDENTITY
+pub fn llama_gguf_identity() -> String {
+    format!("{LLAMA_MODEL_SLUG}-gguf")
 }
 
 /// Hugging Face 端点：尊重 HF_ENDPOINT 镜像（与 CoreML 路径行为一致）。
-/// 此前 GGUF 下载硬编码 huggingface.co，网络受限环境（如 Windows 直连
-/// 失败）设置镜像也无效（issue #2）。
 fn hf_base(endpoint: Option<String>) -> String {
     endpoint
         .map(|s| s.trim().trim_end_matches('/').to_string())
@@ -215,16 +202,6 @@ fn file_complete(path: &Path) -> bool {
     true
 }
 
-pub fn ensure_llama(root: &Path) -> Result<LlamaAsr> {
-    if !llama_ready(root) {
-        anyhow::bail!(
-            "缺少识别模型 / Speech models missing. 运行 / Run: course2md models download\n目录 / Directory: {}",
-            root.display()
-        );
-    }
-    Ok(llama_paths(root))
-}
-
 /// 没有模型就下载；下载过程请保持进程运行。
 pub async fn ensure_llama_or_download(root: &Path) -> Result<LlamaAsr> {
     if !llama_ready(root) {
@@ -267,7 +244,7 @@ pub async fn download_models(root: &Path) -> Result<()> {
     projector.with_context(mirror_hint)?;
     anyhow::ensure!(
         llama_ready(root),
-        "下载文件不是完整的 GGUF 模型，已有文件已保留，可以重试准备 / The downloaded file is not a complete GGUF model; existing files kept, preparation can be retried"
+        "模型文件下载不完整，请重新运行 course2md models download / Model download incomplete; run course2md models download again"
     );
     tracing::info!(path = %root.display(), "models ready");
     Ok(())
@@ -276,8 +253,7 @@ pub async fn download_models(root: &Path) -> Result<()> {
 /// 下载重试次数（2.4GB 大文件，网络抖动/代理断流常见）。
 const DOWNLOAD_ATTEMPTS: usize = 3;
 
-/// 4xx（除 429 限流）是确定性错误（鉴权失败/路径错/镜像缺文件），
-/// 退避重试无意义——来自 PR #9 的重试分类思路。
+/// 4xx（除 429 限流）是确定性错误（鉴权失败/路径错/镜像缺文件），退避重试无意义。
 fn is_permanent_status(code: u16) -> bool {
     code != 429 && (400..500).contains(&code)
 }
@@ -336,12 +312,15 @@ async fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
                     "下载失败，稍后重试 / Download failed; retrying shortly"
                 );
                 std::thread::sleep(wait);
+                crate::dispatch::check_control()?;
             }
             match download_once(&agent, &url, &tmp, &dest, &label) {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    // 确定性 HTTP 错误（4xx≠429）不再退避重试
-                    if e.downcast_ref::<PermanentHttp>().is_some() {
+                    // 确定性 HTTP 错误（4xx≠429）与取消不再重试
+                    if e.downcast_ref::<PermanentHttp>().is_some()
+                        || crate::dispatch::check_control().is_err()
+                    {
                         return Err(e);
                     }
                     // 保留 .part：日志给出断点位置；当前实现重跑会从头下载
@@ -399,13 +378,20 @@ fn download_once(
     let mut out = fs::File::create(tmp)?;
     let mut buf = vec![0u8; 1024 * 512];
     let mut done: u64 = 0;
+    let mut since_check: u64 = 0;
     loop {
+        // 每 32MB 检查一次取消，桌面端取消模型准备时不必等 2.4GB 下完
+        if since_check >= 32 << 20 {
+            crate::dispatch::check_control()?;
+            since_check = 0;
+        }
         let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
         std::io::Write::write_all(&mut out, &buf[..n])?;
         done += n as u64;
+        since_check += n as u64;
         pb.set_position(done);
     }
     out.sync_all()?;
@@ -457,8 +443,8 @@ pub fn list_models(root: &Path) {
     );
     if !llama_ready(root) {
         println!(
-            "下载或修复 / Download or repair: course2md models download --dir {:?}",
-            root
+            "下载或修复 / Download or repair: course2md models download --dir \"{}\"",
+            root.display()
         );
     }
     println!(
@@ -469,22 +455,6 @@ pub fn list_models(root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn apple_model_names_are_available_without_the_native_runtime() {
-        for (alias, canonical) in [
-            ("", "qwen3-1.7b"),
-            (" QWEN3-ASR-1.7B ", "qwen3-1.7b"),
-            ("qwen3-asr-0.6b", "qwen3-0.6b"),
-            ("Whisper-Large-v3-Turbo", "whisper"),
-        ] {
-            assert_eq!(normalize_apple_model(alias).unwrap(), canonical);
-        }
-        assert!(normalize_apple_model("unsupported-model").is_err());
-        // 子串猜测不再生效：含关键词的未知输入必须报错而不是静默误映射
-        assert!(normalize_apple_model("foo-0.6-bar").is_err());
-        assert!(normalize_apple_model("whisper-0.6").is_err());
-    }
 
     #[test]
     fn interrupted_and_unknown_size_downloads_only_publish_complete_files() {
@@ -540,18 +510,6 @@ mod tests {
         assert!(download_once(&agent, &url, &temporary, &missing, "synthetic").is_err());
         assert!(!missing.exists());
         assert_eq!(fs::read(destination).unwrap(), b"abcdef");
-    }
-
-    #[test]
-    fn identity_matches_dir_slug() {
-        // LLAMA_MODEL_SLUG 与 LLAMA_GGUF_IDENTITY 是两个独立字面量（concat! 不接受
-        // 常量，无法互相派生），这里用字面量期望值锁定两者的对应关系，防止改名时只改一处。
-        assert_eq!(llama_gguf_identity(), "qwen3-1.7b-gguf");
-        assert!(
-            llama_paths(Path::new("/x"))
-                .model
-                .starts_with("/x/llama-qwen3-1.7b")
-        );
     }
 
     #[test]

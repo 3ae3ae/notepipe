@@ -140,23 +140,27 @@ print("[NPU] 监听 http://127.0.0.1:" + str(port), flush=True)
 server.serve_forever()
 "#;
 
-pub(crate) fn npu_model_alias(raw: &str) -> Option<&'static str> {
-    Some(match raw.trim().to_ascii_lowercase().as_str() {
-        "whisper" | "turbo" | "whisper-turbo" | "whisper-large" | "large" => {
-            "OpenVINO/whisper-large-v3-turbo-int8-ov"
-        }
-        "tiny" | "whisper-tiny" => "OpenVINO/whisper-tiny-fp16-ov",
-        "base" | "whisper-base" => "OpenVINO/whisper-base-fp16-ov",
-        "small" | "whisper-small" => "OpenVINO/whisper-small-fp16-ov",
-        "qwen3-0.6b" | "0.6b" => "dseditor/Qwen3-ASR-0.6B-INT8_ASYM-OpenVINO",
-        "qwen3" | "qwen3-1.7b" | "1.7b" | "" => "dseditor/Qwen3-ASR-1.7B-INT8_OpenVINO",
-        _ => return None,
-    })
+/// 规范模型 id → OpenVINO 仓库；自定义仓库 ID 原样返回。
+fn npu_repo(model: &str) -> &str {
+    match model {
+        "whisper" => "OpenVINO/whisper-large-v3-turbo-int8-ov",
+        "whisper-tiny" => "OpenVINO/whisper-tiny-fp16-ov",
+        "whisper-base" => "OpenVINO/whisper-base-fp16-ov",
+        "whisper-small" => "OpenVINO/whisper-small-fp16-ov",
+        "qwen3-0.6b" => "dseditor/Qwen3-ASR-0.6B-INT8_ASYM-OpenVINO",
+        "qwen3-1.7b" => "dseditor/Qwen3-ASR-1.7B-INT8_OpenVINO",
+        other => other,
+    }
 }
 
+/// NPU worker 实际加载的仓库（别名经 [`crate::config::canonical_model`] 规范化）。
+/// 无法识别的名称原样透传，交给 validate_asr 报错。
 pub fn resolve_npu_model(raw: Option<&str>) -> String {
     let raw = raw.unwrap_or("").trim();
-    npu_model_alias(raw).unwrap_or(raw).to_string()
+    match crate::config::canonical_model(crate::config::AsrProvider::Npu, raw) {
+        Ok(model) => npu_repo(&model).to_owned(),
+        Err(_) => raw.to_owned(),
+    }
 }
 
 /// `model_id` 由调用方经 [`resolve_npu_model`] 解析后传入（checkpoint 身份与
@@ -177,33 +181,48 @@ pub fn run_npu(
         return Ok(vec![]);
     }
 
-    let (tmp, mut child, stderr_tail, base, token) = start_model_worker(model_id)?;
+    let mut worker = NpuWorker::start(model_id)?;
+    let (base, token) = (worker.base.clone(), worker.token.clone());
     let client = ureq::AgentBuilder::new().timeout(NPU_HTTP_TIMEOUT).build();
 
-    let r = crate::asr::run_chunks(wav, &segs, cp, tmp.path(), "npu asr", |_i, _seg, chunk| {
-        let req_body = serde_json::json!({
-            "path": chunk.to_string_lossy(),
-        });
-        let resp = client
-            .post(&format!("{base}/audio/transcriptions"))
-            .set("X-Auth-Token", &token)
-            .send_json(req_body)
-            .map_err(|e| anyhow::anyhow!("NPU 转写请求失败，请检查网络和服务配置 / Request failed; check your connection and service settings: {e}"))?;
-        let v: serde_json::Value = resp.into_json().map_err(|e| {
-            anyhow::anyhow!("NPU 无法解析服务响应 / Could not parse the service response: {e}")
-        })?;
-        if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
-            anyhow::bail!("NPU 识别失败 / NPU transcription failed: {e}");
-        }
-        let text = v["text"].as_str().unwrap_or("").trim().to_string();
-        let sanitized = crate::asr::sanitize_qwen_text(&text);
-        Ok((!sanitized.is_empty()).then_some(sanitized))
-    });
+    let r = crate::asr::run_chunks(
+        wav,
+        &segs,
+        cp,
+        worker.tmp.path(),
+        "npu asr",
+        |_i, _seg, chunk| {
+            let req_body = serde_json::json!({
+                "path": chunk.to_string_lossy(),
+            });
+            let resp = client
+                .post(&format!("{base}/audio/transcriptions"))
+                .set("X-Auth-Token", &token)
+                .send_json(req_body)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Intel NPU 识别进程无响应 / Intel NPU worker did not respond: {e}"
+                    )
+                })?;
+            let v: serde_json::Value = resp.into_json().map_err(|e| {
+                anyhow::anyhow!("NPU 无法解析服务响应 / Could not parse the service response: {e}")
+            })?;
+            if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
+                anyhow::bail!("NPU 识别失败 / NPU transcription failed: {e}");
+            }
+            let text = v["text"].as_str().unwrap_or("").trim().to_string();
+            let sanitized = crate::asr::sanitize_qwen_text(&text);
+            Ok((!sanitized.is_empty()).then_some(sanitized))
+        },
+    );
 
-    stop_model_worker(&mut child, &base, &token);
+    worker.stop();
 
-    let events =
-        r.map_err(|e| stderr_tail.attach(e, "NPU 识别错误详情 / NPU transcription error details"))?;
+    let events = r.map_err(|e| {
+        worker
+            .stderr
+            .attach(e, "NPU 识别错误详情 / NPU transcription error details")
+    })?;
     tracing::info!(
         n = events.len(),
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
@@ -212,87 +231,85 @@ pub fn run_npu(
     Ok(events)
 }
 
-fn start_model_worker(
-    model_id: &str,
-) -> Result<(
-    crate::runtime::TempWorkDir,
-    crate::runtime::ManagedChild,
-    crate::runtime::StderrTail,
-    String,
-    String,
-)> {
-    let t0 = Instant::now();
-    let tmp = crate::runtime::TempWorkDir::new("npu")?;
-    let script_path = tmp.path().join("npu_worker.py");
-    crate::checkpoint::atomic_write(&script_path, NPU_WORKER_SCRIPT.as_bytes())?;
-
-    let port = crate::runtime::free_port()?;
-    // 每次会话一个不可猜的令牌：worker 的 127.0.0.1 服务不应被本机其他进程驱使
-    let token = crate::execution::digest(
-        format!("npu-session-token-{}-{port}-{t0:?}", std::process::id()).as_bytes(),
-    );
-    tracing::info!(model = %model_id, port, "starting npu worker");
-    crate::progress::stage("model-load", "start");
-    let mut child = spawn_npu_worker(&script_path, model_id, port, &token)?;
-    let stderr_tail = child
-        .take_stderr()
-        .map(|s| crate::runtime::drain_stderr(s, "npu_worker"))
-        .unwrap_or_default();
-    let base = format!("http://127.0.0.1:{port}");
-
-    // ManagedChild：此后任何 ? 早退都会在 Drop 中终止 worker，不再泄漏进程
-    if let Err(e) = crate::runtime::wait_ready(
-        &base,
-        NPU_READY_TIMEOUT,
-        &mut child,
-        Some("\"status\":\"ok\""),
-        Some(&crate::dispatch::check_control),
-    ) {
-        return Err(e.context(format!(
-            "Intel NPU 服务启动失败/超时（首次模型编译可能需要更多时间） / Intel NPU service failed to start or timed out (the first model compilation may take longer); stderr tail:\n{}",
-            stderr_tail.tail()
-        )));
-    }
-    tracing::info!(
-        secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
-        "npu ready"
-    );
-
-    crate::progress::stage("model-load", "done");
-    Ok((tmp, child, stderr_tail, base, token))
+/// 运行中的 NPU 伴随进程；Drop 时由 ManagedChild 兜底终止。
+struct NpuWorker {
+    tmp: crate::runtime::TempWorkDir,
+    child: crate::runtime::ManagedChild,
+    stderr: crate::runtime::StderrTail,
+    base: String,
+    token: String,
 }
 
-fn stop_model_worker(child: &mut crate::runtime::ManagedChild, base: &str, token: &str) {
-    // 优雅关闭：POST /shutdown → try_wait 轮询 ~2s → 未退再 SIGTERM 进程组
-    // （避免 uv 衍生的孙子进程残留）→ 短等 → 仍未退由 ManagedChild Drop 兜底。
-    let client = ureq::AgentBuilder::new().timeout(NPU_HTTP_TIMEOUT).build();
-    let _ = client
-        .post(&format!("{base}/shutdown"))
-        .timeout(SHUTDOWN_TIMEOUT)
-        .set("X-Auth-Token", token)
-        .send_json(serde_json::json!({}));
-    if !wait_exit(child, SHUTDOWN_WAIT) {
-        #[cfg(unix)]
-        {
-            let pid = child.id() as i32;
-            unsafe {
-                libc::kill(-pid, libc::SIGTERM);
-            }
+impl NpuWorker {
+    fn start(model_id: &str) -> Result<Self> {
+        let t0 = Instant::now();
+        let tmp = crate::runtime::TempWorkDir::new("npu")?;
+        let script_path = tmp.path().join("npu_worker.py");
+        crate::checkpoint::atomic_write(&script_path, NPU_WORKER_SCRIPT.as_bytes())?;
+
+        let port = crate::runtime::free_port()?;
+        // 每次会话一个随机令牌：worker 的 127.0.0.1 服务不应被本机其他进程驱使
+        let token = crate::random_b64url(32)?;
+        tracing::info!(model = %model_id, port, "starting npu worker");
+        crate::progress::stage("model-load", "start");
+        let mut child = spawn_npu_worker(&script_path, model_id, port, &token)?;
+        let stderr = child
+            .take_stderr()
+            .map(|s| crate::runtime::drain_stderr(s, "npu_worker"))
+            .unwrap_or_default();
+        let base = format!("http://127.0.0.1:{port}");
+
+        if let Err(e) = crate::runtime::wait_ready(
+            &base,
+            NPU_READY_TIMEOUT,
+            &mut child,
+            Some("\"status\":\"ok\""),
+            Some(&crate::dispatch::check_control),
+        ) {
+            return Err(e.context(format!(
+                "Intel NPU 服务启动失败/超时（首次模型编译可能需要更多时间） / Intel NPU service failed to start or timed out (the first model compilation may take longer); stderr tail:\n{}",
+                stderr.tail()
+            )));
         }
-        let _ = wait_exit(child, SIGTERM_WAIT);
+        tracing::info!(
+            secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
+            "npu ready"
+        );
+        crate::progress::stage("model-load", "done");
+        Ok(Self {
+            tmp,
+            child,
+            stderr,
+            base,
+            token,
+        })
+    }
+
+    /// 优雅关闭：POST /shutdown → 等待 → SIGTERM 进程组（避免 uv 衍生的孙子进程残留）
+    /// → 短等 → 仍未退由 ManagedChild Drop 兜底。
+    fn stop(&mut self) {
+        let client = ureq::AgentBuilder::new().timeout(SHUTDOWN_TIMEOUT).build();
+        let _ = client
+            .post(&format!("{}/shutdown", self.base))
+            .set("X-Auth-Token", &self.token)
+            .send_json(serde_json::json!({}));
+        if self.child.wait_within(SHUTDOWN_WAIT).is_err() {
+            #[cfg(unix)]
+            {
+                let pid = self.child.id() as i32;
+                unsafe {
+                    libc::kill(-pid, libc::SIGTERM);
+                }
+            }
+            let _ = self.child.wait_within(SIGTERM_WAIT);
+        }
     }
 }
 
 /// Prepare the exact NPU model through the normal worker; no media is sent.
 pub fn prepare_npu_model(model_id: &str) -> Result<()> {
-    let (_temporary, mut child, _stderr, base, token) = start_model_worker(model_id)?;
-    stop_model_worker(&mut child, &base, &token);
+    NpuWorker::start(model_id)?.stop();
     Ok(())
-}
-
-/// 等待子进程退出（内部轮询由 ManagedChild::wait_within 实现）；true = 已在 timeout 内退出。
-fn wait_exit(child: &mut crate::runtime::ManagedChild, timeout: Duration) -> bool {
-    child.wait_within(timeout).is_ok()
 }
 
 fn spawn_npu_worker(
@@ -334,8 +351,7 @@ fn spawn_npu_worker(
         .arg("NPU")
         .arg(token)
         .stdout(Stdio::null())
-        // stderr 不能 inherit：脚本里全是 print，会插在进度条重绘中间，
-        // 破坏 indicatif 的原地更新（同 issue #4）。piped + 后台 drain。
+        // stderr 不能 inherit：脚本的输出会插进进度条重绘中间。piped + 后台 drain。
         .stderr(Stdio::piped());
 
     crate::runtime::ManagedChild::spawn("NPU worker", &mut cmd)
@@ -395,6 +411,5 @@ mod tests {
             resolve_npu_model(Some("MyOrg/MyModel-INT8")),
             "MyOrg/MyModel-INT8"
         );
-        assert!(npu_model_alias("whisper-large").is_some());
     }
 }

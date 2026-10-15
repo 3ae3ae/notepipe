@@ -4,10 +4,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 // —— 内置默认值（唯一来源）：main.rs 的 CLI 合并、settings.rs 的展示统一引用这里 ——
-/// SSIM 画面相似度阈值（越高越敏感、截图越多）
-/// 默认本地识别模型（canonical id）：引擎与桌面共用同一来源。
-/// 各后端的模型清单/别名表仍在 models.rs / model_status.rs 各自维护。
+/// 默认本地识别模型（canonical id）。
 pub const DEFAULT_ASR_MODEL: &str = "qwen3-1.7b";
+/// SSIM 画面相似度阈值（越高越敏感、截图越多）
 pub const DEFAULT_SIMILARITY: f64 = 0.85;
 /// 画面采样间隔（秒）
 pub const DEFAULT_SAMPLE_INTERVAL: f64 = 1.0;
@@ -23,9 +22,8 @@ pub const DEFAULT_THREADS: i32 = 4;
 pub const DEFAULT_MAX_SPEECH: f32 = 20.0;
 /// 默认输出根目录
 pub const DEFAULT_OUT_DIR: &str = "out";
-/// GPU 卸载层数默认（llama-server -ngl）：全量卸载。
-/// 注意：没有证据表明某个非零层数在 AMD/ROCm 核显上稳定（issue #12 复测结论），
-/// 因此不设平台差异化默认——Linux+AMD 只做风险警告（pipeline.rs），由用户手动降载。
+/// GPU 卸载层数默认（llama-server -ngl）：全量卸载。没有哪个非零层数在 AMD/ROCm
+/// 核显上被证实稳定，因此不按平台区分默认；Linux+AMD 只做风险警告，由用户手动降载。
 pub const DEFAULT_GPU_LAYERS: u32 = 99;
 
 /// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr_api 共用同一判定）。
@@ -66,7 +64,11 @@ pub fn asr_endpoint(api: &crate::settings::AsrApi) -> AnyhowResult<String> {
         crate::settings::AsrApiMode::Chat => "/chat/completions",
     };
     anyhow::ensure!(
-        !conflicting_endpoint_suffix(base, suffix, &["/audio/transcriptions", "/chat/completions"]),
+        !conflicting_endpoint_suffix(
+            base,
+            suffix,
+            &["/audio/transcriptions", "/chat/completions"]
+        ),
         "服务地址与所选接口类型不一致 / Service endpoint and protocol do not match"
     );
     Ok(append_endpoint_suffix(base, suffix))
@@ -105,6 +107,126 @@ impl AsrProvider {
 impl fmt::Display for AsrProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// 一个本地识别模型的规范 id 与展示名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalModel {
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+const QWEN3_1_7B: LocalModel = LocalModel {
+    id: DEFAULT_ASR_MODEL,
+    label: "Qwen3 1.7B",
+};
+const QWEN3_0_6B: LocalModel = LocalModel {
+    id: "qwen3-0.6b",
+    label: "Qwen3 0.6B",
+};
+const WHISPER: LocalModel = LocalModel {
+    id: "whisper",
+    label: "Whisper",
+};
+const WHISPER_TINY: LocalModel = LocalModel {
+    id: "whisper-tiny",
+    label: "Whisper Tiny",
+};
+const WHISPER_BASE: LocalModel = LocalModel {
+    id: "whisper-base",
+    label: "Whisper Base",
+};
+const WHISPER_SMALL: LocalModel = LocalModel {
+    id: "whisper-small",
+    label: "Whisper Small",
+};
+
+/// 每种本地后端可选的模型（第一项为默认）。云端后端没有本地模型。
+pub fn local_models(provider: AsrProvider) -> &'static [LocalModel] {
+    match provider {
+        AsrProvider::Gpu | AsrProvider::Cpu => &[QWEN3_1_7B],
+        AsrProvider::Coreml => &[QWEN3_1_7B, QWEN3_0_6B, WHISPER],
+        AsrProvider::Npu => &[
+            QWEN3_1_7B,
+            QWEN3_0_6B,
+            WHISPER,
+            WHISPER_TINY,
+            WHISPER_BASE,
+            WHISPER_SMALL,
+        ],
+        AsrProvider::Api => &[],
+    }
+}
+
+/// 模型展示名；未知 id（如自定义仓库）原样返回。
+pub fn model_label(id: &str) -> &str {
+    [
+        QWEN3_1_7B,
+        QWEN3_0_6B,
+        WHISPER,
+        WHISPER_TINY,
+        WHISPER_BASE,
+        WHISPER_SMALL,
+    ]
+    .into_iter()
+    .find(|m| m.id == id)
+    .map_or(id, |m| m.label)
+}
+
+/// 别名 → 规范 id（大小写不敏感）。空值表示默认模型。
+fn model_alias(lower: &str) -> Option<&'static str> {
+    Some(match lower {
+        ""
+        | "qwen"
+        | "qwen3"
+        | "1.7"
+        | "1.7b"
+        | "qwen3-1.7b"
+        | "qwen3-asr-1.7b"
+        | "qwen3-1.7b-gguf"
+        | "qwen3-asr-1.7b-q8_0.gguf" => QWEN3_1_7B.id,
+        "0.6" | "0.6b" | "qwen3-0.6b" | "qwen3-asr-0.6b" => QWEN3_0_6B.id,
+        "whisper"
+        | "whisper-large-v3-turbo"
+        | "whisper-turbo"
+        | "whisper-large"
+        | "turbo"
+        | "large" => WHISPER.id,
+        "tiny" | "whisper-tiny" => WHISPER_TINY.id,
+        "base" | "whisper-base" => WHISPER_BASE.id,
+        "small" | "whisper-small" => WHISPER_SMALL.id,
+        _ => return None,
+    })
+}
+
+/// 模型名的唯一规范化入口：别名 → 规范 id，并确认所选后端支持它。
+/// npu 另外接受 Hugging Face 仓库 ID（含 `/`，原样保留大小写）；云端后端不使用本地模型，原样返回。
+pub fn canonical_model(provider: AsrProvider, raw: &str) -> AnyhowResult<String> {
+    let raw = raw.trim();
+    if provider == AsrProvider::Api {
+        return Ok(raw.to_owned());
+    }
+    if provider == AsrProvider::Npu && raw.contains('/') {
+        return Ok(raw.to_owned());
+    }
+    let models = local_models(provider);
+    match model_alias(&raw.to_ascii_lowercase()) {
+        Some(id) if models.iter().any(|m| m.id == id) => Ok(id.to_owned()),
+        _ => {
+            let available = models.iter().map(|m| m.id).collect::<Vec<_>>().join(", ");
+            let (repo_zh, repo_en) = if provider == AsrProvider::Npu {
+                (
+                    "，或 Hugging Face 仓库名（如 org/model）",
+                    ", or a Hugging Face repository (org/model)",
+                )
+            } else {
+                ("", "")
+            };
+            anyhow::bail!(
+                "所选识别方式不支持模型「{raw}」。可用：{available}{repo_zh} / The {provider} backend does not support model \"{raw}\". Available: {available}{repo_en}"
+            )
+        }
     }
 }
 
@@ -198,7 +320,7 @@ pub struct PipelineConfig {
     pub asr_api: crate::settings::AsrApi,
     /// 转写来源：字幕优先 / 强制字幕 / 强制 ASR
     pub transcript_source: TranscriptSource,
-    /// coreml 后端模型选择：qwen3 | whisper
+    /// 本地识别模型（别名或规范 id，见 [`canonical_model`]）；None = 后端默认
     pub asr_model: Option<String>,
     /// GPU 卸载层数（llama-server -ngl；gpu 后端生效，cpu 后端恒为 0）
     pub gpu_layers: u32,
@@ -372,52 +494,8 @@ impl PipelineConfig {
         allow_environment: bool,
     ) -> AnyhowResult<()> {
         // provider × 模型兼容性：静默忽略用户指定的模型属于静默错误结果
-        if let Some(m) = self
-            .asr_model
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            let lower = m.to_ascii_lowercase();
-            match self.provider {
-                AsrProvider::Gpu | AsrProvider::Cpu => {
-                    anyhow::ensure!(
-                        matches!(
-                            lower.as_str(),
-                            "qwen3"
-                                | "qwen3-1.7b"
-                                | "qwen3-asr-1.7b"
-                                | "qwen3-1.7b-gguf"
-                                | "qwen3-asr-1.7b-q8_0.gguf"
-                        ),
-                        "provider {:?} 当前使用 Qwen3-ASR-1.7B Q8_0；请选择该模型 / This provider currently supports Qwen3-ASR-1.7B Q8_0 only.",
-                        self.provider
-                    );
-                }
-                AsrProvider::Coreml => {
-                    anyhow::ensure!(
-                        matches!(
-                            lower.as_str(),
-                            "qwen"
-                                | "qwen3"
-                                | "qwen3-1.7b"
-                                | "qwen3-asr-1.7b"
-                                | "qwen3-0.6b"
-                                | "qwen3-asr-0.6b"
-                                | "whisper"
-                                | "whisper-large-v3-turbo"
-                        ),
-                        "provider coreml 支持的模型 / supported models: qwen3-1.7b, qwen3-0.6b, whisper (received {m:?})"
-                    );
-                }
-                AsrProvider::Npu => {
-                    anyhow::ensure!(
-                        crate::npu::npu_model_alias(m).is_some() || lower.contains('/'),
-                        "provider npu 需要模型别名或仓库 ID / requires a known model alias or Hugging Face repository ID containing / (received {m:?})"
-                    );
-                }
-                AsrProvider::Api => {}
-            }
+        if let Some(model) = &self.asr_model {
+            canonical_model(self.provider, model)?;
         }
 
         // api 后端：key 缺失时立即报错，而不是切完音频才发现
@@ -456,6 +534,14 @@ impl PipelineConfig {
     }
 }
 
+/// 用户主目录：HOME，Windows 上 HOME 可能缺席时退回 USERPROFILE。
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 /// 配置目录（XDG_CONFIG_HOME / Windows %APPDATA% / ~/.config）。
 pub fn config_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
@@ -467,11 +553,10 @@ pub fn config_dir() -> PathBuf {
             return PathBuf::from(d).join("course2md");
         }
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".config").join("course2md")
+    home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("course2md")
 }
 
 /// 缓存目录（模型等）。
@@ -485,11 +570,10 @@ pub fn cache_dir() -> PathBuf {
             return PathBuf::from(d).join("course2md");
         }
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".cache").join("course2md")
+    home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cache")
+        .join("course2md")
 }
 
 pub fn model_dir_from(opt: Option<&Path>) -> PathBuf {
@@ -500,17 +584,15 @@ pub fn model_dir_from(opt: Option<&Path>) -> PathBuf {
 /// 展开 `~` / `~/...`（仅 Unix 主目录约定；无 HOME 时原样返回）。
 /// 防止配置里的 "~/cache" 真的在当前目录创建名为 `~` 的子目录。
 pub fn expand_tilde(p: PathBuf) -> PathBuf {
-    // 与 config_dir/cache_dir 同一 home 解析：Windows 上 HOME 可能缺席，退回 USERPROFILE
-    let home = || std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
     let Some(s) = p.to_str() else { return p };
     if s == "~" {
-        if let Some(h) = home() {
-            return PathBuf::from(h);
+        if let Some(h) = home_dir() {
+            return h;
         }
     } else if let Some(rest) = s.strip_prefix("~/")
-        && let Some(h) = home()
+        && let Some(h) = home_dir()
     {
-        return PathBuf::from(h).join(rest);
+        return h.join(rest);
     }
     p
 }
@@ -527,12 +609,10 @@ pub fn resolve_resume(cli_resume: bool, cli_no_resume: bool, file_resume: Option
     file_resume.unwrap_or(true)
 }
 
-/// Linux + AMD GPU 检测（issue #12）：任一 /sys/class/drm/card*/device/vendor
+/// Linux + AMD GPU 检测：任一 /sys/class/drm/card*/device/vendor
 /// 内容为 "0x1002"（AMD PCI vendor id）即视为 AMD 显卡机器。
 /// 文件不存在（非 Linux、无 DRM 设备）→ false，不影响其他平台。
-/// 用途：provider=gpu 时的 ROCm 风险警告（pipeline.rs），不参与默认值计算——
-/// 没有证据表明某个非零层数或关闭 mmproj 在 gfx 系列核显上稳定（issue #12 复测），
-/// 不设「安全默认值」，只提示风险与回退路径。
+/// 只用于 provider=gpu 时的 ROCm 风险警告，不参与默认值计算。
 pub fn linux_amd_gpu_present() -> bool {
     cfg!(target_os = "linux") && any_amd_drm_card(Path::new("/sys/class/drm"))
 }
@@ -596,20 +676,31 @@ pub fn apple_native_available() -> bool {
     cfg!(apple_native)
 }
 
-/// 像 URL 或已存在的本地文件才当作输入；否则视为没传参数。
-/// `contains(...)` 三个分支是为 scheme-less 输入（如 `www.bilibili.com/video/BV...`）
-/// 兜底——用户粘贴域名时不一定带 http(s) 前缀。
-pub fn looks_like_source(s: &str) -> bool {
-    let p = Path::new(s);
-    if p.is_file() {
-        return true;
+/// 已知视频站点（含子域名与短链），输入可以不带 http(s) 前缀。
+pub fn known_video_site(input: &str) -> Option<&'static str> {
+    let input = input.trim();
+    let url = url::Url::parse(input)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .or_else(|| url::Url::parse(&format!("https://{input}")).ok())?;
+    let host = url.host_str()?;
+    let under = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
+    if under("bilibili.com") || host == "b23.tv" {
+        Some("bilibili")
+    } else if under("youtube.com") || host == "youtu.be" {
+        Some("youtube")
+    } else {
+        None
     }
+}
+
+/// 像 URL、已知视频站点或已存在的本地文件才当作输入。
+pub fn looks_like_source(s: &str) -> bool {
     let t = s.trim();
-    t.starts_with("http://")
+    Path::new(s).is_file()
+        || t.starts_with("http://")
         || t.starts_with("https://")
-        || t.contains("bilibili.com/")
-        || t.contains("youtube.com/")
-        || t.contains("youtu.be/")
+        || known_video_site(t).is_some()
 }
 
 /// `{root}/{platform}/{title}/{id}/`
@@ -621,12 +712,11 @@ pub fn course_dir(root: &Path, platform: &str, title: &str, id: &str) -> PathBuf
 
 pub fn platform_from(source: &str, extractor: &str) -> String {
     let e = extractor.to_ascii_lowercase();
-    let s = source.to_ascii_lowercase();
     if Path::new(source).is_file() || e == "local" {
         "local".into()
-    } else if e.contains("bili") || s.contains("bilibili.com") {
+    } else if e.contains("bili") || known_video_site(source) == Some("bilibili") {
         "bilibili".into()
-    } else if e.contains("youtube") || s.contains("youtube.com") || s.contains("youtu.be") {
+    } else if e.contains("youtube") || known_video_site(source) == Some("youtube") {
         "youtube".into()
     } else if !e.is_empty() {
         sanitize_component(&e)
@@ -832,6 +922,48 @@ mod tests {
     }
 
     #[test]
+    fn canonical_model_accepts_documented_aliases_per_backend() {
+        for (provider, raw, id) in [
+            (AsrProvider::Gpu, "qwen3", "qwen3-1.7b"),
+            (AsrProvider::Cpu, "Qwen3-ASR-1.7B-Q8_0.gguf", "qwen3-1.7b"),
+            (AsrProvider::Coreml, "qwen3", "qwen3-1.7b"),
+            (AsrProvider::Coreml, " 0.6b ", "qwen3-0.6b"),
+            (AsrProvider::Npu, "turbo", "whisper"),
+            (AsrProvider::Npu, "MyOrg/Model-INT8", "MyOrg/Model-INT8"),
+        ] {
+            assert_eq!(
+                canonical_model(provider, raw).unwrap(),
+                id,
+                "{provider} {raw}"
+            );
+        }
+        assert!(canonical_model(AsrProvider::Gpu, "whisper").is_err());
+        assert!(canonical_model(AsrProvider::Coreml, "whisper-tiny").is_err());
+        assert!(canonical_model(AsrProvider::Coreml, "foo-0.6-bar").is_err());
+        for provider in [AsrProvider::Gpu, AsrProvider::Coreml, AsrProvider::Npu] {
+            for model in local_models(provider) {
+                assert_eq!(canonical_model(provider, model.id).unwrap(), model.id);
+            }
+        }
+    }
+
+    #[test]
+    fn known_video_site_covers_short_links_and_rejects_lookalikes() {
+        assert_eq!(known_video_site("b23.tv/abc"), Some("bilibili"));
+        assert_eq!(
+            known_video_site("m.bilibili.com/video/BV1"),
+            Some("bilibili")
+        );
+        assert_eq!(known_video_site("https://youtu.be/x"), Some("youtube"));
+        assert_eq!(known_video_site("https://bilibili.com.evil.test/"), None);
+        assert_eq!(
+            known_video_site("https://youtube.com/?bilibili.com"),
+            Some("youtube")
+        );
+        assert_eq!(known_video_site("file:///bilibili.com"), None);
+    }
+
+    #[test]
     fn resume_priority() {
         // --no-resume 压倒一切
         assert!(!resolve_resume(true, true, Some(true)));
@@ -857,8 +989,7 @@ mod tests {
 
     #[test]
     fn gpu_offload_priority() {
-        // CLI > 配置文件 > 内置默认（全平台一致：不设平台差异化的「安全默认值」，
-        // 没有证据表明某个非零层数在 AMD/ROCm 核显上稳定，issue #12 复测结论）
+        // CLI > 配置文件 > 内置默认
         assert_eq!(resolve_gpu_layers(Some(8), Some(4)), 8);
         assert_eq!(resolve_gpu_layers(None, Some(4)), 4);
         assert_eq!(resolve_gpu_layers(None, None), DEFAULT_GPU_LAYERS);
