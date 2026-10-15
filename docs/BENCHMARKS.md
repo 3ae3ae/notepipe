@@ -7,7 +7,7 @@ Measured on Apple Silicon (macOS) and Intel Core Ultra NPU (Linux).
 
 ## 1. macOS (Apple Silicon arm64)
 
-Reproduce with `packaging/bench-mac.sh` (speed + power via `powermetrics`). 复现：`packaging/bench-mac.sh`。
+Reproduce with `packaging/bench-mac.sh` (wall time from the `--json` done event, peak memory from `/usr/bin/time -l`, power via `powermetrics`). The script measures both CoreML Qwen3 sizes; the table below predates the 1.7B default. 复现：`packaging/bench-mac.sh`（同时测量 CoreML Qwen3 1.7B 与 0.6B）。
 
 ### Methodology / 方法
 
