@@ -16,7 +16,7 @@
 
 此前截图和日志位于临时目录 `/private/tmp/course2md-reference-review/`，2026-10-15恢复环境时该目录大部分文件已不存在；以上是当时运行与独立审阅的记录，不应将旧路径当作现存交付文件。新的截图使用项目忽略目录 `out/design-review/`。独立测试应用为 `~/Applications/course2md UI Preview.app`，正式用户配置和发布资源未替换。
 
-最后间距修正 `ecb35bb` 已重新构建并原生检查：1440×1021与720×960外观页无重叠或截断，新图为 `out/design-review/appearance-1440.png`、`appearance-narrow.png`；最新空库首页为 `home-1440.png`。
+最后间距修正 `ecb35bb` 已重新构建并原生检查：1440×1021与720×960外观页无重叠或截断，新图为 `out/design-review/appearance-1440.png`、`appearance-narrow.png`；最新空库首页为 `home-1440.png`。独立复测外观页（扣28px原生窗口栏）：预览顶部336.6/参考337、主题卡底552.4/553、偏好卡顶609.3/609、偏好卡底805.9/806 CSS px，先前四处偏差已收敛到约1px以内。
 
 ## 2026-10-14：三档首页参考图排版
 
