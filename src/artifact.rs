@@ -1,7 +1,7 @@
 //! Published versions are immutable. Work directories and diagnostic logs are not notes.
 
 use crate::{
-    checkpoint::atomic_write,
+    checkpoint::{atomic_write, atomic_write_shared},
     execution,
     fetch::VideoMeta,
     render,
@@ -377,7 +377,7 @@ pub fn publish_blocking(
         sections: sections.to_vec(),
         summary: summary.cloned(),
     };
-    atomic_write(
+    atomic_write_shared(
         &staging.path().join("document.json"),
         &serde_json::to_vec_pretty(&document)?,
     )?;
@@ -385,7 +385,7 @@ pub fn publish_blocking(
     if let Some(summary) = summary {
         markdown = crate::summarize::insert_into_md(&markdown, summary);
     }
-    atomic_write(&staging.path().join("course.md"), markdown.as_bytes())?;
+    atomic_write_shared(&staging.path().join("course.md"), markdown.as_bytes())?;
     meta.save(&staging.path().join("meta.json"))?;
     // Preserve original fine-grained transcript for later independent local/AI work.
     if work_dir.join("timeline.jsonl").is_file() {
@@ -470,7 +470,7 @@ pub fn publish_blocking(
         partial: outcomes.is_partial(),
         outcomes,
     };
-    atomic_write(
+    atomic_write_shared(
         &staging.path().join("manifest.json"),
         &serde_json::to_vec_pretty(&manifest)?,
     )?;

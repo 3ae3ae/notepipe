@@ -179,7 +179,7 @@ impl Checkpoint {
         let s =
             std::fs::read_to_string(path).with_context(|| format!("读取 {0} / Failed to read {0}", path.display()))?;
         Ok(Some(
-            serde_json::from_str(&s).context("checkpoint 身份文件损坏 / checkpoint identity file is corrupted")?,
+            serde_json::from_str(&s).context("识别进度记录已损坏 / The transcription progress record is damaged")?,
         ))
     }
 
@@ -242,7 +242,7 @@ impl Checkpoint {
                         tracing::debug!("checkpoint 末行解析失败（按崩溃残留忽略）：{e}");
                     } else {
                         anyhow::bail!(
-                            "checkpoint {0} 第 {1} 行损坏（非末行，不能静默跳过，否则转写内容缺失） / checkpoint {0} line {1} is corrupted (not the last line; it cannot be skipped silently, otherwise transcript content would be lost): {e}",
+                            "识别进度文件第 {1} 行已损坏，请重新识别 / Line {1} of the transcription progress file is damaged; transcribe again ({0}): {e}",
                             path.display(),
                             i + 1
                         );
@@ -333,7 +333,29 @@ impl Checkpoint {
 /// 小文件原子写：tmp → fsync → rename，避免崩溃留下半截文件。
 /// 保证级别：崩溃安全（文件本体已 fsync 后才 rename）；
 /// 不含掉电场景下父目录的 fsync（极端掉电时目录项本身可能未落盘）。
+/// 文件仅本人可读（0600）：配置、凭据与任务记录都走这里。
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomically(path, bytes, false)
+}
+
+/// 同 [`atomic_write`]，但产物是用户要阅读、分享的笔记文件：权限与普通文件一致（0644）。
+pub fn atomic_write_shared(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomically(path, bytes, true)
+}
+
+/// 把临时文件放宽为普通文件权限（0644）；非 Unix 无此概念。
+pub fn make_shared(file: &std::fs::File) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o644))?;
+    }
+    #[cfg(not(unix))]
+    let _ = file;
+    Ok(())
+}
+
+fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -342,6 +364,9 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(bytes)
         .with_context(|| format!("写 {0} / Failed to write {0}", path.display()))?;
+    if shared {
+        make_shared(tmp.as_file())?;
+    }
     tmp.as_file().sync_all()?;
     tmp.persist(path)
         .with_context(|| format!("替换 {0} / Failed to replace {0}", path.display()))?;
@@ -400,10 +425,11 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600, "配置与凭据仅本人可读");
+            let note = dir.path().join("course.md");
+            atomic_write_shared(&note, b"note").unwrap();
+            assert_eq!(mode(&note), 0o644, "笔记文件可被其他程序读取");
         }
     }
 

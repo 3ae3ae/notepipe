@@ -138,6 +138,7 @@ pub(crate) fn write_document(
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    crate::checkpoint::make_shared(file.as_file())?;
     let images = images(root, document)?;
     let mut portable = document.clone();
     let local_file = if portable.meta.extractor == "local" {

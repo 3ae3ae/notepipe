@@ -615,7 +615,7 @@ pub fn local_content_identity(
 
 impl VideoMeta {
     pub fn save(&self, path: &Path) -> Result<()> {
-        crate::checkpoint::atomic_write(path, serde_json::to_string_pretty(self)?.as_bytes())
+        crate::checkpoint::atomic_write_shared(path, serde_json::to_string_pretty(self)?.as_bytes())
     }
 }
 
