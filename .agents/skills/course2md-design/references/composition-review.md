@@ -1,6 +1,6 @@
 # Composition before component checks
 
-The 2026-09-09 preview was rejected despite extensive screenshots and passing code checks. The failure was judging whether existing content fitted, rather than whether that content and interaction belonged on the page. Use the following decision order to challenge an implementation, including this skill's own local rules.
+Extensive screenshots and passing code checks do not show that content and interaction belong on a page; judging only whether existing content fits is the common failure. Use the following decision order to challenge an implementation, including this skill's own local rules.
 
 ## Start with the job
 
@@ -22,7 +22,7 @@ After composition, inspect geometry and states. Exercise search in its actual sc
 
 ## Authoritative basis and project adaptation
 
-Relevant official Apple HIG pages were checked against Apple's published documentation data on 2026-09-09, not merely their JavaScript HTML shells:
+Relevant official Apple HIG pages, read from Apple's published documentation data:
 
 - [Layout](https://developer.apple.com/design/human-interface-guidelines/layout): group related content, reserve space for essential information, and make alignment communicate hierarchy. Project adaptation: complete setting/resource boundaries and less prominent routine status.
 - [Settings](https://developer.apple.com/design/human-interface-guidelines/settings): choose useful defaults, avoid asking for detectable information, and keep task-specific options in context. Project adaptation: preserve the user's requested in-app settings and four-part skippable setup; no switch to a new navigation architecture merely to imitate a screenshot.

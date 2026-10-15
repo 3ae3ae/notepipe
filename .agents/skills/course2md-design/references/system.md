@@ -1,6 +1,6 @@
 # Shared design system
 
-This is the maintained course2md adaptation, updated 2026-09-09. Rules and dimensions in this file are project choices unless explicitly identified as official. Rejected native screens are regression evidence; they do not substitute for judging a complete new composition or establish design acceptance.
+This is the maintained course2md adaptation. Rules and dimensions in this file are project choices unless explicitly identified as official. Rejected native screens are regression evidence; they do not substitute for judging a complete new composition or establish design acceptance.
 
 Read [layout, type and icons](layout-and-type.md) for the concrete ruler and measurement contract, and [states and motion](states-and-motion.md) for combined states, progress, scrolling and animation. The [official source guide](material-sources.md) links real downloaded content and explains which M3 content is available only as short quotations.
 

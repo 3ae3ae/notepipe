@@ -41,9 +41,9 @@ At 100% interface scale, use these project roles. Specify **size, line height an
 | --- | --- | --- | --- |
 | Page heading | 28 / 36px | Semibold, about 600 | Meaningful page icon if it clarifies the task; shared heading slot |
 | Section heading | 18 / 26px | Semibold, about 600 | Meaningful category icon; same treatment for peer sections |
-| Action, navigation, main field label | 14 / 22px | Semibold, about 600 | Meaningful Material icon plus 8px gap |
-| Field value / ordinary UI body | 14 / 22px | Regular, about 400 | No compulsory decorative icon |
-| Necessary metadata / support | 12 / 18px | Regular, about 400 | Status icon only when it communicates state |
+| Action, navigation, main field label | 14 / 22px (settings: 16px) | Semibold, about 600 | Meaningful icon plus 8px gap |
+| Field value / ordinary UI body | 14 / 22px (settings: 16px) | Regular, about 400 | No compulsory decorative icon |
+| Necessary metadata / support | 12 / 18px (settings: 14px) | Regular, about 400 | Status icon only when it communicates state |
 | Note-reading body | Start at 16 / 26px, adapt to the reader's scale | Regular, about 400 | Preserve semantic Markdown formatting; no icon per paragraph |
 
 “Icon + bold label” applies to the UI's scan and action layer. It does not bold filenames, values, every subtitle, information-panel prose or a generated note. Never manufacture importance by emphasizing everything. Short headings/labels have no terminal period; explanatory sentences remain normal prose.
@@ -67,6 +67,8 @@ Use real text measurement. Character count × font size is not a valid width for
 
 ### Icons need optical alignment
 
+Shared navigation, actions and settings use the Lucide outline icons in `desktop/assets/outline`, resolved centrally in `desktop/src/icons.rs`; brand marks and meanings without an outline match keep their existing assets. Settings navigation stays at 14px while settings content uses the larger sizes in the type table.
+
 The Material icon source allows 20dp optical icons and a 40dp target for mouse/keyboard layouts. That supports the project's compact desktop baseline, not a universal mobile target rule. Keep the current Material family consistent. Existing legacy Material Icons are not automatically variable Material Symbols; do not pretend they expose weight/grade/optical-size axes.
 
 Use a shared 20px icon slot for normal 14px UI labels, judged as a component cluster. For inline glyph-style Symbols, M3 describes matching size/weight and lowering the symbol baseline by roughly 11.5% of text size. Apply that only to an inline-symbol renderer with relevant metrics. An SVG centered by flex must not also receive that baseline correction. Shared optical adjustments need native checks with multiple shapes.
@@ -86,7 +88,3 @@ The reader is a content surface. Use a bounded prose column, ordinary paragraph 
 Record the pane width/text scale, chosen rulers and actual deviations. Compare the title, first group, representative rows, main action, expanded information panel and focused edge control. Include a long mixed-script value. A useful capture shows the complete grouping and its geometry, not just an isolated component.
 
 Repeat at narrow/default/wide windows and offered text scales. Record whether rows wrap, stack or change pane arrangement and whether actions remain associated with their content. “No overlap” is not a complete layout review.
-
-## 2026-10-14 supplied archive override
-
-The user’s 13-group, three-width archive controls current home and settings geometry. Reference-matching outline icons are resolved centrally in `desktop/src/icons.rs`, with Lucide assets and their complete licences under `desktop/assets/outline`. Existing brand and unmatched icons retain their shared fallback. Settings opt into 16px body/control labels and 14px support text; navigation retains 14px. This supersedes the older Material-only icon-family and settings typography assumptions above, while preserving semantic palettes.
