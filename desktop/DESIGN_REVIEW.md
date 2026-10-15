@@ -99,3 +99,9 @@
 原生截图、测试日志保存于 `/private/tmp/course2md-reference-review/`：`final-home.png`、`final-options.png`、`final-reader.png`、`final-library.png`、`fixed-settings.png`、`fixed-settings-bottom.png`、`settings-final-dark.png`、`library-narrow.png`、`live-reader-narrow.png`、`library-no-results.png`、`generate-result.png`、`repeat-result.png`、`slow-start.png`、`slow-cancelled.png`、`cancel-late-stable.png`。
 
 边界：未逐一实测全部配色与字号组合、宽屏极限、所有 hover/press/滚动动画、登录往返、保存失败和生成失败重试；相关恢复分支已做源码交叉复核及现有测试验证。合成视频的紫色画面是测试素材，不是正式封面设计。未验证真实外网服务、AI 摘要或 Apple 语音识别。本次不宣称穷尽全产品视觉与集成验收。
+
+## 2026-10-15：选项图标与居中
+
+用户最终明确选项应居中：每项固定18px图标槽、8px间距，图标与自然宽度文字作为整体水平/垂直居中；不按最长标签列左对齐。共享SingleChoiceGroup删除segment_icons分歧，选中背景不再替换语义图标。审查了首页三处、生成三处、外观/字号、服务编辑三处、引导三处及阅读tabs；动态字幕逐value补图标，额外NPU模型走下拉未改。高级本机引擎改为标签上/控件下，与同卡片的模型布局一致。
+
+6项组件测试通过，包含312px三段控件、图标与文字组合中心、垂直中心、切换后位置稳定与键盘导航；最终构建通过。原生1440页检查外观/字号/文字来源/模型；当前截图为out/design-review/center-appearance.png和center-generation.png。源码独立复核确认生产调用图标覆盖完整。本轮未逐一原生重访全部弹窗及150/200%字号。
