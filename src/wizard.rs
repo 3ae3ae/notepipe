@@ -1,9 +1,6 @@
 //! 首次使用向导：没有可用的转写配置且处于交互终端时，引导选择语音转写方式并写盘。
-//!
-//! 触发条件见 [`is_first_run`]；非交互/CI 环境不触发，走既有默认逻辑
-//!（provider 回落 `config::default_provider_hint()`）。
-//! 交互风格与 llm.rs 的 setup_interactive 一致：dialoguer Select/Input +
-//! `interact_opt` 取消（Esc 退出，不写配置或开始下载）。
+//! 非交互/CI 环境不触发（provider 回落 `config::default_provider_hint()`）；
+//! Esc 取消，不写配置也不开始下载。
 
 use crate::config::AsrProvider;
 use anyhow::Result;
@@ -29,13 +26,12 @@ impl std::fmt::Display for ExitWizard {
 }
 impl std::error::Error for ExitWizard {}
 
+/// 调用方已排除 --json/--quiet（stdout 必须保持纯输出，不能混进交互提示）。
 pub fn maybe_run(
     opts: &crate::cli::RunOpts,
     file: &crate::settings::ConfigFile,
 ) -> Result<crate::settings::ConfigFile> {
-    if opts.quiet
-        || opts.json
-        || matches!(
+    if matches!(
             opts.transcript_source.or(file.defaults.transcript_source),
             Some(crate::config::TranscriptSource::Subtitle)
         )
@@ -70,14 +66,11 @@ fn run_wizard(
     println!(
         "欢迎使用 course2md！选择字幕不可用时的语音转写方式。 / Welcome! Choose how to transcribe when subtitles are unavailable."
     );
-    println!("{}", crate::auth::BILIBILI_SETUP_TIP);
-    println!();
-
     println!(
         "↑↓ 选择，Enter 确认，Esc 取消。 / Use ↑↓ to select, Enter to confirm, Esc to cancel."
     );
     println!(
-        "仅使用字幕可加 --transcript-source subtitle，无需下载识别模型。 / For subtitles only, use --transcript-source subtitle; no speech model is needed."
+        "只想用视频自带字幕？按 Esc 退出，加 --transcript-source subtitle 重新运行。 / Subtitles only? Press Esc and rerun with --transcript-source subtitle."
     );
 
     let top = select(
@@ -153,9 +146,7 @@ fn run_wizard(
     let path = crate::settings::save(&cfg)?;
     println!();
     println!("✓ 已保存配置 / Configuration saved: {}", path.display());
-    println!(
-        "现在开始处理视频。用 --provider 临时切换转写方式。 / Processing your video now. Use --provider to change transcription for a single run."
-    );
+    println!("开始处理视频… / Processing your video…");
     Ok(cfg)
 }
 
@@ -167,22 +158,23 @@ enum LocalPick {
 
 /// 按本机能力动态生成本地后端候选：推荐项（default_provider_hint）置顶并标注。
 fn pick_local_provider() -> Result<LocalPick> {
+    let llama = crate::runtime::which("llama-server").is_some();
     let mut cands: Vec<AsrProvider> = vec![];
     if cfg!(apple_native) {
         cands.push(AsrProvider::Coreml);
     }
-    if crate::runtime::which("llama-server").is_some() {
+    if llama {
         cands.push(AsrProvider::Gpu);
     }
     if std::path::Path::new(crate::npu::NPU_DEVICE_PATH).exists() {
         cands.push(AsrProvider::Npu);
     }
-    if crate::runtime::which("llama-server").is_some() {
+    if llama {
         cands.push(AsrProvider::Cpu);
     }
     if cands.is_empty() {
         println!(
-            "本地识别依赖尚未安装。可先退出运行 course2md doctor，或继续配置云端 API。 / Local transcription is unavailable. Exit and run course2md doctor, or configure cloud API."
+            "本机识别所需的组件尚未安装。可退出后运行 course2md doctor 查看，或改用云端识别。 / Local transcription is unavailable. Exit and run course2md doctor, or use a cloud service."
         );
         return select(
             "下一步 / Next step",
@@ -217,7 +209,8 @@ fn pick_local_provider() -> Result<LocalPick> {
             } else {
                 ""
             };
-            format!("{}{tag}", provider_label(p))
+            let (zh, en) = p.label();
+            format!("{zh}{tag} / {en}")
         })
         .collect();
     items.push("改用云端 API / Use cloud API".to_string());
@@ -229,25 +222,15 @@ fn pick_local_provider() -> Result<LocalPick> {
     })
 }
 
-fn provider_label(p: AsrProvider) -> &'static str {
-    match p {
-        AsrProvider::Coreml => "coreml — Apple 原生识别 / Apple native transcription",
-        AsrProvider::Gpu => "gpu — GPU 加速 / GPU acceleration (Metal / CUDA / Vulkan)",
-        AsrProvider::Npu => "npu — Intel NPU 加速 / Intel NPU acceleration (OpenVINO)",
-        AsrProvider::Cpu => "cpu — CPU 识别（速度较慢） / CPU transcription (slower)",
-        AsrProvider::Api => "api — 云端语音转写 / Cloud transcription",
-    }
-}
-
 /// 云端分支：base_url / api_key / model 三项，缺省值直接取自 settings::AsrApi::default()。
 fn configure_cloud(cfg: &mut crate::settings::ConfigFile) -> Result<()> {
     let defaults = crate::settings::AsrApi::default();
     cfg.asr_api.base_url = dialoguer::Input::new()
-        .with_prompt("服务地址 / Base URL (OpenAI-compatible)")
+        .with_prompt("服务地址（兼容 OpenAI 接口）/ Service URL (OpenAI-compatible)")
         .default(defaults.base_url)
         .interact_text()?;
     cfg.asr_api.api_key = dialoguer::Password::new()
-        .with_prompt("API Key（输入隐藏；留空使用环境变量） / API key (hidden; leave blank to use COURSE2MD_ASR_API_KEY)")
+        .with_prompt("API 密钥（输入不显示）/ API key (hidden)")
         .allow_empty_password(true)
         .interact()?;
     cfg.asr_api.model = dialoguer::Input::new()
@@ -266,7 +249,7 @@ fn configure_cloud(cfg: &mut crate::settings::ConfigFile) -> Result<()> {
     );
     anyhow::ensure!(
         !cfg.asr_api.api_key.trim().is_empty() || crate::config::asr_api_key_from_env().is_some(),
-        "未提供 API Key。请设置 COURSE2MD_ASR_API_KEY 后重试，或在向导中输入。 / No API key provided. Set COURSE2MD_ASR_API_KEY or enter a key in setup."
+        "未提供 API 密钥。请在向导中输入，或设置环境变量 COURSE2MD_ASR_API_KEY 后重试。 / No API key provided. Enter one in setup, or set COURSE2MD_ASR_API_KEY and retry."
     );
     Ok(())
 }

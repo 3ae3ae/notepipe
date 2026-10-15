@@ -1,22 +1,27 @@
 //! 环境体检：一次性报告依赖工具、平台后端可用性、配置与模型缓存状态。
 //! 用户报 issue 时附上 `course2md doctor` 输出即可定位大多数环境问题。
 
-use crate::config::AsrProvider;
 use anyhow::Result;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 /// 版本首行展示的最大字符数（防止某些工具输出超长首行撑爆版面）
 const VERSION_LINE_MAX_CHARS: usize = 72;
 
+/// 单个工具的版本探测上限：坏掉的二进制不能让 doctor 卡住。
+const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
+
 fn tool_version(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Option<String> {
-    let out = Command::new(cmd).args(args).output().ok()?;
+    let mut command = Command::new(cmd);
+    command.args(args);
+    let out = crate::runtime::run_bounded("doctor", &mut command, VERSION_TIMEOUT).ok()?;
     if !out.status.success() {
         return None;
     }
-    let s = String::from_utf8_lossy(&out.stdout);
     Some(
-        s.lines()
+        out.stdout
+            .lines()
             .next()
             .unwrap_or("")
             .trim()
@@ -49,7 +54,7 @@ pub fn run() -> Result<()> {
                     &mut out,
                     false,
                     tool,
-                    "  缺失 / Missing: brew install ffmpeg (macOS); sudo apt install ffmpeg (Debian/Ubuntu)",
+                    &format!("  缺失 / Missing: {}", crate::error::install_hint(tool)),
                 );
             }
         }
@@ -99,12 +104,15 @@ pub fn run() -> Result<()> {
                 Err(error) => out.push(format!("! GPU  无法检查设备 / Device check failed: {error:#}")),
             }
         }
-        None => out.push("- gpu/cpu  缺少 llama-server / llama-server missing. 安装 llama.cpp 后重试 / Install llama.cpp to use these backends.".into()),
+        None => out.push(format!(
+            "- gpu/cpu  显卡/CPU 识别需要 llama.cpp / GPU and CPU transcription require llama.cpp: {}",
+            crate::error::install_hint("llama.cpp")
+        )),
     }
     if cfg!(target_os = "linux") {
         let device = Path::new(crate::npu::NPU_DEVICE_PATH).exists();
         out.push(if device {
-            "✓ npu  检测到 Intel NPU；仍需 OpenVINO 运行环境 / Intel NPU detected; OpenVINO runtime also required"
+            "✓ npu  检测到 Intel NPU（首次使用会自动安装运行组件）/ Intel NPU detected (runtime components install on first use)"
         } else {
             "- npu  未检测到 Intel NPU 设备 / No Intel NPU device detected"
         }.into());
@@ -138,7 +146,7 @@ pub fn run() -> Result<()> {
                 Ok(()) => {}
                 Err(error) => {
                     failures += 1;
-                    check(&mut out, false, "settings", &format!("  {error:#}"));
+                    check(&mut out, false, "配置值 / settings values", &format!("  {error:#}"));
                 }
             }
             let root = crate::config::model_dir_from(cfg.defaults.model_dir.as_deref());
@@ -154,7 +162,10 @@ pub fn run() -> Result<()> {
                     "- gpu/cpu models  未下载或不完整 / Missing or incomplete: {}",
                     root.display()
                 ));
-                out.push(format!("  仅 gpu/cpu 需要；下载约 2.4GB / Only needed for gpu/cpu (~2.4GB): course2md models download --dir {:?}", root));
+                out.push(format!(
+                    "  仅 gpu/cpu 需要；下载约 2.4GB / Only needed for gpu/cpu (~2.4GB): course2md models download --dir \"{}\"",
+                    root.display()
+                ));
             }
             let key = !cfg.asr_api.api_key.trim().is_empty()
                 || crate::config::asr_api_key_from_env().is_some();
@@ -163,17 +174,10 @@ pub fn run() -> Result<()> {
                 .defaults
                 .provider
                 .unwrap_or_else(crate::config::default_provider_hint);
-            let label = match provider {
-                AsrProvider::Coreml => "Apple native",
-                AsrProvider::Gpu => "llama.cpp GPU",
-                AsrProvider::Cpu => "llama.cpp CPU",
-                AsrProvider::Npu => "Intel NPU / OpenVINO",
-                AsrProvider::Api => "Cloud speech API",
-            };
+            let (zh, en) = provider.label();
             out.push(format!(
-                "\n当前识别后端 / Configured speech backend: {provider} ({label})"
+                "\n当前识别方式 / Configured speech backend: {provider}（{zh} / {en}）"
             ));
-            out.push("字幕可用时无需语音识别；可用 --provider 覆盖后端 / Subtitles do not require speech recognition; override the backend with --provider.".into());
         }
         Err(error) => {
             failures += 1;

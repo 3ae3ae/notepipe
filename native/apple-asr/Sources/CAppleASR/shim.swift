@@ -86,7 +86,7 @@ public func c2mVadDetect(
         outN.pointee = Int32(n)
         return 0
     } catch {
-        setErr("VAD 失败: \(error)")
+        setErr("语音检测失败 / Speech detection failed: \(error)")
         return -1
     }
 }
@@ -103,10 +103,10 @@ private func progressLog(_ p: Double, _ msg: String) {
     msg.withCString { reportModelProgress(p, $0) }
 }
 
-// Rust prepares missing files before loading. Cached inference must not contact
-// the Hub again, or offline use waits for network retries despite complete files.
+// Rust prepares missing files before loading, and loaders run offline, so every
+// progress report here is a local load whatever the library labels it.
 private func cachedLoadProgress(_ p: Double, _ msg: String) {
-    progressLog(p, msg.hasPrefix("Downloading") ? "正在加载本机模型…" : msg)
+    progressLog(p, "正在加载本机模型… / Loading local model…")
 }
 
 // MARK: - ASR：qwen3（CoreML 0.6B/ANE）| qwen3-1.7b（MLX/GPU）| whisper
@@ -141,7 +141,7 @@ public func c2mAsrPrepareCache(_ model: UnsafePointer<CChar>, _ errBuf: UnsafeMu
             case "whisper":
                 downloads.append(("aufklarer/Whisper-Large-v3-Turbo-CoreML", ["MelSpectrogram.mlmodelc/**", "AudioEncoder.mlmodelc/**", "TextDecoder.mlmodelc/**", "TextDecoderContextPrefill.mlmodelc/**", "generation_config.json", "manifest.json", "tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt"]))
             default:
-                throw NSError(domain: "course2md", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unsupported Apple model: \(name)"])
+                throw NSError(domain: "course2md", code: 1, userInfo: [NSLocalizedDescriptionKey: "不支持的 Apple 模型 / Unsupported Apple model: \(name)"])
             }
             downloads.append(("aufklarer/Silero-VAD-v6.2.1-CoreML", ["silero_vad.mlmodelc/**", "config.json"]))
             for (index, item) in downloads.enumerated() {
@@ -154,7 +154,7 @@ public func c2mAsrPrepareCache(_ model: UnsafePointer<CChar>, _ errBuf: UnsafeMu
         return 0
     } catch {
         if errLen > 0 {
-            let message = "Apple model download failed (\(name)): \(error)"
+            let message = "Apple 模型下载失败 / Apple model download failed (\(name)): \(error)"
             message.withCString { _ = strncpy(errBuf, $0, errLen - 1) }
             errBuf[errLen - 1] = 0
         }
@@ -182,18 +182,23 @@ public func c2mAsrCreate(_ model: UnsafePointer<CChar>, _ errBuf: UnsafeMutableP
                     progressHandler: cachedLoadProgress)
             }
             kind = .qwenMlx(m)
-        } else {
+        } else if name == "qwen3-0.6b" {
             let m = try runSync {
                 try await CoreMLASRModel.fromPretrained(offlineMode: true, progressHandler: cachedLoadProgress)
             }
             try m.warmUp()
             kind = .qwen(m)
+        } else {
+            throw NSError(domain: "course2md", code: 1, userInfo: [NSLocalizedDescriptionKey: "不支持的 Apple 模型 / Unsupported Apple model: \(name)"])
         }
         return Unmanaged.passRetained(AsrBox(kind)).toOpaque()
     } catch {
-        let msg = "ASR init failed (\(name)): \(error)"
-        msg.withCString { cStr in
-            _ = strncpy(errBuf, cStr, errLen - 1)
+        let msg = "识别模型加载失败 / Speech model failed to load (\(name)): \(error)"
+        if errLen > 0 {
+            msg.withCString { cStr in
+                _ = strncpy(errBuf, cStr, errLen - 1)
+            }
+            errBuf[errLen - 1] = 0
         }
         return nil
     }
@@ -235,7 +240,7 @@ public func c2mAsrTranscribe(
         }
         return 0
     } catch {
-        setErr("转写失败: \(error)")
+        setErr("转写失败 / Transcription failed: \(error)")
         return -1
     }
 }

@@ -104,6 +104,19 @@ impl AsrProvider {
     }
 }
 
+impl AsrProvider {
+    /// 面向用户的识别方式名称（中文 / English）。
+    pub fn label(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::Coreml => ("Apple 芯片本机识别", "Apple silicon on-device"),
+            Self::Gpu => ("显卡加速", "GPU"),
+            Self::Cpu => ("CPU（较慢）", "CPU (slower)"),
+            Self::Npu => ("Intel NPU 加速", "Intel NPU"),
+            Self::Api => ("云端语音识别", "Cloud speech service"),
+        }
+    }
+}
+
 impl fmt::Display for AsrProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())

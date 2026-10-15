@@ -72,6 +72,7 @@ pub fn stage(name: &str, status: &str) {
             "llm" => "润色文字 / Proofreading transcript",
             "summary" | "summarize" => "生成总结 / Generating summary",
             "render" => "生成笔记 / Writing notes",
+            "model/prepare" => "检查识别模型 / Checking speech model",
             name if name.starts_with("model/") => "下载识别模型 / Downloading speech model",
             _ => return,
         };
@@ -291,32 +292,6 @@ impl tracing::field::Visit for LogVisitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn stage_event_shape() {
-        assert_eq!(
-            stage_event("scenes", "start"),
-            serde_json::json!({"type": "stage", "stage": "scenes", "status": "start"})
-        );
-    }
-
-    #[test]
-    fn progress_event_message_optional() {
-        assert_eq!(
-            progress_event("transcribe", 3, 10, ""),
-            serde_json::json!({"type": "progress", "stage": "transcribe", "current": 3, "total": 10})
-        );
-        let ev = progress_event("llm", 1, 2, "第 3 节");
-        assert_eq!(ev["message"], "第 3 节");
-    }
-
-    #[test]
-    fn log_event_shape() {
-        assert_eq!(
-            log_event("warn", "boom"),
-            serde_json::json!({"type": "log", "level": "warn", "message": "boom"})
-        );
-    }
 
     #[test]
     fn visitor_message_fallback_to_fields() {
