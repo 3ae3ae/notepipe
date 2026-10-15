@@ -15,9 +15,8 @@ pub const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 
 /// 该后端对 text.format=json_object 有前置检查：input 消息须含小写 "json"
-///（大小写敏感，实测 2026-09；instructions 中出现不算数）。润色的首个文本块
-/// 是纯 segments JSON（校验逻辑要按 JSON 解析复核段落数），不能污染；
-/// 因此在末尾追加独立的约束块。
+///（大小写敏感；instructions 中出现不算数）。润色的首个文本块是纯 segments
+/// JSON，不能污染，因此在末尾追加独立的约束块。
 fn ensure_json_marker(content: &mut Value) {
     let Some(parts) = content.as_array_mut() else { return };
     let mentioned = parts
@@ -110,20 +109,6 @@ fn codex_content(user: Value) -> Value {
         other => vec![serde_json::json!({"type": "input_text", "text": other.to_string()})],
     };
     Value::Array(parts)
-}
-
-/// 请求体中的用户输入文本（校对校验要复核段落数；两种方言各取所需）。
-pub(crate) fn user_input_text(body: &Value) -> Option<&str> {
-    if let Some(text) = body["messages"][1]["content"][0]["text"].as_str() {
-        return Some(text);
-    }
-    body["input"][0]["content"].as_array()?.iter().find_map(|part| {
-        if part["type"] == "input_text" {
-            part["text"].as_str()
-        } else {
-            None
-        }
-    })
 }
 
 /// 端点是否声明了结构化输出约束（400/422 降级重试的前提）。
@@ -236,8 +221,8 @@ mod tests {
         assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
         assert_eq!(body["input"][0]["content"][1]["type"], "input_image");
         assert_eq!(body["text"]["format"]["type"], "json_object");
-        // 首个文本块保持纯输入（校验按 JSON 解析）；json 约束块追加在末尾
-        assert_eq!(user_input_text(&body), Some("输入"));
+        // 首个文本块保持纯输入；json 约束块追加在末尾
+        assert_eq!(body["input"][0]["content"][0]["text"], "输入");
         let last = body["input"][0]["content"].as_array().unwrap().len() - 1;
         assert!(
             body["input"][0]["content"][last]["text"]
@@ -252,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn openai_body_and_input_text_roundtrip() {
+    fn openai_body_requests_structured_output() {
         let s = settings(LlmProvider::OpenAiCompatible);
         let body = chat_body(
             &s,
@@ -261,7 +246,7 @@ mod tests {
             100,
         );
         assert_eq!(body["response_format"]["type"], "json_object");
-        assert_eq!(user_input_text(&body), Some("输入"));
+        assert_eq!(body["messages"][1]["content"][0]["text"], "输入");
         assert!(has_structured_format(&s, &body));
     }
 

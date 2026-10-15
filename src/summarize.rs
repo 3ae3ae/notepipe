@@ -37,7 +37,7 @@ pub struct Summary {
 }
 
 /// 总结区块哨兵注释（md/html 通用；HTML 注释在两种渲染产物中都原样保留）。
-/// 幂等判断 / strip / 原地替换均以哨兵为准，不再扫描正文结构字面量。
+/// 幂等判断与原地替换均以哨兵为准。
 const SUMMARY_BEGIN: &str = "<!-- course2md:summary -->";
 const SUMMARY_END: &str = "<!-- /course2md:summary -->";
 
@@ -145,9 +145,14 @@ fn chat_once(
     description: &str,
 ) -> Result<String> {
     let body = crate::provider::chat_body(s, sys, user, llm::CHAT_MAX_TOKENS);
-    llm::send_chat_described(agent, s, &body, "summary", description)
-        .map_err(|f| f.err)
-        .context("LLM 总结请求失败 / LLM summary request failed")
+    llm::send_chat_described(agent, s, &body, llm::Purpose::Summary, description, &|content| {
+        anyhow::ensure!(
+            parse_summary(content).is_some(),
+            "服务返回的摘要结构无效 / Invalid summary structure"
+        );
+        Ok(())
+    })
+    .context("生成摘要请求失败 / Summary request failed")
 }
 
 /// One requested summary scope. A protocol failure is retained, never hidden by another paid request.
@@ -387,7 +392,7 @@ pub fn render_html_block(sm: &Summary) -> String {
 /// 首次插入定位到元信息之后、首个字幕小节（## [mm:ss]）之前。
 pub fn insert_into_md(md: &str, sm: &Summary) -> String {
     let block = render_md_block(sm);
-    if contains_summary(md) {
+    if md.contains(SUMMARY_BEGIN) {
         return replace_sentinel_block(md, &block);
     }
     if let Some(pos) = md.find("\n## [") {
@@ -404,7 +409,7 @@ pub fn insert_into_md(md: &str, sm: &Summary) -> String {
 /// 首次插入定位到 </header> 之后（兜底 </body> 前 / 文末）。
 pub fn insert_into_html(html: &str, sm: &Summary) -> String {
     let block = render_html_block(sm);
-    if contains_html_summary(html) {
+    if html.contains(SUMMARY_BEGIN) {
         return replace_sentinel_block(html, &block);
     }
     if let Some(pos) = html.find("</header>") {
@@ -436,7 +441,6 @@ fn sentinel_range(doc: &str) -> Option<std::ops::Range<usize>> {
 }
 
 /// 原地替换哨兵之间的总结区块；缺闭合哨兵时保守不改（告警）。
-/// 调用方需先经 contains_summary / contains_html_summary 确认起始哨兵存在。
 fn replace_sentinel_block(doc: &str, block: &str) -> String {
     let Some(range) = sentinel_range(doc) else {
         return doc.to_string();
@@ -457,35 +461,6 @@ pub fn sanitize_filename(name: &str) -> String {
     crate::config::sanitize_filename_with_fallback(name, "summary")
 }
 
-/// 判断已渲染 markdown 是否已包含总结区块（幂等跳过；以哨兵注释为准，
-/// 视频标题本身含「视频总结」字样时不会误判）。
-pub fn contains_summary(md: &str) -> bool {
-    md.contains(SUMMARY_BEGIN)
-}
-
-/// 判断已渲染 HTML 是否已包含总结区块（幂等跳过；以哨兵注释为准）。
-pub fn contains_html_summary(html: &str) -> bool {
-    html.contains(SUMMARY_BEGIN)
-}
-
-/// 删除哨兵之间的总结区块；只有起始哨兵没有闭合哨兵时保守不删（告警）。
-fn strip_sentinel_block(doc: &str) -> String {
-    let Some(range) = sentinel_range(doc) else {
-        return doc.to_string();
-    };
-    format!("{}{}", &doc[..range.start], &doc[range.end..])
-}
-
-/// 从 markdown 中移除已有总结区块（--force 重写时使用）。
-pub fn strip_md_summary(md: &str) -> String {
-    strip_sentinel_block(md)
-}
-
-/// 从 HTML 中移除已有总结区块（--force 重写时使用）。
-pub fn strip_html_summary(html: &str) -> String {
-    strip_sentinel_block(html)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn md_insert_and_strip_roundtrip() {
+    fn md_insert_places_summary_before_the_body() {
         let md = "# 标题\n\n---\n\n## [00:00](u)\n\n正文\n";
         let sm = Summary {
             tldr: "概述".into(),
@@ -516,20 +491,17 @@ mod tests {
             }],
         };
         let with = insert_into_md(md, &sm);
-        assert!(contains_summary(&with));
         assert!(
-            with.find("视频总结").unwrap() < with.find("## [00:00]").unwrap(),
+            with.find(SUMMARY_BEGIN).unwrap() < with.find("## [00:00]").unwrap(),
             "总结在正文前"
         );
-        let stripped = strip_md_summary(&with);
-        assert!(!contains_summary(&stripped));
-        assert!(stripped.contains("## [00:00]"), "正文保留");
-        // 标题含「视频总结」不误判
-        assert!(!contains_summary("# 视频总结速览课\n\n正文"));
+        // 标题含「视频总结」不当作已有总结
+        let titled = "# 视频总结速览课\n\n## [00:00](u)\n";
+        assert_eq!(insert_into_md(titled, &sm).matches(SUMMARY_BEGIN).count(), 1);
     }
 
     #[test]
-    fn html_insert_and_strip_roundtrip() {
+    fn html_insert_places_summary_after_the_header() {
         let html =
             "<html><body><header><h1>t</h1></header>\n<section><p>x</p></section>\n</body></html>";
         let sm = Summary {
@@ -541,10 +513,6 @@ mod tests {
         assert!(
             with.find("<section class=\"summary\">").unwrap() < with.find("<section>").unwrap()
         );
-        assert!(contains_html_summary(&with));
-        let stripped = strip_html_summary(&with);
-        assert!(!contains_html_summary(&stripped));
-        assert!(stripped.contains("<section>"));
     }
 
     #[test]
@@ -573,9 +541,14 @@ mod tests {
     }
 
     #[test]
-    fn unclosed_sentinel_is_not_stripped() {
+    fn unclosed_sentinel_is_left_unchanged() {
         let md = "# 标题\n\n<!-- course2md:summary -->\n\n## 残缺块\n\n正文\n";
-        assert_eq!(strip_md_summary(md), md, "缺闭合哨兵时保守不删");
+        let sm = Summary {
+            tldr: "新".into(),
+            key_points: vec![],
+            outline: vec![],
+        };
+        assert_eq!(insert_into_md(md, &sm), md, "缺闭合哨兵时保守不改");
     }
 
     #[test]
