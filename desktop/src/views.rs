@@ -90,7 +90,6 @@ impl Desktop {
             .id("brand-home")
             .flex()
             .items_center()
-            .gap(rems(10. / 14.))
             .px(rems(6. / 14.))
             .h(CONTROL_HEIGHT)
             .rounded(RADIUS_PILL)
@@ -99,10 +98,6 @@ impl Desktop {
             .hover(|style| style.opacity(0.8))
             .role(Role::Link)
             .aria_label("course2md 工作台")
-            .child(h_flex().w(rems(32. / 14.)).h(rems(32. / 14.))
-                .justify_center().items_center().rounded(RADIUS_SMALL)
-                .bg(color(ACCENT_STRONG)).text_color(color(ON_PRIMARY))
-                .child(icons::file().size(rems(20. / 14.))))
             .child(
                 div()
                     .text_size(rems(24. / 14.))
