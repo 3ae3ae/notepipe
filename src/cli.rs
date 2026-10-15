@@ -96,7 +96,7 @@ pub struct RunOpts {
     #[arg(help_heading = "截图 / Slides")]
     pub stable_secs: Option<f64>,
 
-    /// 仅比较指定区域 / Compare a region, e.g. 40%,0%-100%,100%
+    /// 只看画面的某块区域判断翻页，格式：左%,上%-右%,下% / Detect slide changes in a region: left%,top%-right%,bottom%
     #[arg(long)]
     #[arg(help_heading = "截图 / Slides")]
     pub roi: Option<String>,
@@ -111,8 +111,8 @@ pub struct RunOpts {
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub provider: Option<crate::config::AsrProvider>,
 
-    /// 识别模型（需与后端兼容）/ Speech model (must match backend)
-    /// gpu/cpu: qwen3; coreml: qwen3-1.7b, qwen3-0.6b, whisper; npu/api: 按后端配置 / backend-specific
+    /// 识别模型（需与后端兼容）/ Speech model (must match the backend)
+    /// gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b、qwen3-0.6b、whisper；npu: whisper 或 Hugging Face 仓库名 / or a Hugging Face repository
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub asr_model: Option<String>,
@@ -142,17 +142,17 @@ pub struct RunOpts {
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub transcript_source: Option<crate::config::TranscriptSource>,
 
-    /// GPU 卸载层数（0–99）；核显不稳定时可降低 / GPU offload layers; lower on unstable integrated GPUs
+    /// 放到 GPU 上运行的层数（0–99，默认全部）；核显不稳定时调低 / Layers run on the GPU (0–99, all by default); lower on unstable integrated GPUs
     #[arg(long, value_parser = clap::value_parser!(u32).range(0..=99))]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub gpu_layers: Option<u32>,
 
-    /// 将多模态 projector 放到 GPU / Offload the multimodal projector to GPU
+    /// 音频编码部分也用 GPU（默认）/ Also run the audio encoder on the GPU (default)
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub mmproj_offload: bool,
 
-    /// 将多模态 projector 留在 CPU / Keep the multimodal projector on CPU
+    /// 音频编码部分改用 CPU（显存不足时）/ Run the audio encoder on the CPU (when GPU memory is low)
     #[arg(long, conflicts_with = "mmproj_offload")]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub no_mmproj_offload: bool,
@@ -172,7 +172,7 @@ pub struct RunOpts {
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub model_dir: Option<PathBuf>,
 
-    /// 保留下载的视频 / Keep downloaded media.mp4
+    /// 保留下载的视频 / Keep the downloaded video
     #[arg(long)]
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub keep_video: bool,
@@ -182,7 +182,7 @@ pub struct RunOpts {
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub no_keep_video: bool,
 
-    /// 复用输出目录中已有的 media.mp4 / Reuse media.mp4 already in the output directory
+    /// 不重新下载，使用上次下载的视频 / Reuse the previously downloaded video
     #[arg(long)]
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub no_download: bool,
@@ -247,12 +247,12 @@ pub struct RunOpts {
     #[arg(help_heading = "终端输出 / Terminal output")]
     pub verbose: u8,
 
-    /// 从检查点恢复，跳过已识别片段 / Resume from saved speech checkpoints
+    /// 继续上次中断的识别（默认开启）/ Continue interrupted transcription (on by default)
     #[arg(long)]
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub resume: bool,
 
-    /// 忽略语音识别检查点，重新识别 / Ignore speech checkpoints and transcribe again
+    /// 从头重新识别 / Transcribe again from the start
     #[arg(long, conflicts_with = "resume")]
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub no_resume: bool,
@@ -273,7 +273,7 @@ pub enum Command {
     /// 执行已保存的任务；从标准输入读取完整 JSON 参数 / Execute a saved task from stdin JSON
     #[command(hide = true)]
     RunTask,
-    /// 管理 gpu/cpu 本地识别模型 / Manage gpu/cpu speech models
+    /// 管理本地识别模型 / Manage local speech models
     Models {
         #[command(subcommand)]
         cmd: ModelsCmd,
@@ -290,9 +290,9 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// 为已有笔记生成 AI 总结 / Add AI summaries to existing course.md/html
+    /// 为已有笔记生成 AI 总结 / Add AI summaries to existing notes
     Summarize(SummarizeArgs),
-    /// 清除已保存的 AI 服务配置 / Clear saved AI service settings
+    /// 清除 AI 润色的地址、密钥、模型和 Codex 登录 / Clear the AI proofreading endpoint, key, model and Codex login
     Remove(RemoveArgs),
 }
 
@@ -305,13 +305,13 @@ pub struct RemoveArgs {
 
 #[derive(Args)]
 pub struct SummarizeArgs {
-    /// 笔记目录或其父目录（包含 timeline.jsonl）/ Note directories or a parent directory
+    /// 笔记目录，或存放多份笔记的上级目录 / A note directory or a folder of notes
     #[arg(required = true)]
     pub dirs: Vec<PathBuf>,
-    /// 替换已有总结 / Replace existing summaries
+    /// 重新生成已有总结 / Regenerate existing summaries
     #[arg(long)]
     pub force: bool,
-    /// 另存独立总结到此目录 / Also export standalone summaries to this directory
+    /// 另存一份总结（Markdown）到此目录 / Also save each summary as Markdown in this directory
     #[arg(short = 'o', long)]
     pub out: Option<PathBuf>,
     /// 静默模式，仅报告错误 / Quiet mode: report errors only
@@ -321,30 +321,25 @@ pub struct SummarizeArgs {
 
 #[derive(Subcommand)]
 pub enum ModelsCmd {
-    /// 只读检查指定设备和模型的缓存 / Inspect exact local model cache without downloading
+    /// 检查模型是否已下载 / Check whether a model is downloaded
     Inspect {
-        #[arg(long, value_enum)]
-        provider: crate::config::AsrProvider,
-        #[arg(long, default_value = "qwen3-1.7b")]
-        model: String,
-        #[arg(long)]
-        dir: Option<PathBuf>,
+        #[command(flatten)]
+        target: ModelTarget,
+        /// 以 JSON 输出 / Print JSON
         #[arg(long)]
         json: bool,
     },
-    /// 准备指定模型，复用已有缓存 / Prepare an exact local model and retain downloaded files
+    /// 下载并验证模型 / Download and verify a model
     Prepare {
-        #[arg(long, value_enum)]
-        provider: crate::config::AsrProvider,
-        #[arg(long, default_value = "qwen3-1.7b")]
-        model: String,
-        #[arg(long)]
-        dir: Option<PathBuf>,
+        #[command(flatten)]
+        target: ModelTarget,
+        /// 以 NDJSON 输出进度，禁用交互 / Stream NDJSON progress without prompts
         #[arg(long)]
         json: bool,
     },
     /// 下载 gpu/cpu 模型（约 2.4GB）/ Download gpu/cpu models (~2.4GB)
     Download {
+        /// 模型目录 / Model directory
         #[arg(long)]
         dir: Option<PathBuf>,
         /// 以 NDJSON 输出进度，禁用交互 / Stream NDJSON progress without prompts
@@ -353,9 +348,23 @@ pub enum ModelsCmd {
     },
     /// 检查 gpu/cpu 模型文件 / Check downloaded gpu/cpu model files
     List {
+        /// 模型目录 / Model directory
         #[arg(long)]
         dir: Option<PathBuf>,
     },
+}
+
+#[derive(Args)]
+pub struct ModelTarget {
+    /// 识别方式 / Speech backend
+    #[arg(long, value_enum)]
+    pub provider: crate::config::AsrProvider,
+    /// 模型（默认为该识别方式的默认模型）/ Model (defaults to the backend's default)
+    #[arg(long, default_value = crate::config::DEFAULT_ASR_MODEL)]
+    pub model: String,
+    /// 模型目录 / Model directory
+    #[arg(long)]
+    pub dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]

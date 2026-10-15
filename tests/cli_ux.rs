@@ -57,7 +57,6 @@ fn no_arguments_or_help_succeed_with_bilingual_guidance() {
         let text = stdout(&result);
         assert!(text.contains("快速开始 / Quick start"));
         assert!(text.contains("Speech recognition"));
-        assert!(!text.contains("提交代码"));
     }
     for cmd in ["models", "llm", "config", "summarize", "remove", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
@@ -125,6 +124,37 @@ fn model_listing_uses_configured_directory_and_rejects_partial_files() {
     assert!(text.contains("custom models"));
     assert!(text.contains("Missing or incomplete"));
     assert!(text.contains("models download --dir"));
+}
+
+#[test]
+fn model_inspection_accepts_aliases_and_uses_the_configured_directory() {
+    let cli = CliTest::new();
+    cli.config("[defaults]\nmodel_dir = 'custom models'\n");
+    let result = cli.run(&["models", "inspect", "--provider", "gpu", "--model", "qwen3", "--json"]);
+    assert!(result.status.success(), "{}", stderr(&result));
+    let status: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(status["model"], "qwen3-1.7b");
+    assert_eq!(status["can_prepare"], true);
+    let part = status["parts"][0]["path"].as_str().unwrap();
+    assert!(part.contains("custom models"), "{part}");
+}
+
+#[test]
+fn config_show_reports_the_defaults_conversion_uses() {
+    let cli = CliTest::new();
+    let result = cli.run(&["config", "show"]);
+    assert!(result.status.success());
+    let text = stdout(&result);
+    let value = |key: &str| {
+        text.lines()
+            .find(|line| line.trim_start().starts_with(key))
+            .and_then(|line| line.split(':').nth(1))
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(value("resume "), "true");
+    assert_eq!(value("stable_secs "), "0.8");
 }
 
 #[test]

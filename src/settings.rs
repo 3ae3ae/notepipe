@@ -157,18 +157,32 @@ pub fn save(cfg: &ConfigFile) -> Result<PathBuf> {
     Ok(p)
 }
 
-/// `config init` 写入的带注释模板。输出格式默认值由 [`crate::options::default_formats`]
-/// 渲染，模板注释不会与内置默认脱节。
+/// `config init` 写入的带注释模板。默认值占位符由内置默认渲染，注释不会与实际默认脱节。
 pub fn template() -> String {
+    use crate::config as c;
     let formats = crate::options::default_formats()
         .iter()
         .map(|f| format!("\"{f}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    TEMPLATE.replace(
-        "#formats = [DEFAULT_FORMATS]",
-        &format!("#formats = [{formats}]"),
-    )
+    let api = AsrApi::default();
+    [
+        ("{OUT}", c::DEFAULT_OUT_DIR.to_string()),
+        ("{SIMILARITY}", c::DEFAULT_SIMILARITY.to_string()),
+        ("{SAMPLE_INTERVAL}", format!("{:?}", c::DEFAULT_SAMPLE_INTERVAL)),
+        ("{COOLDOWN}", format!("{:?}", c::DEFAULT_COOLDOWN)),
+        ("{MAX_HEIGHT}", c::DEFAULT_MAX_HEIGHT.to_string()),
+        ("{STABLE_SECS}", format!("{:?}", c::DEFAULT_STABLE_SECS)),
+        ("{THREADS}", c::DEFAULT_THREADS.to_string()),
+        ("{GPU_LAYERS}", c::DEFAULT_GPU_LAYERS.to_string()),
+        ("{ASR_MODEL}", c::DEFAULT_ASR_MODEL.to_string()),
+        ("{MAX_SPEECH}", format!("{:?}", c::DEFAULT_MAX_SPEECH)),
+        ("{FORMATS}", formats),
+        ("{API_BASE_URL}", api.base_url),
+        ("{API_MODEL}", api.model),
+    ]
+    .into_iter()
+    .fold(TEMPLATE.to_string(), |text, (key, value)| text.replace(key, &value))
 }
 
 const TEMPLATE: &str = r#"# course2md 配置 / Configuration
@@ -178,22 +192,22 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 
 [defaults]
 # 输出根目录，按平台/标题/ID 分类 / Output root, organized by platform/title/ID
-#out = "out"
+#out = "{OUT}"
 # 截图相似度 (0,1]，越高截图越多 / Similarity (0,1]; higher captures more slides
-#similarity = 0.85
+#similarity = {SIMILARITY}
 # 画面采样间隔（秒）/ Frame sampling interval (seconds)
-#sample_interval = 1.0
+#sample_interval = {SAMPLE_INTERVAL}
 # 截图最短间隔（秒）/ Minimum interval between slides (seconds)
-#cooldown = 10.0
+#cooldown = {COOLDOWN}
 # 下载视频最大高度 / Maximum downloaded video height
-#max_height = 1080
+#max_height = {MAX_HEIGHT}
 # first 立即截图，stable 等动画结束 / first: immediate; stable: wait for animations
 #slide_mode = "stable"
-#stable_secs = 1.0
+#stable_secs = {STABLE_SECS}
 # 仅比较指定画面区域 / Compare only this region
 #roi = "40%,0%-100%,100%"
 # 识别线程数 / Speech recognition threads
-#threads = 4
+#threads = {THREADS}
 # coreml: Apple Silicon 原生构建 / Apple Silicon native build
 # gpu/cpu: 需要 llama-server 和约 2.4GB 模型 / requires llama-server and ~2.4GB model
 # npu: Intel NPU，需要 OpenVINO / Intel NPU, requires OpenVINO
@@ -201,35 +215,35 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 # 留空自动选择后端；course2md doctor 查看可用性 / Leave unset for automatic selection; check with course2md doctor
 #provider = "gpu"
 # GPU 卸载层数（0–99）；核显不稳定时可降低 / GPU offload layers; lower on unstable integrated GPUs
-#gpu_layers = 99
+#gpu_layers = {GPU_LAYERS}
 # 将多模态 projector 放到 GPU；false 留在 CPU / Offload projector to GPU; false keeps it on CPU
 #mmproj_offload = true
-# 模型需与后端兼容 / Models must match the backend
-# gpu/cpu: qwen3; coreml: qwen3-1.7b, qwen3-0.6b, whisper
-#asr_model = "qwen3"
+# 识别模型，需与后端兼容 / Speech model; must match the backend
+# gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b, qwen3-0.6b, whisper；npu: whisper 或 Hugging Face 仓库名 / or a Hugging Face repository
+#asr_model = "{ASR_MODEL}"
 # auto 优先字幕，无字幕再识别 / auto: subtitles first, then speech recognition
 # subtitle 仅字幕；asr 仅识别 / subtitle: subtitles only; asr: speech recognition only
 #transcript_source = "auto"
 # 每段语音最长秒数 (1–600) / Maximum speech segment length in seconds (1–600)
-#max_speech = 20.0
+#max_speech = {MAX_SPEECH}
 # 输出格式 / Output formats: md, html, json
-#formats = [DEFAULT_FORMATS]
+#formats = [{FORMATS}]
 # gpu/cpu 模型目录；默认使用系统缓存 / gpu/cpu model directory; platform cache by default
 #model_dir = "~/.cache/course2md/models"
 # 成功后保留下载的视频 / Keep downloaded video after success
 #keep_video = false
-# 从语音检查点恢复 / Resume from speech checkpoints
-#resume = false
+# 继续上次中断的识别 / Continue interrupted transcription
+#resume = true
 
 [asr_api]
 # OpenAI 兼容语音服务 / OpenAI-compatible speech service
 # transcriptions: /audio/transcriptions; chat: /chat/completions
 # 请求方式和模型需由服务商支持 / The provider must support the selected mode and model
 #mode = "transcriptions"
-#base_url = "https://openrouter.ai/api/v1"
+#base_url = "{API_BASE_URL}"
 # 推荐通过 COURSE2MD_ASR_API_KEY 环境变量提供密钥 / Prefer the COURSE2MD_ASR_API_KEY environment variable
 #api_key = ""
-#model = "qwen/qwen3-asr-flash-2026-02-10"
+#model = "{API_MODEL}"
 
 [llm]
 # 可选 AI 润色；运行 course2md llm setup 配置 / Optional AI proofreading; configure with course2md llm setup
@@ -249,115 +263,101 @@ enabled = false
 #summarize = false
 "#;
 
-/// 打印生效配置（CLI 覆盖合并前，来自文件的值）。
-pub fn print_effective(cfg: &ConfigFile) {
-    use crate::config as c;
+/// 打印配置文件与内置默认合并后的设置（不含本次命令行与环境变量覆盖）。
+/// 默认值经 [`crate::options::resolve`] 得出，与实际转换使用同一套解析。
+pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     let d = &cfg.defaults;
+    let r = crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)?;
     println!("配置文件 / Configuration: {}", config_path().display());
     println!(
         "文件设置与内置默认值；不含本次命令行或环境变量覆盖 / File settings and built-in defaults, before CLI and environment overrides"
     );
+    let rows: Vec<(&str, String)> = vec![
+        ("out", r.out_root.display().to_string()),
+        ("similarity", r.similarity.to_string()),
+        ("sample_interval", r.sample_interval.to_string()),
+        ("cooldown", r.cooldown.to_string()),
+        ("max_height", r.max_height.to_string()),
+        ("roi", d.roi.clone().unwrap_or_else(|| "-".into())),
+        ("threads", r.threads.to_string()),
+        (
+            "provider",
+            match d.provider {
+                Some(p) => p.to_string(),
+                None => format!("{}（自动选择 / automatic）", r.provider),
+            },
+        ),
+        ("slide_mode", r.slide_mode.to_string()),
+        ("stable_secs", r.stable_secs.to_string()),
+        ("asr_model", r.asr_model.clone().unwrap_or_else(|| "-".into())),
+        (
+            "transcript_source",
+            format!("{:?}", r.transcript_source).to_ascii_lowercase(),
+        ),
+        ("max_speech", r.max_speech.to_string()),
+        (
+            "formats",
+            r.formats.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","),
+        ),
+        ("model_dir", r.model_dir.display().to_string()),
+        ("keep_video", r.keep_video.to_string()),
+        ("no_download", r.no_download.to_string()),
+        ("resume", r.resume.to_string()),
+        ("gpu_layers", r.gpu_layers.to_string()),
+        ("mmproj_offload", r.mmproj_offload.to_string()),
+    ];
     println!("[defaults]");
-    let s = |v: &Option<String>| v.clone().unwrap_or_else(|| "-".into());
-    println!(
-        "  out            : {}",
-        d.out
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| c::DEFAULT_OUT_DIR.into())
-    );
-    println!(
-        "  similarity     : {}",
-        d.similarity.unwrap_or(c::DEFAULT_SIMILARITY)
-    );
-    println!(
-        "  sample_interval: {}",
-        d.sample_interval.unwrap_or(c::DEFAULT_SAMPLE_INTERVAL)
-    );
-    println!(
-        "  cooldown       : {}",
-        d.cooldown.unwrap_or(c::DEFAULT_COOLDOWN)
-    );
-    println!(
-        "  max_height     : {}",
-        d.max_height.unwrap_or(c::DEFAULT_MAX_HEIGHT)
-    );
-    println!("  roi            : {}", s(&d.roi));
-    println!(
-        "  threads        : {}",
-        d.threads.unwrap_or(c::DEFAULT_THREADS)
-    );
-    println!(
-        "  provider       : {}",
-        d.provider
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "(自动选择 / automatic)".into())
-    );
-    println!("  slide_mode     : {}", d.slide_mode.unwrap_or_default());
-    println!(
-        "  stable_secs    : {}",
-        d.stable_secs.unwrap_or(c::DEFAULT_STABLE_SECS)
-    );
-    println!("  asr_model      : {}", s(&d.asr_model));
-    println!(
-        "  transcript_source: {}",
-        match d.transcript_source.unwrap_or_default() {
-            c::TranscriptSource::Auto => "auto",
-            c::TranscriptSource::Subtitle => "subtitle",
-            c::TranscriptSource::Asr => "asr",
-        }
-    );
-    println!(
-        "  max_speech     : {}",
-        d.max_speech.unwrap_or(c::DEFAULT_MAX_SPEECH)
-    );
-    let formats = |formats: &Option<Vec<c::OutputFormat>>| {
-        formats
-            .clone()
-            .unwrap_or_else(crate::options::default_formats)
-            .iter()
-            .map(|x| x.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    println!("  formats        : {}", formats(&d.formats));
-    println!(
-        "  model_dir      : {}",
-        d.model_dir
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "(系统缓存 / platform cache)".into())
-    );
-    println!("  keep_video     : {}", d.keep_video.unwrap_or(false));
-    println!("  no_download    : {}", d.no_download.unwrap_or(false));
-    println!("  resume         : {}", d.resume.unwrap_or(false));
-    println!(
-        "  gpu_layers     : {}",
-        d.gpu_layers.unwrap_or(c::DEFAULT_GPU_LAYERS)
-    );
-    println!("  mmproj_offload : {}", d.mmproj_offload.unwrap_or(true));
-    println!("[asr_api]");
-    println!("  base_url       : {}", cfg.asr_api.base_url);
-    println!("  model          : {}", cfg.asr_api.model);
-    println!(
-        "  api_key        : {}",
-        if cfg.asr_api.api_key.is_empty() {
+    for (key, value) in rows {
+        println!("  {key:<17}: {value}");
+    }
+    let hidden = |key: &str| {
+        if key.is_empty() {
             "-"
         } else {
             "(已设置，隐藏 / set, hidden)"
         }
-    );
+    };
+    println!("[asr_api]");
+    println!("  {:<17}: {}", "base_url", cfg.asr_api.base_url);
+    println!("  {:<17}: {}", "model", cfg.asr_api.model);
+    println!("  {:<17}: {}", "mode", cfg.asr_api.mode);
+    println!("  {:<17}: {}", "api_key", hidden(&cfg.asr_api.api_key));
     println!("[llm]");
-    println!("  enabled        : {}", cfg.llm.enabled);
-    println!(
-        "  model          : {}",
-        if cfg.llm.model.is_empty() {
-            "-"
-        } else {
-            &cfg.llm.model
-        }
-    );
-    println!("  vision         : {}", cfg.llm.vision);
-    println!("  concurrency    : {}", cfg.llm.concurrency);
-    println!("  summarize      : {}", cfg.llm.summarize);
+    println!("  {:<17}: {}", "enabled", cfg.llm.enabled);
+    let model = if cfg.llm.model.is_empty() { "-" } else { &cfg.llm.model };
+    println!("  {:<17}: {model}", "model");
+    println!("  {:<17}: {}", "vision", cfg.llm.vision);
+    println!("  {:<17}: {}", "concurrency", cfg.llm.concurrency);
+    println!("  {:<17}: {}", "summarize", cfg.llm.summarize);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn template_parses_to_built_in_defaults_when_uncommented() {
+        let text: String = super::template()
+            .lines()
+            .map(|line| {
+                line.strip_prefix('#')
+                    .filter(|l| l.starts_with(|c: char| c.is_ascii_lowercase()) && l.contains(" = "))
+                    .unwrap_or(line)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: super::ConfigFile = toml::from_str(&text).unwrap();
+        let from_template =
+            crate::options::resolve(String::new(), &Default::default(), &file).unwrap();
+        let built_in =
+            crate::options::resolve(String::new(), &Default::default(), &Default::default())
+                .unwrap();
+        assert_eq!(from_template.resume, built_in.resume);
+        assert_eq!(from_template.stable_secs, built_in.stable_secs);
+        assert_eq!(from_template.similarity, built_in.similarity);
+        assert_eq!(from_template.cooldown, built_in.cooldown);
+        assert_eq!(from_template.max_speech, built_in.max_speech);
+        assert_eq!(from_template.gpu_layers, built_in.gpu_layers);
+        assert_eq!(from_template.formats, built_in.formats);
+        assert_eq!(file.asr_api, super::AsrApi::default());
+    }
 }

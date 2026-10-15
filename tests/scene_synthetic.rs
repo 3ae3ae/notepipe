@@ -41,10 +41,7 @@ fn make_test_video(path: &std::path::Path) {
 }
 
 /// 两个场景测试共享的 PipelineConfig 基座；差异字段在调用处用结构体更新语法覆盖。
-fn test_cfg(
-    video: &std::path::Path,
-    dir: &std::path::Path,
-) -> course2md::config::PipelineConfig {
+fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> course2md::config::PipelineConfig {
     course2md::config::PipelineConfig {
         url: video.display().to_string(),
         out_dir: dir.to_path_buf(),

@@ -64,9 +64,6 @@ fn main() -> std::process::ExitCode {
                     serde_json::json!({"type": "error", "message": format!("参数无效 / Invalid arguments: {error}")}),
                 );
             } else {
-                if error.use_stderr() {
-                    eprintln!("参数无效，请参考下方帮助 / Invalid arguments; see the help below.");
-                }
                 let _ = error.print();
             }
             return std::process::ExitCode::from(error.exit_code() as u8);
@@ -82,15 +79,21 @@ fn main() -> std::process::ExitCode {
                     | ModelsCmd::Inspect { json: true, .. }
             })
         );
+    let quiet =
+        cli.opts.quiet || matches!(&cli.command, Some(Command::Summarize(args)) if args.quiet);
     if json {
         progress::set_json_mode();
     }
-    progress::set_quiet(cli.opts.quiet);
-    match run(cli) {
+    progress::set_quiet(quiet);
+    init_logging(cli.opts.verbose, quiet, json);
+    match run(cli, args.len() == 1) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             // 向导的「退出，稍后下载」是正常结束，不是失败
-            if error.downcast_ref::<course2md::wizard::ExitWizard>().is_some() {
+            if error
+                .downcast_ref::<course2md::wizard::ExitWizard>()
+                .is_some()
+            {
                 return std::process::ExitCode::SUCCESS;
             }
             let message = format!("{error:#}");
@@ -98,16 +101,13 @@ fn main() -> std::process::ExitCode {
                 progress::emit(serde_json::json!({"type": "error", "message": message}));
             } else {
                 eprintln!("错误 / Error: {message}");
-                eprintln!(
-                    "帮助 / Help: course2md --help · 环境检查 / Check environment: course2md doctor"
-                );
             }
             std::process::ExitCode::FAILURE
         }
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<()> {
+fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
     if let Some(platform) = cli.logout {
         return course2md::login::logout(platform);
     }
@@ -123,20 +123,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     }
     match cli.command {
         Some(Command::RunTask) => {
-            init_logging(0, false, true);
             let request = course2md::execution::Request::read(std::io::stdin().lock())?;
-            Ok(course2md::runtime::block_on(course2md::execution::run(request))??)
+            Ok(course2md::runtime::block_on(course2md::execution::run(
+                request,
+            ))??)
         }
         Some(Command::Models { cmd }) => match cmd {
-            ModelsCmd::Inspect {
-                provider,
-                model,
-                dir,
-                json,
-            } => {
-                init_logging(0, false, json);
-                let root = config::model_dir_from(dir.as_deref());
-                let status = models::status::inspect(provider, &model, &root)?;
+            ModelsCmd::Inspect { target, json } => {
+                let root = configured_model_dir(target.dir.as_deref())?;
+                let status = models::status::inspect(target.provider, &target.model, &root)?;
                 if json {
                     println!("{}", serde_json::to_string(&status)?);
                 } else {
@@ -144,17 +139,16 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
                 Ok(())
             }
-            ModelsCmd::Prepare {
-                provider,
-                model,
-                dir,
-                json,
-            } => {
-                init_logging(0, false, json);
-                let root = config::model_dir_from(dir.as_deref());
-                let status = course2md::runtime::block_on(models::prepare(provider, &model, &root))??;
+            ModelsCmd::Prepare { target, json } => {
+                let root = configured_model_dir(target.dir.as_deref())?;
+                let status = course2md::runtime::block_on(models::prepare(
+                    target.provider,
+                    &target.model,
+                    &root,
+                ))??;
+                // 桌面按 done 事件判定完成；slides/segments 是该事件的必填字段
                 progress::emit(
-                    serde_json::json!({"type":"done", "out_dir":root, "title":model, "slides":0, "segments":0, "model_status":status}),
+                    serde_json::json!({"type":"done", "out_dir":root, "title":status.model, "slides":0, "segments":0, "model_status":status}),
                 );
                 if !json {
                     println!("模型准备完成 / Model preparation finished.");
@@ -163,13 +157,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 Ok(())
             }
             ModelsCmd::Download { dir, json } => {
-                if json {
-                    progress::set_json_mode();
-                }
-                init_logging(0, false, json);
-                let file = settings::load()?;
-                let root =
-                    config::model_dir_from(dir.as_deref().or(file.defaults.model_dir.as_deref()));
+                let root = configured_model_dir(dir.as_deref())?;
                 course2md::runtime::block_on(models::download_models(&root))??;
                 progress::emit(
                     serde_json::json!({"type":"done", "model_dir": root.display().to_string()}),
@@ -180,16 +168,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 Ok(())
             }
             ModelsCmd::List { dir } => {
-                init_logging(0, false, false);
-                let file = settings::load()?;
-                let root =
-                    config::model_dir_from(dir.as_deref().or(file.defaults.model_dir.as_deref()));
+                let root = configured_model_dir(dir.as_deref())?;
                 models::list_models(&root);
                 Ok(())
             }
         },
         Some(Command::Llm { cmd }) => {
-            init_logging(0, false, false);
             match cmd {
                 LlmCmd::Setup {
                     base_url,
@@ -226,12 +210,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Some(Command::Doctor) => {
-            init_logging(0, false, false);
-            doctor::run()
-        }
+        Some(Command::Doctor) => doctor::run(),
         Some(Command::Config { cmd }) => {
-            init_logging(0, false, false);
             match cmd {
                 ConfigCmd::Init { force } => {
                     let path = settings::config_path();
@@ -249,18 +229,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                         "已生成配置模板 / Configuration template created: {}",
                         path.display()
                     );
-                    println!(
-                        "按需取消注释并修改；命令行参数优先。/ Uncomment and edit as needed; CLI options take priority."
-                    );
                     println!("{}", course2md::auth::BILIBILI_SETUP_TIP);
                 }
-                ConfigCmd::Show => settings::print_effective(&settings::load()?),
+                ConfigCmd::Show => settings::print_effective(&settings::load()?)?,
             }
             Ok(())
         }
         Some(Command::Summarize(args)) => {
-            init_logging(0, args.quiet, false);
-            progress::set_quiet(args.quiet);
             let file = settings::load()?;
             llm::validate(&file.llm)?;
             let mut targets: Vec<std::path::PathBuf> = vec![];
@@ -283,7 +258,6 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Remove(args)) => {
-            init_logging(0, false, false);
             let mut cfg = settings::load()?;
             let mut cleared: Vec<String> = vec![];
             // 只列出确实非空、本次真正清掉的字段（空配置不冒充「已清除」）
@@ -296,13 +270,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     cleared.push(name.to_string());
                 }
             }
-            cfg.llm.api_key.clear();
-            cfg.llm.base_url.clear();
-            cfg.llm.model.clear();
-            cfg.llm.provider = course2md::llm::LlmProvider::OpenAiCompatible;
-            cfg.llm.enabled = false;
-            cfg.llm.summarize = false;
-            cfg.llm.prompt = None;
+            if course2md::login::codex::remove_credentials()? {
+                cleared.push("codex".to_string());
+            }
+            cfg.llm = course2md::llm::LlmSettings::default();
             if args.asr {
                 if !cfg.asr_api.api_key.is_empty() {
                     cleared.push("asr_api.api_key".to_string());
@@ -324,7 +295,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
             if !args.asr {
                 println!(
-                    "云端语音密钥单独保留；使用 remove --asr 可清除。/ To also clear the cloud speech key, run: course2md remove --asr"
+                    "云端语音识别密钥未清除；如需清除：course2md remove --asr / Cloud speech key kept; to clear it: course2md remove --asr"
                 );
             }
             Ok(())
@@ -334,7 +305,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 Some(source) => normalize_source(&source)?,
                 None => {
                     anyhow::ensure!(
-                        std::env::args_os().len() == 1,
+                        no_args,
                         "缺少视频来源 / Missing video source. 示例 / Example: course2md ./lecture.mp4"
                     );
                     println!(
@@ -345,10 +316,6 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     return Ok(());
                 }
             };
-            if cli.opts.json {
-                progress::set_json_mode();
-            }
-            init_logging(cli.opts.verbose, cli.opts.quiet, cli.opts.json);
             let file = settings::load()?;
             let initial = course2md::options::resolve(source.clone(), &cli.opts, &file)?;
             // 仅为 wizard 前快速失败；pipeline::run 开头的全量 validate 才是入口契约
@@ -367,12 +334,27 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             } else {
                 wizard::maybe_run(&cli.opts, &file)?
             };
-            let cfg = course2md::options::resolve(source, &cli.opts, &file)?;
-            // 全量预检在 pipeline::run 开头做（下载/抽帧/模型加载之前，毫秒级失败）
+            let mut cfg = course2md::options::resolve(source, &cli.opts, &file)?;
+            // coreml 首次使用时先确定模型（可能交互询问），模型缓存准备与转写才会是同一个模型
+            #[cfg(apple_native)]
+            if cfg.provider == config::AsrProvider::Coreml
+                && cfg.transcript_source != config::TranscriptSource::Subtitle
+            {
+                cfg.asr_model = Some(course2md::apple::resolve_model(cfg.asr_model.as_deref())?);
+            }
             tracing::info!(out = %cfg.out_dir.display(), provider = %cfg.provider, "start");
             Ok(course2md::runtime::block_on(pipeline::run(&cfg))??)
         }
     }
+}
+
+/// `--dir` > 配置文件 defaults.model_dir > 系统缓存。所有 models 子命令共用。
+fn configured_model_dir(dir: Option<&std::path::Path>) -> anyhow::Result<std::path::PathBuf> {
+    if let Some(dir) = dir {
+        return Ok(config::model_dir_from(Some(dir)));
+    }
+    let file = settings::load()?;
+    Ok(config::model_dir_from(file.defaults.model_dir.as_deref()))
 }
 
 /// 笔记版本目录：课程目录取 current.json 指向的版本，版本目录直接使用。
@@ -542,9 +524,14 @@ fn print_model_status(status: &models::status::LocalModelStatus) {
     }
     match status.state {
         CacheState::Cached | CacheState::Loaded => {}
-        CacheState::Unsupported => println!(
-            "该后端不支持此模型 / This backend does not support the model; 可用模型见 / See: course2md models list"
-        ),
+        CacheState::Unsupported => {
+            let available = config::local_models(status.provider)
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("该后端支持的模型 / Models supported by this backend: {available}")
+        }
         _ if status.can_prepare => println!(
             "下载或修复 / Download or repair: course2md models prepare --provider {} --model {}",
             status.provider, status.model
@@ -581,16 +568,7 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
         );
         return Ok(source.to_owned());
     }
-    if [
-        "bilibili.com/",
-        "www.bilibili.com/",
-        "youtube.com/",
-        "www.youtube.com/",
-        "youtu.be/",
-    ]
-    .iter()
-    .any(|host| source.starts_with(host))
-    {
+    if config::known_video_site(source).is_some() {
         return Ok(format!("https://{source}"));
     }
     anyhow::bail!(
