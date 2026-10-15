@@ -2,129 +2,96 @@
 set -euo pipefail
 
 # 安装 course2md 预编译二进制到 ~/bin（或 COURSE2MD_BIN_DIR）。
-# 用法：
+# Install the prebuilt course2md binary into ~/bin (or COURSE2MD_BIN_DIR).
 #   curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh | bash
 
 REPO="${COURSE2MD_REPO:-mizorewww/course2md}"
 BIN_DIR="${COURSE2MD_BIN_DIR:-$HOME/bin}"
+RELEASE="https://github.com/${REPO}/releases/latest/download"
+YTDLP_RELEASE="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
+
+say() { printf '%s\n' "$@"; }
+warn() { printf '%s\n' "$@" >&2; }
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
+apple=0
 case "$os-$arch" in
-  darwin-arm64|darwin-aarch64) ASSET="course2md-macos-arm64" ;;
-  darwin-x86_64) ASSET="course2md-macos-x86_64" ;;
-  linux-x86_64|linux-amd64) ASSET="course2md-linux-x86_64" ;;
-  linux-aarch64|linux-arm64) ASSET="course2md-linux-aarch64" ;;
+  darwin-arm64|darwin-aarch64) ASSET="course2md-macos-arm64"; YTDLP="yt-dlp_macos"; apple=1 ;;
+  darwin-x86_64) ASSET="course2md-macos-x86_64"; YTDLP="yt-dlp_macos" ;;
+  linux-x86_64|linux-amd64) ASSET="course2md-linux-x86_64"; YTDLP="yt-dlp_linux" ;;
+  linux-aarch64|linux-arm64) ASSET="course2md-linux-aarch64"; YTDLP="yt-dlp_linux_aarch64" ;;
   *)
-    echo "暂无预编译包：$os $arch。请用 cargo install --path . 从源码安装。" >&2
+    warn "暂无 $os/$arch 的预编译版本，请从源码安装：cargo install --path . / No prebuilt binary for $os/$arch; build from source with cargo install --path ."
     exit 1
     ;;
 esac
 
-missing=()
-need() { command -v "$1" >/dev/null 2>&1 || missing+=("$1"); }
-need ffmpeg
-need ffprobe
-# macOS arm64 预编译包含 CoreML 后端，无需 llama-server；其余平台需要。
-# yt-dlp 不在此列：PATH 没有时下面会随包装到 BIN_DIR，兜底逻辑见脚本尾部。
-if [ "$os-$arch" != "darwin-arm64" ] && [ "$os-$arch" != "darwin-aarch64" ]; then
-  need llama-server
-fi
-if [ "${#missing[@]}" -gt 0 ]; then
-  echo "缺少依赖：${missing[*]}" >&2
-  echo "macOS:  brew install ffmpeg yt-dlp llama.cpp" >&2
-  echo "Arch:   sudo pacman -S ffmpeg yt-dlp llama-cpp" >&2
-  echo "GPU:    Arch/CachyOS also needs a GPU backend (e.g. ggml-vulkan) and the GPU driver; check llama-server --list-devices" >&2
-  echo "Debian: sudo apt install ffmpeg yt-dlp && 安装 llama.cpp（见 README）" >&2
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+  warn "缺少 ffmpeg（含 ffprobe）/ ffmpeg (with ffprobe) is required:"
+  warn "  macOS:         brew install ffmpeg"
+  warn "  Arch/CachyOS:  sudo pacman -S ffmpeg"
+  warn "  Debian/Ubuntu: sudo apt install ffmpeg"
   exit 1
 fi
 
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# Verify against the release's SHA256SUMS when it publishes one; older releases do not.
+sums="$tmp/SHA256SUMS"
+curl -fsSL "$RELEASE/SHA256SUMS" -o "$sums" 2>/dev/null || rm -f "$sums"
+verify() {
+  local file="$1" name="$2" expected
+  [ -f "$sums" ] || return 0
+  expected="$(awk -v n="$name" '$2 == n || $2 == "*" n {print $1}' "$sums")"
+  [ -n "$expected" ] || return 0
+  if [ "$(sha256 "$file")" != "$expected" ]; then
+    warn "校验和不匹配：$name / Checksum mismatch: $name"
+    exit 1
+  fi
+}
+
 mkdir -p "$BIN_DIR"
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+curl -fsSL "$RELEASE/$ASSET" -o "$tmp/course2md"
+verify "$tmp/course2md" "$ASSET"
+install -m 755 "$tmp/course2md" "$BIN_DIR/course2md"
+say "已安装 / Installed: $BIN_DIR/course2md"
 
-if command -v gh >/dev/null 2>&1; then
-  gh release download -R "$REPO" -p "$ASSET" -O "$tmp" --clobber
-else
-  url="$(
-    COURSE2MD_REPO="$REPO" ASSET="$ASSET" python3 - <<'PY'
-import json, os, urllib.request
-repo = os.environ["COURSE2MD_REPO"]
-asset = os.environ["ASSET"]
-with urllib.request.urlopen(f"https://api.github.com/repos/{repo}/releases/latest") as r:
-    data = json.load(r)
-for a in data.get("assets", []):
-    if a["name"] == asset:
-        print(a["browser_download_url"])
-        break
-else:
-    raise SystemExit(f"release 中找不到 {asset}")
-PY
-  )"
-  curl -fsSL "$url" -o "$tmp"
+# Apple 本机语音识别需要与程序放在同一目录的 mlx.metallib。
+if [ "$apple" = 1 ]; then
+  if curl -fsSL "$RELEASE/mlx-macos-arm64.metallib" -o "$tmp/mlx.metallib"; then
+    verify "$tmp/mlx.metallib" "mlx-macos-arm64.metallib"
+    install -m 644 "$tmp/mlx.metallib" "$BIN_DIR/mlx.metallib"
+  else
+    warn "警告：Apple 本机语音识别组件下载失败，将无法在本机识别语音。重新运行安装命令即可重试。"
+    warn "Warning: the Apple speech component failed to download; local recognition is unavailable. Re-run the installer to retry."
+  fi
 fi
 
-install -m 755 "$tmp" "$BIN_DIR/course2md"
-echo "已安装：$BIN_DIR/course2md"
-
-# yt-dlp：PATH 里已有就沿用系统版本；否则从 yt-dlp 官方 release 下载独立二进制
-# 装到 BIN_DIR——与 course2md 同目录是运行时搜索清单的一档（随包自带）。
+# 在线视频需要 yt-dlp：PATH 中已有就沿用，否则在程序旁安装官方独立版本。
 if command -v yt-dlp >/dev/null 2>&1; then
-  echo "检测到 yt-dlp：$(command -v yt-dlp)，沿用 PATH 版本"
+  say "使用已安装的 yt-dlp / Using installed yt-dlp: $(command -v yt-dlp)"
+elif curl -fsSL --max-time 300 "$YTDLP_RELEASE/$YTDLP" -o "$tmp/yt-dlp" &&
+     curl -fsSL "$YTDLP_RELEASE/SHA2-256SUMS" -o "$tmp/yt-dlp.sums" &&
+     [ "$(sha256 "$tmp/yt-dlp")" = "$(awk -v n="$YTDLP" '$2 == n {print $1}' "$tmp/yt-dlp.sums")" ]; then
+  install -m 755 "$tmp/yt-dlp" "$BIN_DIR/yt-dlp"
+  say "已安装 / Installed: $BIN_DIR/yt-dlp"
 else
-  ytdlp_asset=""
-  case "$os-$arch" in
-    darwin-*) ytdlp_asset="yt-dlp_macos" ;;
-    linux-x86_64|linux-amd64) ytdlp_asset="yt-dlp_linux" ;;
-    linux-aarch64|linux-arm64) ytdlp_asset="yt-dlp_linux_aarch64" ;;
-  esac
-  yt="$(mktemp)"
-  if [ -n "$ytdlp_asset" ] &&
-     curl -fsSL --max-time 300 "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$ytdlp_asset" -o "$yt"; then
-    install -m 755 "$yt" "$BIN_DIR/yt-dlp"
-    echo "已安装：$BIN_DIR/yt-dlp（随包自带）"
-  else
-    echo "警告：yt-dlp 下载失败；远程视频功能需要它，可稍后手动安装" >&2
-    echo "      macOS: brew install yt-dlp ；其他: pipx install yt-dlp" >&2
-  fi
-  rm -f "$yt"
+  warn "警告：yt-dlp 安装失败，在线视频需要它（本地文件不受影响）。/ Warning: yt-dlp could not be installed; online videos need it (local files still work)."
+  warn "  macOS: brew install yt-dlp    其他 / other: pipx install yt-dlp"
 fi
 
-# MLX Metal kernels：CoreML 推理需要与二进制同目录（仅 macOS arm64）
-if [ "$os-$arch" = "darwin-arm64" ] || [ "$os-$arch" = "darwin-aarch64" ]; then
-  mlb="$(mktemp)"
-  mlx_installed=0
-  trap 'rm -f "$tmp" "$mlb"' EXIT
-  if command -v gh >/dev/null 2>&1; then
-    if gh release download -R "$REPO" -p "mlx-macos-arm64.metallib" -O "$mlb" --clobber 2>/dev/null; then
-      install -m 644 "$mlb" "$BIN_DIR/mlx.metallib"
-      mlx_installed=1
-      echo "已安装：$BIN_DIR/mlx.metallib（CoreML 推理所需）"
-    fi
-  else
-    url="$(
-      COURSE2MD_REPO="$REPO" python3 - <<'PY'
-import json, os, urllib.request
-repo = os.environ["COURSE2MD_REPO"]
-with urllib.request.urlopen(f"https://api.github.com/repos/{repo}/releases/latest") as r:
-    data = json.load(r)
-for a in data.get("assets", []):
-    if a["name"] == "mlx-macos-arm64.metallib":
-        print(a["browser_download_url"])
-        break
-PY
-    )"
-    if [ -n "$url" ] && curl -fsSL "$url" -o "$mlb" 2>/dev/null; then
-      install -m 644 "$mlb" "$BIN_DIR/mlx.metallib"
-      mlx_installed=1
-      echo "已安装：$BIN_DIR/mlx.metallib（CoreML 推理所需）"
-    fi
-  fi
-  if [ "$mlx_installed" != 1 ]; then
-    echo "警告：MLX Metal 库下载失败，Apple 原生识别（CoreML）将不可用；" >&2
-    echo "      可重跑 install.sh 或手动从 release 资产 mlx-macos-arm64.metallib 安装到 $BIN_DIR/mlx.metallib" >&2
-  fi
+if [ "$apple" != 1 ] && ! command -v llama-server >/dev/null 2>&1; then
+  warn "提示：本机 GPU/CPU 语音识别需要 llama-server；只用字幕、云端或 NPU 识别时无需安装。"
+  warn "Note: local GPU/CPU recognition needs llama-server; subtitles, cloud and NPU recognition work without it."
+  warn "  https://github.com/ggml-org/llama.cpp#quick-start"
 fi
 
-echo "请确保 PATH 包含 ${BIN_DIR}，例如：export PATH=\"\$HOME/bin:\$PATH\""
-echo "首次运行会自动下载识别模型（macOS CoreML 约 1-2GB；其他平台 llama.cpp GGUF 约 2.4GB）。"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) say "请把 $BIN_DIR 加入 PATH / Add $BIN_DIR to PATH:  export PATH=\"$BIN_DIR:\$PATH\"" ;;
+esac
+say "运行 course2md doctor 检查环境 / Run course2md doctor to check your setup."
