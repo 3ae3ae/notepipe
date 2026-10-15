@@ -312,9 +312,9 @@ impl RenderOnce for SingleChoiceGroup {
                 f32::from(width.ceil())
             })
             .fold(0_f32, f32::max);
-        // Measure the longest label for content-sized tracks. Full-width cells
-        // use a fixed leading inset, so separate groups also share text axes
-        // regardless of label length or selection.
+        // Measure the longest label for content-sized tracks. Each option's
+        // icon and intrinsic-width label are centered together inside its cell;
+        // selection changes only the surface, never the content geometry.
         let icon_size = rems(18. / 14.);
         let icon_and_gap = f32::from(rems(26. / 14.).to_pixels(window.rem_size()));
         let content_width = label_width + icon_and_gap;
@@ -391,7 +391,6 @@ impl RenderOnce for SingleChoiceGroup {
             );
             let debug_kind = if self.full_width { "full" } else { "content" };
             let content = gpui_base::h_flex()
-                .w_full()
                 .max_w_full()
                 .min_w_0()
                 .gap(rems(8. / 14.))
@@ -409,8 +408,6 @@ impl RenderOnce for SingleChoiceGroup {
                 .child(
                     div()
                         .min_w_0()
-                        .flex_1()
-                        .text_left()
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .when(cfg!(test), |label| {
@@ -648,9 +645,10 @@ mod tests {
         let options = ["full-choice-option-0", "full-choice-option-1", "full-choice-option-2"]
             .map(|selector| choice_bounds(cx, selector));
         for index in 0..3 {
-            assert!(((before[index].left() - options[index].left())
-                - (before[0].left() - options[0].left())).abs() <= px(0.5), "labels: {before:?}; options: {options:?}; icons: {icon_before:?}");
-            assert!((icon_before[index].left() - options[index].left() - px(10.)).abs() <= px(0.5));
+            let content_center = (icon_before[index].left() + before[index].right()) / 2.;
+            assert!((content_center - options[index].center().x).abs() <= px(0.5));
+            assert!((icon_before[index].center().y - options[index].center().y).abs() <= px(0.5));
+            assert!((before[index].center().y - options[index].center().y).abs() <= px(0.5));
             assert!((before[index].top() - before[0].top()).abs() < px(0.5));
             assert_eq!(icon_before[index].size, gpui::size(px(18.), px(18.)));
             assert!((before[index].left() - icon_before[index].right() - px(8.)).abs() < px(0.5));
