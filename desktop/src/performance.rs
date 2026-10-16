@@ -73,9 +73,8 @@ impl MotionTrace {
 }
 
 thread_local! {
-    // Enabled on the UI thread after the background task reads the opt-in.
-    // Rendering only touches this bounded memory; it never reads environment
-    // variables, formats IDs, encodes JSON, writes files, or requests frames.
+    // Rendering only touches this bounded memory; it never formats IDs,
+    // encodes JSON, writes files or requests frames.
     static MOTION_TRACE: RefCell<Option<MotionTrace>> = const { RefCell::new(None) };
 }
 
@@ -104,43 +103,21 @@ fn take_motion_events(mut spare: VecDeque<MotionEvent>) -> (VecDeque<MotionEvent
 /// File creation, encoding and writes run on the background executor. This does
 /// not request frames, navigate the app, or change the animation scheduler.
 pub fn start(window: &mut Window, cx: &App) {
+    let Some(path) = std::env::var_os("COURSE2MD_PERFORMANCE_LOG").map(PathBuf::from) else {
+        return;
+    };
+    let trace_frames = std::env::var_os("COURSE2MD_FRAME_TRACE").is_some();
+    let trace_motion = std::env::var_os("COURSE2MD_MOTION_TRACE").as_deref() == Some(std::ffi::OsStr::new("1"));
+    if trace_frames {
+        gpui::profiler::set_trace_enabled(true);
+    }
+    MOTION_TRACE.with(|trace| *trace.borrow_mut() = trace_motion.then(MotionTrace::new));
     let executor = cx.background_executor().clone();
     window
         .spawn(cx, async move |cx| {
-            let Some((path, trace_frames, motion_trace, mut motion_spare)) = executor
-                .spawn(async move {
-                    let path = std::env::var_os("COURSE2MD_PERFORMANCE_LOG").map(PathBuf::from)?;
-                    let trace_frames = std::env::var_os("COURSE2MD_FRAME_TRACE").is_some();
-                    let trace_motion = std::env::var_os("COURSE2MD_MOTION_TRACE").as_deref()
-                        == Some(std::ffi::OsStr::new("1"));
-                    Some((
-                        path,
-                        trace_frames,
-                        trace_motion.then(MotionTrace::new),
-                        VecDeque::with_capacity(if trace_motion {
-                            MOTION_EVENT_CAPACITY
-                        } else {
-                            0
-                        }),
-                    ))
-                })
-                .await
-            else {
-                return;
-            };
-            let trace_motion = motion_trace.is_some();
+            let mut motion_spare =
+                VecDeque::with_capacity(if trace_motion { MOTION_EVENT_CAPACITY } else { 0 });
             let started = Instant::now();
-            if cx
-                .update(move |_, _| {
-                    if trace_frames {
-                        gpui::profiler::set_trace_enabled(true);
-                    }
-                    MOTION_TRACE.with(|trace| *trace.borrow_mut() = motion_trace);
-                })
-                .is_err()
-            {
-                return;
-            }
             let mut collector = gpui::profiler::FrameTimingCollector::new();
             loop {
                 smol::Timer::after(Duration::from_secs(1)).await;
