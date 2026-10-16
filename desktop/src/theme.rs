@@ -911,6 +911,44 @@ pub fn input_action(id: impl Into<gpui::ElementId>) -> gpui_component::button::B
     quiet(id).h(size).min_h(size).w(size).min_w(size).px_0()
 }
 
+pub enum NoticeKind {
+    Info,
+    Danger,
+}
+
+/// A page-level notice: tinted surface, status icon and wrapping text.
+/// Callers append the notice's actions, which wrap below the text when narrow.
+pub fn notice_banner(
+    id: impl Into<gpui::ElementId>,
+    kind: NoticeKind,
+    text: impl Into<gpui::SharedString>,
+) -> gpui::Div {
+    use gpui::{prelude::*, *};
+    let (bg, tone, icon, role) = match kind {
+        NoticeKind::Info => (SECONDARY_CONTAINER, ACCENT, crate::icons::info(), Role::Status),
+        NoticeKind::Danger => (DANGER_BG, DANGER, crate::icons::error(), Role::Alert),
+    };
+    div()
+        .flex()
+        .flex_wrap()
+        .w_full()
+        .min_w_0()
+        .items_center()
+        .gap(rems(12. / 14.))
+        .p(rems(12. / 14.))
+        .rounded(RADIUS_SMALL)
+        .bg(color(bg))
+        .child(icon.size(ICON_SLOT).flex_shrink_0().text_color(color(tone)))
+        .child(
+            accessible_text(id, text)
+                .role(role)
+                .flex_1()
+                .flex_basis(rems(200. / 14.))
+                .min_w_0()
+                .whitespace_normal(),
+        )
+}
+
 /// Status badge kinds; text always pairs with its tinted background.
 pub enum BadgeKind {
     Success,

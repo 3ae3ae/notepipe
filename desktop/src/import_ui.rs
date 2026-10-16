@@ -465,7 +465,6 @@ fn conversion_gate(
 impl Desktop {
     /// Explicit confirmation of an already visible preview owns submission.
     pub fn start_conversion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.clear_queued_message();
         if self.reading && self.page == Page::New {
             self.read_generation = self.read_generation.wrapping_add(1);
             self.reading = false;

@@ -1382,16 +1382,6 @@ impl Desktop {
         })
     }
 
-    pub(super) fn clear_queued_message(&mut self) {
-        if self
-            .message
-            .as_deref()
-            .is_some_and(|message| message.starts_with("已加入任务"))
-        {
-            self.message = None;
-        }
-    }
-
     pub fn enqueue_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.save_current_draft(cx) {
             return;
@@ -1726,7 +1716,6 @@ impl Desktop {
         });
         match result {
             Ok(job) => {
-                self.clear_queued_message();
                 self.job = Some(job);
                 self.active_task = Some(task.id.clone());
                 self.kind = Kind::Convert;
@@ -2153,7 +2142,6 @@ impl Desktop {
         cancelled: bool,
         cx: &mut Context<Self>,
     ) {
-        self.clear_queued_message();
         let done = self.pending_done.take();
         let manifest = done.as_ref().and_then(|d| {
             course2md::artifact::read_manifest(&d.out_dir.join("manifest.json")).ok()

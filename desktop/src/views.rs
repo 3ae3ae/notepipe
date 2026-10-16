@@ -50,6 +50,14 @@ pub(super) fn settings_content_width(window: &Window) -> f32 {
     (shell_content_width(Page::Settings, window) - settings_sidebar_width(window) - settings_column_gap(window)).max(0.)
 }
 
+/// Entrance motion replays when the notice text changes, not on every frame.
+fn notice_key(text: &str) -> usize {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish() as usize
+}
+
 fn shell_column_at(width: AbsoluteLength) -> Div {
     div()
         .w_full()
@@ -198,33 +206,15 @@ impl Desktop {
         Some(crate::motion::enter(
             SharedString::from(format!("task-result-notice-{}", task.id)),
             shell_column_for(self.page).py_2().flex_shrink_0().child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .items_center()
-                    .gap_2()
-                    .p_3()
-                    .rounded_md()
-                    .bg(color(SECONDARY_CONTAINER))
-                    .child(icons::info().text_color(color(ACCENT)))
-                    .child(
-                        accessible_text(
-                            "background-task-result",
-                            format!(
-                                "《{}》：{}",
-                                task.plan.title,
-                                if exports_only {
-                                    "文件已导出"
-                                } else {
-                                    task.state.label()
-                                },
-                            ),
-                        )
-                        .flex_1()
-                        .min_w_0()
-                        .line_clamp(2)
-                        .text_ellipsis(),
-                    )
+                notice_banner(
+                    "background-task-result",
+                    NoticeKind::Info,
+                    format!(
+                        "《{}》：{}",
+                        task.plan.title,
+                        if exports_only { "文件已导出" } else { task.state.label() },
+                    ),
+                )
                     .child(
                         control("open-task-result")
                             .icon(icons::arrow_forward())
@@ -434,16 +424,9 @@ impl Render for Desktop {
             )
             .when_some(self.workspace_error.clone(), |v, message| {
                 v.child(crate::motion::enter(
-                    SharedString::from(format!("workspace-error-{message}")),
-                    shell_column_for(self.page)
-                        .pb_3()
-                        .text_color(color(DANGER))
-                        .child(accessible_text("workspace-error", message).role(Role::Alert))
-                        .child(
-                            h_flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .mt_2()
+                    ("workspace-error", notice_key(&message)),
+                    shell_column_for(self.page).pb_3().child(
+                        notice_banner("workspace-error", NoticeKind::Danger, message)
                                 .child(
                                     control("retry-workspace-records")
                                         .icon(icons::refresh())
@@ -464,33 +447,13 @@ impl Render for Desktop {
                                             })),
                                     )
                                 }),
-                        )))
+                    )))
             })
             .when_some(self.message.clone(), |v, message| {
-                let completed = message.starts_with("笔记已生成");
                 v.child(crate::motion::state_enter(
-                    SharedString::from(format!("app-message-{message}")),
+                    ("app-message", notice_key(&message)),
                     shell_column_for(self.page).pb_3().child(
-                        h_flex()
-                            .min_w_0()
-                            .items_center()
-                            .gap_3()
-                            .p_3()
-                            .rounded_md()
-                            .bg(color(if completed { SUCCESS_BG } else { SECONDARY_CONTAINER }))
-                            .child(if completed {
-                                icons::check_circle().text_color(color(SUCCESS))
-                            } else {
-                                icons::info().text_color(color(ACCENT))
-                            })
-                            .child(
-                                accessible_text("app-message", message)
-                                    .role(Role::Status)
-                                    .flex_1()
-                                    .min_w_0()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .whitespace_normal(),
-                            )
+                        notice_banner("app-message", NoticeKind::Info, message)
                             .child(
                                 control("dismiss-message")
                                     .ghost()
