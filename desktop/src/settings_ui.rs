@@ -76,6 +76,9 @@ pub struct OrdinaryPreferenceIssue {
     pub can_retry: bool,
 }
 
+/// Pause after the last keystroke before typed settings text is written.
+const TEXT_SAVE_DELAY_MS: u64 = 600;
+
 pub(crate) struct State {
     model_diagnostics: model_diagnostics::State,
     tab_focus: [FocusHandle; SettingsTab::ALL.len()],
@@ -94,6 +97,9 @@ pub(crate) struct State {
     generation_block_messages: std::collections::BTreeSet<String>,
     pending_generation: Option<GenerationPreferences>,
     pending_application: Option<ApplicationPreferences>,
+    /// Typed text not yet written to disk; flushed after a pause, on blur and on exit.
+    unsaved_text: Option<GenerationPreferences>,
+    text_flush: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -137,18 +143,18 @@ impl State {
         for (field, input) in &inputs {
             let field = *field;
             subscriptions.push(
-                cx.subscribe_in(input, window, move |this, _, event, _, cx| {
-                    if matches!(event, InputEvent::Change) {
-                        this.setting_input_changed(field, cx);
-                    }
+                cx.subscribe_in(input, window, move |this, _, event, _, cx| match event {
+                    InputEvent::Change => this.setting_input_changed(field, cx),
+                    InputEvent::Blur => this.flush_generation_text(cx),
+                    _ => {}
                 }),
             );
         }
         let prompt = cx.new(|cx| TextareaState::new(window, cx).rows(6));
-        subscriptions.push(cx.subscribe(&prompt, |this, _, event, cx| {
-            if matches!(event, InputEvent::Change) {
-                this.save_prompt_draft(cx);
-            }
+        subscriptions.push(cx.subscribe(&prompt, |this, _, event, cx| match event {
+            InputEvent::Change => this.save_prompt_draft(cx),
+            InputEvent::Blur => this.flush_generation_text(cx),
+            _ => {}
         }));
         Self {
             model_diagnostics: Default::default(),
@@ -168,6 +174,8 @@ impl State {
             generation_block_messages: Default::default(),
             pending_generation: None,
             pending_application: None,
+            unsaved_text: None,
+            text_flush: None,
             _subscriptions: subscriptions,
         }
     }
@@ -789,8 +797,9 @@ pub(super) fn preference(
 impl Desktop {
     fn generation_edit_base(&self) -> GenerationPreferences {
         self.settings_ui
-            .pending_generation
+            .unsaved_text
             .as_ref()
+            .or(self.settings_ui.pending_generation.as_ref())
             .or_else(|| self.preferences.generation_intent())
             .unwrap_or_else(|| self.preferences.generation())
             .clone()
@@ -1680,7 +1689,7 @@ impl Desktop {
             } else {
                 next.subtitle_languages_draft = Some(input);
             }
-            self.save_generation_text_draft(next, cx);
+            self.stage_generation_text(next, cx);
             return;
         }
         let input = self.setting_value(field, cx);
@@ -1724,7 +1733,28 @@ impl Desktop {
             return;
         }
         next.prompt_draft = Some(text);
-        self.save_generation_text_draft(next, cx);
+        self.stage_generation_text(next, cx);
+    }
+    fn stage_generation_text(&mut self, next: GenerationPreferences, cx: &mut Context<Self>) {
+        self.settings_ui.unsaved_text = Some(next);
+        self.settings_ui.text_flush = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(TEXT_SAVE_DELAY_MS))
+                .await;
+            let _ = this.update(cx, |this, cx| this.flush_generation_text(cx));
+        }));
+    }
+    /// Writes typed text that is still only in memory.
+    pub(crate) fn flush_generation_text(&mut self, cx: &mut Context<Self>) {
+        self.settings_ui.text_flush = None;
+        if let Some(next) = self.settings_ui.unsaved_text.take() {
+            self.save_generation_text_draft(next, cx);
+        }
+    }
+    /// Whole-value commits include any typed text, so the staged copy is superseded.
+    pub(crate) fn discard_staged_generation_text(&mut self) {
+        self.settings_ui.text_flush = None;
+        self.settings_ui.unsaved_text = None;
     }
     fn save_generation_text_draft(&mut self, next: GenerationPreferences, cx: &mut Context<Self>) {
         let previous = self
@@ -2579,7 +2609,10 @@ impl Desktop {
         match self.preferences.reset_group(group) {
             Ok(()) => {
                 match group {
-                    PreferenceGroup::Generation => self.settings_ui.pending_generation = None,
+                    PreferenceGroup::Generation => {
+                        self.discard_staged_generation_text();
+                        self.settings_ui.pending_generation = None;
+                    }
                     PreferenceGroup::Application => self.settings_ui.pending_application = None,
                     PreferenceGroup::Services => {}
                 }
@@ -2629,6 +2662,7 @@ impl Desktop {
         new: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        self.flush_generation_text(cx);
         let previous = self
             .ordinary_preferences_submit_issue()
             .map(|issue| issue.message);
@@ -2655,6 +2689,7 @@ impl Desktop {
                 cancel.store(true, Ordering::Release);
             }
         }
+        self.flush_generation_text(cx);
         if let Some(next) = self.settings_ui.pending_generation.clone() {
             self.commit_generation(next, cx);
         }

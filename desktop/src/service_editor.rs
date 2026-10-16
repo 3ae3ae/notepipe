@@ -2047,6 +2047,7 @@ impl Desktop {
         next: GenerationPreferences,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.discard_staged_generation_text();
         let previous = self
             .ordinary_preferences_submit_issue()
             .map(|issue| issue.message);
