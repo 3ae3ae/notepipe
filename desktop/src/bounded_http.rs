@@ -29,15 +29,18 @@ pub(crate) fn json_agent(
 pub(crate) fn json_call(call: ureq::Request, authorization: Option<&Secret>) -> ureq::Request {
     let call = call.set("Accept", "application/json");
     match authorization {
-        Some(secret) => call.set("Authorization", &format!("Bearer {}", secret.expose())),
+        Some(secret) => {
+            let header = zeroize::Zeroizing::new(format!("Bearer {}", secret.expose()));
+            call.set("Authorization", &header)
+        }
         None => call,
     }
 }
 
 /// 有界读取的失败分类：网络/IO 错误与响应体超限分开。
-/// Network 的错误体有意不透出（调用方统一映射为自己的网络错误）。
+/// 调用方把 Network 统一映射为自己的网络错误。
 pub(crate) enum BoundedReadError {
-    Network(#[allow(dead_code)] std::io::Error),
+    Network,
     TooLarge,
 }
 
@@ -49,7 +52,7 @@ pub(crate) fn read_bounded(response: ureq::Response, max: u64) -> Result<Vec<u8>
         .into_reader()
         .take(max + 1)
         .read_to_end(&mut body)
-        .map_err(BoundedReadError::Network)?;
+        .map_err(|_| BoundedReadError::Network)?;
     if body.len() as u64 > max {
         return Err(BoundedReadError::TooLarge);
     }

@@ -311,7 +311,7 @@ impl Transport for HttpTransport {
         let body = crate::bounded_http::read_bounded(response, MAX_RESPONSE).map_err(|error| {
             match error {
                 crate::bounded_http::BoundedReadError::TooLarge => Error::TooLarge,
-                crate::bounded_http::BoundedReadError::Network(_) => Error::Network,
+                crate::bounded_http::BoundedReadError::Network => Error::Network,
             }
         })?;
         Ok(Response { status, body })

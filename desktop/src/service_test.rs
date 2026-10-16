@@ -226,7 +226,7 @@ impl Transport for HttpTransport {
                 crate::bounded_http::BoundedReadError::TooLarge => {
                     TransportFailure::ResponseTooLarge(status)
                 }
-                crate::bounded_http::BoundedReadError::Network(_) => TransportFailure::Unknown,
+                crate::bounded_http::BoundedReadError::Network => TransportFailure::Unknown,
             }
         })?;
         Ok(HttpResponse { status, body })
