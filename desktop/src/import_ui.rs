@@ -33,7 +33,7 @@ fn import_option_field(
         .child(accessible_text(id, label)
             .text_size(if section { TEXT_BODY } else { TEXT_AUX })
             .font_weight(if section { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-            .text_color(color(if section { ACCENT_STRONG } else { MUTED })))
+            .text_color(color(if section { ACCENT } else { GRAY })))
         .child(content)
 }
 
@@ -42,7 +42,7 @@ fn import_option_switch_row(label: &'static str, hint: &'static str, switch: imp
         .child(v_flex().flex_1().min_w_0().gap_1()
             .child(div().text_size(rems(16. / 14.)).child(label))
             .when(!hint.is_empty(), |view| view.child(
-                div().text_size(TEXT_AUX).text_color(color(MUTED)).child(hint))))
+                div().text_size(TEXT_AUX).text_color(color(GRAY)).child(hint))))
         .child(div().flex_shrink_0().child(switch))
 }
 
@@ -135,7 +135,7 @@ pub(crate) fn box_section(icon: Icon, label: &'static str) -> Div {
         h_flex()
             .gap_2()
             .items_center()
-            .child(icon.size(px(20.)).text_color(color(ACCENT_STRONG)))
+            .child(icon.size(px(20.)).text_color(color(ACCENT)))
             .child(
                 accessible_text(text_id("box-section", label), label)
                     .text_size(TEXT_TITLE)
@@ -1069,7 +1069,7 @@ impl Desktop {
                             } else {
                                 CARD_LINE
                             }))
-                            .child(Icon::new(icons::link()).size(rems(24. / 14.)).text_color(color(MUTED)))
+                            .child(Icon::new(icons::link()).size(rems(24. / 14.)).text_color(color(GRAY)))
                             .child(
                                 div().flex_1().min_w_0().child(
                                     text_input(&self.inputs[&Field::Source])
@@ -1115,7 +1115,7 @@ impl Desktop {
                         .aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL).bg(color(INSET)))
                     .child(v_flex().flex_1().min_w_0().gap_3()
                         .child(accessible_text("import-reading-state", "正在读取视频信息…")
-                            .text_size(TEXT_BODY).text_color(color(MUTED)))
+                            .text_size(TEXT_BODY).text_color(color(GRAY)))
                         .child(div().w(relative(0.72)).h(rems(12. / 14.)).rounded_full().bg(color(INSET)))
                         .child(div().w(relative(0.45)).h(rems(10. / 14.)).rounded_full().bg(color(INSET))))
                     .child(quiet("cancel-source-read").icon(crate::icons::close())
@@ -1154,7 +1154,7 @@ impl Desktop {
                         outline_pill("choose-local-video")
                             .icon(icons::file_upload())
                             .label("选择文件")
-                            .text_color(color(ACCENT_STRONG))
+                            .text_color(color(ACCENT))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.switch_source_kind(false, window, cx);
                                 this.pick_video(window, cx);
@@ -1402,7 +1402,7 @@ impl Desktop {
             })
             .when(
                 !self.source_candidate_covers.contains_key(&candidate.input),
-                |slot| slot.child(icons::movie().size(px(18.)).text_color(color(MUTED))),
+                |slot| slot.child(icons::movie().size(px(18.)).text_color(color(GRAY))),
             );
         let text = v_flex()
             .flex_1()
@@ -1427,7 +1427,7 @@ impl Desktop {
                         .w_full()
                         .min_w_0()
                         .text_size(TEXT_AUX)
-                        .text_color(color(MUTED))
+                        .text_color(color(GRAY))
                         .text_ellipsis()
                         .child(candidate.input.clone()),
                 )
@@ -1442,7 +1442,7 @@ impl Desktop {
                             .w_full()
                             .min_w_0()
                             .text_size(TEXT_AUX)
-                            .text_color(color(MUTED))
+                            .text_color(color(GRAY))
                             .text_ellipsis()
                             .child(course2md::render::fmt_ts(seconds)),
                     )
@@ -1571,7 +1571,7 @@ impl Desktop {
                     .child(
                         icons::file_upload()
                             .size(rems(32. / 14.))
-                            .text_color(color(ACCENT_STRONG)),
+                            .text_color(color(ACCENT)),
                     )
                     .child(
                         accessible_text("import-drop-instruction", "拖入本地视频")
@@ -1617,7 +1617,7 @@ impl Desktop {
                             filename,
                             icons::movie()
                                 .size(rems(20. / 14.))
-                                .text_color(color(ACCENT_STRONG)),
+                                .text_color(color(ACCENT)),
                         )
                         .flex_1()
                         .min_w(rems(18.))
@@ -2053,7 +2053,7 @@ impl Desktop {
                         view.child(
                             div()
                                 .text_size(TEXT_AUX)
-                                .text_color(color(MUTED))
+                                .text_color(color(GRAY))
                                 .child("有字幕时直接用字幕，没有字幕时识别视频声音"),
                         )
                     },
@@ -2114,7 +2114,7 @@ impl Desktop {
                 .gap_2()
                 .child(self.task_service_picker(ServicePurpose::Ai, cx));
             if let Some(selected) = self.selected_task_service(ServicePurpose::Ai) {
-                service = service.child(div().text_size(TEXT_AUX).text_color(color(MUTED)).child(
+                service = service.child(div().text_size(TEXT_AUX).text_color(color(GRAY)).child(
                     format!(
                         "{}会发送到 {}",
                         if self.task_options.llm && self.task_options.vision {
@@ -2130,7 +2130,7 @@ impl Desktop {
                 import_option_field("import-ai-service-label", icons::settings(), "AI 服务", "", service)
             } else {
                 v_flex().w_full().gap_2()
-                    .child(div().text_size(TEXT_AUX).text_color(color(MUTED)).child("AI 服务"))
+                    .child(div().text_size(TEXT_AUX).text_color(color(GRAY)).child("AI 服务"))
                     .child(service)
             });
         }
@@ -2203,7 +2203,7 @@ impl Desktop {
             .child(div().flex_1().min_w_0().text_left().child(label))
             .child(
                 div()
-                    .text_color(color(MUTED))
+                    .text_color(color(GRAY))
                     .font_weight(FontWeight::NORMAL)
                     .child(engine),
             )
@@ -2230,7 +2230,7 @@ impl Desktop {
                 .child(
                     div()
                         .text_size(TEXT_AUX)
-                        .text_color(color(MUTED))
+                        .text_color(color(GRAY))
                         .child("音频会发送到所选识别服务"),
                 );
         } else {
@@ -2248,7 +2248,7 @@ impl Desktop {
                     })
                 });
             if ready {
-                view = view.child(div().text_size(TEXT_AUX).text_color(color(MUTED)).child(
+                view = view.child(div().text_size(TEXT_AUX).text_color(color(GRAY)).child(
                     format!(
                         "模型已下载 · {}",
                         crate::settings_ui::model_diagnostics::model_display_name(&model)
@@ -2275,7 +2275,7 @@ impl Desktop {
                 view = view.child(
                     h_flex().w_full().min_w_0().gap_2().flex_wrap().items_center()
                         .child(div().flex_1().min_w_0().text_size(TEXT_AUX)
-                            .text_color(color(MUTED))
+                            .text_color(color(GRAY))
                             .child(format!("{} · 待下载",
                                 crate::settings_ui::model_diagnostics::model_display_name(&model))))
                         .child(outline_pill("import-prepare-model")
@@ -2303,7 +2303,7 @@ impl Desktop {
                                         }))
                             })),
                 ).when(self.job.is_some(), |view| view.child(
-                    div().text_size(TEXT_AUX).text_color(color(MUTED))
+                    div().text_size(TEXT_AUX).text_color(color(GRAY))
                         .child("当前处理结束后可准备模型")));
             } else {
                 view = view.child(self.model_readiness_panel_with(
@@ -2719,7 +2719,7 @@ impl Desktop {
                     .role(Role::Heading).text_size(rems(if compact { 28. / 14. } else { 36. / 14. }))
                     .line_height(rems(if compact { 36. / 14. } else { 44. / 14. })).font_weight(FontWeight::SEMIBOLD))
                 .child(div().text_center().text_size(rems(if compact { 14. / 14. } else { 16. / 14. }))
-                    .line_height(rems(24. / 14.)).text_color(color(MUTED))
+                    .line_height(rems(24. / 14.)).text_color(color(GRAY))
                     .child("粘贴链接或拖入本地视频，自动生成带截图的 Markdown 笔记")))
             .child(input);
         if let Some((id, message)) = cancelled_notice {
@@ -2792,12 +2792,12 @@ impl Desktop {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.generation_options_open = false; cx.notify();
                             }))))
-                    .child(div().text_size(TEXT_AUX).text_color(color(MUTED))
+                    .child(div().text_size(TEXT_AUX).text_color(color(GRAY))
                         .child("只对接下来添加的视频生效，长期默认值在设置里改")))
                 .child(self.import_text_mode_options(window, cx))
-                .child(div().h(px(1.)).bg(color(LINE)))
+                .child(div().h(px(1.)).bg(color(HAIRLINE)))
                 .child(self.import_ai_options(window, cx))
-                .child(div().h(px(1.)).bg(color(LINE)))
+                .child(div().h(px(1.)).bg(color(HAIRLINE)))
                 .child(self.import_destination(cx))
                 .child(self.import_exports(window, cx))
                 .child(h_flex().w_full().justify_end().pt(rems(8. / 14.))
@@ -2846,12 +2846,12 @@ impl Desktop {
             .group_drag_over::<gpui::ExternalPaths>("workbench-drop", |style| style.visible())
             .bg(color(CANVAS).opacity(0.88)).p(rems(24. / 14.))
             .child(v_flex().size_full().items_center().justify_center().gap_4()
-                .rounded(RADIUS_HERO).border_2().border_dashed().border_color(color(ACCENT_STRONG))
+                .rounded(RADIUS_HERO).border_2().border_dashed().border_color(color(ACCENT))
                 .child(h_flex().size(rems(88. / 14.)).rounded_full()
                     .items_center().justify_center().bg(color(SECONDARY_CONTAINER))
-                    .child(icons::file_upload().size(rems(40. / 14.)).text_color(color(ACCENT_STRONG))))
+                    .child(icons::file_upload().size(rems(40. / 14.)).text_color(color(ACCENT))))
                 .child(div().text_size(rems(28. / 14.)).font_weight(FontWeight::SEMIBOLD).child("松开以添加视频"))
-                .child(div().text_center().text_size(TEXT_BODY).text_color(color(MUTED))
+                .child(div().text_center().text_size(TEXT_BODY).text_color(color(GRAY))
                     .child("读取视频信息后，确认选项即可开始转换")))
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
                 this.drop_source_files(paths.paths(), window, cx);

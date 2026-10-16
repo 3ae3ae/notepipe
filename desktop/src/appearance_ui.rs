@@ -181,7 +181,7 @@ fn palette_choice(palette: PaletteId, selected: bool, amount: f32) -> gpui_base:
                         .gap(px(8.))
                         .p(px(12.))
                         .items_center()
-                        .bg(theme::blend(color(SURFACE), color(ACCENT_SOFT), amount))
+                        .bg(theme::blend(color(SURFACE), color(SECONDARY_CONTAINER), amount))
                         .child(
                             div()
                                 .flex_1()
@@ -368,7 +368,7 @@ impl Desktop {
                     .child(
                         if dark { icons::moon() } else { icons::sun() }
                             .size(px(18.))
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                     )
                     .child(field_label(
                         ("palette-preset-label", usize::from(dark)),

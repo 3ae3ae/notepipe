@@ -20,6 +20,7 @@ macro_rules! tokens {
 tokens!(
     CANVAS,
     SURFACE,
+    SURFACE_HIGH,
     INSET,
     INK,
     GRAY,
@@ -28,41 +29,21 @@ tokens!(
     CARD_LINE,
     CONTROL,
     ACCENT,
-    ACCENT_STRONG,
-    ACCENT_SOFT,
-    PRIMARY,
-    PRIMARY_HOVER,
-    PRIMARY_ACTIVE,
     ON_PRIMARY,
+    SECONDARY_CONTAINER,
+    ON_SECONDARY_CONTAINER,
     SUCCESS,
     SUCCESS_BG,
     WARNING,
     WARNING_BG,
     DANGER,
     DANGER_BG,
-    BADGE_PROGRESS,
-    BADGE_PROGRESS_BG,
-    PROGRESS_FILL,
-    PROGRESS_TRACK,
     FIND_HIGHLIGHT,
     FIND_CURRENT,
     FIND_CURRENT_LINE,
-    SEGMENT_TRACK,
-    SWITCH_TRACK_OFF,
-    HOVER_WARM,
     SELECTION,
-    PRIMARY_CONTAINER,
-    ON_PRIMARY_CONTAINER,
-    SECONDARY_CONTAINER,
-    ON_SECONDARY_CONTAINER,
-    SURFACE_HIGH
 );
 const COLOR_COUNT: usize = ALL_TOKENS.len();
-
-pub const MUTED: ColorToken = GRAY;
-pub const LINE: ColorToken = HAIRLINE;
-pub const BLUE: ColorToken = ACCENT_STRONG;
-pub const TINT: ColorToken = ACCENT_SOFT;
 
 pub fn blend(from: Rgba, to: Rgba, t: f32) -> Rgba {
     let t = t.clamp(0., 1.);
@@ -80,6 +61,7 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
     std::array::from_fn(|index| match ALL_TOKENS[index] {
         CANVAS => rgb(p.canvas),
         SURFACE => rgb(p.surface),
+        SURFACE_HIGH => blend(rgb(p.canvas), rgb(p.text), if id.is_dark() { 0.07 } else { 0.05 }),
         INSET => rgb(p.inset),
         INK => rgb(p.text),
         GRAY => rgb(p.muted),
@@ -88,29 +70,18 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
         // M3 cards are separated by tone rather than a full-strength outline.
         CARD_LINE => blend(rgb(p.surface), rgb(p.border), 0.55),
         CONTROL => rgb(p.control),
-        ACCENT | ACCENT_STRONG | PRIMARY | PROGRESS_FILL => rgb(p.accent),
+        ACCENT => rgb(p.accent),
         ON_PRIMARY => rgb(p.on_accent),
-        PRIMARY_HOVER => blend(rgb(p.accent), rgb(p.text), 0.10),
-        PRIMARY_ACTIVE => blend(rgb(p.accent), rgb(p.text), 0.20),
         // M3 container roles derived from each palette's own accent and text, so
         // every preset keeps its identity (assets/themes/SOURCES.md).
-        ACCENT_SOFT | SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.26 } else { 0.24 }),
+        SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.26 } else { 0.24 }),
         ON_SECONDARY_CONTAINER => blend(rgb(p.text), rgb(p.accent), if id.is_dark() { 0.30 } else { 0.40 }),
-        PRIMARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.38 } else { 0.24 }),
-        ON_PRIMARY_CONTAINER => blend(rgb(p.text), rgb(p.accent), 0.20),
-        SURFACE_HIGH => blend(rgb(p.canvas), rgb(p.text), if id.is_dark() { 0.07 } else { 0.05 }),
         SUCCESS => rgb(p.success),
         SUCCESS_BG => tint(p.success, 0.12),
         WARNING => rgb(p.warning),
         WARNING_BG => tint(p.warning, 0.12),
         DANGER => rgb(p.danger),
         DANGER_BG => tint(p.danger, 0.12),
-        BADGE_PROGRESS => rgb(p.accent),
-        BADGE_PROGRESS_BG => tint(p.accent, 0.10),
-        // M3 linear progress: the track is the indicator's tonal container.
-        PROGRESS_TRACK => tint(p.accent, if id.is_dark() { 0.26 } else { 0.24 }),
-        SEGMENT_TRACK | SWITCH_TRACK_OFF => rgb(p.border),
-        HOVER_WARM => tint(p.text, 0.05),
         SELECTION => rgb(p.selection),
         FIND_HIGHLIGHT => tint(p.warning, 0.16),
         FIND_CURRENT => tint(p.warning, 0.32),
@@ -192,35 +163,29 @@ fn sync_component_theme(dark: bool, cx: &mut App) {
     theme.radius_lg = RADIUS_CARD;
     let colors = &mut theme.colors;
     macro_rules! set {
-        ($token:expr => $($field:ident),+ $(,)?) => { $(colors.$field = color($token).into();)+ };
+        ($value:expr => $($field:ident),+ $(,)?) => {{ let value = $value; $(colors.$field = value.into();)+ }};
     }
-    set!(CANVAS => background, title_bar, tab_bar, status_bar, tiles);
-    set!(SURFACE => button, popover, list, table, accordion, group_box, tab_active);
-    set!(INSET => sidebar, table_head, table_foot, description_list_label, list_head, list_even, table_even, tab, secondary, button_secondary);
-    set!(INK => foreground, button_foreground, popover_foreground, secondary_foreground, button_secondary_foreground, sidebar_foreground, group_box_foreground, table_head_foreground, table_foot_foreground, tab_active_foreground);
-    set!(GRAY => muted_foreground, description_list_label_foreground, tab_foreground);
-    set!(HAIRLINE => border, title_bar_border, sidebar_border, status_bar_border, table_row_border, window_border);
-    set!(CONTROL => input, scrollbar_thumb, switch);
-    set!(FAINT => scrollbar_thumb_hover);
-    set!(ACCENT => accent_foreground, primary, button_primary, caret, ring, link, progress_bar, slider_bar, drag_border, sidebar_primary);
-    set!(ON_PRIMARY => primary_foreground, button_primary_foreground, sidebar_primary_foreground);
-    set!(PRIMARY_HOVER => primary_hover, button_primary_hover, link_hover);
-    set!(PRIMARY_ACTIVE => primary_active, button_primary_active, link_active);
-    set!(ACCENT_SOFT => accent, drop_target, list_active, sidebar_accent, table_active);
-    set!(ACCENT_STRONG => list_active_border, table_active_border, sidebar_accent_foreground);
-    set!(HOVER_WARM => button_hover, secondary_hover, button_secondary_hover, list_hover, table_hover);
-    set!(SEGMENT_TRACK => muted, skeleton, tab_bar_segmented, button_active, secondary_active, button_secondary_active);
-    set!(SELECTION => selection);
-    set!(SURFACE => switch_thumb, slider_thumb);
-    set!(DANGER => danger, button_danger_foreground, danger_hover, danger_active);
-    set!(ON_PRIMARY => danger_foreground, success_foreground, warning_foreground, info_foreground);
-    set!(DANGER_BG => button_danger, button_danger_hover, button_danger_active);
-    set!(SUCCESS => success, button_success_foreground, success_hover, success_active);
-    set!(SUCCESS_BG => button_success, button_success_hover, button_success_active);
-    set!(WARNING => warning, button_warning_foreground, warning_hover, warning_active);
-    set!(WARNING_BG => button_warning, button_warning_hover, button_warning_active);
-    set!(ACCENT => info, info_hover, info_active, button_info_foreground);
-    set!(ACCENT_SOFT => button_info, button_info_hover, button_info_active);
+    set!(color(CANVAS) => background, title_bar, tab_bar, status_bar, tiles);
+    set!(color(SURFACE) => button, popover, list, table, accordion, group_box, tab_active, switch_thumb, slider_thumb);
+    set!(color(INSET) => sidebar, table_head, table_foot, description_list_label, list_head, list_even, table_even, tab, secondary, button_secondary);
+    set!(color(INK) => foreground, button_foreground, popover_foreground, secondary_foreground, button_secondary_foreground, sidebar_foreground, group_box_foreground, table_head_foreground, table_foot_foreground, tab_active_foreground);
+    set!(color(GRAY) => muted_foreground, description_list_label_foreground, tab_foreground);
+    set!(color(FAINT) => scrollbar_thumb_hover);
+    set!(color(HAIRLINE) => border, title_bar_border, sidebar_border, status_bar_border, table_row_border, window_border, muted, skeleton, tab_bar_segmented, button_active, secondary_active, button_secondary_active);
+    set!(color(CONTROL) => input, scrollbar_thumb, switch);
+    set!(color(ACCENT) => accent_foreground, primary, button_primary, caret, ring, link, progress_bar, slider_bar, drag_border, sidebar_primary, list_active_border, table_active_border, sidebar_accent_foreground, info, info_hover, info_active, button_info_foreground);
+    set!(color(ON_PRIMARY) => primary_foreground, button_primary_foreground, sidebar_primary_foreground, danger_foreground, success_foreground, warning_foreground, info_foreground);
+    set!(blend(color(ACCENT), color(INK), 0.10) => primary_hover, button_primary_hover, link_hover);
+    set!(blend(color(ACCENT), color(INK), 0.20) => primary_active, button_primary_active, link_active);
+    set!(color(SECONDARY_CONTAINER) => accent, drop_target, list_active, sidebar_accent, table_active, button_info, button_info_hover, button_info_active);
+    set!(blend(color(SURFACE), color(INK), 0.05) => button_hover, secondary_hover, button_secondary_hover, list_hover, table_hover);
+    set!(color(SELECTION) => selection);
+    set!(color(DANGER) => danger, button_danger_foreground, danger_hover, danger_active);
+    set!(color(DANGER_BG) => button_danger, button_danger_hover, button_danger_active);
+    set!(color(SUCCESS) => success, button_success_foreground, success_hover, success_active);
+    set!(color(SUCCESS_BG) => button_success, button_success_hover, button_success_active);
+    set!(color(WARNING) => warning, button_warning_foreground, warning_hover, warning_active);
+    set!(color(WARNING_BG) => button_warning, button_warning_hover, button_warning_active);
     colors.overlay = gpui::hsla(0., 0., 0., if dark { 0.58 } else { 0.28 });
     colors.scrollbar = gpui::hsla(0., 0., 0., 0.);
     theme.tokens = theme.colors.into();
@@ -540,7 +505,7 @@ pub fn section_title(
         .text_size(rems(15. / 14.))
         .line_height(rems(22. / 14.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(color(ACCENT_STRONG))
+        .text_color(color(ACCENT))
 }
 
 /// M3 search bar: a filled, borderless pill with a leading search icon. The
@@ -975,7 +940,7 @@ pub fn badge(kind: BadgeKind) -> gpui::Div {
         BadgeKind::Success => (SUCCESS, SUCCESS_BG, Some(crate::icons::check_circle())),
         BadgeKind::Warning => (WARNING, WARNING_BG, Some(crate::icons::warning())),
         BadgeKind::Danger => (DANGER, DANGER_BG, Some(crate::icons::error())),
-        BadgeKind::Progress => (BADGE_PROGRESS, BADGE_PROGRESS_BG, Some(crate::icons::schedule())),
+        BadgeKind::Progress => (ACCENT, SECONDARY_CONTAINER, Some(crate::icons::schedule())),
         // Neutral 为纯文字片：ⓘ 专属说明文字（review2-settings#3）
         BadgeKind::Neutral => (GRAY, INSET, None),
     };
@@ -1021,7 +986,7 @@ pub fn outlined_field_label_sized(
         .child(accessible_text(id, label)
             .absolute().top(rems(-8. / 14.)).left(rems(12. / 14.))
             .px(rems(4. / 14.))
-            .bg(color(SURFACE)).text_color(color(MUTED))
+            .bg(color(SURFACE)).text_color(color(GRAY))
             .text_size(label_size).line_height(rems(16. / 14.))
             .font_weight(FontWeight::NORMAL))
 }
@@ -1029,7 +994,7 @@ pub fn outlined_field_label_sized(
 /// Preference switches share the accent and scale their geometry with UI text.
 pub fn coral_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
     switch
-        .color(color(ACCENT_STRONG))
+        .color(color(ACCENT))
         .track_height(rems(20. / 14.))
 }
 

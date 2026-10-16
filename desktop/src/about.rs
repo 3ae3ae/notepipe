@@ -16,7 +16,7 @@ impl Desktop {
                 .child(img("images/course2md.png").size(px(56.)).flex_shrink_0())
                 .child(v_flex().flex_1().min_w_0().gap_1()
                     .child(accessible_text("about-name", "course2md").role(Role::Heading).text_size(TEXT_TITLE).font_weight(FontWeight::SEMIBOLD))
-                    .child(accessible_text("about-build", version).text_size(TEXT_AUX).text_color(color(MUTED))))
+                    .child(accessible_text("about-build", version).text_size(TEXT_AUX).text_color(color(GRAY))))
                 .child(h_flex().gap_2().items_center().flex_wrap()
                     .child(quiet("about-project").icon(icons::external_link()).label("项目主页")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md")))

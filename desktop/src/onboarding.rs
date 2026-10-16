@@ -1120,7 +1120,7 @@ impl Desktop {
                 view.child(
                     settings_value("setup-notice", message)
                         .role(Role::Status)
-                        .text_color(color(if error { DANGER } else { MUTED })),
+                        .text_color(color(if error { DANGER } else { GRAY })),
                 )
             });
         // The scroll viewport owns generous inner gutters, including the input's

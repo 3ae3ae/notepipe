@@ -1,7 +1,7 @@
 //! Small, shared motion vocabulary: entrances, retargetable values and live work.
 use crate::activity::{TransferEta, TransferMetrics};
 use crate::theme::{
-    ACCENT, GRAY, INK, MUTED, PROGRESS_FILL, PROGRESS_TRACK, TEXT_AUX, TEXT_BODY, accessible_text,
+    ACCENT, GRAY, INK, SECONDARY_CONTAINER, TEXT_AUX, TEXT_BODY, accessible_text,
     color,
 };
 use gpui::{prelude::*, *};
@@ -75,7 +75,7 @@ pub fn spinner(id: impl Into<ElementId>, cx: &App) -> AnyElement {
 
 /// Unmeasured work uses motion, never a fabricated completion percentage.
 pub fn indeterminate_progress(id: impl Into<ElementId>, cx: &App) -> AnyElement {
-    let segment = div().absolute().h_full().w(relative(0.3)).rounded_full().bg(color(PROGRESS_FILL));
+    let segment = div().absolute().h_full().w(relative(0.3)).rounded_full().bg(color(ACCENT));
     let segment = if cx.reduce_motion() {
         segment.left(relative(0.35)).into_any_element()
     } else {
@@ -83,7 +83,7 @@ pub fn indeterminate_progress(id: impl Into<ElementId>, cx: &App) -> AnyElement 
             |segment, t| segment.left(relative(t * 1.3 - 0.3))).into_any_element()
     };
     div().relative().w_full().h(px(3.)).rounded_full().overflow_hidden()
-        .bg(color(PROGRESS_TRACK)).child(segment).into_any_element()
+        .bg(color(SECONDARY_CONTAINER)).child(segment).into_any_element()
 }
 
 pub fn value(id: impl Into<ElementId>, target: f32, window: &mut Window, cx: &mut App) -> f32 {
@@ -141,13 +141,13 @@ pub fn progress(
         .h(px(6.))
         .rounded_full()
         .overflow_hidden()
-        .bg(color(PROGRESS_TRACK))
+        .bg(color(SECONDARY_CONTAINER))
         .child(
             div()
                 .h_full()
                 .w(relative(amount))
                 .rounded_full()
-                .bg(color(PROGRESS_FILL)),
+                .bg(color(ACCENT)),
         )
         .into_any_element()
 }
@@ -205,7 +205,7 @@ pub fn transfer_status(
                 value.clone(),
             )
             .text_size(TEXT_AUX)
-            .text_color(color(MUTED)),
+            .text_color(color(GRAY)),
         );
     }
     if let Some(note) = &metrics.note {
@@ -237,7 +237,7 @@ fn transfer_meter(
         .child(
             accessible_text(SharedString::from(format!("{id}-label")), label)
                 .text_size(TEXT_AUX)
-                .text_color(color(MUTED)),
+                .text_color(color(GRAY)),
         )
         .child(
             accessible_text(SharedString::from(format!("{id}-value")), value)

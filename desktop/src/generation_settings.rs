@@ -147,7 +147,7 @@ impl Desktop {
                                         value.preferred_subtitle_languages.join(" → "),
                                     )
                                     .text_size(TEXT_AUX)
-                                    .text_color(color(MUTED)),
+                                    .text_color(color(GRAY)),
                                 )
                             }),
                     )
@@ -216,7 +216,7 @@ impl Desktop {
                                         _ => "自动选择引擎",
                                     },
                                 )
-                                .text_color(color(MUTED))
+                                .text_color(color(GRAY))
                                 .font_weight(FontWeight::NORMAL),
                             )
                         })
@@ -487,7 +487,7 @@ impl Desktop {
                                                     .unwrap_or_else(|| "尚未设置".into()),
                                             )
                                             .text_size(TEXT_AUX)
-                                            .text_color(color(MUTED))
+                                            .text_color(color(GRAY))
                                             .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
                                 .min_w_0(),
                                         ),
@@ -663,7 +663,7 @@ impl Desktop {
                     .child(
                         text("model-readiness-conclusion", conclusion)
                             .text_size(TEXT_AUX)
-                            .text_color(color(if settled { MUTED } else { WARNING })),
+                            .text_color(color(if settled { GRAY } else { WARNING })),
                     ),
             )
             .child(

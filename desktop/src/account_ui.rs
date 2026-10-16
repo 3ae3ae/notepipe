@@ -317,7 +317,7 @@ impl Desktop {
                         view.child(
                             accessible_text("bilibili-account-status", detail)
                                 .text_size(support_size)
-                                .text_color(color(MUTED)),
+                                .text_color(color(GRAY)),
                         )
                     })
                     .map(|view| {
@@ -331,7 +331,7 @@ impl Desktop {
                                 },
                             )
                             .text_size(support_size)
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                         )
                     }),
             )
@@ -386,7 +386,7 @@ impl Desktop {
                     .min_w_0()
                     .whitespace_normal()
                     .text_sm()
-                    .text_color(color(MUTED)),
+                    .text_color(color(GRAY)),
             )
             .child(
                 control("source-account-refresh")
@@ -722,7 +722,7 @@ impl Desktop {
                         .whitespace_normal()
                         .when(!layout.side_by_side, |text| text.text_center())
                         .text_sm()
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                 )
             });
         v_flex()

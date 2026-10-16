@@ -1029,7 +1029,7 @@ impl Desktop {
             LibraryItem::Coverage(message) => {
                 accessible_text("library-search-coverage", message.clone())
                     .text_sm()
-                    .text_color(color(MUTED))
+                    .text_color(color(GRAY))
                     .into_any_element()
             }
             LibraryItem::Issues(messages) => v_flex()
@@ -1071,7 +1071,7 @@ impl Desktop {
                     .child(
                         crate::icons::book_open()
                             .size(px(32.))
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                     )
                     .child(
                         accessible_text(
@@ -2033,7 +2033,7 @@ impl Desktop {
                 ].into_iter().enumerate().map(|(index, label)| h_flex().gap_2().pl_1().pr_3().py_1().rounded_full()
                     .border_1().border_color(color(HAIRLINE)).text_size(TEXT_BODY)
                     .child(h_flex().size(rems(24. / 14.)).justify_center().items_center()
-                        .rounded_full().bg(color(SECONDARY_CONTAINER)).text_color(color(ACCENT_STRONG))
+                        .rounded_full().bg(color(SECONDARY_CONTAINER)).text_color(color(ACCENT))
                         .child((index + 1).to_string()))
                     .child(label))));
             }
@@ -2056,7 +2056,7 @@ impl Desktop {
                         .mr(-crate::theme::QUIET_INSET)
                         .label("查看全部")
                         .child(crate::icons::chevron_right().size_4())
-                        .text_color(color(ACCENT_STRONG))
+                        .text_color(color(ACCENT))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.folder_filter = None;
                             this.navigate(Page::Library, cx);

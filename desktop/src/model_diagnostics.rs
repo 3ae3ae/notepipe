@@ -653,7 +653,7 @@ impl Desktop {
                             part.path.display().to_string(),
                         )
                         .text_size(TEXT_AUX)
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                     )
                     .when(
                         entry.is_some_and(|entry| entry.cache_directories.contains(&path)),
@@ -742,7 +742,7 @@ impl Desktop {
                                         ),
                                     )
                                     .text_size(TEXT_AUX)
-                                    .text_color(color(MUTED)),
+                                    .text_color(color(GRAY)),
                                 )
                             })
             );

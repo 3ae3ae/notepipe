@@ -3047,7 +3047,7 @@ impl Desktop {
                             "离线视频不可用",
                         )
                         .text_size(TEXT_AUX)
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                     )
                     .child(reveal(
                         "reveal-retry-reader-offline-video",
@@ -3269,7 +3269,7 @@ impl Desktop {
                 quiet("note-contents")
                     .icon(icons::toc())
                     .label("目录")
-                    .when(toc_on, |button| button.text_color(color(ACCENT_STRONG)))
+                    .when(toc_on, |button| button.text_color(color(ACCENT)))
                     .accessibility_label(if toc_on {
                         "收起目录"
                     } else {
@@ -3687,12 +3687,12 @@ impl Desktop {
                         .items_center()
                         .flex_wrap()
                         .p_3()
-                        .bg(color(ACCENT_SOFT))
+                        .bg(color(SECONDARY_CONTAINER))
                         .rounded(RADIUS_CARD)
                         .child(
                             icons::history()
                                 .size(px(18.))
-                                .text_color(color(ACCENT_STRONG)),
+                                .text_color(color(ACCENT)),
                         )
                         .child(theme::accessible_text(
                             "newer-note-version",
@@ -3876,7 +3876,7 @@ impl Desktop {
                                 detail.clone(),
                             )
                             .text_sm()
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                         );
                 }
             }
@@ -4022,7 +4022,7 @@ impl Desktop {
                     .items_center()
                     .bg(color(INSET))
                     .rounded(RADIUS_CARD)
-                    .child(icons::image().size(px(32.)).text_color(color(MUTED)))
+                    .child(icons::image().size(px(32.)).text_color(color(GRAY)))
                     .child(
                         theme::accessible_text("no-note-images", "这份笔记没有截图")
                             .text_size(TEXT_TITLE)
@@ -4035,7 +4035,7 @@ impl Desktop {
                         |view| {
                             view.child(
                                 theme::accessible_text("no-note-images-reason", "截图生成未完成")
-                                    .text_color(color(MUTED)),
+                                    .text_color(color(GRAY)),
                             )
                         },
                     )
@@ -4305,7 +4305,7 @@ impl Desktop {
                     .w_full()
                     .min_w_0()
                     .rounded(RADIUS_PILL)
-                    .when(on, |row| row.bg(color(ACCENT_SOFT)))
+                    .when(on, |row| row.bg(color(SECONDARY_CONTAINER)))
                     .child(
                         control(("toc-item", index))
                             .ghost()
@@ -4337,7 +4337,7 @@ impl Desktop {
                                             .text_ellipsis()
                                             .line_height(relative(1.4))
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(color(if on { ACCENT_STRONG } else { INK }))
+                                            .text_color(color(if on { ACCENT } else { INK }))
                                             .child(label.clone()),
                                     )
                                     .when_some(trailing_time, |row, seconds| {
@@ -4346,7 +4346,7 @@ impl Desktop {
                                                 .flex_shrink_0()
                                                 .text_size(TEXT_AUX)
                                                 .text_color(color(if on {
-                                                    ACCENT_STRONG
+                                                    ACCENT
                                                 } else {
                                                     GRAY
                                                 }))

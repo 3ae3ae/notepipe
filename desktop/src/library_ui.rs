@@ -526,7 +526,7 @@ impl Desktop {
                     .rounded_lg()
                     .bg(color(SURFACE))
                     .border_1()
-                    .border_color(color(LINE))
+                    .border_color(color(HAIRLINE))
                     .child(accessible_text(
                         "folder-delete-title",
                         format!("删除「{name}」文件夹？"),
@@ -536,7 +536,7 @@ impl Desktop {
                             "folder-delete-description",
                             "其中的笔记会移到未分类",
                         )
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                     )
                     .child(
                         h_flex()

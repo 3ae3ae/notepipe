@@ -218,7 +218,7 @@ fn setting_label(id: impl Into<ElementId>, _icon: Icon, value: impl Into<SharedS
     div().child(
         text(id, value)
             .text_size(TEXT_BODY)
-            .text_color(color(MUTED)),
+            .text_color(color(GRAY)),
     )
 }
 
@@ -301,7 +301,7 @@ fn settings_form_row(
                     column.child(
                         text(SharedString::from(format!("{id:?}-hint")), hint)
                             .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                     )
                 }),
         );
@@ -329,7 +329,7 @@ pub(super) fn settings_stacked_row(
                 view.child(
                     text(SharedString::from(format!("{id:?}-hint")), hint)
                         .text_size(TEXT_AUX)
-                        .text_color(color(MUTED))
+                        .text_color(color(GRAY))
                         .px(px(12.)),
                 )
             }),
@@ -355,7 +355,7 @@ pub(super) fn settings_outlined_row(
                 view.child(
                     text(SharedString::from(format!("{id:?}-hint")), hint)
                         .text_size(TEXT_AUX)
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                 )
             }),
     )
@@ -381,7 +381,7 @@ pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, contr
                     view.child(
                         text(SharedString::from(format!("switch-hint-{label}")), hint)
                             .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                     )
                 }),
         )
@@ -442,7 +442,7 @@ pub(super) fn settings_detail_group(
             .child(
                 icon.size(rems(20. / 14.))
                     .flex_shrink_0()
-                    .text_color(color(MUTED)),
+                    .text_color(color(GRAY)),
             )
             .child(field_label(id, title).role(Role::Heading).min_w_0()),
     )
@@ -486,7 +486,7 @@ pub(crate) fn account_card(
     let line = move |suffix: &str, message: String, error: bool| {
         text(SharedString::from(format!("{id}-{suffix}")), message)
             .text_size(TEXT_AUX)
-            .text_color(color(if error { DANGER } else { MUTED }))
+            .text_color(color(if error { DANGER } else { GRAY }))
     };
     h_flex()
         .w_full()
@@ -532,7 +532,7 @@ pub(crate) fn settings_resource_icon(icon: Icon) -> Div {
         .justify_center()
         .rounded_full()
         .bg(color(INSET))
-        .child(icon.size(px(22.)).text_color(color(MUTED)))
+        .child(icon.size(px(22.)).text_color(color(GRAY)))
 }
 
 /// Diagnostic values begin on a common reading axis. They can wrap and grow
@@ -1093,7 +1093,7 @@ impl Desktop {
                 .h(px(32.))
                 .w(px(if rail {56.} else {24.}))
                 .rounded_full()
-                .when(selected && rail, |view| view.bg(color(ACCENT_SOFT)))
+                .when(selected && rail, |view| view.bg(color(SECONDARY_CONTAINER)))
                 .child(settings_tab_icon(index).size(px(22.)));
             let label = if rail {
                 match index {
@@ -1116,7 +1116,7 @@ impl Desktop {
                     .px(px(if rail { 0. } else { 16. }))
                     .py(px(8.))
                     .bg(gpui::transparent_black())
-                    .when(selected && !rail, |tab| tab.bg(color(ACCENT_SOFT)))
+                    .when(selected && !rail, |tab| tab.bg(color(SECONDARY_CONTAINER)))
                     .child(
                         div()
                             .flex()
@@ -1292,7 +1292,7 @@ impl Desktop {
                             .child(v_flex().w_full().min_w_0().gap(px(22.))
                                 .child(v_flex().gap_2()
                                     .child(theme::page_heading("settings-category-heading", settings_tab_label(self.settings_tab)))
-                                    .when(self.settings_tab == 0, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_AUX).text_color(color(MUTED)))))
+                                    .when(self.settings_tab == 0, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_AUX).text_color(color(GRAY)))))
                                 .child(content)),
                     ),
             )
@@ -1399,7 +1399,7 @@ impl Desktop {
             let _lead = if empty {
                 Some(
                     text(("services-empty", purpose as usize), "尚未添加")
-                        .text_color(color(MUTED))
+                        .text_color(color(GRAY))
                         .into_any_element(),
                 )
             } else if purpose == ServicePurpose::Speech {
@@ -1446,7 +1446,7 @@ impl Desktop {
                                                 },
                                             )
                                             .text_size(TEXT_AUX)
-                                            .text_color(color(MUTED)),
+                                            .text_color(color(GRAY)),
                                         ),
                                 )
                         })
@@ -1564,7 +1564,7 @@ impl Desktop {
                             icons::science()
                         })
                         .size(px(20.))
-                        .text_color(color(ACCENT_STRONG))
+                        .text_color(color(ACCENT))
                         .flex_shrink_0(),
                     )
                     .child(
@@ -1644,7 +1644,7 @@ impl Desktop {
                             .min_w_0()
                             .whitespace_normal()
                             .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                         )
                         .child(
                             quiet(SharedString::from(format!("update-default-service-{id}")))
@@ -1664,7 +1664,7 @@ impl Desktop {
                         latest_test,
                     )
                     .text_size(TEXT_AUX)
-                    .text_color(color(MUTED)),
+                    .text_color(color(GRAY)),
                 )
             })
             .when(!failures.is_empty(), |card| {
@@ -1932,7 +1932,7 @@ impl Desktop {
                             .flex_1()
                             .min_w_0()
                             .text_size(TEXT_BODY)
-                            .text_color(color(if error { DANGER } else { MUTED })),
+                            .text_color(color(if error { DANGER } else { GRAY })),
                     ),
             ));
             let has_pending = match group {
@@ -2004,7 +2004,7 @@ impl Desktop {
                                     .min_w_0()
                                     .whitespace_normal()
                                     .text_size(TEXT_AUX)
-                                    .text_color(color(MUTED)),
+                                    .text_color(color(GRAY)),
                             ),
                     );
                 }
@@ -2185,7 +2185,7 @@ impl Desktop {
                                                 "重新了解应用的基本使用方式",
                                             )
                                             .text_size(TEXT_AUX)
-                                            .text_color(color(MUTED)),
+                                            .text_color(color(GRAY)),
                                         ),
                                 )
                                 .child(
@@ -2299,7 +2299,7 @@ impl Desktop {
                                                             ),
                                                         )
                                                         .text_size(TEXT_AUX)
-                                                        .text_color(color(MUTED)),
+                                                        .text_color(color(GRAY)),
                                                     ),
                                             ),
                                     )

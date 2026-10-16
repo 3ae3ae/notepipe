@@ -200,7 +200,7 @@ impl Desktop {
                                     .w_full()
                                     .whitespace_normal()
                                     .text_size(TEXT_AUX)
-                                    .text_color(color(MUTED)),
+                                    .text_color(color(GRAY)),
                             )
                         }),
                 )
@@ -322,7 +322,7 @@ impl Desktop {
                             "仅用于这次笔记",
                         )
                         .text_sm()
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                     )
                     .child(
                         control(("inherit-default-service", purpose as usize))
@@ -375,7 +375,7 @@ impl Desktop {
                                     },
                                 )
                                 .text_size(TEXT_AUX)
-                                .text_color(color(MUTED)),
+                                .text_color(color(GRAY)),
                             ),
                     )
                     .child(div().flex_shrink_0().child(view)),
@@ -819,7 +819,7 @@ impl Desktop {
                         item.child(
                             text("service-actual-endpoint", format!("将请求 {endpoint}"))
                                 .text_size(TEXT_AUX)
-                                .text_color(color(MUTED)),
+                                .text_color(color(GRAY)),
                         )
                     }),
             );
@@ -895,7 +895,7 @@ impl Desktop {
                     key = key.child(
                         text("service-key-existing", "已保存密钥，留空则保留")
                             .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                     );
                 }
                 for (index, name) in
@@ -953,7 +953,7 @@ impl Desktop {
                     div().px(rems(20. / 14.)).pb(rems(14. / 14.)).child(
                         text("service-credential-source", format!("密钥来源：{source}"))
                             .text_size(TEXT_AUX)
-                            .text_color(color(MUTED)),
+                            .text_color(color(GRAY)),
                     ),
                 );
             }
@@ -1259,7 +1259,7 @@ impl Desktop {
                     ),
                 )
                 .text_size(TEXT_AUX)
-                .text_color(color(MUTED)),
+                .text_color(color(GRAY)),
             );
             if !evidence.details.is_empty() {
                 result = result.child(
@@ -1283,7 +1283,7 @@ impl Desktop {
                     .children(evidence.details.iter().enumerate().map(|(index, detail)| {
                         text(("service-test-detail", index), detail.clone())
                             .text_sm()
-                            .text_color(color(MUTED))
+                            .text_color(color(GRAY))
                     }));
                 result = result.child(crate::motion::disclosure(
                     "service-test-details-content",
@@ -1371,7 +1371,7 @@ impl Desktop {
                 footer.child(
                     text("service-config-saved-only", "服务配置已保存，尚未开始补做")
                         .text_size(TEXT_AUX)
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                 )
             })
             .child(
@@ -1917,7 +1917,7 @@ impl Desktop {
                 .child(
                     text("default-service-consequence", "仅影响以后生成的笔记")
                         .text_sm()
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                 )
                 .button_props(
                     gpui_component::dialog::DialogButtonProps::default()

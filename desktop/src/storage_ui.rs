@@ -1348,7 +1348,7 @@ impl Desktop {
                 view = view.child(
                     accessible_text("storage-access-coverage", "所有保存位置都暂时无法访问")
                         .text_sm()
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                 );
             }
         } else {
@@ -1594,7 +1594,7 @@ impl Desktop {
                                             )
                                             .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
                                 .text_size(TEXT_AUX)
-                                            .text_color(color(MUTED)),
+                                            .text_color(color(GRAY)),
                                         ),
                                 )
                                 .child(trailing.flex_shrink_0()),

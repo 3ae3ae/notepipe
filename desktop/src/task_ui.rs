@@ -210,7 +210,7 @@ impl StageStatus {
 
     fn ink(self) -> Rgba {
         color(match self {
-            Self::Running => ACCENT_STRONG,
+            Self::Running => ACCENT,
             Self::Complete => SUCCESS,
             Self::Failed => DANGER,
             Self::Uncertain => WARNING,
@@ -2440,7 +2440,7 @@ impl Desktop {
                 .gap_3()
                 .py_12()
                 .items_center()
-                .child(icons::task().size_8().text_color(color(MUTED)))
+                .child(icons::task().size_8().text_color(color(GRAY)))
                 .child(
                     accessible_text("task-empty-title", "还没有生成任务")
                         .role(Role::Heading)
@@ -2644,7 +2644,7 @@ impl Desktop {
                         )
                         .text_sm()
                         .font_weight(FontWeight::NORMAL)
-                        .text_color(color(MUTED)),
+                        .text_color(color(GRAY)),
                     ),
             )
             .child(badge(task_badge_kind(task.state)).child(task_status_label(task)))
@@ -2656,7 +2656,7 @@ impl Desktop {
                 }
                 .size_4()
                 .flex_shrink_0()
-                .text_color(color(MUTED)),
+                .text_color(color(GRAY)),
             )
             .on_click(cx.listener({
                 let id = id.clone();
@@ -2724,7 +2724,7 @@ impl Desktop {
             .w_full()
             .bg(color(SURFACE))
             .border_1()
-            .border_color(color(if is_selected { BLUE } else { LINE }))
+            .border_color(color(if is_selected { ACCENT } else { HAIRLINE }))
             .rounded(RADIUS_CARD)
             .child(row);
         if is_selected {
@@ -2732,7 +2732,7 @@ impl Desktop {
                 .gap_4()
                 .pt_3()
                 .border_t_1()
-                .border_color(color(LINE));
+                .border_color(color(HAIRLINE));
             let destination = self.task_library(task)
                 .map(|lib| lib.name.clone())
                 .unwrap_or_else(|| "保存位置暂时不可用".into());

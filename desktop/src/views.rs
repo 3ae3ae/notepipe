@@ -207,7 +207,7 @@ impl Desktop {
                     .gap_2()
                     .p_3()
                     .rounded_md()
-                    .bg(color(TINT))
+                    .bg(color(SECONDARY_CONTAINER))
                     .child(icons::info().text_color(color(ACCENT)))
                     .child(
                         accessible_text(
@@ -383,7 +383,7 @@ impl Render for Desktop {
                             .child(
                                 accessible_text("opening-note", "正在打开笔记…")
                                     .role(Role::Status)
-                                    .text_color(color(MUTED)),
+                                    .text_color(color(GRAY)),
                             ),
                     )
                 },
@@ -479,7 +479,7 @@ impl Render for Desktop {
                             .gap_3()
                             .p_3()
                             .rounded_md()
-                            .bg(color(if completed { SUCCESS_BG } else { TINT }))
+                            .bg(color(if completed { SUCCESS_BG } else { SECONDARY_CONTAINER }))
                             .child(if completed {
                                 icons::check_circle().text_color(color(SUCCESS))
                             } else {
