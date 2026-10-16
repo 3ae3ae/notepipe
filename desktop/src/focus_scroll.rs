@@ -18,18 +18,38 @@ impl FocusRing {
     }
 }
 
+struct RingState {
+    container: FocusHandle,
+    active: bool,
+    /// The window focus when containment was last resolved.
+    seen: Option<FocusHandle>,
+}
+
 impl RenderOnce for FocusRing {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| (cx.focus_handle(), false));
-        let (focus, active) = state.read(cx).clone();
-        let observed = state.clone();
-        window.defer(cx, move |window, cx| {
-            let active = observed.read(cx).0.contains_focused(window, cx);
-            if active != observed.read(cx).1 {
-                observed.update(cx, |state, _| state.1 = active);
-                window.refresh();
-            }
+        let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| RingState {
+            container: cx.focus_handle(),
+            active: false,
+            seen: None,
         });
+        let (focus, active) = (state.read(cx).container.clone(), state.read(cx).active);
+        let focused = window.focused(cx);
+        // Containment is only reliable after the frame commits, so resolve it
+        // then, and only when window focus has moved since the last check.
+        if state.read(cx).seen != focused {
+            let observed = state.clone();
+            window.defer(cx, move |window, cx| {
+                let active = observed.read(cx).container.contains_focused(window, cx);
+                let changed = active != observed.read(cx).active;
+                observed.update(cx, |state, _| {
+                    state.active = active;
+                    state.seen = focused;
+                });
+                if changed {
+                    window.refresh();
+                }
+            });
+        }
         div()
             .id(self.id)
             .track_focus(&focus)
@@ -81,7 +101,8 @@ pub struct RevealFocus {
 struct State {
     container: FocusHandle,
     focused: Option<FocusHandle>,
-    geometry: Option<(Pixels, Size<Pixels>)>,
+    /// Window focus and geometry when the reveal was last resolved.
+    seen: Option<(Option<FocusHandle>, Pixels, Size<Pixels>)>,
 }
 
 impl RevealFocus {
@@ -115,7 +136,7 @@ impl RenderOnce for RevealFocus {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| State {
             container: cx.focus_handle(),
             focused: None,
-            geometry: None,
+            seen: None,
         });
         let focus = state.read(cx).container.clone();
         div()
@@ -123,21 +144,27 @@ impl RenderOnce for RevealFocus {
                 let Some(bounds) = bounds.first().copied() else {
                     return;
                 };
+                let seen = (window.focused(cx), window.rem_size(), window.bounds().size);
+                if state.read(cx).seen.as_ref() == Some(&seen) {
+                    return;
+                }
                 let state = state.clone();
                 let scroll = self.scroll.clone();
-                let geometry = (window.rem_size(), window.bounds().size);
                 // Focus ancestry is only reliable after this frame has committed:
                 // prepaint moves reused subtrees out of the previous dispatch tree.
-                // This also covers a focus change while a saved-status row disappears.
                 window.defer(cx, move |window, cx| {
                     let focused = window
                         .focused(cx)
                         .filter(|_| state.read(cx).container.contains_focused(window, cx));
+                    let geometry_changed = state
+                        .read(cx)
+                        .seen
+                        .as_ref()
+                        .is_none_or(|(_, rem, size)| (*rem, *size) != (seen.1, seen.2));
                     state.update(cx, |state, _| {
-                        let reveal = focused.is_some()
-                            && (state.focused != focused || state.geometry != Some(geometry));
+                        let reveal = focused.is_some() && (state.focused != focused || geometry_changed);
                         state.focused = focused;
-                        state.geometry = Some(geometry);
+                        state.seen = Some(seen);
                         if !reveal {
                             return;
                         }
