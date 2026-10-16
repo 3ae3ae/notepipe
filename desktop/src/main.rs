@@ -756,6 +756,21 @@ impl Desktop {
         }
     }
 
+    fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings(window, cx);
+        self.select_settings_tab(settings_ui::SettingsTab::Application, window, cx);
+    }
+
+    /// Find inside the open note, otherwise search the library.
+    fn search_content(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::Result {
+            self.open_reader_find(window, cx);
+        } else {
+            self.navigate(Page::Library, cx);
+            self.inputs[&Field::Search].update(cx, |input, cx| input.focus(window, cx));
+        }
+    }
+
     fn navigate(&mut self, page: Page, cx: &mut Context<Self>) {
         self.transient_task_result = None;
         if page != Page::New
@@ -1479,11 +1494,7 @@ fn main() {
                 let new_view = weak.clone();
                 let search_view = weak.clone();
                 cx.on_action(move |_: &OpenAbout, cx| {
-                    dispatch_desktop_action(&about_view, cx, |this, window, cx| {
-                        this.open_settings(window, cx);
-                        this.settings_tab = settings_ui::SettingsTab::Application;
-                        this.prepare_settings_view(window, cx);
-                    });
+                    dispatch_desktop_action(&about_view, cx, Desktop::open_about);
                 });
                 cx.on_action(move |_: &OpenSettings, cx| {
                     dispatch_desktop_action(&settings_view, cx, |this, window, cx| {
@@ -1496,15 +1507,7 @@ fn main() {
                     });
                 });
                 cx.on_action(move |_: &SearchContent, cx| {
-                    dispatch_desktop_action(&search_view, cx, |this, window, cx| {
-                        if this.page == Page::Result {
-                            this.open_reader_find(window, cx);
-                        } else {
-                            this.navigate(Page::Library, cx);
-                            this.inputs[&Field::Search]
-                                .update(cx, |input, cx| input.focus(window, cx));
-                        }
-                    });
+                    dispatch_desktop_action(&search_view, cx, Desktop::search_content);
                 });
                 cx.on_action(move |_: &Quit, cx| {
                     if quit_view

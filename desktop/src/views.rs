@@ -550,14 +550,8 @@ impl Render for Desktop {
                 }
             }))
             .on_action(cx.listener(|this, _: &SearchContent, window, cx| {
-                if window.has_active_dialog(cx) {
-                    return;
-                }
-                if this.page == Page::Result {
-                    this.open_reader_find(window, cx);
-                } else {
-                    this.navigate(Page::Library, cx);
-                    this.inputs[&Field::Search].update(cx, |input, cx| input.focus(window, cx));
+                if !window.has_active_dialog(cx) {
+                    this.search_content(window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
@@ -567,9 +561,7 @@ impl Render for Desktop {
             }))
             .on_action(cx.listener(|this, _: &OpenAbout, window, cx| {
                 if !window.has_active_dialog(cx) {
-                    this.open_settings(window, cx);
-                    this.settings_tab = crate::settings_ui::SettingsTab::Application;
-                    this.prepare_settings_view(window, cx);
+                    this.open_about(window, cx);
                 }
             }))
             .child(a11y::ModalBackground::new(
