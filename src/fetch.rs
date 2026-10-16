@@ -333,18 +333,6 @@ const BILIBILI_ENRICH_LIMIT: usize = 32;
 /// 分集信息补充的并发请求数
 const BILIBILI_ENRICH_CONCURRENCY: usize = 4;
 
-/// `/video/BVxxxxxxxxxx` 路径段中的 BV 号（"BV" + 10 位）。
-fn bilibili_bvid(url: &str) -> Option<String> {
-    let url = url::Url::parse(url).ok()?;
-    let host = url.host_str()?.to_ascii_lowercase();
-    if !host.ends_with("bilibili.com") {
-        return None;
-    }
-    url.path_segments()?.find_map(|segment| {
-        (segment.len() == 12 && segment.starts_with("BV")).then(|| segment.to_string())
-    })
-}
-
 /// 链接里的 `?p=N` 分集号；没有时按第 1 集处理。
 fn bilibili_part_number(url: &str) -> Option<u32> {
     url::Url::parse(url)
@@ -366,7 +354,7 @@ pub fn candidate_identity(candidate: &SourceCandidate) -> Option<String> {
     {
         return Some(identity.to_owned());
     }
-    let bvid = bilibili_bvid(&candidate.input)?;
+    let bvid = crate::config::bilibili_bvid(&candidate.input)?;
     let id = match bilibili_part_number(&candidate.input) {
         Some(part) => format!("{bvid}_p{part}"),
         None => bvid,
@@ -395,7 +383,7 @@ fn apply_bilibili_view(candidates: &mut [SourceCandidate], bvid: &str, view: &Bi
     let pages = view.pages.as_deref().unwrap_or_default();
     for candidate in candidates
         .iter_mut()
-        .filter(|candidate| bilibili_bvid(&candidate.input).as_deref() == Some(bvid))
+        .filter(|candidate| crate::config::bilibili_bvid(&candidate.input).as_deref() == Some(bvid))
     {
         let number = bilibili_part_number(&candidate.input).unwrap_or(1);
         let Some(page) = pages.iter().find(|page| page.page == number) else {
@@ -437,7 +425,7 @@ fn apply_bilibili_view(candidates: &mut [SourceCandidate], bvid: &str, view: &Bi
 pub fn enrich_bilibili_candidates(candidates: &mut [SourceCandidate]) {
     let mut bvids = Vec::new();
     for candidate in candidates.iter() {
-        if let Some(bvid) = bilibili_bvid(&candidate.input)
+        if let Some(bvid) = crate::config::bilibili_bvid(&candidate.input)
             && !bvids.contains(&bvid)
         {
             bvids.push(bvid);
@@ -1065,16 +1053,16 @@ mod tests {
     #[test]
     fn bilibili_ids_come_from_video_paths_and_part_query() {
         assert_eq!(
-            bilibili_bvid("https://www.bilibili.com/video/BV1CAxaeHEeH?p=3").as_deref(),
+            crate::config::bilibili_bvid("https://www.bilibili.com/video/BV1CAxaeHEeH?p=3").as_deref(),
             Some("BV1CAxaeHEeH")
         );
         assert_eq!(
-            bilibili_bvid("https://www.bilibili.com/video/BV1xx411c7mD/").as_deref(),
+            crate::config::bilibili_bvid("https://www.bilibili.com/video/BV1xx411c7mD/").as_deref(),
             Some("BV1xx411c7mD")
         );
-        assert!(bilibili_bvid("https://www.bilibili.com/bangumi/play/ep123").is_none());
-        assert!(bilibili_bvid("https://example.com/video/BV1CAxaeHEeH").is_none());
-        assert!(bilibili_bvid("not a url").is_none());
+        assert!(crate::config::bilibili_bvid("https://www.bilibili.com/bangumi/play/ep123").is_none());
+        assert!(crate::config::bilibili_bvid("https://example.com/video/BV1CAxaeHEeH").is_none());
+        assert!(crate::config::bilibili_bvid("not a url").is_none());
         assert_eq!(
             bilibili_part_number("https://www.bilibili.com/video/BV1CAxaeHEeH?p=12"),
             Some(12)

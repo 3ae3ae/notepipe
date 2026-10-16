@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-// —— 内置默认值（唯一来源）：main.rs 的 CLI 合并、settings.rs 的展示统一引用这里 ——
+// —— 内置默认值（唯一来源）：options.rs 的合并与 settings.rs 的展示统一引用这里 ——
 /// 默认本地识别模型（canonical id）。
 pub const DEFAULT_ASR_MODEL: &str = "qwen3-1.7b";
 /// SSIM 画面相似度阈值（越高越敏感、截图越多）
@@ -23,7 +23,7 @@ pub const DEFAULT_MAX_SPEECH: f32 = 20.0;
 /// 默认输出根目录
 pub const DEFAULT_OUT_DIR: &str = "out";
 /// GPU 卸载层数默认（llama-server -ngl）：全量卸载。没有哪个非零层数在 AMD/ROCm
-/// 核显上被证实稳定，因此不按平台区分默认；Linux+AMD 只做风险警告，由用户手动降载。
+/// 核显上被证实稳定，因此不按平台区分默认；不稳定时由用户用 --gpu-layers 调低。
 pub const DEFAULT_GPU_LAYERS: u32 = 99;
 
 /// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr_api 共用同一判定）。
@@ -329,7 +329,7 @@ pub struct PipelineConfig {
     pub gpu_layers: u32,
     /// 是否把多模态 projector（mmproj）卸载到 GPU
     pub mmproj_offload: bool,
-    /// `-o` 根目录，实际课程目录是 `{out_root}/{platform}/{title}/{id}/`
+    /// `-o` 根目录（笔记库根），课程目录由 workspace/artifact 在其下布局
     pub out_root: PathBuf,
 }
 
@@ -479,16 +479,11 @@ impl PipelineConfig {
         );
         anyhow::ensure!(
             self.gpu_layers <= 99,
-            "gpu_layers 必须在 0..=99（收到 {0}）/ gpu_layers must be in 0..=99 (got {0})",
+            "GPU 层数必须在 0 到 99 之间（当前 {0}）/ GPU layers must be between 0 and 99 (got {0})",
             self.gpu_layers
         );
 
         Ok(())
-    }
-
-    /// 仅在确实需要语音识别时验证后端配置；字幕路径不依赖 ASR。
-    pub fn validate_asr(&self) -> AnyhowResult<()> {
-        self.validate_asr_with_auth(true, true)
     }
 
     pub fn validate_asr_with_auth(
@@ -508,13 +503,16 @@ impl PipelineConfig {
                 !self.asr_api.model.trim().is_empty(),
                 "请输入语音服务提供的模型 ID / Speech model ID is required"
             );
-            anyhow::ensure!(
-                !require_key
-                    || !self.asr_api.api_key.trim().is_empty()
-                    || (allow_environment && asr_api_key_from_env().is_some()),
-                "provider api 需要 API key：配置文件 [asr_api].api_key、--asr-api-key \
-                 或环境变量 COURSE2MD_ASR_API_KEY。/ Cloud transcription requires an API key; set COURSE2MD_ASR_API_KEY or [asr_api].api_key."
-            );
+            let has_key = !self.asr_api.api_key.trim().is_empty()
+                || (allow_environment && asr_api_key_from_env().is_some());
+            if require_key && !has_key {
+                // 桌面任务不读环境变量，只有命令行才提示它
+                anyhow::bail!(if allow_environment {
+                    "云端语音识别需要 API Key：用 --asr-api-key 或环境变量 COURSE2MD_ASR_API_KEY 提供 / Cloud transcription requires an API key: pass --asr-api-key or set COURSE2MD_ASR_API_KEY"
+                } else {
+                    "云端语音识别需要 API Key，请在服务设置中填写 / Cloud transcription requires an API key; add it in service settings"
+                });
+            }
         }
 
         Ok(())
@@ -612,34 +610,6 @@ pub fn resolve_resume(cli_resume: bool, cli_no_resume: bool, file_resume: Option
     file_resume.unwrap_or(true)
 }
 
-/// Linux + AMD GPU 检测：任一 /sys/class/drm/card*/device/vendor
-/// 内容为 "0x1002"（AMD PCI vendor id）即视为 AMD 显卡机器。
-/// 文件不存在（非 Linux、无 DRM 设备）→ false，不影响其他平台。
-/// 只用于 provider=gpu 时的 ROCm 风险警告，不参与默认值计算。
-pub fn linux_amd_gpu_present() -> bool {
-    cfg!(target_os = "linux") && any_amd_drm_card(Path::new("/sys/class/drm"))
-}
-
-/// 扫描 `<sys_drm>/card*/device/vendor`，任一内容为 AMD vendor id 即 true。
-/// 独立成可注入路径的函数以便单测（/sys 在测试机上不可构造）。
-fn any_amd_drm_card(sys_drm: &Path) -> bool {
-    const AMD_VENDOR: &str = "0x1002";
-    let Ok(entries) = std::fs::read_dir(sys_drm) else {
-        return false;
-    };
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| n.starts_with("card"))
-        })
-        .any(|e| {
-            std::fs::read_to_string(e.path().join("device/vendor"))
-                .is_ok_and(|v| v.trim() == AMD_VENDOR)
-        })
-}
-
 /// gpu_layers 三态解析：CLI > 配置文件 > 内置默认 99（全量卸载）。
 pub fn resolve_gpu_layers(cli: Option<u32>, file: Option<u32>) -> u32 {
     cli.or(file).unwrap_or(DEFAULT_GPU_LAYERS)
@@ -706,13 +676,6 @@ pub fn looks_like_source(s: &str) -> bool {
         || known_video_site(t).is_some()
 }
 
-/// `{root}/{platform}/{title}/{id}/`
-pub fn course_dir(root: &Path, platform: &str, title: &str, id: &str) -> PathBuf {
-    root.join(sanitize_component(platform))
-        .join(sanitize_component(title))
-        .join(sanitize_component(id))
-}
-
 pub fn platform_from(source: &str, extractor: &str) -> String {
     let e = extractor.to_ascii_lowercase();
     if Path::new(source).is_file() || e == "local" {
@@ -733,7 +696,7 @@ pub fn infer_slug(source: &str) -> String {
     if p.is_file() {
         return sanitize_component(p.file_stem().and_then(|s| s.to_str()).unwrap_or("local"));
     }
-    if let Some(id) = bvid(source) {
+    if let Some(id) = bilibili_bvid(source) {
         return id;
     }
     if let Some(id) = youtube_id(source) {
@@ -742,16 +705,20 @@ pub fn infer_slug(source: &str) -> String {
     sanitize_component(source)
 }
 
-fn bvid(s: &str) -> Option<String> {
-    // 锚定到 /video/ 路径段之后查找 BV，避免查询参数（?x=BV...）误中
-    let rest = s.split_once("/video/").map(|(_, r)| r)?;
-    let j = rest.find("BV")?;
-    let id: String = rest[j..].chars().take(12).collect();
-    if id.len() >= 6 && id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        Some(id)
-    } else {
-        None
+/// B 站链接 `/video/BVxxxxxxxxxx` 路径段中的 BV 号（"BV" + 10 位）。
+pub fn bilibili_bvid(source: &str) -> Option<String> {
+    let url = url::Url::parse(source)
+        .or_else(|_| url::Url::parse(&format!("https://{}", source.trim())))
+        .ok()?;
+    if known_video_site(url.as_str()) != Some("bilibili") {
+        return None;
     }
+    url.path_segments()?.find_map(|segment| {
+        (segment.len() == 12
+            && segment.starts_with("BV")
+            && segment.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| segment.to_string())
+    })
 }
 
 fn youtube_id(s: &str) -> Option<String> {
@@ -820,14 +787,12 @@ mod tests {
     }
 
     #[test]
-    fn slug_and_layout() {
+    fn slug_from_source() {
         assert_eq!(
             infer_slug("https://www.bilibili.com/video/BV1pb8o6yE8f/?spm=1"),
             "BV1pb8o6yE8f"
         );
         assert_eq!(infer_slug("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
-        let p = course_dir(Path::new("out"), "bilibili", "欢迎来到未来", "BV1pb8o6yE8f");
-        assert_eq!(p, PathBuf::from("out/bilibili/欢迎来到未来/BV1pb8o6yE8f"));
     }
 
     #[test]
@@ -911,17 +876,17 @@ mod tests {
         // gpu/cpu 只有 Qwen3 GGUF：显式要 whisper 必须报错而不是静默用 qwen
         let mut c = valid_cfg();
         c.asr_model = Some("whisper".into());
-        assert!(c.validate_asr().is_err());
+        assert!(c.validate_asr_with_auth(true, true).is_err());
         c.provider = AsrProvider::Coreml;
         c.asr_model = Some("whisper".into());
-        c.validate_asr().unwrap();
+        c.validate_asr_with_auth(true, true).unwrap();
         c.asr_model = Some("qwen-not-a-supported-model".into());
-        assert!(c.validate_asr().is_err());
+        assert!(c.validate_asr_with_auth(true, true).is_err());
         c.provider = AsrProvider::Npu;
         c.asr_model = Some("org/custom-ov-model".into());
-        c.validate_asr().unwrap();
+        c.validate_asr_with_auth(true, true).unwrap();
         c.asr_model = Some("not-a-repo-id".into());
-        assert!(c.validate_asr().is_err());
+        assert!(c.validate_asr_with_auth(true, true).is_err());
     }
 
     #[test]
@@ -1003,24 +968,6 @@ mod tests {
         assert!(!resolve_mmproj_offload(false, false, Some(false)));
         assert!(resolve_mmproj_offload(false, false, Some(true)));
         assert!(resolve_mmproj_offload(false, false, None));
-    }
-
-    #[test]
-    fn amd_drm_card_detection() {
-        let tmp = std::env::temp_dir().join(format!("c2md-drm-{}", std::process::id()));
-        let vendor = tmp.join("card0/device");
-        std::fs::create_dir_all(&vendor).unwrap();
-        // 无 vendor 文件 → false
-        assert!(!any_amd_drm_card(&tmp));
-        // NVIDIA vendor id → false
-        std::fs::write(vendor.join("vendor"), "0x10de\n").unwrap();
-        assert!(!any_amd_drm_card(&tmp));
-        // AMD vendor id（带换行）→ true
-        std::fs::write(vendor.join("vendor"), "0x1002\n").unwrap();
-        assert!(any_amd_drm_card(&tmp));
-        // 不存在的根目录 → false
-        assert!(!any_amd_drm_card(Path::new("/nonexistent/c2md-drm")));
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
