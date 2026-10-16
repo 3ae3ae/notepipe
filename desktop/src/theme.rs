@@ -159,7 +159,7 @@ fn sync_component_theme(dark: bool, cx: &mut App) {
     } else {
         ThemeMode::Light
     };
-    theme.radius = px(8.);
+    theme.radius = RADIUS_SMALL;
     theme.radius_lg = RADIUS_CARD;
     let colors = &mut theme.colors;
     macro_rules! set {
@@ -201,12 +201,13 @@ pub const RADIUS_HERO: Pixels = px(28.);
 pub const RADIUS_SMALL: Pixels = px(8.);
 /// Ordinary controls share this height, including padding, at every text scale.
 pub const CONTROL_HEIGHT: Rems = rems(40. / 14.);
-/// Leading icon slot of an icon + label cluster, and the gap before its text.
-/// Supporting lines of the same item start at `ICON_SLOT + ICON_GAP`.
+/// Horizontal inset of an item inside a settings card.
 pub const SETTING_ITEM_INSET: Rems = rems(20. / 14.);
+/// Leading icon slot of an icon + label cluster, and the gap before its text.
 pub const ICON_SLOT: Rems = rems(20. / 14.);
 pub const ICON_GAP: Rems = rems(8. / 14.);
-pub const LABEL_INSET: Rems = rems(28. / 14.);
+/// Supporting lines of an icon-labelled item start on its label text.
+pub const LABEL_INSET: Rems = rems(ICON_SLOT.0 + ICON_GAP.0);
 
 /// Task dialogs sit below the shared title bar with the same page gutter.
 pub fn task_dialog_top(window: &Window) -> Pixels {
@@ -497,7 +498,6 @@ pub fn control(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button
         .rounded(RADIUS_PILL)
         .py_0()
         .flex_shrink_0()
-        .text_size(rems(1.0))
         .font_weight(gpui::FontWeight::SEMIBOLD)
 }
 
@@ -703,7 +703,7 @@ pub fn described_choice(
                 div()
                     .w_full()
                     .min_w_0()
-                    .pl(rems(28. / 14.))
+                    .pl(LABEL_INSET)
                     .whitespace_normal()
                     .text_size(TEXT_AUX)
                     .line_height(rems(18. / 14.))
@@ -751,30 +751,23 @@ pub fn stacked_field(
 pub fn primary_pill(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button {
     use gpui::Styled;
     use gpui_component::button::ButtonVariants;
-    control(id)
-        .primary()
-        .rounded(RADIUS_PILL)
-        .px(rems(16. / 14.))
-        .gap(rems(8. / 14.))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+    control(id).primary().px(rems(16. / 14.)).gap(ICON_GAP)
 }
 
-/// Top-level destination in the app bar. The current destination sits on the
-/// tonal secondary container; others are quiet with an 8% M3 hover layer.
-pub fn nav_action(
-    id: impl Into<gpui::ElementId>,
-    selected: bool,
+/// Paints a button with an exact fill. gpui-component dilutes a custom fill
+/// to 20%, so the token is also set as the background. With state layers,
+/// hover and press add 8% and 10% of the content color, as in M3.
+fn custom_fill(
+    button: gpui_component::button::Button,
+    bg: gpui::Rgba,
+    fg: gpui::Rgba,
+    state_layers: bool,
     cx: &App,
 ) -> gpui_component::button::Button {
     use gpui::Styled;
     use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
-    let (bg, fg) = if selected {
-        (color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER))
-    } else {
-        (gpui::Rgba { a: 0., ..color(CANVAS) }, color(GRAY))
-    };
-    let layer = |amount| blend(bg, gpui::Rgba { a: 1., ..fg }, amount);
-    control(id)
+    let layer = |amount| if state_layers { blend(bg, gpui::Rgba { a: 1., ..fg }, amount) } else { bg };
+    button
         .custom(
             ButtonCustomVariant::new(cx)
                 .color(bg.into())
@@ -783,31 +776,32 @@ pub fn nav_action(
                 .active(layer(0.10).into())
                 .shadow(false),
         )
-        // gpui-component dilutes a custom fill to 20%; paint the token itself.
         .bg(bg)
-        .px(rems(14. / 14.))
-        .gap(rems(8. / 14.))
+}
+
+/// Top-level destination in the app bar. The current destination sits on the
+/// tonal secondary container; others are quiet.
+pub fn nav_action(
+    id: impl Into<gpui::ElementId>,
+    selected: bool,
+    cx: &App,
+) -> gpui_component::button::Button {
+    use gpui::Styled;
+    let (bg, fg) = if selected {
+        (color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER))
+    } else {
+        (gpui::Rgba { a: 0., ..color(CANVAS) }, color(GRAY))
+    };
+    custom_fill(control(id), bg, fg, true, cx).px(rems(14. / 14.)).gap(ICON_GAP)
 }
 
 /// M3 filled tonal button: a secondary action that still carries weight,
 /// e.g. opening a finished note from a list row.
 pub fn tonal_pill(id: impl Into<gpui::ElementId>, cx: &App) -> gpui_component::button::Button {
     use gpui::Styled;
-    use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
-    let bg = color(SECONDARY_CONTAINER);
-    let fg = color(ON_SECONDARY_CONTAINER);
-    control(id)
-        .custom(
-            ButtonCustomVariant::new(cx)
-                .color(bg.into())
-                .foreground(fg.into())
-                .hover(blend(bg, fg, 0.08).into())
-                .active(blend(bg, fg, 0.10).into())
-                .shadow(false),
-        )
-        .bg(bg)
+    custom_fill(control(id), color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER), true, cx)
         .px(rems(16. / 14.))
-        .gap(rems(8. / 14.))
+        .gap(ICON_GAP)
 }
 
 /// M3 disabled filled button: on-surface at 12% with 38% content, so an
@@ -817,22 +811,11 @@ pub fn disabled_when(
     disabled: bool,
     cx: &App,
 ) -> gpui_component::button::Button {
-    use gpui::Styled;
-    use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
     if !disabled {
         return button;
     }
     let ink = color(INK);
-    let fill = gpui::Rgba { a: 0.12, ..ink };
-    button.custom(
-        ButtonCustomVariant::new(cx)
-            .color(fill.into())
-            .foreground(gpui::Rgba { a: 0.38, ..ink }.into())
-            .hover(fill.into())
-            .active(fill.into())
-            .shadow(false),
-    )
-    .bg(fill)
+    custom_fill(button, gpui::Rgba { a: 0.12, ..ink }, gpui::Rgba { a: 0.38, ..ink }, false, cx)
 }
 
 /// M3 filter chip: 32px, 8px corners. Selected chips sit on the secondary
@@ -843,31 +826,19 @@ pub fn filter_chip(
     cx: &App,
 ) -> gpui_component::button::Button {
     use gpui::Styled;
-    use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
     let size = rems(32. / 14.);
     let (bg, fg) = if selected {
         (color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER))
     } else {
         (gpui::Rgba { a: 0., ..color(CANVAS) }, color(INK))
     };
-    let layer = |amount| blend(bg, gpui::Rgba { a: 1., ..fg }, amount);
-    let chip = gpui_component::button::Button::new(id)
-        .custom(
-            ButtonCustomVariant::new(cx)
-                .color(bg.into())
-                .foreground(fg.into())
-                .hover(layer(0.08).into())
-                .active(layer(0.10).into())
-                .shadow(false),
-        )
-        .bg(bg)
+    let chip = custom_fill(gpui_component::button::Button::new(id), bg, fg, true, cx)
         .h(size)
         .min_h(size)
         .px(rems(12. / 14.))
         .gap(rems(6. / 14.))
-        .rounded(px(8.))
+        .rounded(RADIUS_SMALL)
         .flex_shrink_0()
-        .text_size(TEXT_BODY)
         .font_weight(gpui::FontWeight::MEDIUM)
         .border_1()
         .border_color(if selected { color(SECONDARY_CONTAINER) } else { color(CONTROL) });
@@ -881,11 +852,7 @@ pub fn filter_chip(
 /// Meaningful secondary action with a control-strength border.
 pub fn outline_pill(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button {
     use gpui::Styled;
-    control(id)
-        .outline()
-        .rounded(RADIUS_PILL)
-        .px(rems(16. / 14.))
-        .gap(rems(8. / 14.))
+    control(id).outline().px(rems(16. / 14.)).gap(ICON_GAP)
 }
 
 /// gpui-component's medium button inline padding (`px_2p5`). A quiet action
@@ -901,10 +868,7 @@ pub const QUIET_INSET: gpui::Rems = gpui::rems(0.625);
 pub fn quiet(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button {
     use gpui::Styled;
     use gpui_component::button::ButtonVariants;
-    control(id)
-        .ghost()
-        .rounded(RADIUS_PILL)
-        .text_color(color(GRAY))
+    control(id).ghost().text_color(color(GRAY))
 }
 
 /// Disclosure under an icon-labelled item: the chevron takes the item's icon
