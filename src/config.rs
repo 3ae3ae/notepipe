@@ -644,6 +644,21 @@ pub fn default_provider_hint() -> AsrProvider {
     }
 }
 
+/// MLX 为 `exe` 搜索 metallib 的顺序（mlx-swift load_default_library）：
+/// 可执行文件同目录 → exe/Resources → ../Resources → CWD，文件名 mlx.metallib / default.metallib。
+/// `.app` 包里 codesign 把 Contents/MacOS/ 当代码区，metallib 只能放 Contents/Resources/。
+/// 引擎（doctor / ensure_metallib）与桌面端环境检测共用这份清单。
+pub fn find_metallib(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent().unwrap_or(Path::new("."));
+    let resources = dir.join("Resources");
+    let bundle_resources = dir.join("../Resources");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    [dir, &resources, &bundle_resources, &cwd]
+        .into_iter()
+        .flat_map(|base| ["mlx.metallib", "default.metallib"].map(|name| base.join(name)))
+        .find(|path| path.is_file())
+}
+
 /// Whether this build includes the native Apple speech backend.
 pub fn apple_native_available() -> bool {
     cfg!(apple_native)

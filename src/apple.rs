@@ -119,26 +119,9 @@ pub struct CoremlAsr {
     handle: *mut std::ffi::c_void,
 }
 
-/// MLX 搜索 metallib 的顺序（mlx-swift load_default_library）：
-/// 可执行文件同目录的 mlx.metallib → exe/Resources/mlx.metallib → ……
-/// → CWD 下的 default.metallib（相对当前工作目录）。
-/// `.app` 包里 codesign 把 Contents/MacOS/ 当代码区，metallib 只能放 Contents/Resources/。
-/// doctor 与 ensure_metallib 共用这份清单。
+/// 本进程可执行文件对应的 metallib；搜索顺序见 config::find_metallib。
 pub fn find_metallib() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent().unwrap_or(std::path::Path::new("."));
-    let resources = dir.join("Resources");
-    let bundle_resources = dir.join("../Resources");
-    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
-    for base in [dir, &resources, &bundle_resources, &cwd] {
-        for name in ["mlx.metallib", "default.metallib"] {
-            let path = base.join(name);
-            if path.is_file() {
-                return Some(path);
-            }
-        }
-    }
-    None
+    crate::config::find_metallib(&std::env::current_exe().ok()?)
 }
 
 fn ensure_metallib() -> Result<()> {
