@@ -25,7 +25,7 @@ fn import_option_field(
     content: impl IntoElement,
 ) -> Div {
     if matches!(label, "语音识别" | "AI 服务" | "保存到") {
-        return outlined_field_label(id, label, content);
+        return outlined_field_label(id, label, TEXT_AUX, content);
     }
     let section = matches!(label, "文字来源" | "AI 处理" | "同时导出");
     v_flex().w_full().min_w_0()

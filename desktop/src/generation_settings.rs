@@ -65,7 +65,7 @@ impl Desktop {
                     .child(self.reveal_setting("default-subtitle-language-reveal", {
                         let current = language.to_owned();
                         let entity = cx.weak_entity();
-                        control("default-subtitle-language")
+                        control("default-subtitle-language").settings_text()
                             .h(px(56.))
                             .rounded(RADIUS_SMALL)
                             .w_full()
@@ -131,7 +131,7 @@ impl Desktop {
                                     "自定义语言优先级",
                                     self.settings_ui.language_details_open,
                                 )
-                                .label_text_size(SETTINGS_TEXT_BODY)
+                                .settings_text()
                                 .on_click(cx.listener(
                                     |this, _, _, cx| {
                                         this.settings_ui.language_details_open =
@@ -146,7 +146,7 @@ impl Desktop {
                                         "subtitle-custom-summary",
                                         value.preferred_subtitle_languages.join(" → "),
                                     )
-                                    .text_size(TEXT_AUX)
+                                    .text_size(TEXT_SETTINGS_AUX)
                                     .text_color(color(GRAY)),
                                 )
                             }),
@@ -163,13 +163,13 @@ impl Desktop {
                                 .flex_wrap()
                                 .child(
                                     div().flex_1().min_w(rems(16.)).child(
-                                        text_input(&self.settings_ui.inputs[&EditField::Languages])
+                                        text_input(&self.settings_ui.inputs[&EditField::Languages]).settings_text()
                                             .w_full()
                                             .aria_label("语言优先级"),
                                     ),
                                 )
                                 .child(
-                                    outline_pill("apply-languages")
+                                    outline_pill("apply-languages").settings_text()
                                         .icon(icons::check_circle())
                                         .label("应用")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -194,7 +194,7 @@ impl Desktop {
                 self.reveal_setting("default-asr-device-reveal", {
                     let online = provider == "api";
                     let entity = cx.weak_entity();
-                    control("default-asr-device")
+                    control("default-asr-device").settings_text()
                         .h(px(56.))
                         .rounded(RADIUS_SMALL)
                         .w_full()
@@ -355,7 +355,7 @@ impl Desktop {
                     icons::edit(),
                     "自定义校对规则",
                     "",
-                    quiet("show-proofread-rules")
+                    quiet("show-proofread-rules").settings_text()
                         .mr(-crate::theme::QUIET_INSET)
                         .label(if value.prompt.is_some() {
                             "已自定义"
@@ -398,7 +398,7 @@ impl Desktop {
                                 .gap_2()
                                 .flex_wrap()
                                 .child(
-                                    outline_pill("apply-proofread-rules")
+                                    outline_pill("apply-proofread-rules").settings_text()
                                         .icon(icons::save())
                                         .label("应用校对规则")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -418,7 +418,7 @@ impl Desktop {
                                         })),
                                 )
                                 .child(
-                                    quiet("restore-proofread-rules")
+                                    quiet("restore-proofread-rules").settings_text()
                                         .icon(icons::refresh())
                                         .label("恢复标准规则")
                                         .disabled(value.prompt.is_none())
@@ -486,14 +486,14 @@ impl Desktop {
                                                     })
                                                     .unwrap_or_else(|| "尚未设置".into()),
                                             )
-                                            .text_size(TEXT_AUX)
+                                            .text_size(TEXT_SETTINGS_AUX)
                                             .text_color(color(GRAY))
                                             .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
                                 .min_w_0(),
                                         ),
                                 )
                                 .child(
-                                    outline_pill("settings-manage-storage")
+                                    outline_pill("settings-manage-storage").settings_text()
                                         .label("更改")
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.select_settings_tab(2, window, cx);
@@ -519,7 +519,7 @@ impl Desktop {
                                     ("default-export", index),
                                     selected.contains(&format),
                                     cx,
-                                )
+                                ).settings_text()
                                 .label(label)
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
@@ -592,7 +592,7 @@ impl Desktop {
             let entity = cx.entity().downgrade();
             self.reveal_setting(
                 "default-local-model-menu-reveal",
-                control("default-local-model-menu")
+                control("default-local-model-menu").settings_text()
                     .w_full()
                     .label(label)
                     .child(crate::icons::chevron_down().size_4())
@@ -662,12 +662,12 @@ impl Desktop {
                     })
                     .child(
                         text("model-readiness-conclusion", conclusion)
-                            .text_size(TEXT_AUX)
+                            .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(if settled { GRAY } else { WARNING })),
                     ),
             )
             .child(
-                quiet("toggle-model-details")
+                quiet("toggle-model-details").settings_text()
                     .icon(if self.settings_ui.model_details_open {
                         icons::chevron_up()
                     } else {
@@ -684,7 +684,7 @@ impl Desktop {
                     })),
             )
             .child(
-                quiet("toggle-asr-advanced")
+                quiet("toggle-asr-advanced").settings_text()
                     .mr(-crate::theme::QUIET_INSET)
                     .icon(icons::tune())
                     .label(if self.settings_ui.asr_details_open {
@@ -715,7 +715,7 @@ impl Desktop {
                     "unavailable-fixed-model",
                     format!("{selected} 不适用于当前识别方式，请重新选择"),
                 )
-                .text_size(TEXT_AUX)
+                .text_size(TEXT_SETTINGS_AUX)
                 .text_color(color(DANGER)),
             );
         }
@@ -723,7 +723,7 @@ impl Desktop {
             view = view
                 .child(self.setting_field(EditField::LocalModel, "NPU 模型 ID 或仓库 ID", cx))
                 .child(
-                    control("apply-custom-npu-model")
+                    control("apply-custom-npu-model").settings_text()
                         .icon(icons::check_circle())
                         .label("应用模型选择")
                         .self_start()
@@ -755,7 +755,7 @@ impl Desktop {
                         "selected-device-unavailable",
                         "所选识别方式的运行环境未就绪，详见「应用」诊断",
                     )
-                    .text_size(TEXT_AUX)
+                    .text_size(TEXT_SETTINGS_AUX)
                     .text_color(color(WARNING)),
                 );
             }

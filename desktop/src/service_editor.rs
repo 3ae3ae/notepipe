@@ -162,7 +162,7 @@ impl Desktop {
                 })
                 .collect::<Vec<_>>();
             let entity = cx.entity().downgrade();
-            let picker = control(("service-choice", index))
+            let picker = control(("service-choice", index)).settings_text()
                 .w_full()
                 .min_w_0()
                 .h_auto()
@@ -199,7 +199,7 @@ impl Desktop {
                                 text(("service-choice-detail", index), detail)
                                     .w_full()
                                     .whitespace_normal()
-                                    .text_size(TEXT_AUX)
+                                    .text_size(TEXT_SETTINGS_AUX)
                                     .text_color(color(GRAY)),
                             )
                         }),
@@ -227,10 +227,10 @@ impl Desktop {
                                         .gap_1()
                                         .whitespace_normal()
                                         .child(div().child(name.clone()))
-                                        .child(div().text_size(TEXT_AUX).child(detail.clone()))
+                                        .child(div().text_size(TEXT_SETTINGS_AUX).child(detail.clone()))
                                         .when(!state.is_empty(), |view| {
                                             view.child(
-                                                div().text_size(TEXT_AUX).child(state.clone()),
+                                                div().text_size(TEXT_SETTINGS_AUX).child(state.clone()),
                                             )
                                         })
                                 })
@@ -269,7 +269,7 @@ impl Desktop {
             control((
                 "configure-service",
                 purpose as usize * 2 + current_task as usize,
-            ))
+            )).settings_text()
             .icon(if editor_version.is_some() {
                 icons::edit()
             } else {
@@ -325,7 +325,7 @@ impl Desktop {
                         .text_color(color(GRAY)),
                     )
                     .child(
-                        control(("inherit-default-service", purpose as usize))
+                        control(("inherit-default-service", purpose as usize)).settings_text()
                             .ghost()
                             .icon(icons::refresh())
                             .label("恢复默认")
@@ -374,7 +374,7 @@ impl Desktop {
                                         "尚未添加，请先添加一个语音服务"
                                     },
                                 )
-                                .text_size(TEXT_AUX)
+                                .text_size(TEXT_SETTINGS_AUX)
                                 .text_color(color(GRAY)),
                             ),
                     )
@@ -818,7 +818,7 @@ impl Desktop {
                     .when_some(endpoint, |item, endpoint| {
                         item.child(
                             text("service-actual-endpoint", format!("将请求 {endpoint}"))
-                                .text_size(TEXT_AUX)
+                                .text_size(TEXT_SETTINGS_AUX)
                                 .text_color(color(GRAY)),
                         )
                     }),
@@ -863,7 +863,7 @@ impl Desktop {
             );
             if auth == Authentication::ApiKey {
                 // 显示/隐藏是输入框尾部的安静按钮（与首次引导的密钥字段一致），不再单列开关行
-                let visibility = quiet("toggle-service-key")
+                let visibility = quiet("toggle-service-key").settings_text()
                     .mr(-crate::theme::QUIET_INSET)
                     .icon(if editor.show_key {
                         icons::eye_off()
@@ -894,7 +894,7 @@ impl Desktop {
                 if editor.draft.credential.is_some() {
                     key = key.child(
                         text("service-key-existing", "已保存密钥，留空则保留")
-                            .text_size(TEXT_AUX)
+                            .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                     );
                 }
@@ -904,7 +904,7 @@ impl Desktop {
                         .enumerate()
                 {
                     key = key.child(
-                        control(("capture-environment-key", index))
+                        control(("capture-environment-key", index)).settings_text()
                             .icon(icons::content_copy())
                             .label(format!("使用环境变量 {name}"))
                             .disabled(awaiting_binding)
@@ -952,7 +952,7 @@ impl Desktop {
                 connection = connection.detail(
                     div().px(rems(20. / 14.)).pb(rems(14. / 14.)).child(
                         text("service-credential-source", format!("密钥来源：{source}"))
-                            .text_size(TEXT_AUX)
+                            .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                     ),
                 );
@@ -1025,7 +1025,7 @@ impl Desktop {
             .gap_2()
             .flex_wrap()
             .child(
-                quiet("close-service-editor")
+                quiet("close-service-editor").settings_text()
                     .ml(-crate::theme::QUIET_INSET)
                     .icon(icons::close())
                     .label(if configuration_saved {
@@ -1041,7 +1041,7 @@ impl Desktop {
             )
             .child(div().flex_1())
             .child(
-                outline_pill("run-service-test")
+                outline_pill("run-service-test").settings_text()
                     .icon(icons::science())
                     .label(if busy {
                         format!("正在测试{test_label}…")
@@ -1074,7 +1074,7 @@ impl Desktop {
             )
             .when(editor.repair_task.is_some(), |row| {
                 row.child(
-                    quiet("save-repair-service-only")
+                    quiet("save-repair-service-only").settings_text()
                         .icon(icons::save())
                         .label("仅保存")
                         .disabled(busy || awaiting_binding || editor.saved_configuration.is_some())
@@ -1236,7 +1236,7 @@ impl Desktop {
                     preferences::TestOutcome::NotSent => INSET,
                     _ => DANGER_BG,
                 }))
-                .child(badge(kind).child(label))
+                .child(badge(kind).text_size(TEXT_SETTINGS_AUX).child(label))
                 .when(
                     evidence.outcome != preferences::TestOutcome::Passed,
                     |view| {
@@ -1258,12 +1258,12 @@ impl Desktop {
                         crate::reader_navigation::timestamp_local(evidence.tested_at * 1000)
                     ),
                 )
-                .text_size(TEXT_AUX)
+                .text_size(TEXT_SETTINGS_AUX)
                 .text_color(color(GRAY)),
             );
             if !evidence.details.is_empty() {
                 result = result.child(
-                    quiet("service-test-details")
+                    quiet("service-test-details").settings_text()
                         .icon(icons::info())
                         .self_start()
                         .label(if editor.test_details_open {
@@ -1355,7 +1355,7 @@ impl Desktop {
                         ),
                     )
                     .role(Role::Status)
-                    .text_size(TEXT_AUX)
+                    .text_size(TEXT_SETTINGS_AUX)
                     .text_color(color(if matches!(
                         evidence.outcome,
                         preferences::TestOutcome::OutcomeUnknown
@@ -1370,7 +1370,7 @@ impl Desktop {
             .when(configuration_saved && repair_task, |footer| {
                 footer.child(
                     text("service-config-saved-only", "服务配置已保存，尚未开始补做")
-                        .text_size(TEXT_AUX)
+                        .text_size(TEXT_SETTINGS_AUX)
                         .text_color(color(GRAY)),
                 )
             })
@@ -1387,7 +1387,7 @@ impl Desktop {
                         service_test::TEST_NOTICE.to_owned()
                     },
                 )
-                .text_size(TEXT_AUX),
+                .text_size(TEXT_SETTINGS_AUX),
             )
             .child(actions)
     }

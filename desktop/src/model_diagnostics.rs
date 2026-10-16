@@ -1,5 +1,5 @@
 //! Model evidence is loaded in the background; preparation uses the existing model job.
-use super::{settings_detail_group, settings_detail_row, settings_status_row, settings_value, control, quiet, outline_pill, badge, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
+use super::{settings_detail_group, settings_detail_row, settings_status_row, settings_value};
 use crate::theme::*;
 use crate::*;
 use course2md::{
@@ -391,7 +391,7 @@ impl Desktop {
         };
         if reinstall {
             return view.child(
-                control(SharedString::from(format!("model-reinstall-{key}")))
+                control(SharedString::from(format!("model-reinstall-{key}"))).settings_text()
                     .icon(icons::download())
                     .label("下载完整应用")
                     .self_start()
@@ -404,7 +404,7 @@ impl Desktop {
             view = view.child(
                 control(SharedString::from(format!(
                     "model-llama-install-help-{key}"
-                )))
+                ))).settings_text()
                 .icon(icons::external_link())
                 .label("查看 llama.cpp 安装说明")
                 .self_start()
@@ -424,7 +424,7 @@ impl Desktop {
                     .child(
                         control(SharedString::from(format!(
                             "model-copy-llama-install-{key}"
-                        )))
+                        ))).settings_text()
                         .icon(icons::content_copy())
                         .label("复制安装命令")
                         .self_start()
@@ -448,7 +448,7 @@ impl Desktop {
             view = view.child(
                 control(SharedString::from(format!(
                     "model-python-install-help-{key}"
-                )))
+                ))).settings_text()
                 .icon(icons::external_link())
                 .label("查看 uv 安装说明")
                 .self_start()
@@ -622,7 +622,7 @@ impl Desktop {
             view = view.child(model_status_row(
                 SharedString::from(format!("model-state-label-{key}")),
                 "模型状态",
-                badge(kind).child(label),
+                badge(kind).text_size(TEXT_SETTINGS_AUX).child(label),
                 false,
             ));
             if let Some(description) = description {
@@ -631,7 +631,7 @@ impl Desktop {
                         SharedString::from(format!("model-state-{key}")),
                         description,
                     )
-                    .text_size(TEXT_AUX),
+                    .text_size(TEXT_SETTINGS_AUX),
                 );
             }
             let detail_key = key.clone();
@@ -652,7 +652,7 @@ impl Desktop {
                             SharedString::from(format!("model-cache-path-{key}-{index}")),
                             part.path.display().to_string(),
                         )
-                        .text_size(TEXT_AUX)
+                        .text_size(TEXT_SETTINGS_AUX)
                         .text_color(color(GRAY)),
                     )
                     .when(
@@ -661,7 +661,7 @@ impl Desktop {
                             view.child(
                                 quiet(SharedString::from(format!(
                                     "open-model-cache-{key}-{index}"
-                                )))
+                                ))).settings_text()
                                 .icon(icons::folder_open())
                                 .label("打开缓存位置")
                                 .accessibility_label(format!(
@@ -709,7 +709,7 @@ impl Desktop {
                             .gap_3()
                             .flex_wrap()
                             .child(
-                                quiet(SharedString::from(format!("model-cache-details-{key}")))
+                                quiet(SharedString::from(format!("model-cache-details-{key}"))).settings_text()
                                     .ml(-crate::theme::QUIET_INSET)
                                     .icon(icons::folder_open())
                                     .label(if cache_open {
@@ -741,7 +741,7 @@ impl Desktop {
                                             crate::activity::bytes(status.bytes)
                                         ),
                                     )
-                                    .text_size(TEXT_AUX)
+                                    .text_size(TEXT_SETTINGS_AUX)
                                     .text_color(color(GRAY)),
                                 )
                             })
@@ -792,7 +792,7 @@ impl Desktop {
                 .as_ref()
                 .is_some_and(|active| active.key() == key);
         let request_for_check = request.clone();
-        let recheck = outline_pill(SharedString::from(format!("recheck-model-{key}")))
+        let recheck = outline_pill(SharedString::from(format!("recheck-model-{key}"))).settings_text()
             .icon(icons::refresh())
             .label("重新检查模型")
             .disabled(checking || active)
@@ -843,7 +843,7 @@ impl Desktop {
                 );
             }
             actions = actions.child(
-                control("stop-model-preparation")
+                control("stop-model-preparation").settings_text()
                     .icon(icons::pause())
                     .label(if self.cancelling {
                         "正在停止…"
@@ -863,7 +863,7 @@ impl Desktop {
             let loaded = status.is_some_and(|status| status.state == CacheState::Loaded);
             let label = model_action_label(provider, status.map(|status| &status.state));
             actions = actions.child(
-                control(SharedString::from(format!("prepare-model-{key}")))
+                control(SharedString::from(format!("prepare-model-{key}"))).settings_text()
                     .icon(if loaded {
                         icons::refresh()
                     } else {
@@ -946,7 +946,7 @@ impl Desktop {
             && self.kind == Kind::Models
         {
             view = view.child(
-                control("model-preparation-details")
+                control("model-preparation-details").settings_text()
                     .icon(icons::info())
                     .ghost()
                     .label(if self.settings_ui.model_diagnostics.details {
@@ -973,7 +973,7 @@ impl Desktop {
                             "model-preparation-log",
                             self.logs.iter().cloned().collect::<Vec<_>>().join("\n"),
                         )
-                        .text_size(TEXT_AUX),
+                        .text_size(TEXT_SETTINGS_AUX),
                     ),
                 );
             }
@@ -1080,7 +1080,7 @@ impl Desktop {
                             control(SharedString::from(format!(
                                 "choose-available-model-{}",
                                 provider.as_str()
-                            )))
+                            ))).settings_text()
                             .icon(icons::mic())
                             .label(format!("默认改用 {}", provider_name(provider)))
                             .on_click(cx.listener(

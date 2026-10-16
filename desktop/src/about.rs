@@ -1,7 +1,7 @@
 //! Product identity and build provenance, kept separate from operational settings.
 use super::*;
 use crate::theme::*;
-use crate::settings_ui::{settings_chip, outline_pill, quiet, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
+use crate::settings_ui::settings_chip;
 
 impl Desktop {
     pub fn about_page(&self) -> AnyElement {
@@ -16,21 +16,21 @@ impl Desktop {
                 .child(img("images/course2md.png").size(px(56.)).flex_shrink_0())
                 .child(v_flex().flex_1().min_w_0().gap_1()
                     .child(accessible_text("about-name", "course2md").role(Role::Heading).text_size(TEXT_TITLE).font_weight(FontWeight::SEMIBOLD))
-                    .child(accessible_text("about-build", version).text_size(TEXT_AUX).text_color(color(GRAY))))
+                    .child(accessible_text("about-build", version).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY))))
                 .child(h_flex().gap_2().items_center().flex_wrap()
-                    .child(quiet("about-project").icon(icons::external_link()).label("项目主页")
+                    .child(quiet("about-project").settings_text().icon(icons::external_link()).label("项目主页")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md")))
-                    .child(quiet("about-issue").icon(icons::edit()).label("发送反馈")
+                    .child(quiet("about-issue").settings_text().icon(icons::edit()).label("发送反馈")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/issues")))))
             .child(div().w_full().h(px(1.)).bg(color(HAIRLINE)))
             .child(v_flex().w_full().min_w_0().gap_3()
                 .child(accessible_text("about-license-title", "开源许可"))
                 .child(h_flex().gap_2().flex_wrap()
-                    .child(settings_chip(outline_pill("about-license")).icon(icons::code()).label("course2md · MIT")
+                    .child(settings_chip(outline_pill("about-license").settings_text()).icon(icons::code()).label("course2md · MIT")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/blob/main/LICENSE")))
-                    .child(settings_chip(outline_pill("about-lucide-license")).icon(icons::code()).label("Lucide · ISC")
+                    .child(settings_chip(outline_pill("about-lucide-license").settings_text()).icon(icons::code()).label("Lucide · ISC")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/lucide-icons/lucide/blob/main/LICENSE")))
-                    .child(settings_chip(outline_pill("about-icons-license")).icon(icons::code()).label("Material Icons · Apache 2.0")
+                    .child(settings_chip(outline_pill("about-icons-license").settings_text()).icon(icons::code()).label("Material Icons · Apache 2.0")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/google/material-design-icons/blob/master/LICENSE")))))
             .into_any_element()
     }

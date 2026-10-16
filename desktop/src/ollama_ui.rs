@@ -130,7 +130,7 @@ impl Desktop {
         // 已有对应服务条目时不再邀请重复添加：给直达入口，服务列表仍是唯一管理面（review#1）
         match added_version {
             Some(version_id) => actions.push(
-                quiet(SharedString::from(format!("{id}-open-added"))).when(self.page == Page::Settings, crate::settings_ui::settings_button)
+                quiet(SharedString::from(format!("{id}-open-added"))).when(self.page == Page::Settings, SettingsText::settings_text)
                     .icon(icons::edit())
                     .label("查看服务")
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -144,7 +144,7 @@ impl Desktop {
                     .into_any_element(),
             ),
             None => actions.push(
-                outline_pill(SharedString::from(format!("{id}-add"))).when(self.page == Page::Settings, crate::settings_ui::settings_button)
+                outline_pill(SharedString::from(format!("{id}-add"))).when(self.page == Page::Settings, SettingsText::settings_text)
                     .icon(icons::plus())
                     .label("添加 Ollama 服务")
                     .disabled(working)
@@ -155,7 +155,7 @@ impl Desktop {
             ),
         }
         actions.insert(0,
-            quiet(SharedString::from(format!("{id}-recheck"))).when(self.page == Page::Settings, crate::settings_ui::settings_button)
+            quiet(SharedString::from(format!("{id}-recheck"))).when(self.page == Page::Settings, SettingsText::settings_text)
                 .w(CONTROL_HEIGHT).min_w(CONTROL_HEIGHT).px_0().flex_shrink_0()
                 .icon(icons::refresh())
                 .accessibility_label("重新检查 Ollama").tooltip("重新检查")

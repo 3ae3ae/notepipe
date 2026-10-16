@@ -224,6 +224,30 @@ pub const TEXT_TITLE: Rems = rems(1.286);
 pub const TEXT_READER: Rems = rems(1.143);
 /// Main page headline.
 pub const TEXT_DISPLAY: Rems = rems(2.);
+/// Settings content reads one step larger than navigation and the workbench.
+pub const TEXT_SETTINGS_BODY: Rems = rems(16. / 14.);
+pub const TEXT_SETTINGS_AUX: Rems = TEXT_BODY;
+
+/// Gives a shared control the settings reading size. Controls size their own
+/// labels, so the role cannot be inherited from the enclosing settings card.
+pub trait SettingsText {
+    fn settings_text(self) -> Self;
+}
+impl SettingsText for gpui_component::button::Button {
+    fn settings_text(self) -> Self {
+        self.label_text_size(TEXT_SETTINGS_BODY)
+    }
+}
+impl SettingsText for gpui_component::input::Input {
+    fn settings_text(self) -> Self {
+        gpui::Styled::text_size(self, TEXT_SETTINGS_BODY)
+    }
+}
+impl SettingsText for SingleChoiceGroup {
+    fn settings_text(self) -> Self {
+        self.label_text_size(TEXT_SETTINGS_BODY)
+    }
+}
 
 /// Page title shared by library, tasks, settings and a non-hero workbench.
 /// As on the M3 canvas, the title is text alone; the app bar already marks
@@ -969,16 +993,8 @@ pub fn badge(kind: BadgeKind) -> gpui::Div {
 pub fn outlined_field_label(
     id: impl Into<gpui::ElementId>,
     label: impl Into<gpui::SharedString>,
-    content: impl gpui::IntoElement,
-) -> gpui::Div {
-    outlined_field_label_sized(id, label, content, TEXT_AUX)
-}
-
-pub fn outlined_field_label_sized(
-    id: impl Into<gpui::ElementId>,
-    label: impl Into<gpui::SharedString>,
-    content: impl gpui::IntoElement,
     label_size: gpui::Rems,
+    content: impl gpui::IntoElement,
 ) -> gpui::Div {
     use gpui::{prelude::*, *};
     div().relative().w_full().min_w_0().mt(rems(8. / 14.))

@@ -2,7 +2,7 @@
 use super::*;
 use crate::palettes::{ALL, Appearance, PaletteId};
 use crate::preferences::PreferenceGroup;
-use crate::settings_ui::{field_label, settings_stacked_row, control, outline_pill, outlined_field_label, SETTINGS_TEXT_BODY as TEXT_BODY};
+use crate::settings_ui::{field_label, settings_stacked_row};
 use crate::theme::*;
 
 const PALETTE_GAP: f32 = 16.;
@@ -186,7 +186,7 @@ fn palette_choice(palette: PaletteId, selected: bool, amount: f32) -> gpui_base:
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .text_size(TEXT_BODY)
+                                .text_size(TEXT_SETTINGS_BODY)
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(color(INK))
                                 .when(cfg!(test), |label| {
@@ -292,7 +292,7 @@ impl Desktop {
             .settings_group_notice(PreferenceGroup::Application)
             .is_some_and(|(_, error)| error);
         let finish = if save_failed {
-            outline_pill("finish-palette-picker")
+            outline_pill("finish-palette-picker").settings_text()
                 .icon(icons::close())
                 .label("关闭")
         } else {
@@ -383,8 +383,8 @@ impl Desktop {
             )
             .child(outlined_field_label(
                 ("palette-preset-field", usize::from(dark)),
-                if dark { "深色配色" } else { "浅色配色" },
-                control(("palette-preset", usize::from(dark)))
+                if dark { "深色配色" } else { "浅色配色" }, TEXT_SETTINGS_AUX,
+                control(("palette-preset", usize::from(dark))).settings_text()
                     .w_full()
                     .h(px(56.))
                     .rounded(RADIUS_SMALL)
@@ -396,8 +396,7 @@ impl Desktop {
                     .child(icons::chevron_down().size(px(18.)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_palette_picker(dark, window, cx);
-                    })),
-            ))
+                    }))))
     }
 
     pub(crate) fn appearance_page(
@@ -409,7 +408,7 @@ impl Desktop {
         let width = crate::views::settings_content_width(window);
         let modes = SingleChoiceGroup::new("appearance-mode", "外观模式")
             .segmented()
-            .label_text_size(TEXT_BODY)
+            .settings_text()
             .options([("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
             .icon("system", icons::computer())
             .icon("light", icons::sun())

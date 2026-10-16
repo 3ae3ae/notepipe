@@ -25,23 +25,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// Settings reference typography, scoped independently from navigation and the workbench.
-pub(crate) const SETTINGS_TEXT_BODY: Rems = rems(16. / 14.);
-pub(crate) const SETTINGS_TEXT_SUPPORT: Rems = rems(1.);
-use self::{SETTINGS_TEXT_BODY as TEXT_BODY, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
-
-pub(crate) fn settings_button(button: gpui_component::button::Button) -> gpui_component::button::Button {
-    button.label_text_size(SETTINGS_TEXT_BODY)
-}
-pub(super) fn control(id: impl Into<ElementId>) -> gpui_component::button::Button { settings_button(theme::control(id)) }
-pub(super) fn quiet(id: impl Into<ElementId>) -> gpui_component::button::Button { settings_button(theme::quiet(id)) }
-pub(super) fn outline_pill(id: impl Into<ElementId>) -> gpui_component::button::Button { settings_button(theme::outline_pill(id)) }
-pub(super) fn filter_chip(id: impl Into<ElementId>, selected: bool, cx: &App) -> gpui_component::button::Button { settings_button(theme::filter_chip(id, selected, cx)) }
-pub(super) fn text_input(state: &Entity<InputState>) -> gpui_component::input::Input { theme::text_input(state).text_size(SETTINGS_TEXT_BODY) }
-pub(super) fn badge(kind: BadgeKind) -> Div { theme::badge(kind).text_size(SETTINGS_TEXT_SUPPORT) }
-pub(super) fn outlined_field_label(id: impl Into<ElementId>, label: impl Into<SharedString>, content: impl IntoElement) -> Div {
-    theme::outlined_field_label_sized(id, label, content, SETTINGS_TEXT_SUPPORT)
-}
 
 actions!(
     course2md_settings,
@@ -210,14 +193,14 @@ pub(super) fn field_label(
     value: impl Into<SharedString>,
 ) -> Stateful<Div> {
     text(id, value)
-        .text_size(TEXT_BODY)
+        .text_size(TEXT_SETTINGS_BODY)
         .font_weight(FontWeight::SEMIBOLD)
 }
 
 fn setting_label(id: impl Into<ElementId>, _icon: Icon, value: impl Into<SharedString>) -> Div {
     div().child(
         text(id, value)
-            .text_size(TEXT_BODY)
+            .text_size(TEXT_SETTINGS_BODY)
             .text_color(color(GRAY)),
     )
 }
@@ -300,7 +283,7 @@ fn settings_form_row(
                 .when(!hint.is_empty(), |column| {
                     column.child(
                         text(SharedString::from(format!("{id:?}-hint")), hint)
-                            .text_size(TEXT_AUX)
+                            .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                     )
                 }),
@@ -323,12 +306,12 @@ pub(super) fn settings_stacked_row(
             .max_w(px(520.))
             .min_w_0()
             .gap_3()
-            .child(text(id.clone(), label).text_size(TEXT_BODY))
+            .child(text(id.clone(), label).text_size(TEXT_SETTINGS_BODY))
             .child(control)
             .when(!hint.is_empty(), |view| {
                 view.child(
                     text(SharedString::from(format!("{id:?}-hint")), hint)
-                        .text_size(TEXT_AUX)
+                        .text_size(TEXT_SETTINGS_AUX)
                         .text_color(color(GRAY))
                         .px(px(12.)),
                 )
@@ -350,11 +333,11 @@ pub(super) fn settings_outlined_row(
             .max_w(px(520.))
             .min_w_0()
             .gap_2()
-            .child(outlined_field_label(id.clone(), label, control))
+            .child(outlined_field_label(id.clone(), label, TEXT_SETTINGS_AUX, control))
             .when(!hint.is_empty(), |view| {
                 view.child(
                     text(SharedString::from(format!("{id:?}-hint")), hint)
-                        .text_size(TEXT_AUX)
+                        .text_size(TEXT_SETTINGS_AUX)
                         .text_color(color(GRAY)),
                 )
             }),
@@ -375,12 +358,12 @@ pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, contr
                 .gap_1()
                 .child(
                     text(SharedString::from(format!("switch-label-{label}")), label)
-                        .text_size(TEXT_BODY),
+                        .text_size(TEXT_SETTINGS_BODY),
                 )
                 .when(!hint.is_empty(), |view| {
                     view.child(
                         text(SharedString::from(format!("switch-hint-{label}")), hint)
-                            .text_size(TEXT_AUX)
+                            .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                     )
                 }),
@@ -473,7 +456,7 @@ pub(crate) fn account_card(
         .flex_wrap()
         .child(
             text(SharedString::from(format!("{id}-heading")), title)
-                .text_size(TEXT_BODY)
+                .text_size(TEXT_SETTINGS_BODY)
                 .font_weight(FontWeight::SEMIBOLD),
         )
         .when(busy, |row| {
@@ -482,10 +465,10 @@ pub(crate) fn account_card(
                 cx,
             ))
         })
-        .child(badge(kind).child(label));
+        .child(badge(kind).text_size(TEXT_SETTINGS_AUX).child(label));
     let line = move |suffix: &str, message: String, error: bool| {
         text(SharedString::from(format!("{id}-{suffix}")), message)
-            .text_size(TEXT_AUX)
+            .text_size(TEXT_SETTINGS_AUX)
             .text_color(color(if error { DANGER } else { GRAY }))
     };
     h_flex()
@@ -575,7 +558,7 @@ pub(super) fn settings_value(
         .w_full()
         .min_w_0()
         .whitespace_normal()
-        .text_size(TEXT_BODY)
+        .text_size(TEXT_SETTINGS_BODY)
         .text_color(color(INK))
 }
 fn service_protocol_label(protocol: ServiceProtocol) -> &'static str {
@@ -712,7 +695,7 @@ pub(crate) fn settings_card() -> Div {
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .bg(color(SURFACE)).text_size(SETTINGS_TEXT_BODY)
+        .bg(color(SURFACE)).text_size(TEXT_SETTINGS_BODY)
         .rounded(SETTINGS_CARD_RADIUS)
         .overflow_hidden()
 }
@@ -825,7 +808,7 @@ impl Desktop {
         label: impl Into<SharedString>,
     ) -> SingleChoiceGroup {
         let (reveals, editor_scroll) = self.active_editor_scroll();
-        SingleChoiceGroup::new(id, label).label_text_size(SETTINGS_TEXT_BODY).segmented().when(reveals, |group| {
+        SingleChoiceGroup::new(id, label).settings_text().segmented().when(reveals, |group| {
             group.reveal_in(
                 editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
             )
@@ -886,7 +869,7 @@ impl Desktop {
                     .w_full()
                     .gap_2()
                     .child({
-                        let input = text_input(&self.settings_ui.inputs[&field])
+                        let input = text_input(&self.settings_ui.inputs[&field]).settings_text()
                             .w_full()
                             .when(field == EditField::Key, |input| {
                                 input.content_type(InputContentType::Password)
@@ -919,7 +902,7 @@ impl Desktop {
                     .when_some(error, |view, error| {
                         view.child(
                             text(("setting-error", field as usize), error)
-                                .text_size(TEXT_AUX)
+                                .text_size(TEXT_SETTINGS_AUX)
                                 .text_color(color(DANGER)),
                         )
                     }),
@@ -1158,7 +1141,7 @@ impl Desktop {
             .gap_3()
             .flex_shrink_0()
             .child(
-                quiet("settings-return")
+                quiet("settings-return").settings_text()
                     .w(CONTROL_HEIGHT).min_w(CONTROL_HEIGHT).px_0().flex_shrink_0()
                     .icon(icons::arrow_left())
                     .accessibility_label("返回")
@@ -1246,10 +1229,10 @@ impl Desktop {
                             .flex_1()
                             .min_w_0()
                             .text_color(color(DANGER))
-                            .text_size(TEXT_AUX),
+                            .text_size(TEXT_SETTINGS_AUX),
                         )
                         .child(
-                            control(("open-failed-settings-group", target))
+                            control(("open-failed-settings-group", target)).settings_text()
                                 .icon(icons::settings())
                                 .label("查看设置")
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1292,7 +1275,7 @@ impl Desktop {
                             .child(v_flex().w_full().min_w_0().gap(px(22.))
                                 .child(v_flex().gap_2()
                                     .child(theme::page_heading("settings-category-heading", settings_tab_label(self.settings_tab)))
-                                    .when(self.settings_tab == 0, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_AUX).text_color(color(GRAY)))))
+                                    .when(self.settings_tab == 0, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))))
                                 .child(content)),
                     ),
             )
@@ -1445,16 +1428,16 @@ impl Desktop {
                                                     "当前使用本机识别"
                                                 },
                                             )
-                                            .text_size(TEXT_AUX)
+                                            .text_size(TEXT_SETTINGS_AUX)
                                             .text_color(color(GRAY)),
                                         ),
                                 )
                         })
                         .child(
                             (if purpose == ServicePurpose::Ai {
-                                quiet(("add-service", purpose as usize))
+                                quiet(("add-service", purpose as usize)).settings_text()
                             } else {
-                                outline_pill(("add-service", purpose as usize))
+                                outline_pill(("add-service", purpose as usize)).settings_text()
                             })
                             .icon(icons::plus())
                             .label(add_label)
@@ -1520,7 +1503,7 @@ impl Desktop {
             });
         let mut status_badges = Vec::new();
         if tests.is_empty() {
-            status_badges.push(badge(BadgeKind::Neutral).child(text(
+            status_badges.push(badge(BadgeKind::Neutral).text_size(TEXT_SETTINGS_AUX).child(text(
                 SharedString::from(format!("saved-service-badge-{id}")),
                 "尚未测试",
             )));
@@ -1532,7 +1515,7 @@ impl Desktop {
                 preferences::TestOutcome::NotSent => (BadgeKind::Neutral, "未完成"),
                 _ => (BadgeKind::Warning, "未通过"),
             };
-            status_badges.push(badge(status_kind).child(text(
+            status_badges.push(badge(status_kind).text_size(TEXT_SETTINGS_AUX).child(text(
                 SharedString::from(format!("saved-service-test-{id}-{}", kind.contract())),
                 format!("{}{outcome}", kind.label()),
             )));
@@ -1578,7 +1561,7 @@ impl Desktop {
                         .whitespace_normal(),
                     )
                     .child(
-                        quiet(SharedString::from(format!("test-saved-service-{id}")))
+                        quiet(SharedString::from(format!("test-saved-service-{id}"))).settings_text()
                             .icon(icons::science())
                             .label("测试…")
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1591,7 +1574,7 @@ impl Desktop {
                             })),
                     )
                     .child(
-                        quiet(SharedString::from(format!("edit-saved-service-{id}")))
+                        quiet(SharedString::from(format!("edit-saved-service-{id}"))).settings_text()
                             .icon(icons::edit())
                             .label("编辑")
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1606,7 +1589,7 @@ impl Desktop {
                     .child(
                         quiet(SharedString::from(format!(
                             "delete-saved-service-{service_id}"
-                        )))
+                        ))).settings_text()
                         .icon(icons::delete())
                         .label("删除…")
                         .on_click(cx.listener(
@@ -1621,7 +1604,7 @@ impl Desktop {
                     SharedString::from(format!("saved-service-description-{id}")),
                     description,
                 )
-                .text_size(TEXT_AUX)
+                .text_size(TEXT_SETTINGS_AUX)
                 .text_color(color(GRAY)),
             )
             .when_some(outdated_default, |card, default| {
@@ -1643,11 +1626,11 @@ impl Desktop {
                             .flex_1()
                             .min_w_0()
                             .whitespace_normal()
-                            .text_size(TEXT_AUX)
+                            .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                         )
                         .child(
-                            quiet(SharedString::from(format!("update-default-service-{id}")))
+                            quiet(SharedString::from(format!("update-default-service-{id}"))).settings_text()
                                 .icon(icons::check_circle())
                                 .label("用于以后生成…")
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1663,7 +1646,7 @@ impl Desktop {
                         SharedString::from(format!("saved-service-last-test-{id}")),
                         latest_test,
                     )
-                    .text_size(TEXT_AUX)
+                    .text_size(TEXT_SETTINGS_AUX)
                     .text_color(color(GRAY)),
                 )
             })
@@ -1673,7 +1656,7 @@ impl Desktop {
                         SharedString::from(format!("saved-service-test-status-{id}")),
                         failures.join("\n"),
                     )
-                    .text_size(TEXT_AUX)
+                    .text_size(TEXT_SETTINGS_AUX)
                     .text_color(color(GRAY)),
                 )
             })
@@ -1931,7 +1914,7 @@ impl Desktop {
                         text(("settings-group-feedback", group as usize), message.clone())
                             .flex_1()
                             .min_w_0()
-                            .text_size(TEXT_BODY)
+                            .text_size(TEXT_SETTINGS_BODY)
                             .text_color(color(if error { DANGER } else { GRAY })),
                     ),
             ));
@@ -1945,7 +1928,7 @@ impl Desktop {
                 let retry = if primary_retry {
                     primary_pill(id)
                 } else {
-                    control(id)
+                    control(id).settings_text()
                 };
                 view = view.child(
                     retry
@@ -1973,7 +1956,7 @@ impl Desktop {
             if let Some(detail) = detail {
                 let expanded = self.settings_ui.expanded_feedback.contains(&group);
                 view = view.child(
-                    control(("settings-feedback-details", group as usize))
+                    control(("settings-feedback-details", group as usize)).settings_text()
                         .icon(icons::info())
                         .ghost()
                         .self_start()
@@ -2003,7 +1986,7 @@ impl Desktop {
                                     .w_full()
                                     .min_w_0()
                                     .whitespace_normal()
-                                    .text_size(TEXT_AUX)
+                                    .text_size(TEXT_SETTINGS_AUX)
                                     .text_color(color(GRAY)),
                             ),
                     );
@@ -2012,7 +1995,7 @@ impl Desktop {
         }
         if self.preferences.is_blocked(group) {
             view = view.child(
-                control(("reset-settings-group", group as usize))
+                control(("reset-settings-group", group as usize)).settings_text()
                     .icon(icons::refresh())
                     .label("保留原文件并重置此组")
                     .self_start()
@@ -2184,12 +2167,12 @@ impl Desktop {
                                                 "restart-onboarding-help",
                                                 "重新了解应用的基本使用方式",
                                             )
-                                            .text_size(TEXT_AUX)
+                                            .text_size(TEXT_SETTINGS_AUX)
                                             .text_color(color(GRAY)),
                                         ),
                                 )
                                 .child(
-                                    outline_pill("restart-onboarding")
+                                    outline_pill("restart-onboarding").settings_text()
                                         .label("重新开始用户引导")
                                         .icon(icons::restart())
                                         .on_click(cx.listener(|this, _, window, cx| {
@@ -2298,13 +2281,13 @@ impl Desktop {
                                                                     .count()
                                                             ),
                                                         )
-                                                        .text_size(TEXT_AUX)
+                                                        .text_size(TEXT_SETTINGS_AUX)
                                                         .text_color(color(GRAY)),
                                                     ),
                                             ),
                                     )
                                     .child(
-                                        quiet("refresh-environment")
+                                        quiet("refresh-environment").settings_text()
                                             .icon(icons::refresh())
                                             .label("重新检查")
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -2324,7 +2307,7 @@ impl Desktop {
                                             .iter()
                                             .filter(|(_, _, optional)| !optional)
                                             .map(|(label, _, _)| {
-                                                settings_chip(badge(BadgeKind::Neutral))
+                                                settings_chip(badge(BadgeKind::Neutral).text_size(TEXT_SETTINGS_AUX))
                                                     .child(icons::check().size(px(14.)))
                                                     .child(*label)
                                             }),
@@ -2333,7 +2316,7 @@ impl Desktop {
                     )
                     .child(
                         setting_surface().py(rems(9. / 14.)).children(toggle_details.take().map(|toggle| {
-                            quiet("toggle-diagnostics-details")
+                            quiet("toggle-diagnostics-details").settings_text()
                                 .w_full()
                                 .label("诊断详情")
                                 .child(div().flex_1())
@@ -2359,7 +2342,7 @@ impl Desktop {
                             BadgeKind::Success
                         } else {
                             BadgeKind::Warning
-                        })
+                        }).text_size(TEXT_SETTINGS_AUX)
                         .child(if optional {
                             "当前未使用"
                         } else if ready {
@@ -2378,7 +2361,7 @@ impl Desktop {
                             "转换程序无法运行，重新安装应用后笔记仍会保留",
                         ))
                         .child(
-                            control("download-repair-app")
+                            control("download-repair-app").settings_text()
                                 .icon(icons::download())
                                 .label("下载安装包")
                                 .self_start()
@@ -2408,7 +2391,7 @@ impl Desktop {
                         .gap_2()
                         .flex_wrap()
                         .child(
-                            control("refresh-environment")
+                            control("refresh-environment").settings_text()
                                 .icon(icons::refresh())
                                 .label("重新检查环境")
                                 .loading(self.environment.is_none())
@@ -2418,7 +2401,7 @@ impl Desktop {
                                 ),
                         )
                         .child(
-                            quiet("toggle-diagnostics-details")
+                            quiet("toggle-diagnostics-details").settings_text()
                                 .icon(icons::info())
                                 .label(if open {
                                     "收起诊断详情"
@@ -2483,7 +2466,7 @@ impl Desktop {
                         .child(settings_value("install-media-tools-help", help))
                         .child(settings_value("install-media-tools-command", command))
                         .child(
-                            quiet("copy-media-install-command")
+                            quiet("copy-media-install-command").settings_text()
                                 .icon(icons::content_copy())
                                 .label("复制安装命令")
                                 .self_start()

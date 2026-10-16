@@ -1496,7 +1496,6 @@ impl Desktop {
     /// Storage locations listed in the settings page; per-location operations
     /// live in this module alongside the migration flow.
     pub(super) fn storage_settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::settings_ui::{quiet, outline_pill, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
         let view = v_flex()
             .w_full()
             .min_w_0()
@@ -1527,14 +1526,14 @@ impl Desktop {
                 // 与账号卡片同一组合：徽章与动作是标题行尾部的一个槽位，窄时整体换行。
                 // 强调顺序与其他卡片一致：描边主动作在前，安静的「打开位置」在后。
                 let trailing = h_flex().gap_2().items_center().flex_wrap()
-                    .child(quiet(("open-storage-location", index)).icon(icons::folder_open()).label("打开位置").disabled(offline).on_click({
+                    .child(quiet(("open-storage-location", index)).settings_text().icon(icons::folder_open()).label("打开位置").disabled(offline).on_click({
                         let root = root.clone();
                         move |_, _, cx| cx.open_with_system(&root)
                     }))
-                    .when(default && several, |row| row.child(badge(BadgeKind::Neutral).child("默认保存位置")))
-                    .when(offline, |row| row.child(badge(BadgeKind::Warning).child("暂时不可访问")))
+                    .when(default && several, |row| row.child(badge(BadgeKind::Neutral).text_size(TEXT_SETTINGS_AUX).child("默认保存位置")))
+                    .when(offline, |row| row.child(badge(BadgeKind::Warning).text_size(TEXT_SETTINGS_AUX).child("暂时不可访问")))
                     .when(!default, |row| {
-                        row.child(outline_pill(("default-storage-location", index)).icon(icons::check_circle()).label("设为默认").disabled(needs_relocation || needs_reassociation || self.storage_ui.busy)
+                        row.child(outline_pill(("default-storage-location", index)).settings_text().icon(icons::check_circle()).label("设为默认").disabled(needs_relocation || needs_reassociation || self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(workspace) = &mut this.workspace {
                                     let result = workspace.state.library(&id)
@@ -1551,15 +1550,15 @@ impl Desktop {
                             })))
                     })
                     .when(!needs_relocation && !needs_reassociation, |row| {
-                        row.child(outline_pill(("move-storage-location", index)).label("移动课程库…").disabled(self.storage_ui.busy)
+                        row.child(outline_pill(("move-storage-location", index)).settings_text().label("移动课程库…").disabled(self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, window, cx| this.begin_library_move(move_id.clone(), window, cx))))
                     })
                     .when(needs_reassociation, |row| {
-                        row.child(outline_pill(("reassociate-storage-location", index)).icon(icons::storage()).label("重新关联…").disabled(self.storage_ui.busy)
+                        row.child(outline_pill(("reassociate-storage-location", index)).settings_text().icon(icons::storage()).label("重新关联…").disabled(self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, window, cx| this.begin_library_reassociation(reassociate_id.clone(), window, cx))))
                     })
                     .when(needs_relocation, |row| {
-                        row.child(outline_pill(("relocate-storage-location", index)).icon(icons::folder_open()).label("重新定位…").disabled(self.storage_ui.busy)
+                        row.child(outline_pill(("relocate-storage-location", index)).settings_text().icon(icons::folder_open()).label("重新定位…").disabled(self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, window, cx| this.begin_library_relocation(relocate_id.clone(), window, cx))))
                     })
 ;
@@ -1593,7 +1592,7 @@ impl Desktop {
                                                 root.display().to_string(),
                                             )
                                             .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
-                                .text_size(TEXT_AUX)
+                                .text_size(TEXT_SETTINGS_AUX)
                                             .text_color(color(GRAY)),
                                         ),
                                 )
@@ -1636,7 +1635,7 @@ impl Desktop {
                         }))
                     })
                     .child(
-                        quiet("register-storage-location")
+                        quiet("register-storage-location").settings_text()
                             .icon(icons::plus())
                             .label("添加课程库位置")
                             .on_click(cx.listener(|this, _, window, cx| {

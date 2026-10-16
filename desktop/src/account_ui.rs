@@ -220,7 +220,7 @@ impl Desktop {
 
     fn account_summary(&self, onboarding: bool, cx: &mut Context<Self>) -> Div {
         let in_settings = self.page == Page::Settings;
-        let support_size = if in_settings { crate::settings_ui::SETTINGS_TEXT_SUPPORT } else { TEXT_AUX };
+        let support_size = if in_settings { TEXT_SETTINGS_AUX } else { TEXT_AUX };
         let status = self.account_status_text();
         let saved = self.account.has_saved_login;
         let expired = matches!(self.account.status, Some(AccountStatus::Expired));
@@ -257,7 +257,7 @@ impl Desktop {
             .flex_wrap()
             .when_some(login_action, |view, label| {
                 view.child(
-                    outline_pill("account-login").when(in_settings, crate::settings_ui::settings_button)
+                    outline_pill("account-login").when(in_settings, SettingsText::settings_text)
                         .icon(icons::bilibili())
                         .label(label)
                         .on_click(
@@ -268,14 +268,14 @@ impl Desktop {
             // Only a saved login has anything to re-verify.
             .when(saved, |view| {
                 view.child(
-                    quiet("account-refresh").when(in_settings, crate::settings_ui::settings_button)
+                    quiet("account-refresh").when(in_settings, SettingsText::settings_text)
                         .icon(icons::refresh())
                         .label("重新检查")
                         .disabled(self.account.checking)
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
                 )
                 .child(
-                    quiet("account-logout").when(in_settings, crate::settings_ui::settings_button)
+                    quiet("account-logout").when(in_settings, SettingsText::settings_text)
                         .icon(icons::logout())
                         .label("退出登录")
                         .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx))),
