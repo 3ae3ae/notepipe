@@ -1040,7 +1040,7 @@ impl Desktop {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let rail = f32::from(window.viewport_size().width) < 960.;
+        let rail = is_compact(window);
         let mut navigation = v_flex()
             .id("settings-navigation")
             .key_context("SettingsTabs")

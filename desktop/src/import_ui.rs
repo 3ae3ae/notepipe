@@ -1095,7 +1095,7 @@ impl Desktop {
                                         cx.notify();
                                     })),
                             )
-                            .child(self.preview_source_button(f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14., cx)),
+                            .child(self.preview_source_button(is_compact(window), cx)),
                     )
                     .when_some(validation, |view, message| view.child(issue(message))),
             );
@@ -1651,7 +1651,7 @@ impl Desktop {
     /// The video identity remains compact; paths and account tools are details.
     fn box_selected_video(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let Some(source) = &self.source_preview else { return v_flex(); };
-        let compact = f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14.;
+        let compact = is_compact(window);
         let duration = (source.duration.is_finite() && source.duration > 0.)
             .then(|| course2md::render::fmt_ts(source.duration));
         let mut cover = div().relative().w(rems(if compact { 128. / 14. } else { 160. / 14. }))
@@ -2696,7 +2696,7 @@ impl Desktop {
             .current_input_task(cx)
             .filter(|task| task.state == workspace::TaskState::Cancelled)
             .map(|task| (task.id.clone(), "任务已取消".to_owned()));
-        let compact = f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14.;
+        let compact = is_compact(window);
         let input = v_flex().w_full().min_w_0().gap_4()
             .when(!self.online, |input| input.child(self.source_kind_tabs(cx)))
             .child(self.box_source_input(window, cx));

@@ -209,9 +209,20 @@ pub const ICON_GAP: Rems = rems(8. / 14.);
 /// Supporting lines of an icon-labelled item start on its label text.
 pub const LABEL_INSET: Rems = rems(ICON_SLOT.0 + ICON_GAP.0);
 
-/// Task dialogs sit below the shared title bar with the same page gutter.
+/// The app bar holds one control row with 8px above and below.
+pub fn title_bar_height(window: &Window) -> Pixels {
+    CONTROL_HEIGHT.to_pixels(window.rem_size()) + px(16.)
+}
+
+/// Task dialogs sit below the shared title bar with the page gutter.
 pub fn task_dialog_top(window: &Window) -> Pixels {
-    window.rem_size() * (40. / 14.) + px(40.)
+    title_bar_height(window) + px(24.)
+}
+
+/// Windows narrower than 960px at the current text scale use compact layouts:
+/// narrow gutters, an icon-only navigation rail and stacked controls.
+pub fn is_compact(window: &Window) -> bool {
+    f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14.
 }
 
 /* ---------- 栏宽（rems，随字号缩放的结构尺寸） ---------- */
@@ -975,7 +986,7 @@ pub fn processing_switch(switch: gpui_component::switch::Switch) -> gpui_compone
 /// GPUI Component's Root resets rem size from Theme on every render. Update that
 /// authority as well as the current window so parent and modal renders agree.
 pub fn apply_scale(scale: f32, window: &mut Window, cx: &mut App) {
-    let scale = if [1.0, 1.25, 1.5, 2.0].contains(&scale) {
+    let scale = if crate::preferences::FONT_SCALES.contains(&scale) {
         scale
     } else {
         1.0

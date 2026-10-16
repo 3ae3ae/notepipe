@@ -810,7 +810,7 @@ mod tests {
         assert!(regular.code_size >= 240.);
 
         for (width, height) in [(860., 620.), (1068., 768.), (1600., 1000.)] {
-            for scale in [1., 1.25, 1.5, 2.] {
+            for scale in crate::preferences::FONT_SCALES {
                 let layout = qr_layout(width, height, 14. * scale);
                 assert!(layout.code_size > 0.);
                 assert!(layout.code_size <= layout.content_width);

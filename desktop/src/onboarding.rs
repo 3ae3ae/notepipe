@@ -1019,7 +1019,7 @@ impl Desktop {
             .min(f32::from(window.viewport_size().width) - 48.)
             .max(280.);
         let available_height =
-            (f32::from(window.viewport_size().height) - (40. * scale + 16.) - 48.).max(160.);
+            (f32::from(window.viewport_size().height) - f32::from(title_bar_height(window)) - 48.).max(160.);
         let compact = available_height < 540. * scale;
         let steps = ["识别方式", "AI 服务", "Bilibili", "模型准备"];
         let heading = v_flex()

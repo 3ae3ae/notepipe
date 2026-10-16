@@ -29,8 +29,7 @@ fn shell_column_width(page: Page) -> AbsoluteLength {
 /// The max width includes both gutters; layout calculations use the same box.
 pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
     let width = f32::from(window.bounds().size.width);
-    let scale = f32::from(window.rem_size()) / 14.;
-    let gutter = if matches!(page, Page::New | Page::Settings) && width < 960. * scale { 16. } else { SHELL_GUTTER };
+    let gutter = if matches!(page, Page::New | Page::Settings) && is_compact(window) { 16. } else { SHELL_GUTTER };
     (width.min(f32::from(shell_column_width(page).to_pixels(window.rem_size()))) - gutter * 2.).max(0.)
 }
 
@@ -80,7 +79,6 @@ impl Desktop {
         let task_count = self.workspace.as_ref().map_or(0, |workspace| {
             crate::task_ui::actionable_task_count(&workspace.state.tasks)
         });
-        let scale = self.preferences.application().font_scale;
         // macOS draws the traffic lights inside the title bar's leading edge.
         let leading = if cfg!(target_os = "macos") { 80. } else { 12. };
         let page = self.page;
@@ -110,7 +108,7 @@ impl Desktop {
             }));
         let library = nav_action("nav-library", matches!(page, Page::Library | Page::Result), cx)
             .icon(icons::book_open())
-            .when(f32::from(window.bounds().size.width) >= 960. * self.preferences.application().font_scale, |button| button.label("笔记库"))
+            .when(!is_compact(window), |button| button.label("笔记库"))
             .accessibility_label("笔记库")
             .on_click(cx.listener(|this, _, _, cx| {
                 this.folder_filter = None;
@@ -127,7 +125,7 @@ impl Desktop {
             .icon(if self.settings_have_problem() { icons::warning() } else { icons::settings() })
             .accessibility_label("设置")
             .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)));
-        apply_shell_title_bar_chrome(TitleBar::new().h(px(40. * scale + 16.))).child(
+        apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window))).child(
             h_flex()
                 .w_full()
                 .min_w_0()
@@ -333,7 +331,7 @@ impl Render for Desktop {
                         .text_size(TEXT_BODY)
                         .child(
                             TitleBar::new()
-                                .h(px(40. * self.preferences.application().font_scale + 16.))
+                                .h(title_bar_height(window))
                                 .pl_0()
                                 .bg(color(CANVAS))
                                 .border_color(color(HAIRLINE))
@@ -522,7 +520,7 @@ impl Render for Desktop {
                     .child(
                         shell_column_for(self.page)
                             .when(self.page == Page::Settings, |v| v.max_w_full())
-                            .when(matches!(self.page, Page::New | Page::Settings) && f32::from(window.bounds().size.width) < 960. * f32::from(window.rem_size()) / 14., |v| v.px(px(16.)))
+                            .when(matches!(self.page, Page::New | Page::Settings) && is_compact(window), |v| v.px(px(16.)))
                             .when(
                                 matches!(self.page, Page::Result | Page::Settings)
                                     || self_scrolling,
