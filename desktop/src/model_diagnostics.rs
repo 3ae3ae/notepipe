@@ -319,7 +319,7 @@ impl Desktop {
         self.settings_ui.model_diagnostics.result = None;
         self.settings_ui.model_diagnostics.cancelled = false;
         self.settings_ui.model_diagnostics.details = false;
-        self.start(Kind::Models, cx);
+        self.start_model_preparation(cx);
     }
     pub fn model_preparation_finished(
         &mut self,

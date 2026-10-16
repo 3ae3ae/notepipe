@@ -4,7 +4,7 @@ use crate::theme::*;
 use crate::settings_ui::{settings_chip, outline_pill, quiet, SETTINGS_TEXT_SUPPORT as TEXT_AUX};
 
 impl Desktop {
-    pub fn about_page(&self, _: &mut Context<Self>) -> AnyElement {
+    pub fn about_page(&self) -> AnyElement {
         let commit = env!("COURSE2MD_DESKTOP_COMMIT");
         let version = if commit.is_empty() {
             env!("CARGO_PKG_VERSION").to_owned()

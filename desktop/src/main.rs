@@ -58,7 +58,6 @@ enum Page {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Convert,
-    Doctor,
     Models,
 }
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -66,14 +65,7 @@ enum Field {
     Source,
     Title,
     FolderName,
-    Output,
     Search,
-    AsrUrl,
-    AsrKey,
-    AsrModel,
-    LlmUrl,
-    LlmKey,
-    LlmModel,
 }
 const PROVIDERS: [(&str, &str); 6] = [
     ("", "自动"),
@@ -271,7 +263,6 @@ struct Desktop {
     generation_options_open: bool,
     validation_attempt: usize,
     show_options: bool,
-    show_logs: bool,
     environment: Option<backend::Environment>,
     scrolls: [ScrollHandle; 5],
     inputs: BTreeMap<Field, Entity<InputState>>,
@@ -435,19 +426,8 @@ impl Desktop {
                 String::new(),
             ),
             (Field::Title, "", String::new()),
-            (
-                Field::Output,
-                "课程笔记保存位置",
-                output.display().to_string(),
-            ),
             (Field::Search, "搜索笔记标题", String::new()),
             (Field::FolderName, "文件夹名称", String::new()),
-            (Field::AsrUrl, "", config.asr_api.base_url.clone()),
-            (Field::AsrKey, "API Key", config.asr_api.api_key.clone()),
-            (Field::AsrModel, "转写模型", config.asr_api.model.clone()),
-            (Field::LlmUrl, "", config.llm.base_url.clone()),
-            (Field::LlmKey, "API Key", config.llm.api_key.clone()),
-            (Field::LlmModel, "模型名称", config.llm.model.clone()),
         ];
         let inputs: BTreeMap<_, _> = fields
             .into_iter()
@@ -458,7 +438,6 @@ impl Desktop {
                         InputState::new(window, cx)
                             .placeholder(placeholder)
                             .default_value(value)
-                            .masked(matches!(field, Field::AsrKey | Field::LlmKey))
                     }),
                 )
             })
@@ -619,7 +598,6 @@ impl Desktop {
             generation_options_open: false,
             validation_attempt: 0,
             show_options: false,
-            show_logs: false,
             environment: None,
             scrolls: std::array::from_fn(|_| ScrollHandle::new()),
             inputs,
@@ -818,26 +796,19 @@ impl Desktop {
     fn value(&self, field: Field, cx: &App) -> String {
         self.inputs[&field].read(cx).value().trim().to_string()
     }
-    fn output(&self, _cx: &App) -> PathBuf {
+    fn output(&self) -> PathBuf {
         self.workspace
             .as_ref()
             .and_then(|w| w.state.library(&w.state.default_library))
             .map(|l| l.root.clone())
             .unwrap_or_else(|| self.library_root.clone())
     }
-    fn pick(&mut self, directory: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn pick_video(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = cx.prompt_for_paths(PathPromptOptions {
-            files: !directory,
-            directories: directory,
+            files: true,
+            directories: false,
             multiple: false,
-            prompt: Some(
-                if directory {
-                    "选择保存目录"
-                } else {
-                    "选择课程视频"
-                }
-                .into(),
-            ),
+            prompt: Some("选择课程视频".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
@@ -845,67 +816,36 @@ impl Desktop {
                 match result {
                     Ok(Ok(Some(paths))) => {
                         if let Some(path) = paths.first() {
-                            let field = if directory {
-                                Field::Output
-                            } else {
-                                Field::Source
-                            };
-                            this.inputs[&field].update(cx, |state, cx| {
+                            this.inputs[&Field::Source].update(cx, |state, cx| {
                                 state.set_value(path.display().to_string(), window, cx)
                             });
-                            if !directory {
-                                this.inspect_source(window, cx);
-                            }
+                            this.inspect_source(window, cx);
                         }
                     }
                     Ok(Ok(None)) => {}
-                    Ok(Err(error)) => this.message = Some(format!("无法打开文件选择器：{error:#}")),
-                    Err(error) => this.message = Some(error.to_string()),
+                    Ok(Err(_)) | Err(_) => this.message = Some("无法打开文件选择器".into()),
                 }
                 cx.notify();
             });
         })
         .detach();
     }
-    fn start(&mut self, kind: Kind, cx: &mut Context<Self>) {
-        if kind == Kind::Convert {
-            self.navigate(Page::New, cx);
-            return;
-        }
-        if self.job.is_some() {
-            self.message = Some("当前任务结束后再试".into());
-            cx.notify();
-            return;
-        }
-        let args = match kind {
-            Kind::Doctor => vec!["doctor".into()],
-            Kind::Models => self.model_preparation_args(),
-            Kind::Convert => unreachable!(),
-        };
-        match Job::start(args) {
+    fn start_model_preparation(&mut self, cx: &mut Context<Self>) {
+        match Job::start(self.model_preparation_args()) {
             Ok(job) => {
                 self.job = Some(job);
                 self.active_task = None;
-                self.kind = kind;
+                self.kind = Kind::Models;
                 self.cancelling = false;
                 self.logs.clear();
                 self.progress.clear();
                 self.pending_done = None;
                 self.task_error = None;
-                self.task_status = if kind == Kind::Doctor {
-                    "正在检查运行环境"
-                } else {
-                    "正在准备识别模型"
-                }
-                .into();
+                self.task_status = "正在准备识别模型".into();
             }
             Err(error) => {
                 self.task_error = Some(format!("{error:#}"));
-                if kind == Kind::Models {
-                    self.model_preparation_finished(false, false, cx);
-                } else {
-                    self.message = self.task_error.clone();
-                }
+                self.model_preparation_finished(false, false, cx);
             }
         }
         cx.notify();
@@ -1013,18 +953,7 @@ impl Desktop {
                             "未完成"
                         }
                         .into();
-                        if self.kind == Kind::Models {
-                            self.model_preparation_finished(success, cancelled, cx);
-                        } else if success {
-                            self.refresh_environment(cx);
-                        }
-                        if self.kind != Kind::Models {
-                            self.message = Some(
-                                self.task_error
-                                    .clone()
-                                    .unwrap_or_else(|| self.task_status.clone()),
-                            );
-                        }
+                        self.model_preparation_finished(success, cancelled, cx);
                     }
                 }
             }

@@ -2661,7 +2661,6 @@ impl Desktop {
             .on_click(cx.listener({
                 let id = id.clone();
                 move |this, _, _, cx| {
-                    this.show_logs = false;
                     if is_selected {
                         this.clear_task_card_motion(&id);
                         if let Some(workspace) = &mut this.workspace {

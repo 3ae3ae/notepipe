@@ -2242,7 +2242,7 @@ impl Desktop {
             course2md::config::OutputFormat::Json => "json",
         };
         let suggested = format!("{stem}.{extension}");
-        let receiver = cx.prompt_for_new_path(&self.output(cx), Some(&suggested));
+        let receiver = cx.prompt_for_new_path(&self.output(), Some(&suggested));
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let path = match receiver.await {

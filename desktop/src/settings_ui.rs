@@ -2165,7 +2165,7 @@ impl Desktop {
             .child(self.environment_page(window, cx))
             .child(
                 group("about-heading", "关于")
-                    .child(setting_surface().child(self.about_page(cx)))
+                    .child(setting_surface().child(self.about_page()))
                     .child(
                         setting_surface().child(
                             h_flex()

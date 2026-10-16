@@ -34,8 +34,6 @@ pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
     (width.min(f32::from(shell_column_width(page).to_pixels(window.rem_size()))) - gutter * 2.).max(0.)
 }
 
-pub(super) fn settings_uses_sidebar(_window: &Window) -> bool { true }
-
 pub(super) fn settings_sidebar_width(window: &Window) -> f32 {
     let scale = f32::from(window.rem_size()) / 14.;
     let width = f32::from(window.bounds().size.width) / scale;

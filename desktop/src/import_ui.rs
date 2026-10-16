@@ -1157,7 +1157,7 @@ impl Desktop {
                             .text_color(color(ACCENT_STRONG))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.switch_source_kind(false, window, cx);
-                                this.pick(false, window, cx);
+                                this.pick_video(window, cx);
                             })),
                     )
     }
@@ -1583,7 +1583,7 @@ impl Desktop {
                             .icon(crate::icons::folder_open())
                             .label("选择视频")
                             .on_click(
-                                cx.listener(|this, _, window, cx| this.pick(false, window, cx)),
+                                cx.listener(|this, _, window, cx| this.pick_video(window, cx)),
                             ),
                     )
                     .on_drop(
@@ -1633,7 +1633,7 @@ impl Desktop {
                                     .icon(crate::icons::folder_open())
                                     .label("更换视频")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.pick(false, window, cx)
+                                        this.pick_video(window, cx)
                                     })),
                             )
                             .when(self.can_start_input(cx), |row| {

@@ -288,10 +288,6 @@ pub fn shadow_hero() -> Vec<gpui::BoxShadow> {
         gpui::BoxShadow::new(px(0.), px(16.), shadow_color(0.08)).blur_radius(px(40.)),
     ]
 }
-/// Selected segment pill: 0/1/2 @12%.
-pub fn shadow_segment_selected() -> Vec<gpui::BoxShadow> {
-    vec![gpui::BoxShadow::new(px(0.), px(1.), shadow_color(0.12)).blur_radius(px(2.))]
-}
 /// M3 level-1 card elevation: 0/1/2 @6%, kept faint so tone carries the layer.
 pub fn shadow_card() -> Vec<gpui::BoxShadow> {
     vec![gpui::BoxShadow::new(px(0.), px(1.), shadow_color(0.06)).blur_radius(px(2.))]
