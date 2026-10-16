@@ -342,8 +342,10 @@ pub fn run_coreml(
 ) -> Result<Vec<TranscriptEvent>> {
     let t0 = Instant::now();
     let raw = vad(wav, 0.25, 0.35)?;
-    // 时长只探测一次（与 ffmpeg_vad 同样约定：normalize_segments 不再自行 ffprobe）
-    let dur = crate::media::probe_duration_blocking(wav).unwrap_or(0.0);
+    // 时长缺失时不能按 0 处理：末段语音会被当成静音丢掉
+    let dur = crate::media::probe_duration_blocking(wav)
+        .filter(|d| d.is_finite() && *d > 0.0)
+        .context("无法读取音频时长 / Could not read the audio duration")?;
     let segs = crate::asr::normalize_segments(raw, max_speech, wav, dur)?;
     tracing::info!(segs = segs.len(), engine = "silero-coreml", "vad");
     if segs.is_empty() {
