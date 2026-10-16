@@ -262,7 +262,7 @@ pub fn disclosure(id: impl Into<ElementId>, open: bool, content: Div) -> AnyElem
 
 #[cfg(test)]
 mod tests {
-    use super::{disclosure, ease_out, enter, value};
+    use super::{ease_out, enter, value};
     use gpui::{
         App, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
         Render, RenderOnce, Styled as _, TestAppContext, VisualTestContext, Window, div, px, size,
@@ -371,7 +371,7 @@ mod tests {
     }
 
     impl Render for RevealHarness {
-        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let content = div()
                 .debug_selector(|| "motion-reveal-surface".into())
                 .flex()
