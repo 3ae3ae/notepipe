@@ -538,7 +538,7 @@ struct TaskProcessingDetails {
 }
 
 impl RenderOnce for TaskProcessingDetails {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         // Open state lives on Desktop: a virtualized task row unmounts when it
         // leaves the viewport, and keyed window state would be forgotten.
         let open = self.open;
@@ -584,13 +584,10 @@ impl RenderOnce for TaskProcessingDetails {
                 }),
             )
             .child(if self.animate {
-                disclosure(
+                crate::motion::disclosure(
                     SharedString::from(format!("task-stage-details-{}", self.task_id)),
                     open,
-                    details,
-                    window,
-                    cx,
-                )
+                    details)
             } else if open {
                 details.into_any_element()
             } else {
@@ -609,7 +606,7 @@ struct TaskRawLogs {
 }
 
 impl RenderOnce for TaskRawLogs {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let open = self.open;
         let task_id = self.task_id.clone();
         let desktop = self.desktop.clone();
@@ -670,13 +667,10 @@ impl RenderOnce for TaskRawLogs {
                 }),
             )
             .child(if self.animate {
-                disclosure(
+                crate::motion::disclosure(
                     SharedString::from(format!("task-raw-log-disclosure-{}", self.task_id)),
                     open,
-                    log,
-                    window,
-                    cx,
-                )
+                    log)
             } else if open {
                 log.into_any_element()
             } else {

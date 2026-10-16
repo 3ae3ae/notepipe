@@ -489,7 +489,7 @@ impl Desktop {
             .and_then(Entry::result)
             .and_then(|result| result.as_ref().ok());
         let (mut view, cache_action, cache_details) =
-            self.model_status_section(provider, &request, provider_row, window, cx);
+            self.model_status_section(provider, &request, provider_row, cx);
         let (actions, extras) = self.model_prepare_actions(
             provider,
             &request,
@@ -515,7 +515,6 @@ impl Desktop {
         provider: AsrProvider,
         request: &Request,
         provider_row: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Div, Option<Div>, Option<AnyElement>) {
         let key = request.key();
@@ -749,10 +748,7 @@ impl Desktop {
             cache_details = Some(crate::motion::disclosure(
                         SharedString::from(format!("model-cache-content-{key}")),
                         cache_open,
-                        cache,
-                        window,
-                        cx,
-                    ));
+                        cache));
             if let Some(error) = &status.last_error {
                 view = view.child(settings_detail_row(
                     SharedString::from(format!("model-last-error-label-{key}")),

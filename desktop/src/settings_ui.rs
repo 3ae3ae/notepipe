@@ -2488,10 +2488,7 @@ impl Desktop {
             .child(checks.detail(crate::motion::disclosure(
                 "diagnostics-detail-content",
                 open,
-                details.px(SETTING_ITEM_INSET).pb(rems(16. / 14.)),
-                window,
-                cx,
-            )))
+                details.px(SETTING_ITEM_INSET).pb(rems(16. / 14.)))))
             .child(self.model_diagnostics_panel(window, cx))
     }
     // Wrappers only while the other interface modules are being integrated.

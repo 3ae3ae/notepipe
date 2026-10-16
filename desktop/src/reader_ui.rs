@@ -2687,7 +2687,7 @@ impl Desktop {
             window,
             cx,
         );
-        page = page.children(self.reader_notices(&preview, &controls_scroll, window, cx));
+        page = page.children(self.reader_notices(&preview, &controls_scroll, cx));
         let reading_note = self.result_tab == 0;
         let items = note_items(&preview.blocks, compact);
         // The note flow's persistent list state follows the loaded note and the
@@ -3593,7 +3593,7 @@ impl Desktop {
                     .inline(),
                 );
             }
-            Some(disclosure(
+            Some(crate::motion::disclosure(
                 "reader-information-panel",
                 self.reader_ui.info_open,
                 v_flex()
@@ -3648,10 +3648,7 @@ impl Desktop {
                             )
                             // 与设置页一致：macOS「始终显示滚动条」偏好开启时常驻（review4#4）
                             .child(crate::backend::vertical_scrollbar(&information_scroll)),
-                    ),
-                window,
-                cx,
-            ).into_any_element())
+                    )).into_any_element())
         } else {
             None
         }
@@ -3662,7 +3659,6 @@ impl Desktop {
         &mut self,
         preview: &Rc<notes::Preview>,
         controls_scroll: &ScrollHandle,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let reveal = |id: &'static str, child: AnyElement| {
@@ -3880,13 +3876,10 @@ impl Desktop {
                         );
                 }
             }
-            problem = problem.child(disclosure(
+            problem = problem.child(crate::motion::disclosure(
                 "reader-processing-detail-panel",
                 self.reader_ui.processing_details_open,
-                processing_details,
-                window,
-                cx,
-            ));
+                processing_details));
             notices.push(crate::motion::enter(
                 "reader-processing-notice",
                 problem));

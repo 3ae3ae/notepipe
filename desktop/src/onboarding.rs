@@ -1010,7 +1010,7 @@ impl Desktop {
         };
         let content = match step {
             Step::Engine => self.setup_engine_content(window, cx),
-            Step::Ai => self.setup_service_content(ServicePurpose::Ai, window, cx),
+            Step::Ai => self.setup_service_content(ServicePurpose::Ai, cx),
             Step::Account => self.account_onboarding_page(window, cx),
             Step::Model => self.setup_model_content(window, cx),
         };
@@ -1243,7 +1243,7 @@ impl Desktop {
             );
         let mut body = v_flex().w_full().min_w_0().gap_4().child(routes);
         if !local {
-            return body.child(self.setup_service_content(ServicePurpose::Speech, window, cx));
+            return body.child(self.setup_service_content(ServicePurpose::Speech, cx));
         }
         let engines = [
             (
@@ -1463,10 +1463,7 @@ impl Desktop {
                 .child(motion::disclosure(
                     "setup-model-choices",
                     self.onboarding.model_choices_open,
-                    model_grid,
-                    window,
-                    cx,
-                )),
+                    model_grid)),
         );
         body
     }
@@ -1754,7 +1751,6 @@ impl Desktop {
     fn setup_service_content(
         &self,
         purpose: ServicePurpose,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let service = self.onboarding.service(purpose);
@@ -2083,10 +2079,7 @@ impl Desktop {
                             details,
                         )
                         .text_size(TEXT_AUX),
-                    ),
-                    window,
-                    cx,
-                ));
+                    )));
             body = body.child(motion::state_enter(
                 ("setup-service-feedback", service.test_serial as usize),
                 feedback));
@@ -2404,10 +2397,7 @@ impl Desktop {
                 .child(motion::disclosure(
                     "setup-model-detail-content",
                     self.onboarding.model_details_open,
-                    details,
-                    window,
-                    cx,
-                )),
+                    details)),
         )
     }
 

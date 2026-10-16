@@ -561,7 +561,6 @@ impl Desktop {
         &self,
         kind: &str,
         message: &str,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         // A localized first line is the summary; only a raw tool line is replaced.
@@ -603,10 +602,7 @@ impl Desktop {
                 .child(motion::disclosure(
                     text_id("subtitle-technical", message),
                     expanded,
-                    v_flex().child(help(details.to_owned())),
-                    window,
-                    cx,
-                ))
+                    v_flex().child(help(details.to_owned()))))
             })
     }
 
@@ -1130,7 +1126,7 @@ impl Desktop {
         if let Some(title) = &self.source_collection_title {
             view = self.candidate_list_view(view, title, cx);
         }
-        view = self.source_preview_error(view, window, cx);
+        view = self.source_preview_error(view, cx);
         if self.online {
             view = view.child(self.local_upload_hint(cx));
         }
@@ -1452,7 +1448,7 @@ impl Desktop {
     }
 
     /// Keep source failures beside the field, with retry/login/details still reachable.
-    fn source_preview_error(&self, view: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn source_preview_error(&self, view: Div, cx: &mut Context<Self>) -> Div {
         let mut view = view;
         if let Some(error) = &self.preview_error
             && !self.source_candidates.is_empty()
@@ -1465,10 +1461,7 @@ impl Desktop {
             let details = motion::disclosure(
                 "source-error-disclosure",
                 self.show_preview_details,
-                v_flex().child(help(error.clone())),
-                window,
-                cx,
-            );
+                v_flex().child(help(error.clone())));
             view = view.child(motion::enter(
                 text_id("source-error", error),
                 v_flex().w_full().min_w_0().gap_2()
@@ -1729,10 +1722,10 @@ impl Desktop {
             .child(selected)
             .when(!self.online && self.can_start_input(cx), |card| card.child(
                 h_flex().w_full().justify_end().child(self.box_bottom_row(false, cx))))
-            .child(motion::disclosure("source-details-disclosure", self.show_preview_details, details, window, cx)))
+            .child(motion::disclosure("source-details-disclosure", self.show_preview_details, details)))
     }
 
-    fn text_source_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn text_source_view(&self, cx: &mut Context<Self>) -> Div {
         let Some(source) = &self.source_preview else {
             return v_flex();
         };
@@ -1838,7 +1831,7 @@ impl Desktop {
             );
         }
         if let Some(error) = failure {
-            let failure_details = self.subtitle_issue("subtitle-read", error, window, cx);
+            let failure_details = self.subtitle_issue("subtitle-read", error, cx);
             view = view.child(motion::enter(
                 text_id("subtitle-failure", error),
                 v_flex()
@@ -1952,7 +1945,6 @@ impl Desktop {
                 options = options.child(self.subtitle_issue(
                     "subtitle-warning",
                     &format!("部分字幕尚未确认：{message}"),
-                    window,
                     cx,
                 ));
             }
@@ -2009,10 +2001,7 @@ impl Desktop {
             view = view.child(motion::disclosure(
                 "text-source-choices",
                 show_text_choices,
-                options,
-                window,
-                cx,
-            ));
+                options));
         }
         view
     }
@@ -2760,7 +2749,7 @@ impl Desktop {
                 if text_required {
                     source = source.child(
                         box_section(icons::subtitles(), "文字来源")
-                            .child(self.text_source_view(window, cx)),
+                            .child(self.text_source_view(cx)),
                     );
                 }
                 source = source.child(self.conversion_recovery(cx));
@@ -2768,7 +2757,7 @@ impl Desktop {
             } else if text_required {
                 view = view.child(
                     box_section(icons::subtitles(), "文字来源")
-                        .child(self.text_source_view(window, cx)),
+                        .child(self.text_source_view(cx)),
                 );
             }
         }

@@ -247,13 +247,7 @@ fn transfer_meter(
         )
 }
 
-pub fn disclosure(
-    id: impl Into<ElementId>,
-    open: bool,
-    content: Div,
-    _window: &mut Window,
-    _cx: &mut App,
-) -> AnyElement {
+pub fn disclosure(id: impl Into<ElementId>, open: bool, content: Div) -> AnyElement {
     if open {
         // Keep intrinsic measurement, padding and child layout in the normal
         // tree. Measuring in prepaint and clipping to a previous frame's height
@@ -386,7 +380,7 @@ mod tests {
                         .debug_selector(|| "motion-reveal-content".into())
                         .h(self.content_height),
                 );
-            let reveal = disclosure("geometry-reveal", self.open, content, window, cx);
+            let reveal = crate::motion::disclosure("geometry-reveal", self.open, content);
             div()
                 .debug_selector(|| "motion-layout-root".into())
                 .flex()

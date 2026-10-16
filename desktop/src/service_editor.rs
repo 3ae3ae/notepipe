@@ -1011,7 +1011,7 @@ impl Desktop {
             );
         }
         view = view.child(connection);
-        if let Some(testing) = self.service_test_section(window, cx) {
+        if let Some(testing) = self.service_test_section( cx) {
             view = view.child(testing);
         }
         if let Some(status) = &editor.status
@@ -1139,7 +1139,6 @@ impl Desktop {
     /// so an empty 「检查服务」 heading never appears.
     fn service_test_section(
         &self,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let editor = self.settings_ui.editor.as_ref()?;
@@ -1288,10 +1287,7 @@ impl Desktop {
                 result = result.child(crate::motion::disclosure(
                     "service-test-details-content",
                     editor.test_details_open,
-                    details,
-                    window,
-                    cx,
-                ));
+                    details));
             }
             testing = testing.child(crate::motion::enter(
                 SharedString::from(format!(

@@ -176,10 +176,7 @@ impl Desktop {
                                             this.apply_language_preferences(cx)
                                         })),
                                 ),
-                        ),
-                        window,
-                        cx,
-                    )),
+                        ))),
             ));
         let mut recognition =
             group("asr-default-settings", "语音识别").child(settings_outlined_row(
@@ -294,18 +291,12 @@ impl Desktop {
                                     });
                                     this.commit_generation(next, cx);
                                 })),
-                        ),
-                        window,
-                        cx,
-                    ));
+                        )));
             let model_panel = self.default_model_readiness_panel(window, cx);
             recognition = recognition.detail(crate::motion::disclosure(
                 "default-model-management",
                 self.settings_ui.model_details_open,
-                model_panel,
-                window,
-                cx,
-            ));
+                model_panel));
         }
         let mut ai = group("ai-default-settings", "AI 处理")
             .child(
@@ -437,10 +428,7 @@ impl Desktop {
                                             }
                                         })),
                                 ),
-                        ),
-                    window,
-                    cx,
-                ));
+                        )));
         }
         let selected = value.options.formats.clone().unwrap_or_default();
         v_flex()

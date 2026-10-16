@@ -477,17 +477,6 @@ pub fn init(cx: &mut App) {
     sync_component_theme(false, cx);
 }
 
-/// 展开/收起内容的共享动效入口（经 theme 导出供页面统一使用）
-pub fn disclosure(
-    id: impl Into<gpui::ElementId>,
-    open: bool,
-    content: gpui::Div,
-    window: &mut Window,
-    cx: &mut App,
-) -> gpui::AnyElement {
-    crate::motion::disclosure(id, open, content, window, cx)
-}
-
 /// One baseline for ordinary actions; content buttons explicitly opt into auto height.
 pub fn control(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button {
     use gpui::Styled;

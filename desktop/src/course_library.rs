@@ -185,7 +185,7 @@ impl RenderOnce for LibraryDiagnostics {
                     });
                 }),
             )
-            .child(disclosure(
+            .child(crate::motion::disclosure(
                 SharedString::from(format!("library-diagnostics-content:{}", self.id)),
                 open,
                 v_flex()
@@ -214,10 +214,7 @@ impl RenderOnce for LibraryDiagnostics {
                                 .font_weight(FontWeight::NORMAL)
                                 .text_color(color(GRAY))
                             }),
-                    ),
-                window,
-                cx,
-            ))
+                    )))
     }
 }
 
@@ -967,7 +964,7 @@ impl Desktop {
         let state = self.library_list.clone();
         let items = Rc::new(items);
         let desktop = cx.weak_entity();
-        let element = list(state, move |index, window, cx| {
+        let element = list(state, move |index, _window, cx| {
             let Some(item) = items.get(index) else {
                 return div().into_any_element();
             };
@@ -979,7 +976,7 @@ impl Desktop {
                 layout,
             };
             desktop
-                .update(cx, |this, cx| this.library_item(item, row, window, cx))
+                .update(cx, |this, cx| this.library_item(item, row, cx))
                 .unwrap_or_else(|_| div().into_any_element())
         })
         .w_full()
@@ -1005,7 +1002,6 @@ impl Desktop {
         &mut self,
         item: &LibraryItem,
         row: LibraryRowContext,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (index, last, focus, layout) = (row.index, row.last, row.focus, row.layout);
@@ -1233,7 +1229,7 @@ impl Desktop {
                 let animate = !collapsed && self.enter_once(format!("folder-disclosure-{index}"));
                 let collection = self.course_collection(&body.entries, layout, animate, cx);
                 if animate {
-                    disclosure(("folder-disclosure", index), true, collection, window, cx)
+                    crate::motion::disclosure(("folder-disclosure", index), true, collection)
                 } else if collapsed {
                     div().hidden().into_any_element()
                 } else {
