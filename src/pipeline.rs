@@ -30,7 +30,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let local = Path::new(&cfg.url);
     let is_local = local.is_file();
     if !is_local {
-        crate::error::require_cmd("yt-dlp")?;
+        crate::error::require_ytdlp()?;
     }
     progress::stage("fetch", "start");
     let probed = if is_local {
@@ -386,7 +386,7 @@ async fn reprocess(
                 );
                 // 与主路径同一纪律：无法校验的现存文件已由 prepare_cached_media 归档，
                 // 此处只会真正下载新内容，不会把未校验文件标记为已校验
-                crate::error::require_cmd("yt-dlp")?;
+                crate::error::require_ytdlp()?;
                 progress::stage("download", "start");
                 fetch::download(&cfg.url, &cfg.media_path(), cfg.max_height, false).await?;
                 save_file_digest_async(cfg.media_path(), cfg.out_dir.join("media.sha256")).await?;
@@ -710,7 +710,7 @@ async fn run_prepared(
     crate::error::require_cmd("ffmpeg")?;
     crate::error::require_cmd("ffprobe")?;
     if !is_local {
-        crate::error::require_cmd("yt-dlp")?;
+        crate::error::require_ytdlp()?;
     }
     if selected.is_none() && cfg.provider != config::AsrProvider::Api {
         progress::stage("model/prepare", "start");
