@@ -173,6 +173,8 @@ struct Ledger {
     service_versions: BTreeMap<String, String>,
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     emitted: Mutex<HashSet<String>>,
+    /// Sending/Uncertain receipts by stable id: read from disk once, then kept in step by `save`.
+    unresolved: Mutex<Option<HashMap<String, Receipt>>>,
 }
 static ACTIVE: OnceLock<Mutex<Option<Arc<Ledger>>>> = OnceLock::new();
 fn active() -> Option<Arc<Ledger>> {
@@ -239,6 +241,9 @@ pub async fn watch_control() -> anyhow::Error {
 pub fn receipts(work_dir: &Path) -> Result<Vec<Receipt>> {
     read_receipts(&work_dir.join("requests"))
 }
+fn is_unresolved(receipt: &Receipt) -> bool {
+    matches!(receipt.state, State::Sending | State::Uncertain)
+}
 fn read_receipts(dir: &Path) -> Result<Vec<Receipt>> {
     if !dir.is_dir() {
         return Ok(vec![]);
@@ -267,6 +272,7 @@ impl Ledger {
             service_versions: versions.clone(),
             locks: Mutex::new(HashMap::new()),
             emitted: Mutex::new(HashSet::new()),
+            unresolved: Mutex::new(None),
         })
     }
     fn control(&self) -> Result<Control> {
@@ -334,7 +340,28 @@ impl Ledger {
             &self.dir.join(format!("{}.json", receipt.stable_id)),
             &serde_json::to_vec_pretty(receipt).map_err(Failure::local)?,
         )
-        .map_err(Failure::local)
+        .map_err(Failure::local)?;
+        if let Some(index) = self.unresolved.lock().map_err(Failure::local)?.as_mut() {
+            if is_unresolved(receipt) {
+                index.insert(receipt.stable_id.clone(), receipt.clone());
+            } else {
+                index.remove(&receipt.stable_id);
+            }
+        }
+        Ok(())
+    }
+    fn unresolved_receipts(&self) -> std::result::Result<Vec<Receipt>, Failure> {
+        let mut index = self.unresolved.lock().map_err(Failure::local)?;
+        if index.is_none() {
+            let loaded = read_receipts(&self.dir)
+                .map_err(Failure::local)?
+                .into_iter()
+                .filter(is_unresolved)
+                .map(|receipt| (receipt.stable_id.clone(), receipt))
+                .collect();
+            *index = Some(loaded);
+        }
+        Ok(index.as_ref().map_or_else(Vec::new, |index| index.values().cloned().collect()))
     }
     #[cfg(test)]
     fn send(
@@ -431,10 +458,8 @@ impl Ledger {
         }
         // An unknown prerequisite cannot be bypassed by splitting/relaxing the payload
         // or by beginning downstream summary requests. Unrelated local work remains possible.
-        for unresolved in read_receipts(&self.dir).map_err(Failure::local)? {
-            if unresolved.stable_id != stable_id
-                && matches!(unresolved.state, State::Sending | State::Uncertain)
-            {
+        for unresolved in self.unresolved_receipts()? {
+            if unresolved.stable_id != stable_id {
                 // Live in-flight requests may run concurrently; only stale Sending from another
                 // process is unknown. A lock currently held in this context proves it is live.
                 let live = self
