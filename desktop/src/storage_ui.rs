@@ -1718,10 +1718,14 @@ impl Desktop {
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();
-            let worker = cx
-                .background_executor()
-                .spawn(async move { storage::cleanup_backup(&backup, &roots, &worker_cancel) });
-            let result = worker.await;
+            // 清理是同步删除文件；见 crate::spawn_blocking_io 的说明
+            let worker = crate::spawn_blocking_io(move || {
+                storage::cleanup_backup(&backup, &roots, &worker_cancel)
+            });
+            let result = worker
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("清理工作线程意外结束")));
             let _ = this.update_in(cx, |this, _, cx| {
                 this.storage_ui.busy = false;
                 this.storage_ui.cancel = None;
