@@ -225,6 +225,21 @@ pub(super) struct CourseLocation {
     pub relative: PathBuf,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LibraryIssueKind {
+    Scan,
+    Folders,
+    Titles,
+}
+
+/// A read failure in one registered library; recovery cards claim theirs by (root, kind).
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct LibraryIssue {
+    pub root: PathBuf,
+    pub kind: LibraryIssueKind,
+    pub message: String,
+}
+
 /// Filesystem facts are collected by the library worker and read by the UI.
 #[derive(Default)]
 pub(super) struct LibraryViewCache {
@@ -232,7 +247,7 @@ pub(super) struct LibraryViewCache {
     pub recovery: BTreeMap<PathBuf, organize::Recovery>,
     pub title_recovery: BTreeMap<PathBuf, organize::Recovery>,
     aliases: BTreeMap<PathBuf, BTreeMap<PathBuf, String>>,
-    alias_issues: Vec<String>,
+    alias_issues: Vec<LibraryIssue>,
 }
 
 impl LibraryViewCache {
@@ -251,9 +266,11 @@ impl LibraryViewCache {
             Ok(names) => {
                 cache.aliases.insert(location.root.clone(), names);
             }
-            Err(error) => cache
-                .alias_issues
-                .push(format!("{}的显示名称尚未读取：{error:#}", location.name)),
+            Err(error) => cache.alias_issues.push(LibraryIssue {
+                root: location.root.clone(),
+                kind: LibraryIssueKind::Titles,
+                message: format!("{}的显示名称尚未读取：{error:#}", location.name),
+            }),
         }
         if let Some(scan) = scan {
             for course in &scan.courses {
@@ -366,6 +383,14 @@ impl Render for CourseRenameDialog {
 }
 
 impl Desktop {
+    fn library_issue_messages(&self, root: &std::path::Path, kind: LibraryIssueKind) -> Vec<String> {
+        self.library_issues
+            .iter()
+            .filter(|issue| issue.kind == kind && issue.root == root)
+            .map(|issue| issue.message.clone())
+            .collect()
+    }
+
     pub fn course_display_title(&self, course: &Course) -> String {
         self.courses
             .iter()
@@ -574,13 +599,8 @@ impl Desktop {
                 let restore = location.root.clone();
                 let rebuild = location.root.clone();
                 let folder = location.root.clone();
-                let prefix = format!("{}的文件夹记录暂时无法读取：", location.name);
-                let diagnostics: Vec<_> = self
-                    .library_issues
-                    .iter()
-                    .filter(|issue| issue.starts_with(&prefix))
-                    .cloned()
-                    .collect();
+                let diagnostics =
+                    self.library_issue_messages(&location.root, LibraryIssueKind::Folders);
                 let mut row = h_flex().gap_2().flex_wrap();
                 if recovery.has_backup {
                     row = row.child(
@@ -632,13 +652,8 @@ impl Desktop {
             }
             if let Some(recovery) = self.library_view_cache.title_recovery.get(&location.root) {
                 has_notice = true;
-                let prefix = format!("{}的显示名称尚未读取：", location.root.display());
-                let diagnostics: Vec<_> = self
-                    .library_issues
-                    .iter()
-                    .filter(|issue| issue.starts_with(&prefix))
-                    .cloned()
-                    .collect();
+                let diagnostics =
+                    self.library_issue_messages(&location.root, LibraryIssueKind::Titles);
                 let mut row = h_flex().gap_2().flex_wrap();
                 for reset in [false, true] {
                     if !reset && !recovery.has_backup {
@@ -789,29 +804,18 @@ impl Desktop {
             .library_issues
             .iter()
             .filter(|issue| {
-                !self.workspace.as_ref().is_some_and(|workspace| {
-                    workspace.state.libraries.iter().any(|location| {
-                        !all_access.unavailable.contains(&location.root)
-                            && ((self
-                                .library_view_cache
-                                .recovery
-                                .contains_key(&location.root)
-                                && issue.starts_with(&format!(
-                                    "{}的文件夹记录暂时无法读取：",
-                                    location.name
-                                )))
-                                || (self
-                                    .library_view_cache
-                                    .title_recovery
-                                    .contains_key(&location.root)
-                                    && issue.starts_with(&format!(
-                                        "{}的显示名称尚未读取：",
-                                        location.root.display()
-                                    ))))
-                    })
-                })
+                let claimed = match issue.kind {
+                    LibraryIssueKind::Scan => false,
+                    LibraryIssueKind::Folders => {
+                        self.library_view_cache.recovery.contains_key(&issue.root)
+                    }
+                    LibraryIssueKind::Titles => {
+                        self.library_view_cache.title_recovery.contains_key(&issue.root)
+                    }
+                };
+                !(claimed && !all_access.unavailable.contains(&issue.root))
             })
-            .cloned()
+            .map(|issue| issue.message.clone())
             .collect();
         if !remaining_issues.is_empty() && coverage != crate::storage::LibraryCoverage::Unavailable
         {

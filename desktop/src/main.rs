@@ -242,7 +242,7 @@ struct Desktop {
     library: organize::Library,
     library_root: PathBuf,
     library_error: Option<String>,
-    library_issues: Vec<String>,
+    library_issues: Vec<course_library::LibraryIssue>,
     library_indexes: BTreeMap<PathBuf, organize::Library>,
     library_view_cache: course_library::LibraryViewCache,
     library_generation: u64,
@@ -1059,20 +1059,29 @@ impl Desktop {
                     match scan {
                         Ok(scan) => {
                             this.courses.extend(scan.courses);
-                            this.library_issues.extend(scan.issues);
+                            this.library_issues.extend(scan.issues.into_iter().map(|message| {
+                                course_library::LibraryIssue {
+                                    root: location.root.clone(),
+                                    kind: course_library::LibraryIssueKind::Scan,
+                                    message,
+                                }
+                            }));
                         }
-                        Err(error) => this
-                            .library_issues
-                            .push(format!("{}读取失败：{error:#}", location.name)),
+                        Err(error) => this.library_issues.push(course_library::LibraryIssue {
+                            root: location.root.clone(),
+                            kind: course_library::LibraryIssueKind::Scan,
+                            message: format!("{}读取失败：{error:#}", location.name),
+                        }),
                     }
                     match organization {
                         Ok(library) => {
                             this.library_indexes.insert(location.root, library);
                         }
-                        Err(error) => this.library_issues.push(format!(
-                            "{}的文件夹记录暂时无法读取：{error:#}",
-                            location.name
-                        )),
+                        Err(error) => this.library_issues.push(course_library::LibraryIssue {
+                            root: location.root.clone(),
+                            kind: course_library::LibraryIssueKind::Folders,
+                            message: format!("{}的文件夹信息已损坏：{error:#}", location.name),
+                        }),
                     }
                 }
                 this.courses.sort_by_key(|c| std::cmp::Reverse(c.modified));
