@@ -20,6 +20,9 @@ fn model_status_row(
         .when(divider, |row| row.border_b_1().border_color(color(HAIRLINE)))
 }
 
+/// Preparation log lines shown when expanded; older lines stay in the task log.
+const LOG_TAIL: usize = 80;
+
 #[derive(Clone)]
 struct Request {
     provider: AsrProvider,
@@ -61,12 +64,19 @@ impl Entry {
         self.checking
     }
 }
+/// How the last preparation ended, kept with the request it belongs to.
+struct Outcome {
+    key: String,
+    message: String,
+    error: bool,
+    cancelled: bool,
+}
 #[derive(Default)]
 pub(super) struct State {
     entries: BTreeMap<String, Entry>,
+    /// The request the running model job is preparing; taken when it exits.
     preparing: Option<Request>,
-    result: Option<(String, bool)>,
-    cancelled: bool,
+    outcome: Option<Outcome>,
     details: bool,
     cache_details: std::collections::BTreeSet<String>,
     /// 渲染期只登记 key，真正的 entries 写入与后台检查在 cx.defer 中执行
@@ -148,21 +158,29 @@ impl Desktop {
         model: Option<&str>,
         root: &Path,
     ) -> ModelSetupSnapshot {
-        let request = Request::new(provider, model, root);
+        let key = Request::new(provider, model, root).key();
         let state = &self.settings_ui.model_diagnostics;
-        let entry = state.entries.get(&request.key());
-        let matching = state
-            .preparing
-            .as_ref()
-            .is_some_and(|active| active.key() == request.key());
+        let entry = state.entries.get(&key);
+        let outcome = state.outcome.as_ref().filter(|outcome| outcome.key == key);
         ModelSetupSnapshot {
             checking: entry.is_none_or(Entry::checking),
             result: entry.and_then(|entry| entry.result.clone()),
             device_issue: self.model_device_issue(provider),
-            preparing: matching && self.kind == Kind::Models && self.job.is_some(),
-            notice: matching.then(|| state.result.clone()).flatten(),
-            cancelled: matching && state.cancelled,
+            preparing: self.is_preparing(&key),
+            notice: outcome.map(|outcome| (outcome.message.clone(), outcome.error)),
+            cancelled: outcome.is_some_and(|outcome| outcome.cancelled),
         }
+    }
+
+    /// The request a running model job is preparing.
+    fn active_preparation(&self) -> Option<&Request> {
+        (self.kind == Kind::Models && self.job.is_some())
+            .then_some(self.settings_ui.model_diagnostics.preparing.as_ref())
+            .flatten()
+    }
+    fn is_preparing(&self, key: &str) -> bool {
+        self.active_preparation()
+            .is_some_and(|active| active.key() == key)
     }
 
     pub(crate) fn prepare_setup_model(
@@ -280,7 +298,7 @@ impl Desktop {
             .collect::<BTreeMap<_, _>>();
         let default = self.default_model_request();
         requests.insert(default.key(), default);
-        if let Some(request) = self.settings_ui.model_diagnostics.preparing.clone() {
+        if let Some(request) = self.active_preparation().cloned() {
             requests.insert(request.key(), request);
         }
         for request in requests.into_values() {
@@ -315,10 +333,10 @@ impl Desktop {
             cx.notify();
             return;
         }
-        self.settings_ui.model_diagnostics.preparing = Some(request);
-        self.settings_ui.model_diagnostics.result = None;
-        self.settings_ui.model_diagnostics.cancelled = false;
-        self.settings_ui.model_diagnostics.details = false;
+        let state = &mut self.settings_ui.model_diagnostics;
+        state.preparing = Some(request);
+        state.outcome = None;
+        state.details = false;
         self.start_model_preparation(cx);
     }
     pub fn model_preparation_finished(
@@ -327,34 +345,36 @@ impl Desktop {
         cancelled: bool,
         cx: &mut Context<Self>,
     ) {
-        self.settings_ui.model_diagnostics.cancelled = cancelled && !success;
         let request = self
             .settings_ui
             .model_diagnostics
             .preparing
-            .clone()
+            .take()
             .unwrap_or_else(|| self.default_model_request());
-        let result = (
-            if success {
-                format!("{} 已准备完成", request.model)
-            } else if cancelled {
-                format!("{} 的准备已停止", request.model)
-            } else {
-                format!(
-                    "{} 的准备未完成：{}",
-                    request.model,
-                    self.task_error.as_deref().unwrap_or("准备失败")
-                )
-            },
-            !success && !cancelled,
-        );
-        self.settings_ui.model_diagnostics.result = Some(result.clone());
-        // 同步到引导页的准备记录（取代渲染期的 retain_setup_model_result）
+        let name = course2md::config::model_label(&request.model);
+        let message = if success {
+            format!("{name} 已准备完成")
+        } else if cancelled {
+            format!("{name} 的准备已停止")
+        } else {
+            format!(
+                "{name} 的准备未完成：{}",
+                self.task_error.as_deref().unwrap_or("准备失败")
+            )
+        };
+        let error = !success && !cancelled;
+        let cancelled = cancelled && !success;
         self.onboarding.apply_model_preparation_result(
             &request.key(),
-            result,
-            cancelled && !success,
+            (message.clone(), error),
+            cancelled,
         );
+        self.settings_ui.model_diagnostics.outcome = Some(Outcome {
+            key: request.key(),
+            message,
+            error,
+            cancelled,
+        });
         self.refresh_model_diagnostics(cx);
         cx.notify();
     }
@@ -596,14 +616,7 @@ impl Desktop {
             ));
         }
         if let Some(status) = status {
-            // 准备进行中必须展示真实阶段：缓存检查还停留在「待下载」会与进度条矛盾（review4#5）
-            let being_prepared = self
-                .settings_ui
-                .model_diagnostics
-                .preparing
-                .as_ref()
-                .is_some_and(|request| request.key() == key);
-            let (kind, label, description) = if being_prepared {
+            let (kind, label, description) = if self.is_preparing(&key) {
                 (BadgeKind::Progress, "准备中", None)
             } else {
                 match status.state {
@@ -779,14 +792,7 @@ impl Desktop {
     ) -> (Div, Vec<AnyElement>) {
         let mut extras: Vec<AnyElement> = Vec::new();
         let request = request.clone();
-        let active = self.kind == Kind::Models
-            && self.job.is_some()
-            && self
-                .settings_ui
-                .model_diagnostics
-                .preparing
-                .as_ref()
-                .is_some_and(|active| active.key() == key);
+        let active = self.is_preparing(key);
         let request_for_check = request.clone();
         let recheck = outline_pill(SharedString::from(format!("recheck-model-{key}"))).settings_text()
             .icon(icons::refresh())
@@ -914,9 +920,7 @@ impl Desktop {
                     )),
             );
         }
-        if self.kind == Kind::Models
-            && self.job.is_some()
-            && let Some(active) = &self.settings_ui.model_diagnostics.preparing
+        if let Some(active) = self.active_preparation()
             && active.key() != request.key()
         {
             view = view.child(
@@ -930,16 +934,18 @@ impl Desktop {
                     )),
             );
         }
-        if let Some((message, error)) = &self.settings_ui.model_diagnostics.result {
+        let outcome = self.settings_ui.model_diagnostics.outcome.as_ref();
+        if let Some(outcome) = outcome {
             view = view.child(
-                settings_value("model-prepare-result", message.clone())
+                settings_value("model-prepare-result", outcome.message.clone())
                     .role(Role::Status)
-                    .text_color(color(if *error { DANGER } else { INK })),
+                    .text_color(color(if outcome.error { DANGER } else { INK })),
             );
         }
-        if self.settings_ui.model_diagnostics.preparing.is_some()
+        // Logs belong to the last model job: shown while it runs and after it ends.
+        if self.kind == Kind::Models
             && !self.logs.is_empty()
-            && self.kind == Kind::Models
+            && (self.job.is_some() || outcome.is_some())
         {
             view = view.child(
                 control("model-preparation-details").settings_text()
@@ -965,10 +971,12 @@ impl Desktop {
                         "准备日志",
                     )
                     .child(
-                        settings_value(
-                            "model-preparation-log",
-                            self.logs.iter().cloned().collect::<Vec<_>>().join("\n"),
-                        )
+                        settings_value("model-preparation-log", {
+                            let tail = self.logs.len().saturating_sub(LOG_TAIL);
+                            let lines: Vec<&str> =
+                                self.logs.range(tail..).map(String::as_str).collect();
+                            lines.join("\n")
+                        })
                         .text_size(TEXT_SETTINGS_AUX),
                     ),
                 );
