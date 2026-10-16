@@ -344,7 +344,7 @@ impl RenderOnce for SingleChoiceGroup {
                     div().w(icon_size).h(icon_size).flex_shrink_0()
                         .flex().items_center().justify_center()
                         .when(cfg!(test), |icon| icon.debug_selector(move || {
-                            format!("{debug_kind}-choice-icon-{index}").into()
+                            format!("{debug_kind}-choice-icon-{index}")
                         }))
                         .when_some(self.icons.get(&value).cloned(), |slot, icon| {
                             slot.child(icon.size(icon_size))
@@ -357,7 +357,7 @@ impl RenderOnce for SingleChoiceGroup {
                         .text_ellipsis()
                         .when(cfg!(test), |label| {
                             label.debug_selector(move || {
-                                format!("{debug_kind}-choice-label-{index}").into()
+                                format!("{debug_kind}-choice-label-{index}")
                             })
                         })
                         .child(label.clone()),
@@ -400,7 +400,7 @@ impl RenderOnce for SingleChoiceGroup {
                     .child(content)
                     .when(cfg!(test), |radio| {
                         radio.debug_selector(move || {
-                            format!("{debug_kind}-choice-option-{index}").into()
+                            format!("{debug_kind}-choice-option-{index}")
                         })
                     })
                     .on_change(move |_, _, window, cx| {
@@ -588,7 +588,7 @@ mod tests {
             let mut font = window.text_style().font();
             font.weight = FontWeight::MEDIUM;
             window.text_system().shape_line("语音识别".into(), px(14.), &[TextRun {
-                len: "语音识别".len(), font, color: gpui::black().into(),
+                len: "语音识别".len(), font, color: gpui::black(),
                 background_color: None, underline: None, strikethrough: None,
             }], None).width.ceil()
         });
@@ -747,8 +747,8 @@ mod tests {
         assert!(indicator.right() <= lane.right() + px(0.5));
         assert_eq!(indicator.top(), lane.top());
         assert_eq!(indicator.bottom(), lane.bottom());
-        for index in 0..count {
-            let option = choice_bounds(cx, OPTION_SELECTORS[index]);
+        for selector in &OPTION_SELECTORS[..count] {
+            let option = choice_bounds(cx, selector);
             assert!((option.size.width - lane.size.width / count as f32).abs() <= px(0.5));
             assert!((indicator.size.width - option.size.width).abs() <= px(0.5));
         }

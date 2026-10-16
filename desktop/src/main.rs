@@ -383,15 +383,15 @@ impl Desktop {
         }
         self.save_reading_position(cx);
         self.cancel_storage_for_close();
-        if let Some(workspace) = &mut self.workspace {
-            if let Err(error) = workspace.transaction(|state| {
+        if let Some(workspace) = &mut self.workspace
+            && let Err(error) = workspace.transaction(|state| {
                 state.stop_session();
                 Ok(())
-            }) {
-                self.workspace_error = Some(format!("无法保存退出前的状态，窗口暂不关闭：{error:#}"));
-                cx.notify();
-                return false;
-            }
+            })
+        {
+            self.workspace_error = Some(format!("无法保存退出前的状态，窗口暂不关闭：{error:#}"));
+            cx.notify();
+            return false;
         }
         self.cancel_background_reads();
         self.closing = true;

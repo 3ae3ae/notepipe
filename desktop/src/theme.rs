@@ -9,7 +9,7 @@ pub use choice_group::SingleChoiceGroup;
 
 macro_rules! tokens {
     ($($name:ident),+ $(,)?) => {
-        #[allow(non_camel_case_types)]
+        #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(usize)]
         pub enum ColorToken { $($name),+ }
@@ -792,7 +792,7 @@ pub fn nav_action(
     } else {
         (gpui::Rgba { a: 0., ..color(CANVAS) }, color(GRAY))
     };
-    custom_fill(control(id), bg, fg, true, cx).px(rems(14. / 14.)).gap(ICON_GAP)
+    custom_fill(control(id), bg, fg, true, cx).px(rems(1.)).gap(ICON_GAP)
 }
 
 /// M3 filled tonal button: a secondary action that still carries weight,

@@ -237,16 +237,16 @@ impl Desktop {
                             .accessibility_label("关闭提示")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.transient_task_result = None;
-                                if let Some(workspace) = &mut this.workspace {
-                                    if let Err(error) = workspace.transaction(|state| {
+                                if let Some(workspace) = &mut this.workspace
+                                    && let Err(error) = workspace.transaction(|state| {
                                         if let Some(task) = state.task_mut(&dismiss_id) {
                                             task.unread = false;
                                         }
                                         Ok(())
-                                    }) {
-                                        this.workspace_error =
-                                            Some(format!("提示关闭状态未能保存：{error:#}"));
-                                    }
+                                    })
+                                {
+                                    this.workspace_error =
+                                        Some(format!("提示关闭状态未能保存：{error:#}"));
                                 }
                                 cx.notify();
                             })),
