@@ -56,7 +56,7 @@ gpui = { path = ".deps/zed/crates/gpui", features = ["test-support"] }
 
 
 [profile.dev]
-debug = 0
+debug = "line-tables-only"
 
 [profile.release]
 lto = "thin"
