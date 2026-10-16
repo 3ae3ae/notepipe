@@ -9,9 +9,12 @@ use gpui_component::{Sizable, h_flex, v_flex};
 use std::time::Duration;
 
 pub const ENTER_MS: u64 = 160;
+/// Value changes and state entrances share the overlay show/dismiss range.
 pub const VALUE_MS: u64 = 200;
-/// 调色板切换过渡时长（theme::apply_preference 用，纳入同一运动词汇表）
+pub const SELECTION_MS: u64 = 180;
 pub const PALETTE_MS: u64 = 280;
+const SPINNER_TURN_MS: u64 = 1000;
+const INDETERMINATE_SWEEP_MS: u64 = 1400;
 
 pub fn ease_out(t: f32) -> f32 {
     1. - (1. - t.clamp(0., 1.)).powi(3)
@@ -43,8 +46,7 @@ pub fn state_enter<E: IntoElement + Styled + 'static>(
     let trace_id = id.clone();
     view.with_animation(
         id,
-        // 与 Show/dismiss overlay 同一 starting range（150-220ms，states-and-motion.md）
-        Animation::new(Duration::from_millis(200))
+        Animation::new(Duration::from_millis(VALUE_MS))
             .with_easing(ease_out)
             .with_max_fps(60.),
         move |view, t| {
@@ -65,7 +67,7 @@ pub fn spinner(id: impl Into<ElementId>, cx: &App) -> AnyElement {
     }
     icon.with_animation(
         id,
-        Animation::new(Duration::from_millis(1000))
+        Animation::new(Duration::from_millis(SPINNER_TURN_MS))
             .repeat()
             .with_max_fps(60.),
         |icon, t| icon.rotate(radians(std::f32::consts::TAU * t)),
@@ -79,7 +81,7 @@ pub fn indeterminate_progress(id: impl Into<ElementId>, cx: &App) -> AnyElement 
     let segment = if cx.reduce_motion() {
         segment.left(relative(0.35)).into_any_element()
     } else {
-        segment.with_animation(id, Animation::new(Duration::from_millis(1400)).repeat().with_max_fps(60.),
+        segment.with_animation(id, Animation::new(Duration::from_millis(INDETERMINATE_SWEEP_MS)).repeat().with_max_fps(60.),
             |segment, t| segment.left(relative(t * 1.3 - 0.3))).into_any_element()
     };
     div().relative().w_full().h(px(3.)).rounded_full().overflow_hidden()
@@ -115,7 +117,7 @@ pub fn selection_value(
     let amount = gpui_base::transition(
         id,
         target,
-        gpui_base::Transition::new(Duration::from_millis(180)).ease(|t| t * t * (3. - 2. * t)),
+        gpui_base::Transition::new(Duration::from_millis(SELECTION_MS)).ease(|t| t * t * (3. - 2. * t)),
         window,
         cx,
     );
