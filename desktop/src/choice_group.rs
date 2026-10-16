@@ -25,7 +25,6 @@ type Change = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 struct OptionItem {
     value: SharedString,
     label: SharedString,
-    disabled: bool,
 }
 
 #[derive(IntoElement)]
@@ -39,8 +38,6 @@ pub struct SingleChoiceGroup {
     segmented: bool,
     label_text_size: Option<Rems>,
     tabs: bool,
-    activate_selected: bool,
-    vertical: bool,
     provided_focus: Vec<FocusHandle>,
     disabled: bool,
     on_change: Option<Change>,
@@ -58,8 +55,6 @@ impl SingleChoiceGroup {
             segmented: false,
             label_text_size: None,
             tabs: false,
-            activate_selected: false,
-            vertical: false,
             provided_focus: Vec::new(),
             disabled: false,
             on_change: None,
@@ -75,7 +70,6 @@ impl SingleChoiceGroup {
             .map(|(value, label)| OptionItem {
                 value: value.into(),
                 label: label.into(),
-                disabled: false,
             })
             .collect();
         self
@@ -106,16 +100,6 @@ impl SingleChoiceGroup {
         self.tabs = true;
         self
     }
-    /// A top-level tab can also return from a detail view to its section root.
-    pub fn activate_selected(mut self) -> Self {
-        self.activate_selected = true;
-        self
-    }
-    pub fn vertical(mut self) -> Self {
-        self.vertical = true;
-        self.full_width = true;
-        self
-    }
     pub fn focus_handles(mut self, handles: impl IntoIterator<Item = FocusHandle>) -> Self {
         self.provided_focus = handles.into_iter().collect();
         self
@@ -129,18 +113,8 @@ impl SingleChoiceGroup {
         self.reveal_in = Some(scroll);
         self
     }
-    /// 整组禁用（预留能力：尚无调用方；用于可用性门控场景，如环境不满足时禁用某组选择）
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
-        self
-    }
-    /// 按值禁用单个选项（预留能力：尚无调用方；用于如「未检测到 GPU 时禁用 GPU 选项」）
-    pub fn disable_option(mut self, value: impl AsRef<str>) -> Self {
-        for option in &mut self.options {
-            if option.value.as_ref() == value.as_ref() {
-                option.disabled = true;
-            }
-        }
         self
     }
     pub fn on_change(
@@ -154,7 +128,7 @@ impl SingleChoiceGroup {
 
 #[derive(Clone)]
 struct Navigation {
-    options: Vec<OptionItem>,
+    values: Vec<SharedString>,
     focus: Vec<FocusHandle>,
     selected: Option<usize>,
     on_change: Option<Change>,
@@ -166,51 +140,39 @@ enum Direction {
     First,
     Last,
 }
-fn destination(enabled: &[usize], current: Option<usize>, direction: Direction) -> Option<usize> {
-    if enabled.is_empty() {
+/// Arrow keys wrap; with no current option, Next starts at the first and Previous at the last.
+fn destination(count: usize, current: Option<usize>, direction: Direction) -> Option<usize> {
+    if count == 0 {
         return None;
     }
-    let position = current.and_then(|current| enabled.iter().position(|index| *index == current));
     Some(match direction {
-        Direction::First => enabled[0],
-        Direction::Last => *enabled.last().unwrap(),
-        Direction::Next => enabled[position.map_or(0, |index| (index + 1) % enabled.len())],
-        Direction::Previous => {
-            enabled[position.map_or(enabled.len() - 1, |index| {
-                (index + enabled.len() - 1) % enabled.len()
-            })]
-        }
+        Direction::First => 0,
+        Direction::Last => count - 1,
+        Direction::Next => current.map_or(0, |index| (index + 1) % count),
+        Direction::Previous => current.map_or(count - 1, |index| (index + count - 1) % count),
     })
 }
 impl Navigation {
     fn navigate(&self, direction: Direction, window: &mut Window, cx: &mut App) {
-        let enabled = self
-            .options
-            .iter()
-            .enumerate()
-            .filter(|(_, option)| !option.disabled)
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
         let current = self
             .focus
             .iter()
             .position(|focus| focus.is_focused(window))
             .or(self.selected);
-        let Some(index) = destination(&enabled, current, direction) else {
+        let Some(index) = destination(self.values.len(), current, direction) else {
             return;
         };
         self.focus[index].focus(window, cx);
         if self.selected != Some(index)
             && let Some(on_change) = &self.on_change
         {
-            on_change(&self.options[index].value, window, cx);
+            on_change(&self.values[index], window, cx);
         }
     }
 }
 /// Surfaces stay behind the interactive item. Hover/focus cannot erase selection.
 fn item_style<T: Styled + StatefulInteractiveElement + gpui::prelude::FluentBuilder>(
     item: T,
-    vertical: bool,
     height: Pixels,
 ) -> T {
     item.relative()
@@ -228,19 +190,14 @@ fn item_style<T: Styled + StatefulInteractiveElement + gpui::prelude::FluentBuil
         .bg(gpui::transparent_black())
         .text_size(super::TEXT_BODY)
         .font_weight(FontWeight::MEDIUM)
-        .when(vertical, |item| item.w_full())
-        .when(!vertical, |item| item.flex_1())
+        .flex_1()
         .hover(|style| style.bg(super::color(super::INK).opacity(0.035)))
         .active(|style| style.bg(super::color(super::INK).opacity(0.075)))
         .focus_visible(|style| style.border_color(super::color(super::ACCENT)))
 }
 impl RenderOnce for SingleChoiceGroup {
-    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        if self.disabled {
-            self.options
-                .iter_mut()
-                .for_each(|option| option.disabled = true);
-        }
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let disabled = self.disabled;
         let state = window.use_keyed_state(self.id.clone(), cx, |_, _| {
             BTreeMap::<SharedString, FocusHandle>::new()
         });
@@ -263,11 +220,13 @@ impl RenderOnce for SingleChoiceGroup {
             .options
             .iter()
             .position(|option| Some(&option.value) == self.value.as_ref());
-        let entry = selected
-            .filter(|index| !self.options[*index].disabled)
-            .or_else(|| self.options.iter().position(|option| !option.disabled));
+        let entry = (!disabled).then(|| selected.unwrap_or(0));
         let navigation = Navigation {
-            options: self.options.clone(),
+            values: if disabled {
+                Vec::new()
+            } else {
+                self.options.iter().map(|option| option.value.clone()).collect()
+            },
             focus: handles.clone(),
             selected,
             on_change: self.on_change.clone(),
@@ -278,10 +237,9 @@ impl RenderOnce for SingleChoiceGroup {
         let last = navigation;
         let count = self.options.len();
         let scale = f32::from(window.rem_size()) / 14.;
-        let segmented = self.segmented && !self.vertical;
+        let segmented = self.segmented;
         let inset = if segmented { 0. } else { 2. * scale };
         let item_height = px(if segmented { 40. * scale } else { 36. * scale });
-        let vertical = self.vertical;
         let position = crate::motion::selection_value(
             ElementId::NamedChild(self.id.clone().into(), "selection-position".into()),
             selected.unwrap_or(0) as f32,
@@ -289,45 +247,41 @@ impl RenderOnce for SingleChoiceGroup {
             cx,
         )
         .clamp(0., count.saturating_sub(1) as f32);
-        // Text shaping uses the current font and size. Equal slots keep labels still
-        // while the selected surface moves, including in content-sized toolbars.
-        let mut font = window.text_style().font();
-        font.weight = FontWeight::MEDIUM;
-        let label_width = self
-            .options
-            .iter()
-            .map(|option| {
-                let run = TextRun {
-                    len: option.label.len(),
-                    font: font.clone(),
-                    color: super::color(super::INK).into(),
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let width = window
-                    .text_system()
-                    .shape_line(option.label.clone(), self.label_text_size.map(|size| size.to_pixels(window.rem_size())).unwrap_or(window.rem_size()), &[run], None)
-                    .width;
-                f32::from(width.ceil())
-            })
-            .fold(0_f32, f32::max);
-        // Measure the longest label for content-sized tracks. Each option's
-        // icon and intrinsic-width label are centered together inside its cell;
-        // selection changes only the surface, never the content geometry.
         let icon_size = rems(18. / 14.);
-        let icon_and_gap = f32::from(rems(26. / 14.).to_pixels(window.rem_size()));
-        let content_width = label_width + icon_and_gap;
-        let padding = f32::from(rems(if segmented { 8. / 14. } else { 12. / 14. })
-            .to_pixels(window.rem_size())) * 2.;
-        let slot_width = (content_width + padding + 4.).ceil();
+        // A content-sized group gives every option the slot of its longest
+        // label, so labels stay still while the selected surface moves.
+        // Full-width groups divide the parent instead and need no measurement.
+        let content_width = (!self.full_width).then(|| {
+            let mut font = window.text_style().font();
+            font.weight = FontWeight::MEDIUM;
+            let size = self.label_text_size.unwrap_or(super::TEXT_BODY).to_pixels(window.rem_size());
+            let label_width = self
+                .options
+                .iter()
+                .map(|option| {
+                    let run = TextRun {
+                        len: option.label.len(),
+                        font: font.clone(),
+                        color: super::color(super::INK).into(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+                    let shaped = window.text_system().shape_line(option.label.clone(), size, &[run], None);
+                    f32::from(shaped.width.ceil())
+                })
+                .fold(0_f32, f32::max);
+            let icon_and_gap = f32::from(rems(26. / 14.).to_pixels(window.rem_size()));
+            let padding = f32::from(rems(if segmented { 8. / 14. } else { 12. / 14. }).to_pixels(window.rem_size())) * 2.;
+            // The 2px focus border on each side belongs to the slot.
+            ((label_width + icon_and_gap + padding + 4.).ceil()) * count as f32 + inset * 2. + 2.
+        });
         let mut lane = gpui_base::h_flex()
             .relative()
             .w_full()
             .min_w_0()
             .items_stretch()
             .when(segmented, |lane| lane.rounded_full().overflow_hidden())
-            .when(vertical, |lane| lane.flex_col().gap(px(4. * scale)))
             .when(cfg!(test), |lane| {
                 lane.debug_selector(|| "full-choice-lane".into())
             });
@@ -348,18 +302,10 @@ impl RenderOnce for SingleChoiceGroup {
                     // M3 segmented buttons and navigation share the tonal
                     // secondary container as the selected surface.
                     .bg(super::color(super::SECONDARY_CONTAINER))
-                    .when(!vertical, |fill| {
-                        fill.top_0()
-                            .bottom_0()
-                            .left(relative(position / count as f32))
-                            .w(relative(1. / count as f32))
-                    })
-                    .when(vertical, |fill| {
-                        fill.left_0()
-                            .right_0()
-                            .top(px(position * (40. * scale)))
-                            .h(item_height)
-                    })
+                    .top_0()
+                    .bottom_0()
+                    .left(relative(position / count as f32))
+                    .w(relative(1. / count as f32))
                     .when(cfg!(test), |fill| {
                         fill.debug_selector(|| "full-choice-indicator".into())
                     }),
@@ -374,7 +320,6 @@ impl RenderOnce for SingleChoiceGroup {
         }
         for (index, option) in self.options.into_iter().enumerate() {
             let checked = selected == Some(index);
-            let activate_selected = self.activate_selected;
             let focus = handles[index].clone().tab_stop(entry == Some(index));
             let callback = self.on_change.clone();
             let value = option.value.clone();
@@ -419,13 +364,13 @@ impl RenderOnce for SingleChoiceGroup {
                 );
             if self.tabs {
                 let click_focus = focus.clone();
-                let tab = item_style(gpui_base::Tab::new(value.clone()), vertical, item_height)
+                let tab = item_style(gpui_base::Tab::new(value.clone()), item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
                     .when(segmented, |item| item.px(rems(8. / 14.)).rounded_none()
                         .when(index == 0, |item| item.rounded_l_full())
                         .when(index + 1 == count, |item| item.rounded_r_full()))
                     .selected(checked)
-                    .disabled(option.disabled)
+                    .disabled(disabled)
                     .accessibility_label(label)
                     .set_position(index + 1, count)
                     .track_focus(&focus)
@@ -433,27 +378,25 @@ impl RenderOnce for SingleChoiceGroup {
                     .child(content)
                     .on_click(move |_, window, cx| {
                         click_focus.focus(window, cx);
-                        if (!checked || activate_selected)
-                            && let Some(callback) = &callback
+                        if !checked && let Some(callback) = &callback
                         {
                             callback(&value, window, cx);
                         }
                     });
                 lane = lane.child(tab);
             } else {
-                let radio = item_style(gpui_base::Radio::new(value.clone()), vertical, item_height)
+                let radio = item_style(gpui_base::Radio::new(value.clone()), item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
                     .when(segmented, |item| item.px(rems(8. / 14.)).rounded_none()
                         .when(index == 0, |item| item.rounded_l_full())
                         .when(index + 1 == count, |item| item.rounded_r_full()))
                     .checked(checked)
-                    .disabled(option.disabled)
+                    .disabled(disabled)
                     .accessibility_label(label)
                     .set_position(index + 1, count)
                     .track_focus(&focus)
-                    .tab_stop(entry == Some(index))
                     .text_color(text_color)
-                    .when(option.disabled, |radio| radio.opacity(0.5))
+                    .when(disabled, |radio| radio.opacity(0.5))
                     .child(content)
                     .when(cfg!(test), |radio| {
                         radio.debug_selector(move || {
@@ -482,20 +425,12 @@ impl RenderOnce for SingleChoiceGroup {
             .min_w_0()
             .max_w_full()
             .p(px(inset))
-            // M3 分段按钮：透明轨道 + 发丝外框，选中段为 secondary container。
-            // 竖向导航没有轨道概念（settings.md：复用胶囊选中即可），轨道近乎方形时
-            // rounded_full 会把发丝边画成一个完整圆圈，因此竖向不画轨道外框。
-            .when(!vertical, |group| {
-                group
-                    .rounded_full()
-                    .border_1()
-                    .border_color(super::color(if segmented { super::CONTROL } else { super::HAIRLINE }))
-            })
-            .bg(gpui::transparent_black())
-            .when(self.full_width, |group| group.w_full())
-            .when(!self.full_width, |group| {
-                // 边框占入声明宽度：lane 可用宽度不被发丝边吃掉
-                group.w(px(slot_width * count as f32 + inset * 2. + 2.))
+            .rounded_full()
+            .border_1()
+            .border_color(super::color(if segmented { super::CONTROL } else { super::HAIRLINE }))
+            .map(|group| match content_width {
+                Some(width) => group.w(px(width)),
+                None => group.w_full(),
             })
             .when(cfg!(test), |group| {
                 group.debug_selector(|| "full-choice-track".into())
@@ -957,15 +892,14 @@ mod tests {
     }
 
     #[test]
-    fn arrows_skip_disabled_values_wrap_and_start_when_selection_is_unknown() {
-        let enabled = [0, 2, 3];
-        assert_eq!(destination(&enabled, Some(0), Direction::Next), Some(2));
-        assert_eq!(destination(&enabled, Some(3), Direction::Next), Some(0));
-        assert_eq!(destination(&enabled, Some(0), Direction::Previous), Some(3));
-        assert_eq!(destination(&enabled, None, Direction::Next), Some(0));
-        assert_eq!(destination(&enabled, None, Direction::Previous), Some(3));
-        assert_eq!(destination(&enabled, Some(1), Direction::First), Some(0));
-        assert_eq!(destination(&enabled, Some(1), Direction::Last), Some(3));
-        assert_eq!(destination(&[], Some(0), Direction::Next), None);
+    fn arrows_wrap_and_start_when_selection_is_unknown() {
+        assert_eq!(destination(3, Some(0), Direction::Next), Some(1));
+        assert_eq!(destination(3, Some(2), Direction::Next), Some(0));
+        assert_eq!(destination(3, Some(0), Direction::Previous), Some(2));
+        assert_eq!(destination(3, None, Direction::Next), Some(0));
+        assert_eq!(destination(3, None, Direction::Previous), Some(2));
+        assert_eq!(destination(3, Some(1), Direction::First), Some(0));
+        assert_eq!(destination(3, Some(1), Direction::Last), Some(2));
+        assert_eq!(destination(0, Some(0), Direction::Next), None);
     }
 }
