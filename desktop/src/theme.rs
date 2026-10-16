@@ -967,7 +967,7 @@ pub fn badge(kind: BadgeKind) -> gpui::Div {
         BadgeKind::Warning => (WARNING, WARNING_BG, Some(crate::icons::warning())),
         BadgeKind::Danger => (DANGER, DANGER_BG, Some(crate::icons::error())),
         BadgeKind::Progress => (ACCENT, SECONDARY_CONTAINER, Some(crate::icons::schedule())),
-        // Neutral 为纯文字片：ⓘ 专属说明文字（review2-settings#3）
+        // Neutral is a plain text chip without a status icon.
         BadgeKind::Neutral => (GRAY, INSET, None),
     };
     let mut view = div()
@@ -1010,7 +1010,7 @@ pub fn outlined_field_label(
 }
 
 /// Preference switches share the accent and scale their geometry with UI text.
-pub fn coral_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
+pub fn preference_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
     switch
         .color(color(ACCENT))
         .track_height(rems(20. / 14.))
@@ -1018,7 +1018,7 @@ pub fn coral_switch(switch: gpui_component::switch::Switch) -> gpui_component::s
 
 /// Larger switches for a full-width processing panel's preference rows.
 pub fn processing_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
-    coral_switch(switch).reference_geometry().track_height(rems(32. / 14.))
+    preference_switch(switch).reference_geometry().track_height(rems(32. / 14.))
 }
 
 /// GPUI Component's Root resets rem size from Theme on every render. Update that

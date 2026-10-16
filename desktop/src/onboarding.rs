@@ -1920,7 +1920,7 @@ impl Desktop {
                         .child(field_label(format!("setup-ai-{id}-label"), label).min_w_0())
                         .child(crate::focus_scroll::FocusRing::new(
                             format!("setup-ai-{id}-focus"),
-                            coral_switch(
+                            preference_switch(
                                 Switch::new(format!("setup-ai-{id}"))
                                     .checked(checked)
                                     .disabled(busy)

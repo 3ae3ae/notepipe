@@ -33,7 +33,6 @@ pub fn init_validation_diagnostics() {
         let file = Arc::new(Mutex::new(file));
         std::panic::set_hook(Box::new(move |info| {
             if let Ok(mut file) = file.lock() {
-                // payload 可能包含用户数据，按上面的承诺不记录
                 let _ = writeln!(file, "panic at {:?}", info.location());
                 let _ = writeln!(file, "{}", std::backtrace::Backtrace::force_capture());
                 let _ = file.flush();

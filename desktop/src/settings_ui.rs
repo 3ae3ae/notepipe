@@ -780,7 +780,7 @@ pub(super) fn preference(
                     .items_center()
                     .child(crate::focus_scroll::FocusRing::new(
                         SharedString::from(format!("preference-focus-{label}")),
-                        coral_switch(control).accessibility_label(label).py_1(),
+                        preference_switch(control).accessibility_label(label).py_1(),
                     )),
             ),
     )
@@ -1130,7 +1130,7 @@ impl Desktop {
     }
 
     pub fn settings_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        // 渲染不得有副作用：hydrate/诊断检查/tab 钳制都在 open_settings、
+        // 渲染不得有副作用：hydrate/诊断检查都在 open_settings、
         // select_settings_tab、restore_settings_group 等事件入口完成
         let content_width = crate::views::settings_content_width(window);
         let layout_width = content_width

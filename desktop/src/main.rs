@@ -117,7 +117,6 @@ pub(crate) fn asr_provider_from_index(index: usize) -> Option<course2md::config:
 }
 
 /// 云端 API 在 PROVIDERS 表中的下标：PROVIDERS[..CLOUD_PROVIDER_INDEX] 即本机引擎集合。
-/// 此前以裸数字 5 散落在 import_ui/task_ui/workspace，是「5 即云端」的无文档契约。
 pub(crate) const CLOUD_PROVIDER_INDEX: usize = 5;
 
 impl ConversionOptions {
@@ -1005,7 +1004,7 @@ impl Desktop {
             self.start_next_task(cx);
         }
         let ticking = save || immediate || self.job.is_some() || self.event_repaint_pending;
-        // 模型下载与任务同一合帧节奏（此前 1s，设置页进度条明显滞后）
+        // Model downloads repaint at the task rate so their progress keeps up.
         let interval = if save || self.event_repaint_pending || self.kind == Kind::Models {
             EVENT_REPAINT_INTERVAL
         } else {
@@ -1244,7 +1243,6 @@ impl Desktop {
                             this.sync_reader_tab_stops();
                         }
                         this.preview = Some(Rc::new(preview));
-                        // 事件路径触发阅读页数据加载（渲染不再负责）
                         this.ensure_reader_data(cx);
                         this.apply_course_title_aliases();
                         this.restore_reading_position(cx);
