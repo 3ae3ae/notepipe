@@ -33,7 +33,7 @@ fn palette_minimum_width(palettes: &[PaletteId], window: &Window) -> f32 {
                     .text_system()
                     .shape_line(
                         label.clone(),
-                        window.rem_size(),
+                        TEXT_SETTINGS_BODY.to_pixels(window.rem_size()),
                         &[style.to_run(label.len())],
                         None,
                     )
