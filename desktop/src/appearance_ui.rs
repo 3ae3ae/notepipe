@@ -383,14 +383,14 @@ impl Desktop {
             )
             .child(outlined_field_label(
                 ("palette-preset-field", usize::from(dark)),
-                if dark { "深色配色" } else { "浅色配色" }, TEXT_SETTINGS_AUX,
+                "主题", TEXT_SETTINGS_AUX,
                 control(("palette-preset", usize::from(dark))).settings_text()
                     .w_full()
                     .h(px(56.))
                     .rounded(RADIUS_SMALL)
                     .text_size(rems(16. / 14.))
                     .font_weight(FontWeight::NORMAL)
-                    .accessibility_label(format!("{label}：{}，选择主题", palette.name()))
+                    .accessibility_label(format!("{label}：{}", palette.name()))
                     .label(palette.name())
                     .child(div().flex_1())
                     .child(icons::chevron_down().size(px(18.)))

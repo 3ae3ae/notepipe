@@ -73,7 +73,7 @@ const PROVIDERS: [(&str, &str); 6] = [
     ("gpu", "GPU"),
     ("cpu", "CPU"),
     ("npu", "Intel NPU"),
-    ("api", "云端 API"),
+    ("api", "云端服务"),
 ];
 
 /// Runs blocking IO on a dedicated OS thread and delivers the result through a channel.
@@ -388,7 +388,7 @@ impl Desktop {
                 state.stop_session();
                 Ok(())
             }) {
-                self.workspace_error = Some(format!("退出意图尚未保存：{error:#}。窗口保持打开。"));
+                self.workspace_error = Some(format!("无法保存退出前的状态，窗口暂不关闭：{error:#}"));
                 cx.notify();
                 return false;
             }
@@ -526,7 +526,7 @@ impl Desktop {
                 Ok(workspace) => (Some(workspace), None),
                 Err(error) => (
                     None,
-                    Some(format!("输入与任务记录无法读取：{error:#}")),
+                    Some(format!("任务记录读取失败：{error:#}")),
                 ),
             };
         let settings_ui = settings_ui::State::new(window, cx);
@@ -736,7 +736,7 @@ impl Desktop {
                 true
             }
             Err(error) => {
-                self.workspace_error = Some(format!("新的视频输入尚未保存：{error:#}"));
+                self.workspace_error = Some(format!("新链接未能保存：{error:#}"));
                 cx.notify();
                 false
             }
@@ -1063,7 +1063,7 @@ impl Desktop {
                         }
                         Err(error) => this
                             .library_issues
-                            .push(format!("{}暂时无法读取：{error:#}", location.name)),
+                            .push(format!("{}读取失败：{error:#}", location.name)),
                     }
                     match organization {
                         Ok(library) => {
@@ -1096,7 +1096,7 @@ impl Desktop {
                     this.library = library;
                     this.library_error = None;
                 } else {
-                    this.library_error = Some("当前库的文件夹信息暂时无法读取".into());
+                    this.library_error = Some("文件夹信息读取失败".into());
                 }
                 this.advance_conversion_when_ready(cx);
                 cx.notify();
@@ -1172,7 +1172,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("读取笔记的工作线程意外结束")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("读取笔记时出错，请重试")));
             let _ = this.update(cx, |this, cx| {
                 if this.read_generation != generation || this.page != origin {
                     return;
@@ -1234,7 +1234,7 @@ impl Desktop {
                                 }
                                 Ok(())
                             }) {
-                                this.workspace_error = Some(format!("阅读状态尚未保存：{error:#}"));
+                                this.workspace_error = Some(format!("阅读进度未能保存：{error:#}"));
                             }
                         }
                         settle_reader_notice(&mut this.message, &mut this.reader_failure_notice);
@@ -1514,7 +1514,7 @@ fn main() {
             ]),
             gpui::Menu::new("文件").items([gpui::MenuItem::action("导入视频", ImportVideo)]),
             gpui::Menu::new("查找")
-                .items([gpui::MenuItem::action("搜索课程或当前笔记", SearchContent)]),
+                .items([gpui::MenuItem::action("搜索笔记", SearchContent)]),
         ]);
         cx.activate(true);
     });

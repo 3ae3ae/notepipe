@@ -200,7 +200,7 @@ impl Desktop {
             workspace::TaskState::Complete => "阅读笔记",
             workspace::TaskState::Partial if result.is_some() => "阅读笔记",
             workspace::TaskState::Partial => "查看未完成部分",
-            workspace::TaskState::Uncertain => "确认请求结果",
+            workspace::TaskState::Uncertain => "查看结果",
             _ => "查看任务",
         };
         Some(crate::motion::enter(
@@ -234,7 +234,7 @@ impl Desktop {
                         control("dismiss-task-result")
                             .ghost()
                             .icon(crate::icons::close())
-                            .accessibility_label("关闭这条任务提示")
+                            .accessibility_label("关闭提示")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.transient_task_result = None;
                                 if let Some(workspace) = &mut this.workspace {
@@ -245,7 +245,7 @@ impl Desktop {
                                         Ok(())
                                     }) {
                                         this.workspace_error =
-                                            Some(format!("任务提示状态尚未保存：{error:#}"));
+                                            Some(format!("提示关闭状态未能保存：{error:#}"));
                                     }
                                 }
                                 cx.notify();
@@ -430,7 +430,7 @@ impl Render for Desktop {
                                 .child(
                                     control("retry-workspace-records")
                                         .icon(icons::refresh())
-                                        .label("重新读取并保存记录")
+                                        .label("重试")
                                         .disabled(self.job.is_some() || self.storage_ui.busy)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.retry_workspace_records(window, cx)
@@ -440,7 +440,7 @@ impl Render for Desktop {
                                     row.child(
                                         control("rebuild-workspace-records")
                                             .icon(icons::restart())
-                                            .label("保全原文件并重建记录")
+                                            .label("备份并重建任务记录")
                                             .disabled(self.job.is_some() || self.storage_ui.busy)
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.rebuild_workspace_records(window, cx)
