@@ -2888,7 +2888,7 @@ impl Desktop {
                     .icon(icons::settings())
                     .label("检查所需组件")
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.settings_tab = 3;
+                        this.settings_tab = crate::settings_ui::SettingsTab::Application;
                         this.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
                         this.open_settings(window, cx);
                     })),

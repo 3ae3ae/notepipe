@@ -67,7 +67,7 @@ struct ServiceEditor {
     save_failed: bool,
     /// The settings category the inline editor was opened from (e.g. 生成笔记);
     /// closing it returns there instead of leaving the user on 服务与账号.
-    origin_tab: Option<usize>,
+    origin_tab: Option<SettingsTab>,
 }
 
 pub struct OrdinaryPreferenceIssue {
@@ -78,7 +78,7 @@ pub struct OrdinaryPreferenceIssue {
 
 pub(crate) struct State {
     model_diagnostics: model_diagnostics::State,
-    tab_focus: [FocusHandle; 5],
+    tab_focus: [FocusHandle; SettingsTab::ALL.len()],
     inputs: BTreeMap<EditField, Entity<InputState>>,
     prompt: Entity<TextareaState>,
     editor: Option<ServiceEditor>,
@@ -570,26 +570,60 @@ fn service_protocol_label(protocol: ServiceProtocol) -> &'static str {
     }
 }
 
-fn settings_tab_icon(index: usize) -> Icon {
-    match index {
-        4 => icons::palette(),
-        // 生成笔记 = 笔记/文档对象（tune 留给偏好/高级覆盖项，见 crosspage#8 图标指称）
-        0 => icons::article(),
-        1 => icons::cloud(),
-        2 => icons::storage(),
-        _ => icons::info(),
-    }
+/// Settings categories in navigation order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsTab {
+    Appearance,
+    Generation,
+    Services,
+    Storage,
+    Application,
 }
-const SETTINGS_TABS: [(usize, &str); 5] = [
-    (4, "外观"),
-    (0, "生成笔记"),
-    (1, "服务与账号"),
-    (2, "存储"),
-    (3, "应用"),
-];
 
-fn settings_tab_label(index: usize) -> &'static str {
-    ["生成笔记", "服务与账号", "存储", "应用", "外观"][index.min(4)]
+impl SettingsTab {
+    pub(crate) const ALL: [Self; 5] =
+        [Self::Appearance, Self::Generation, Self::Services, Self::Storage, Self::Application];
+
+    fn index(self) -> usize {
+        self as usize
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "外观",
+            Self::Generation => "生成笔记",
+            Self::Services => "服务与账号",
+            Self::Storage => "存储",
+            Self::Application => "应用",
+        }
+    }
+    /// The narrow rail has room for two characters.
+    fn short_label(self) -> &'static str {
+        match self {
+            Self::Generation => "笔记",
+            Self::Services => "服务",
+            other => other.label(),
+        }
+    }
+    fn icon(self) -> Icon {
+        match self {
+            Self::Appearance => icons::palette(),
+            Self::Generation => icons::article(),
+            Self::Services => icons::cloud(),
+            Self::Storage => icons::storage(),
+            Self::Application => icons::info(),
+        }
+    }
+    fn offset(self, by: usize) -> Self {
+        Self::ALL[(self.index() + by) % Self::ALL.len()]
+    }
+    fn group(self) -> Option<PreferenceGroup> {
+        match self {
+            Self::Generation => Some(PreferenceGroup::Generation),
+            Self::Services => Some(PreferenceGroup::Services),
+            Self::Appearance | Self::Application => Some(PreferenceGroup::Application),
+            Self::Storage => None,
+        }
+    }
 }
 
 fn group(id: &'static str, title: &'static str) -> SettingsGroup {
@@ -778,7 +812,7 @@ impl Desktop {
         let editor = self.settings_ui.editor.as_ref().filter(|editor| {
             editor.target.is_some()
                 || editor.repair_task.is_some()
-                || (self.page == Page::Settings && self.settings_tab == 1)
+                || (self.page == Page::Settings && self.settings_tab == SettingsTab::Services)
         });
         (
             self.page == Page::Settings || editor.is_some(),
@@ -986,44 +1020,33 @@ impl Desktop {
         // 事件入口的准备动作（不是渲染副作用）：钳制遗留 tab、同步 tab stops、
         // 首次水合输入框、按 key 去重的模型诊断检查
         self.prepare_settings_view(window, cx);
-        self.settings_ui.tab_focus[self.settings_tab.min(4)].focus(window, cx);
+        self.settings_ui.tab_focus[self.settings_tab.index()].focus(window, cx);
     }
 
     pub(crate) fn prepare_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.normalize_settings_tab();
         self.sync_settings_tab_stops();
         self.hydrate_settings_inputs(window, cx);
         self.ensure_settings_model_diagnostic(cx);
         self.ensure_account_cards(cx);
     }
 
-    fn normalize_settings_tab(&mut self) {
-        // 5 是旧分页的遗留值，无写入路径；读到时迁移到「服务与账号」
-        if self.settings_tab == 5 {
-            self.settings_tab = 1;
-        }
-        if self.settings_tab > 4 {
-            self.settings_tab = 4;
-        }
-    }
     fn sync_settings_tab_stops(&mut self) {
         for (index, focus) in self.settings_ui.tab_focus.iter_mut().enumerate() {
-            *focus = focus.clone().tab_stop(index == self.settings_tab);
+            *focus = focus.clone().tab_stop(index == self.settings_tab.index());
         }
     }
-    fn select_settings_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.settings_tab = index;
-        self.normalize_settings_tab();
+    pub(crate) fn select_settings_tab(&mut self, tab: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_tab = tab;
         self.sync_settings_tab_stops();
         self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
-        self.settings_ui.tab_focus[index].focus(window, cx);
+        self.settings_ui.tab_focus[tab.index()].focus(window, cx);
         self.ensure_account_cards(cx);
         cx.notify();
     }
 
     /// 服务与账号页：补齐两个账号卡片的状态（忙碌/已查守卫保证不重复发起）。
     fn ensure_account_cards(&mut self, cx: &mut Context<Self>) {
-        if self.settings_tab != 1 {
+        if self.settings_tab != SettingsTab::Services {
             return;
         }
         if self.codex.status.is_none() && !self.codex.busy() {
@@ -1036,7 +1059,6 @@ impl Desktop {
 
     fn settings_navigation(
         &self,
-        sidebar: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1048,27 +1070,20 @@ impl Desktop {
             .flex_shrink_0()
             .gap(px(8.))
             .on_action(cx.listener(|this, _: &NextSettingsTab, window, cx| {
-                let position = SETTINGS_TABS
-                    .iter()
-                    .position(|(i, _)| *i == this.settings_tab)
-                    .unwrap_or(0);
-                this.select_settings_tab(SETTINGS_TABS[(position + 1) % 5].0, window, cx);
+                this.select_settings_tab(this.settings_tab.offset(1), window, cx);
             }))
             .on_action(cx.listener(|this, _: &PreviousSettingsTab, window, cx| {
-                let position = SETTINGS_TABS
-                    .iter()
-                    .position(|(i, _)| *i == this.settings_tab)
-                    .unwrap_or(0);
-                this.select_settings_tab(SETTINGS_TABS[(position + 4) % 5].0, window, cx);
+                this.select_settings_tab(this.settings_tab.offset(SettingsTab::ALL.len() - 1), window, cx);
             }))
             .on_action(cx.listener(|this, _: &FirstSettingsTab, window, cx| {
-                this.select_settings_tab(4, window, cx)
+                this.select_settings_tab(SettingsTab::ALL[0], window, cx)
             }))
             .on_action(cx.listener(|this, _: &LastSettingsTab, window, cx| {
-                this.select_settings_tab(3, window, cx)
+                this.select_settings_tab(SettingsTab::ALL[SettingsTab::ALL.len() - 1], window, cx)
             }));
-        for (index, label) in SETTINGS_TABS {
-            let selected = self.settings_tab == index;
+        for tab in SettingsTab::ALL {
+            let index = tab.index();
+            let selected = self.settings_tab == tab;
             let icon = div()
                 .flex()
                 .items_center()
@@ -1077,21 +1092,13 @@ impl Desktop {
                 .w(px(if rail {56.} else {24.}))
                 .rounded_full()
                 .when(selected && rail, |view| view.bg(color(SECONDARY_CONTAINER)))
-                .child(settings_tab_icon(index).size(px(22.)));
-            let label = if rail {
-                match index {
-                    0 => "笔记",
-                    1 => "服务",
-                    _ => label,
-                }
-            } else {
-                label
-            };
+                .child(tab.icon().size(px(22.)));
+            let label = if rail { tab.short_label() } else { tab.label() };
             navigation = navigation.child(
                 gpui_base::Tab::new(("settings-tab", index))
                     .selected(selected)
                     .track_focus(&self.settings_ui.tab_focus[index].clone().tab_stop(selected))
-                    .accessibility_label(settings_tab_label(index))
+                    .accessibility_label(tab.label())
                     .w_full()
                     .h_auto()
                     .min_h(px(56.))
@@ -1115,25 +1122,20 @@ impl Desktop {
                             ),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select_settings_tab(index, window, cx)
+                        this.select_settings_tab(tab, window, cx)
                     })),
             );
         }
-        let _ = sidebar;
         navigation.into_any_element()
     }
 
     pub fn settings_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // 渲染不得有副作用：hydrate/诊断检查/tab 钳制都在 open_settings、
         // select_settings_tab、restore_settings_group 等事件入口完成
-        let sidebar = true;
         let content_width = crate::views::settings_content_width(window);
         let layout_width = content_width
-            + if sidebar {
-                crate::views::settings_sidebar_width(window) + crate::views::settings_column_gap(window)
-            } else {
-                0.
-            };
+            + crate::views::settings_sidebar_width(window)
+            + crate::views::settings_column_gap(window);
         let header = h_flex()
             .w_full()
             .min_w_0()
@@ -1156,12 +1158,12 @@ impl Desktop {
             )
             .child(text("settings-page-title", "设置").text_size(rems(22. / 14.)));
 
-        let navigation = self.settings_navigation(sidebar, window, cx);
+        let navigation = self.settings_navigation(window, cx);
         let mut panel = v_flex()
             .relative()
             .id("settings-panel")
             .role(Role::TabPanel)
-            .aria_label(settings_tab_label(self.settings_tab))
+            .aria_label(self.settings_tab.label())
             .flex_1()
             .min_w_0()
             .min_h_0()
@@ -1172,13 +1174,7 @@ impl Desktop {
             PreferenceGroup::Services,
             PreferenceGroup::Application,
         ] {
-            let current_group = match self.settings_tab {
-                0 => Some(PreferenceGroup::Generation),
-                1 => Some(PreferenceGroup::Services),
-                3 | 4 => Some(PreferenceGroup::Application),
-                _ => None,
-            };
-            if current_group == Some(group) {
+            if self.settings_tab.group() == Some(group) {
                 if self.preferences.is_blocked(group)
                     || self
                         .settings_group_notice(group)
@@ -1199,12 +1195,11 @@ impl Desktop {
                 continue;
             }
             let target = match group {
-                PreferenceGroup::Generation => 0,
-                PreferenceGroup::Services => 1,
-                PreferenceGroup::Application => 4,
+                PreferenceGroup::Generation => SettingsTab::Generation,
+                PreferenceGroup::Services => SettingsTab::Services,
+                PreferenceGroup::Application => SettingsTab::Appearance,
             };
-            if target != self.settings_tab
-                && let Some((message, true)) = self.settings_group_notice(group)
+            if let Some((message, true)) = self.settings_group_notice(group)
             {
                 panel = panel.child(
                     h_flex()
@@ -1218,7 +1213,7 @@ impl Desktop {
                         .bg(color(DANGER_BG))
                         .child(
                             text(
-                                ("settings-failed-group", target),
+                                ("settings-failed-group", target.index()),
                                 if message.starts_with(group.label()) {
                                     message
                                 } else {
@@ -1232,7 +1227,7 @@ impl Desktop {
                             .text_size(TEXT_SETTINGS_AUX),
                         )
                         .child(
-                            control(("open-failed-settings-group", target)).settings_text()
+                            control(("open-failed-settings-group", target.index())).settings_text()
                                 .icon(icons::settings())
                                 .label("查看设置")
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1243,13 +1238,13 @@ impl Desktop {
             }
         }
         let content = match self.settings_tab {
-            0 => self.generation_settings_page(window, cx),
-            1 => self.services_settings_page(window, cx),
-            2 => self.storage_settings_page(cx),
-            3 => self.application_settings_page(window, cx),
-            _ => self.appearance_page(window, cx),
+            SettingsTab::Generation => self.generation_settings_page(window, cx),
+            SettingsTab::Services => self.services_settings_page(window, cx),
+            SettingsTab::Storage => self.storage_settings_page(cx),
+            SettingsTab::Application => self.application_settings_page(window, cx),
+            SettingsTab::Appearance => self.appearance_page(window, cx),
         };
-        let editing_service = self.settings_tab == 1
+        let editing_service = self.settings_tab == SettingsTab::Services
             && self
                 .settings_ui
                 .editor
@@ -1274,8 +1269,8 @@ impl Desktop {
                             .when(!editing_service, |view| view.pb(px(24.)))
                             .child(v_flex().w_full().min_w_0().gap(px(22.))
                                 .child(v_flex().gap_2()
-                                    .child(theme::page_heading("settings-category-heading", settings_tab_label(self.settings_tab)))
-                                    .when(self.settings_tab == 0, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))))
+                                    .child(theme::page_heading("settings-category-heading", self.settings_tab.label()))
+                                    .when(self.settings_tab == SettingsTab::Generation, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))))
                                 .child(content)),
                     ),
             )
@@ -1296,12 +1291,9 @@ impl Desktop {
             .min_w_0()
             .min_h_0()
             .flex_1()
-            .when(sidebar, |view| {
-                view.flex_row()
-                    .items_stretch()
-                    .gap(px(crate::views::settings_column_gap(window)))
-            })
-            .when(!sidebar, |view| view.flex_col().gap(px(24.)))
+            .flex_row()
+            .items_stretch()
+            .gap(px(crate::views::settings_column_gap(window)))
             .child(navigation)
             .child(panel);
         v_flex()

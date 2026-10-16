@@ -484,7 +484,7 @@ impl Desktop {
                                     outline_pill("settings-manage-storage").settings_text()
                                         .label("更改")
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.select_settings_tab(2, window, cx);
+                                            this.select_settings_tab(SettingsTab::Storage, window, cx);
                                         })),
                                 ),
                         ),

@@ -568,7 +568,7 @@ impl Render for Desktop {
             .on_action(cx.listener(|this, _: &OpenAbout, window, cx| {
                 if !window.has_active_dialog(cx) {
                     this.open_settings(window, cx);
-                    this.settings_tab = 3;
+                    this.settings_tab = crate::settings_ui::SettingsTab::Application;
                     this.prepare_settings_view(window, cx);
                 }
             }))

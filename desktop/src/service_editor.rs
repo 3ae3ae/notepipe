@@ -544,7 +544,7 @@ impl Desktop {
                 && editor.target == target
                 && editor.repair_task == repair_task
             {
-                self.settings_tab = 1;
+                self.settings_tab = SettingsTab::Services;
                 self.navigate(Page::Settings, cx);
                 self.prepare_settings_view(window, cx);
                 self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
@@ -555,7 +555,7 @@ impl Desktop {
             // A second action must not reuse the previous editor's endpoint or scope.
             // Switching forms cancels the earlier edit; only Save can publish it.
             if !self.close_service_editor(window, cx) {
-                self.settings_tab = 1;
+                self.settings_tab = SettingsTab::Services;
                 self.navigate(Page::Settings, cx);
                 self.prepare_settings_view(window, cx);
                 self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
@@ -607,7 +607,7 @@ impl Desktop {
                     .service_retired_in_snapshot(&version.service_id)
             });
         let draft_protocol = draft.protocol;
-        let origin_tab = (inline && self.page == Page::Settings && self.settings_tab != 1)
+        let origin_tab = (inline && self.page == Page::Settings && self.settings_tab != SettingsTab::Services)
             .then_some(self.settings_tab);
         self.settings_ui.editor = Some(ServiceEditor {
             draft,
@@ -634,7 +634,7 @@ impl Desktop {
             self.codex_refresh_status(crate::codex_ui::CodexSurface::Editor, cx);
         }
         if inline {
-            self.settings_tab = 1;
+            self.settings_tab = SettingsTab::Services;
             self.navigate(Page::Settings, cx);
             self.prepare_settings_view(window, cx);
             self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
@@ -1863,10 +1863,9 @@ impl Desktop {
             // returning focus target lives.
             if let Some(tab) = editor.origin_tab
                 && self.page == Page::Settings
-                && self.settings_tab == 1
+                && self.settings_tab == SettingsTab::Services
             {
                 self.settings_tab = tab;
-                self.normalize_settings_tab();
                 self.sync_settings_tab_stops();
             }
             if let Some(focus) = editor.return_focus {

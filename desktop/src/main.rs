@@ -258,7 +258,7 @@ struct Desktop {
     settings_origin: Option<Page>,
     settings_return_focus: Option<FocusHandle>,
     result_tab: usize,
-    settings_tab: usize,
+    settings_tab: settings_ui::SettingsTab,
     source_editor_open: bool,
     generation_options_open: bool,
     validation_attempt: usize,
@@ -593,7 +593,7 @@ impl Desktop {
             settings_origin: None,
             settings_return_focus: None,
             result_tab: 0,
-            settings_tab: 4,
+            settings_tab: settings_ui::SettingsTab::Appearance,
             source_editor_open: false,
             generation_options_open: false,
             validation_attempt: 0,
@@ -1481,7 +1481,7 @@ fn main() {
                 cx.on_action(move |_: &OpenAbout, cx| {
                     dispatch_desktop_action(&about_view, cx, |this, window, cx| {
                         this.open_settings(window, cx);
-                        this.settings_tab = 3;
+                        this.settings_tab = settings_ui::SettingsTab::Application;
                         this.prepare_settings_view(window, cx);
                     });
                 });
