@@ -1614,8 +1614,8 @@ impl Desktop {
         {
             return;
         }
-        if let Some(workspace) = &mut self.workspace {
-            if let Err(error) = workspace.transaction(|state| {
+        if let Some(workspace) = &mut self.workspace
+            && let Err(error) = workspace.transaction(|state| {
                 state.positions.insert(key.clone(), position.clone());
                 Ok(())
             }) {
@@ -1623,7 +1623,6 @@ impl Desktop {
                 cx.notify();
                 return;
             }
-        }
         self.reader_position_saved_at = Some(Instant::now());
         self.reader_ui.last_position = Some((key, position));
     }
@@ -2720,7 +2719,7 @@ impl Desktop {
         } else {
             (Some(title), None)
         };
-        let toolbar = self.reader_toolbar(preview, outline, back, compact, short, window, cx);
+        let toolbar = self.reader_toolbar(preview, outline, back, &metrics, window, cx);
         page = page.child(
             v_flex()
                 .w_full()
@@ -3180,11 +3179,11 @@ impl Desktop {
         preview: &Rc<notes::Preview>,
         headings: &[(usize, String, Option<f64>)],
         back: AnyElement,
-        compact: bool,
-        short_reader: bool,
+        metrics: &ReaderMetrics,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> ReaderToolbarParts {
+        let (compact, short_reader) = (metrics.compact, metrics.short);
         let reading_note = self.result_tab == 0;
         let (search, short_matches) = self.reader_find_controls(short_reader, window, cx);
         let mut toolbar = h_flex()
@@ -3561,8 +3560,8 @@ impl Desktop {
                     .into_owned(),
             ));
         }
-        if let Some(manifest) = &preview.course.manifest {
-            if let Some(task) = self.workspace.as_ref().and_then(|workspace| {
+        if let Some(manifest) = &preview.course.manifest
+            && let Some(task) = self.workspace.as_ref().and_then(|workspace| {
                 workspace
                     .state
                     .tasks
@@ -3594,7 +3593,6 @@ impl Desktop {
                     ));
                 }
             }
-        }
         if !details.is_empty() || compact_metadata.is_some() {
             let information_scroll = self.reader_ui.information_scroll.clone();
             // The panel is at most 16rem tall; its scrolling viewport is what
@@ -3720,8 +3718,8 @@ impl Desktop {
             crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone()).inline()
         };
         let mut notices = Vec::new();
-        if let Some(current) = &preview.course.manifest {
-            if let Some(newer) = self
+        if let Some(current) = &preview.course.manifest
+            && let Some(newer) = self
                 .courses
                 .iter()
                 .find(|course| {
@@ -3746,7 +3744,6 @@ impl Desktop {
                         )),
                 ));
             }
-        }
         if let Some(notice) = processing_notice(&preview.processing_issues) {
             let mut problem = v_flex()
                 .gap_3()
@@ -3916,7 +3913,7 @@ impl Desktop {
             ));
             notices.push(crate::motion::enter("reader-processing-notice", problem));
         }
-        if files_need_reload(&preview, &self.reader_ui.issues, &self.reader_ui.frames) {
+        if files_need_reload(preview, &self.reader_ui.issues, &self.reader_ui.frames) {
             let course = preview.course.clone();
             let issues = preview
                 .issues
