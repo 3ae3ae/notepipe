@@ -10,6 +10,11 @@ use anyhow::{Context as _, Result, ensure};
 use gpui_component::button::*;
 use std::collections::HashMap;
 use std::rc::Rc;
+use course2md::config::TranscriptSource;
+use course2md::execution::Component;
+
+/// Request purpose of a remote speech recognition call.
+const TRANSCRIPTION_PURPOSE: &str = "transcription";
 
 /// One row of the virtualized task queue. Task rows carry their index into
 /// the sorted task snapshot captured for the frame.
@@ -281,15 +286,21 @@ fn task_stage_progress(
     (detail, fraction)
 }
 
+/// Proofreading and summary are the AI components; remote request purposes
+/// use the same names.
+pub(crate) fn ai_component(name: &str) -> Option<Component> {
+    Component::parse(name).filter(|part| matches!(part, Component::Proofreading | Component::Summary))
+}
+
 /// A proofreading stage can close after failed requests. Published component
 /// outcomes distinguish an ended attempt from a successfully completed step.
 fn ai_stage_outcome(name: &str, outcomes: Option<&serde_json::Value>) -> Option<StageStatus> {
     let component = match name {
-        "llm" => "proofreading",
-        "summary" | "summarize" => "summary",
+        "llm" => Component::Proofreading,
+        "summary" | "summarize" => Component::Summary,
         _ => return None,
     };
-    match outcomes?.get(component)?.get("status")?.as_str()? {
+    match outcomes?.get(component.as_str())?.get("status")?.as_str()? {
         "succeeded" => Some(StageStatus::Complete),
         "failed" | "partial" => Some(StageStatus::Failed),
         _ => None,
@@ -379,9 +390,9 @@ fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
         return None;
     }
     let outcomes = &task.outcomes;
-    let failures: Vec<_> = ["proofreading", "summary"]
+    let failures: Vec<_> = [Component::Proofreading, Component::Summary]
         .into_iter()
-        .filter_map(|component| outcomes.get(component))
+        .filter_map(|component| outcomes.get(component.as_str()))
         .filter(|outcome| {
             matches!(
                 outcome.get("status").and_then(|status| status.as_str()),
@@ -396,9 +407,7 @@ fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
         .iter()
         .filter_map(|outcome| outcome.get("message").and_then(|message| message.as_str()))
         .chain(task.blocked.iter().filter_map(|request| {
-            let purpose = request.purpose.as_deref().unwrap_or_default();
-            (purpose.contains("proof") || purpose.contains("summary"))
-                .then_some(request.message.as_str())
+            ai_component(request.purpose.as_deref()?).map(|_| request.message.as_str())
         }))
         .chain(task.error.as_deref())
         .find_map(service_configuration_issue)
@@ -410,12 +419,12 @@ pub(crate) fn task_requires_service_repair(task: &TaskRecord) -> bool {
 
 /// 组件 key → 补做按钮文案的唯一来源（任务卡/课程库/阅读页共用，防止多处漂移）。
 pub(crate) fn retry_component_label(component: &str) -> &'static str {
-    match component {
-        "screenshots" => "补生成截图",
-        "proofreading" => "重试 AI 校对",
-        "summary" => "补生成摘要",
-        "exports" => "仅补导出",
-        _ => "补全未完成部分",
+    match Component::parse(component) {
+        Some(Component::Screenshots) => "补生成截图",
+        Some(Component::Proofreading) => "重试 AI 校对",
+        Some(Component::Summary) => "补生成摘要",
+        Some(Component::Exports) => "仅补导出",
+        None => "补全未完成部分",
     }
 }
 
@@ -463,7 +472,7 @@ impl RenderOnce for TaskStages {
                             ),
                         )
                         // 与卡片内 detail_row 同一 160px 标签列：值/状态列共用一条
-                        // 起始尺（review#2；theme.rs settings detail row 的宽度）
+                        // 起始尺（theme.rs settings detail row 的宽度）
                         .w(rems(160. / 14.))
                         .max_w_full()
                         .flex_shrink_0(),
@@ -642,7 +651,7 @@ impl RenderOnce for TaskRawLogs {
                 .icon(if open {
                     icons::chevron_up()
                 } else {
-                    // 与同级「查看已完成的处理」一致：可展开项用 chevron 表达（review4 可选）
+                    // 与同级「查看已完成的处理」一致：可展开项用 chevron 表达
                     icons::chevron_down()
                 })
                 .label(if open {
@@ -1135,7 +1144,7 @@ impl Desktop {
         let source = draft.source.clone().context("请先读取并确认视频")?;
         let environment = self.ensure_plan_environment(source.online)?;
         ensure!(
-            draft.options.source_mode == 2
+            draft.options.source_mode == TranscriptSource::Asr
                 || (source.subtitle_request.is_none() && source.subtitle_read_error.is_none()),
             "所选字幕还未确认，请继续读取或明确选择其他文字来源。"
         );
@@ -1146,7 +1155,7 @@ impl Desktop {
         ensure!(!draft.title.trim().is_empty(), "请填写笔记名称");
         self.ensure_plan_storage(workspace, draft, validation)?;
         let mut config = self.plan_config(draft);
-        let using_subtitle = draft.options.source_mode != 2
+        let using_subtitle = draft.options.source_mode != TranscriptSource::Asr
             && (source.selected_subtitle.is_some() || draft.subtitle.is_some());
         if using_subtitle {
             if let Some(subtitle) = &source.selected_subtitle {
@@ -1159,8 +1168,8 @@ impl Desktop {
         } else {
             use course2md::subtitle::SubtitleEvidence;
             ensure!(
-                draft.options.source_mode == 2
-                    || (draft.options.source_mode == 0
+                draft.options.source_mode == TranscriptSource::Asr
+                    || (draft.options.source_mode == TranscriptSource::Auto
                         && matches!(
                             source.subtitles,
                             SubtitleEvidence::NoneFound
@@ -1231,13 +1240,13 @@ impl Desktop {
         let mut config = self.plan_config(draft);
         // 强制字幕（source_mode 1）不会走到语音识别；其余模式运行时可能退回 ASR，
         // 与 build_plan 一样先确认本机识别能力并补默认模型。
-        if draft.options.source_mode != 1 {
+        if draft.options.source_mode != TranscriptSource::Subtitle {
             let provider = config
                 .defaults
                 .provider
                 .unwrap_or_else(|| self.recommended_local_provider());
             let capability = ensure_asr_capability(environment, provider);
-            if draft.options.source_mode == 0 {
+            if draft.options.source_mode == TranscriptSource::Auto {
                 capability.context("部分视频可能没有字幕，需要语音识别能力作为后备")?;
             } else {
                 capability?;
@@ -1281,7 +1290,7 @@ impl Desktop {
 
     /// 把多选候选一次性加入队列：逐个复用既有去重（进行中的相同任务不重复创建），
     /// 一次事务落盘，随后选中第一个任务并启动队列。
-    pub fn enqueue_selected_candidates(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn enqueue_selected_candidates(&mut self, cx: &mut Context<Self>) {
         let selected: Vec<(usize, source::SourceCandidate)> = self
             .source_candidates
             .iter()
@@ -1497,7 +1506,7 @@ impl Desktop {
             .resolve_for_execution_with_secrets(&task.plan.config, &refs, secrets)?
             .into_config();
         let course_id = workspace::course_dir_name(&task.plan.source_id);
-        let subtitle_events = if task.plan.options.source_mode != 2 && task.plan.subtitle.is_none()
+        let subtitle_events = if task.plan.options.source_mode != TranscriptSource::Asr && task.plan.subtitle.is_none()
         {
             workspace::task_subtitle_events(task)?
         } else {
@@ -1529,7 +1538,7 @@ impl Desktop {
             title: task.plan.title.clone(),
             author: task.plan.source.author.clone(),
             duration: task.plan.source.duration,
-            subtitle: if task.plan.options.source_mode != 2 {
+            subtitle: if task.plan.options.source_mode != TranscriptSource::Asr {
                 task.plan.subtitle.clone()
             } else {
                 None
@@ -1873,11 +1882,10 @@ impl Desktop {
                 .filter(|b| b.is_uncertain())
                 .filter_map(|b| b.purpose.as_deref())
                 .map(|purpose| {
-                    if purpose.contains("summary") {
-                        "summary".to_owned()
-                    } else {
-                        "proofreading".to_owned()
-                    }
+                    ai_component(purpose)
+                        .unwrap_or(Component::Proofreading)
+                        .as_str()
+                        .to_owned()
                 })
                 .collect();
             self.reprocess_task(id, components, requests, cx);
@@ -1956,7 +1964,7 @@ impl Desktop {
                 task_component_failures(task)
                     .into_iter()
                     .map(|(component, _, _)| component)
-                    .filter(|component| matches!(component.as_str(), "proofreading" | "summary"))
+                    .filter(|component| ai_component(component).is_some())
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -1987,8 +1995,8 @@ impl Desktop {
                 .context("原任务记录暂时不可用")?;
             let mut base = task.plan.config.clone();
             base.defaults.transcript_source = Some(course2md::config::TranscriptSource::Subtitle);
-            base.llm.enabled = components.iter().any(|part| part == "proofreading");
-            base.llm.summarize = components.iter().any(|part| part == "summary");
+            base.llm.enabled = components.iter().any(|part| part == Component::Proofreading.as_str());
+            base.llm.summarize = components.iter().any(|part| part == Component::Summary.as_str());
             let config = self.preferences.config_for_refs(
                 &base,
                 &ServiceRefs {
@@ -2277,7 +2285,7 @@ impl Desktop {
                         self.open_completed_conversion(Course::from_completed(done), cx);
                     }
                 }
-                self.task_status = task.state.label().into();
+                self.task_status = task.status_label().into();
                 self.transient_task_result = Some((id.to_owned(), std::time::Instant::now()));
             }
             Err(error) => {
@@ -2317,7 +2325,7 @@ impl Desktop {
                 tasks = workspace.state.tasks.clone();
                 tasks.sort_by_key(|task| (task_group(task), std::cmp::Reverse(task.created)));
                 let history_open = window.use_keyed_state("task-history-open", cx, |_, _| false);
-                // 只有一种状态组时组头与页头汇总重复：此时不再重复分组行（M6）
+                // 只有一种状态组时组头与页头汇总重复：此时不再重复分组行
                 let distinct_groups = tasks
                     .iter()
                     .map(task_group)
@@ -2840,7 +2848,7 @@ impl Desktop {
                     task_component_failures(task)
                         .iter()
                         .any(|(component, _, _)| {
-                            matches!(component.as_str(), "proofreading" | "summary")
+                            ai_component(component).is_some()
                         });
                 if repairable && uncertain.is_empty() && task.handled_by.is_none() {
                     let repair_id = id.clone();
@@ -2855,16 +2863,15 @@ impl Desktop {
                 }
                 for (component, label, outcome) in task_component_failures(task) {
                     let unknown_component = uncertain.iter().any(|request| {
-                        let purpose = request.purpose.as_deref().unwrap_or_default();
-                        (component == "proofreading" && purpose.contains("proof"))
-                            || (component == "summary" && purpose.contains("summary"))
+                        request.purpose.as_deref().and_then(ai_component)
+                            .is_some_and(|part| part.as_str() == component)
                     });
                     if unknown_component {
                         continue;
                     }
                     let reason =
                         activity::component_failure_message(&label, outcome.message.as_deref());
-                    let ai_component = matches!(component.as_str(), "proofreading" | "summary");
+                    let ai_component = ai_component(&component).is_some();
                     if !(requires_repair && ai_component) {
                         details = details.child(
                             accessible_text(
@@ -3275,7 +3282,7 @@ impl Desktop {
 
     fn task_processing_facts(&self, task: &TaskRecord) -> Div {
         let source =
-            if task.plan.options.source_mode != 2 && task.plan.source.selected_subtitle.is_some() {
+            if task.plan.options.source_mode != TranscriptSource::Asr && task.plan.source.selected_subtitle.is_some() {
                 "视频字幕"
             } else if task.plan.options.uses_cloud_provider() {
                 "识别服务"
@@ -3339,74 +3346,6 @@ impl Desktop {
                 .text_color(color(SUCCESS))))
     }
 
-    /// The current task and its progress retain one reading position as stages change.
-    pub fn box_task_running(
-        &mut self,
-        task: &TaskRecord,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let id = task.id.clone();
-        let active = self.is_running_task(&id);
-        let mut card = v_flex()
-            .w_full()
-            .min_w_0()
-            .gap_4()
-            .child(self.task_heading(task));
-        if task.plan.options.source_mode == 0
-            && task.plan.source.selected_subtitle.is_none()
-            && matches!(
-                task.plan.source.subtitles,
-                course2md::subtitle::SubtitleEvidence::Failed { .. }
-            )
-        {
-            card = card.child(info_callout(
-                SharedString::from(format!("task-subtitle-fallback-{id}")),
-                "字幕不可用，已改为识别视频声音",
-            ));
-        }
-        if task.state == TaskState::Queued && !active {
-            // The 等待处理 badge covers the next-in-line case; only a real wait is stated.
-            let waiting = self
-                .workspace
-                .as_ref()
-                .map(|workspace| {
-                    workspace
-                        .state
-                        .tasks
-                        .iter()
-                        .take_while(|other| other.id != id)
-                        .filter(|other| {
-                            other.handled_by.is_none() && other.state == TaskState::Queued
-                        })
-                        .count()
-                })
-                .unwrap_or(0);
-            if waiting > 0 {
-                card = card.child(info_callout(
-                    SharedString::from(format!("task-queued-{id}")),
-                    format!("前面还有 {waiting} 个任务"),
-                ));
-            }
-        }
-        let (progress, _) = self.task_progress_sections(task, cx);
-        card = card.when_some(progress, |view, progress| view.child(progress));
-        let mut actions = h_flex().gap_2().flex_wrap();
-        actions = self.task_stop_actions(
-            actions,
-            task,
-            matches!(
-                task.state,
-                TaskState::Running | TaskState::Queued | TaskState::Pausing
-            ) || active,
-            "box-",
-            outline_pill,
-            quiet,
-            cx,
-        );
-        card.child(actions)
-    }
-
     /// Workbench box card for a task that needs the user: paused, failed or
     /// uncertain outcomes, each with its real recovery action.
     pub fn box_task_attention(&mut self, task: &TaskRecord, cx: &mut Context<Self>) -> Div {
@@ -3448,7 +3387,7 @@ impl Desktop {
         // Without partial failures the feedback line above already names the reason.
         let missing = partial_failures
             .iter()
-            .filter(|(component, _, _)| matches!(component.as_str(), "proofreading" | "summary"))
+            .filter(|(component, _, _)| ai_component(component).is_some())
             .map(|(_, label, _)| label.as_str())
             .collect::<Vec<_>>()
             .join("、");
@@ -3462,7 +3401,7 @@ impl Desktop {
             );
         }
         for (component, _, reason) in partial_failures.iter().filter(|(component, _, _)| {
-            !requires_repair || !matches!(component.as_str(), "proofreading" | "summary")
+            !requires_repair || !ai_component(component).is_some()
         }) {
             card = card.child(
                 accessible_text(
@@ -3503,7 +3442,7 @@ impl Desktop {
             }
             if partial_failures
                 .iter()
-                .any(|(component, _, _)| matches!(component.as_str(), "proofreading" | "summary"))
+                .any(|(component, _, _)| ai_component(component).is_some())
             {
                 let repair_id = id.clone();
                 actions = actions.child(
@@ -3516,7 +3455,7 @@ impl Desktop {
                 );
             }
             for (component, label, _) in &partial_failures {
-                if requires_repair && matches!(component.as_str(), "proofreading" | "summary") {
+                if requires_repair && ai_component(component).is_some() {
                     continue;
                 }
                 let component = component.clone();
@@ -3631,20 +3570,9 @@ fn task_badge_kind(state: TaskState) -> BadgeKind {
 
 impl ConversionOptions {
     pub fn apply_to(&self, config: &mut course2md::settings::ConfigFile) {
-        use course2md::config::{AsrProvider, OutputFormat, TranscriptSource};
-        config.defaults.provider = match self.provider {
-            1 => Some(AsrProvider::Coreml),
-            2 => Some(AsrProvider::Gpu),
-            3 => Some(AsrProvider::Cpu),
-            4 => Some(AsrProvider::Npu),
-            5 => Some(AsrProvider::Api),
-            _ => None,
-        };
-        config.defaults.transcript_source = Some(match self.source_mode {
-            1 => TranscriptSource::Subtitle,
-            2 => TranscriptSource::Asr,
-            _ => TranscriptSource::Auto,
-        });
+        use course2md::config::OutputFormat;
+        config.defaults.provider = crate::asr_provider_from_index(self.provider);
+        config.defaults.transcript_source = Some(self.source_mode);
         config.defaults.keep_video = Some(self.keep_video);
         config.defaults.resume = Some(true);
         config.defaults.formats = Some(
@@ -3691,16 +3619,14 @@ fn task_status_label(task: &TaskRecord) -> String {
             .filter_map(|request| request.purpose.as_deref())
             .collect();
         // The 阅读笔记 action shows whether the note is readable.
-        return if !purpose.is_empty()
-            && purpose.iter().all(|purpose| purpose.contains("proof"))
-        {
+        let all = |component: Component| {
+            !purpose.is_empty() && purpose.iter().all(|purpose| ai_component(purpose) == Some(component))
+        };
+        return if all(Component::Proofreading) {
             "AI 校对结果未确认"
-        } else if !purpose.is_empty() && purpose.iter().all(|purpose| purpose.contains("summary")) {
+        } else if all(Component::Summary) {
             "摘要结果未确认"
-        } else if purpose
-            .iter()
-            .any(|purpose| purpose.contains("transcription"))
-        {
+        } else if purpose.contains(TRANSCRIPTION_PURPOSE) {
             "语音识别结果未确认"
         } else {
             "部分处理结果未确认"
@@ -3710,7 +3636,7 @@ fn task_status_label(task: &TaskRecord) -> String {
     if task.exports_only() && task.state == TaskState::Complete {
         "文件已导出".into()
     } else {
-        task.state.label().into()
+        task.status_label().into()
     }
 }
 
@@ -3719,14 +3645,11 @@ fn request_scope(request: &workspace::BlockedRequest) -> String {
         request.description.clone()
     } else {
         let purpose = request.purpose.as_deref().unwrap_or_default();
-        let name = if purpose.contains("proof") {
-            "AI 校对"
-        } else if purpose.contains("summary") {
-            "生成摘要"
-        } else if purpose.contains("transcription") {
-            "语音识别"
-        } else {
-            "外部处理"
+        let name = match ai_component(purpose) {
+            Some(Component::Proofreading) => "AI 校对",
+            Some(Component::Summary) => "生成摘要",
+            _ if purpose == TRANSCRIPTION_PURPOSE => "语音识别",
+            _ => "外部处理",
         };
         format!("{name}：范围未记录")
     }
@@ -4362,7 +4285,7 @@ mod tests {
         update_draft_source_title(&mut draft, b.input.clone(), "我的复习笔记".into(), None);
         assert!(draft.custom_title);
         let revision = draft.revision;
-        assert!(draft.accept_source(revision, b));
+        assert!(crate::workspace::accept_source(&mut draft, revision, b));
         assert_eq!(draft.title, "我的复习笔记");
         assert!(draft.custom_title);
     }

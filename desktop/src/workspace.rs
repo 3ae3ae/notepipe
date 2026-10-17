@@ -1,6 +1,7 @@
 //! Durable user work. Views never supply the identity or settings of a retry.
 use super::ConversionOptions;
 use anyhow::{Context, Result, bail, ensure};
+use course2md::execution::Component;
 use course2md::settings::ConfigFile;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -45,6 +46,29 @@ pub fn course_dir_name(source_id: &str) -> String {
         "course-{}",
         &course2md::execution::digest(source_id.as_bytes())[..32]
     )
+}
+
+/// The text source choice is stored as its historical index (0 auto,
+/// 1 subtitles, 2 speech recognition).
+pub mod text_source_index {
+    use course2md::config::TranscriptSource;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &TranscriptSource, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u64(match value {
+            TranscriptSource::Auto => 0,
+            TranscriptSource::Subtitle => 1,
+            TranscriptSource::Asr => 2,
+        })
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<TranscriptSource, D::Error> {
+        Ok(match u64::deserialize(deserializer)? {
+            1 => TranscriptSource::Subtitle,
+            2 => TranscriptSource::Asr,
+            _ => TranscriptSource::Auto,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -147,19 +171,6 @@ impl Draft {
         }
     }
 
-    #[cfg(test)]
-    pub fn accept_source(&mut self, revision: u64, source: crate::source::Source) -> bool {
-        if self.revision != revision {
-            return false;
-        }
-        if !self.custom_title {
-            self.title = source.title.clone();
-        }
-        self.source = Some(source);
-        self.updated = now();
-        true
-    }
-
     pub fn inherit(&mut self, defaults: &ConversionOptions) {
         let v = &mut self.options;
         if !self.overrides.contains(&Override::Provider) {
@@ -183,7 +194,6 @@ impl Draft {
         if !self.overrides.contains(&Override::Formats) {
             v.formats = defaults.formats;
         }
-        v.resume = true;
     }
 
     /// Resume inheriting AI processing choices without changing other task choices.
@@ -362,6 +372,16 @@ pub struct TaskRecord {
 }
 
 impl TaskRecord {
+    /// The state label, telling a cancel apart from a pause while the worker stops.
+    pub fn status_label(&self) -> &'static str {
+        if self.state == TaskState::Pausing && self.intent == Intent::Cancel {
+            "正在取消"
+        } else {
+            self.state.label()
+        }
+    }
+
+
     /// 是否有结果尚未确认的请求（BlockedRequest::is_uncertain 的任务级汇总）。
     pub fn has_uncertain(&self) -> bool {
         self.blocked.iter().any(BlockedRequest::is_uncertain)
@@ -371,7 +391,7 @@ impl TaskRecord {
         matches!(
             &self.plan.operation,
             course2md::execution::Operation::Reprocess { components, .. }
-                if !components.is_empty() && components.iter().all(|part| part == "exports")
+                if !components.is_empty() && components.iter().all(|part| part == Component::Exports.as_str())
         )
     }
 }
@@ -914,22 +934,16 @@ impl State {
         components.sort();
         components.dedup();
         ensure!(!components.is_empty(), "请选择需要补做的内容");
-        for component in &components {
-            let failed = if component == "exports" {
-                value
+        let mut parsed = Component::parse_all(&components)?;
+        for component in &parsed {
+            let failed = match component {
+                Component::Exports => value
                     .get("exports")
                     .and_then(|v| v.as_object())
-                    .is_some_and(|exports| exports.values().any(failed_outcome))
-            } else {
-                matches!(
-                    component.as_str(),
-                    "screenshots" | "proofreading" | "summary"
-                ) && value.get(component).is_some_and(failed_outcome)
+                    .is_some_and(|exports| exports.values().any(failed_outcome)),
+                component => value.get(component.as_str()).is_some_and(failed_outcome),
             };
-            ensure!(
-                failed,
-                "这部分无需补做"
-            );
+            ensure!(failed, "这部分无需补做");
         }
         if !resend.is_empty() {
             reconcile_receipts(&mut original)?;
@@ -947,19 +961,21 @@ impl State {
             // summary that the uncertain proofreading prevented from starting.
             // Any summary receipt means it has its own attempt to recover; do
             // not infer permission to repeat it from a proofreading decision.
-            if components.iter().any(|part| part == "proofreading")
-                && !components.iter().any(|part| part == "summary")
+            let summary = Component::Summary.as_str();
+            if parsed.contains(&Component::Proofreading)
+                && !parsed.contains(&Component::Summary)
                 && original.plan.config.llm.summarize
-                && value.get("summary").is_some_and(failed_outcome)
+                && value.get(summary).is_some_and(failed_outcome)
                 && original.blocked.iter().any(|request| {
                     request.is_uncertain()
-                        && request.purpose.as_deref() == Some("proofreading")
+                        && request.purpose.as_deref() == Some(Component::Proofreading.as_str())
                 })
                 && !course2md::dispatch::receipts(&original.work_dir)?
                     .iter()
-                    .any(|receipt| receipt.purpose == "summary")
+                    .any(|receipt| receipt.purpose == summary)
             {
-                components.push("summary".into());
+                parsed.push(Component::Summary);
+                components.push(summary.into());
                 components.sort();
             }
         } else {
@@ -971,19 +987,17 @@ impl State {
         let mut plan = original.plan;
         if let Some((service, config)) = ai_service {
             ensure!(
-                components
+                parsed
                     .iter()
-                    .all(|part| matches!(part.as_str(), "proofreading" | "summary")),
+                    .all(|part| matches!(part, Component::Proofreading | Component::Summary)),
                 "服务修复只能用于未完成的校对或摘要"
             );
             plan.ai_service = Some(service);
             plan.config.llm = config.llm;
         }
-        let only_exports = components.iter().all(|component| component == "exports");
-        plan.config.llm.enabled = components
-            .iter()
-            .any(|component| component == "proofreading");
-        plan.config.llm.summarize = components.iter().any(|component| component == "summary");
+        let only_exports = parsed.iter().all(|component| *component == Component::Exports);
+        plan.config.llm.enabled = parsed.contains(&Component::Proofreading);
+        plan.config.llm.summarize = parsed.contains(&Component::Summary);
         plan.config.llm.vision &= plan.config.llm.enabled;
         plan.options.llm = plan.config.llm.enabled;
         plan.options.summarize = plan.config.llm.summarize;
@@ -1213,7 +1227,7 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
         components,
         ..
     } = &task.plan.operation
-        && components.iter().all(|component| component == "exports")
+        && components.iter().all(|component| component == Component::Exports.as_str())
         && task.work_dir.join("export-result.json").is_file()
     {
         let value: serde_json::Value =
@@ -1966,6 +1980,20 @@ impl Workspace {
     }
 }
 
+/// Apply a preview result the way the import page does, for tests.
+#[cfg(test)]
+pub(crate) fn accept_source(draft: &mut Draft, revision: u64, source: crate::source::Source) -> bool {
+    if draft.revision != revision {
+        return false;
+    }
+    if !draft.custom_title {
+        draft.title = source.title.clone();
+    }
+    draft.source = Some(source);
+    draft.updated = now();
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2176,8 +2204,9 @@ mod tests {
         draft.change_source("A".into());
         let old = draft.revision;
         draft.change_source("B".into());
-        assert!(!draft.accept_source(old, source("A", "title-a")));
-        assert!(draft.accept_source(draft.revision, source("B", "title-b")));
+        assert!(!accept_source(&mut draft, old, source("A", "title-a")));
+        let revision = draft.revision;
+        assert!(accept_source(&mut draft, revision, source("B", "title-b")));
         draft.options.llm = true;
         draft.overrides.insert(Override::Proofread);
         let mut defaults = ConversionOptions::default();
@@ -2194,7 +2223,7 @@ mod tests {
         draft.custom_title = true;
         draft.folder = Some(42);
         draft.options.provider = 2;
-        draft.options.source_mode = 1;
+        draft.options.source_mode = course2md::config::TranscriptSource::Subtitle;
         draft.options.keep_video = true;
         draft.options.formats = [true, false, true];
         draft.options.llm = true;
@@ -2244,7 +2273,6 @@ mod tests {
         expected.options.llm = true;
         expected.options.summarize = false;
         expected.options.vision = true;
-        expected.options.resume = true;
         assert_eq!(draft, expected);
     }
 
@@ -2461,12 +2489,11 @@ mod tests {
         assert!(!state.matches_input(&after_new.id, after_new.revision));
         let current = state.draft().unwrap().clone();
         assert!(state.matches_input(&current.id, current.revision));
-        assert!(
-            state
-                .draft_mut()
-                .unwrap()
-                .accept_source(current.revision, source("same-input", "当前读取结果"),)
-        );
+        assert!(accept_source(
+            state.draft_mut().unwrap(),
+            current.revision,
+            source("same-input", "当前读取结果"),
+        ));
         assert_eq!(state.draft().unwrap().title, "当前读取结果");
         assert_eq!(state.drafts.len(), 1);
     }

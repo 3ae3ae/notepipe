@@ -132,14 +132,14 @@ impl ConversionOptions {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct ConversionOptions {
     provider: usize,
-    source_mode: usize,
+    #[serde(with = "workspace::text_source_index")]
+    source_mode: course2md::config::TranscriptSource,
     llm: bool,
     #[serde(default)]
     summarize: bool,
     #[serde(default)]
     vision: bool,
     keep_video: bool,
-    resume: bool,
     formats: [bool; 3],
 }
 
@@ -155,14 +155,9 @@ impl ConversionOptions {
                     .unwrap_or(0)
             })
             .unwrap_or(0);
-        let source_mode = match config.defaults.transcript_source.unwrap_or_default() {
-            course2md::config::TranscriptSource::Auto => 0,
-            course2md::config::TranscriptSource::Subtitle => 1,
-            course2md::config::TranscriptSource::Asr => 2,
-        };
+        let source_mode = config.defaults.transcript_source.unwrap_or_default();
         let llm = config.llm.enabled;
         let keep_video = config.defaults.keep_video.unwrap_or(false);
-        let resume = true;
         let formats = config
             .defaults
             .formats
@@ -183,7 +178,6 @@ impl ConversionOptions {
             summarize: config.llm.summarize,
             vision: config.llm.vision,
             keep_video,
-            resume,
             formats,
         }
     }

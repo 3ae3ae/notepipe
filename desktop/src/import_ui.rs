@@ -5,6 +5,7 @@ use super::*;
 const WORKBENCH_WIDTH: f32 = 760.;
 use crate::{motion, preferences::ServicePurpose, theme::*};
 use anyhow::Context as _;
+use course2md::config::TranscriptSource;
 use course2md::subtitle::{SubtitleEvidence, SubtitleReadError, SubtitleTrack};
 use gpui_component::{
     checkbox::Checkbox,
@@ -16,25 +17,34 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// The processing panel uses a single field column with one shared inset.
-fn import_option_field(
+/// A group heading in the processing panel's single field column.
+fn import_option_section(
     id: impl Into<ElementId>,
-    _icon: Icon,
     label: &'static str,
-    _hint: &'static str,
     content: impl IntoElement,
 ) -> Div {
-    if matches!(label, "语音识别" | "AI 服务" | "保存到") {
-        return outlined_field_label(id, label, TEXT_AUX, content);
-    }
-    let section = matches!(label, "文字来源" | "AI 处理" | "同时导出");
-    v_flex().w_full().min_w_0()
-        .gap_2()
+    v_flex().w_full().min_w_0().gap_2()
         .child(accessible_text(id, label)
-            .text_size(if section { TEXT_BODY } else { TEXT_AUX })
-            .font_weight(if section { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-            .text_color(color(if section { ACCENT } else { GRAY })))
+            .text_size(TEXT_BODY)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(color(ACCENT)))
         .child(content)
+}
+
+/// A plain field label above its control.
+fn import_option_label(
+    id: impl Into<ElementId>,
+    label: &'static str,
+    content: impl IntoElement,
+) -> Div {
+    v_flex().w_full().min_w_0().gap_2()
+        .child(accessible_text(id, label).text_size(TEXT_AUX).text_color(color(GRAY)))
+        .child(content)
+}
+
+/// Secondary text below a control.
+pub(crate) fn aux_text(content: impl IntoElement) -> Div {
+    div().text_size(TEXT_AUX).text_color(color(GRAY)).child(content)
 }
 
 fn import_option_switch_row(label: &'static str, hint: &'static str, switch: impl IntoElement) -> Div {
@@ -42,15 +52,20 @@ fn import_option_switch_row(label: &'static str, hint: &'static str, switch: imp
         .child(v_flex().flex_1().min_w_0().gap_1()
             .child(div().text_size(rems(16. / 14.)).child(label))
             .when(!hint.is_empty(), |view| view.child(
-                div().text_size(TEXT_AUX).text_color(color(GRAY)).child(hint))))
+                aux_text(hint))))
         .child(div().flex_shrink_0().child(switch))
 }
 
+/// The first line of a message when it is already readable. A raw download
+/// tool line (`WARNING:` / `ERROR:`) is not, and the caller supplies a summary.
+fn readable_first_line(message: &str) -> Option<&str> {
+    let first = message.lines().next().unwrap_or(message);
+    (!first.contains("WARNING:") && !first.contains("ERROR:")).then_some(first)
+}
+
 fn help(text: impl Into<SharedString>) -> Div {
-    // 与设置/引导页同一辅助信息处理：共享 ⓘ 图标 + 常规字重（共享实现在
-    // onboarding::help，review5 Note / review4#2）。
     let text = text.into();
-    crate::onboarding::help(text_id("help", &text), text).text_sm()
+    crate::theme::supporting_info(text_id("help", &text), text).text_sm()
 }
 fn issue(message: impl Into<SharedString>) -> Stateful<Div> {
     let message = message.into();
@@ -65,12 +80,7 @@ fn text_id(kind: &str, value: &str) -> SharedString {
     format!("import-{kind}-{:x}", hash.finish()).into()
 }
 
-/// Idle 工作台 conversion-options chrome. 高级选项 is the only disclosure;
-/// conversion defaults live there as real controls, not a standalone callout.
-// 设计决定（此前由恒值函数 + 源码嗅探测试钉住，无法被编译器发现且阻碍重构）：
-// idle 工作台不显示 conversion-defaults callout；识别/引擎控件直接放在「高级选项」层，
-// 不再嵌套 disclosure；AI 选项行不组合前导图标列。改动这些决定请直接改代码与本注释。
-
+/// One AI processing switch in the processing options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConversionAiOption {
     Proofread,
@@ -109,24 +119,18 @@ pub(crate) fn apply_conversion_ai_option(
     }
 }
 
-pub(crate) fn apply_text_source_mode(options: &mut ConversionOptions, mode: usize) {
-    options.source_mode = mode;
-}
+const TEXT_SOURCE_CHOICES: [(TranscriptSource, &str); 3] = [
+    (TranscriptSource::Auto, "自动"),
+    (TranscriptSource::Subtitle, "仅字幕"),
+    (TranscriptSource::Asr, "语音识别"),
+];
 
-pub(crate) fn apply_speech_location(
-    options: &mut ConversionOptions,
-    cloud: bool,
-    local_provider: usize,
-) {
-    options.provider = if cloud {
-        crate::CLOUD_PROVIDER_INDEX
-    } else {
-        local_provider
-    };
-}
-
-pub(crate) fn apply_local_engine(options: &mut ConversionOptions, provider: usize) {
-    options.provider = provider;
+fn text_source_id(mode: TranscriptSource) -> &'static str {
+    match mode {
+        TranscriptSource::Auto => "auto",
+        TranscriptSource::Subtitle => "subtitle",
+        TranscriptSource::Asr => "asr",
+    }
 }
 
 /// A shared heading for related conversion options. 图标由调用方显式给出（不做文案子串匹配）。
@@ -155,9 +159,9 @@ pub(crate) fn conversion_fact(value: impl Into<SharedString>, warning: bool) -> 
         .when(warning, |row| row.font_weight(FontWeight::SEMIBOLD))
 }
 
-fn uses_speech(source: &source::Source, source_mode: usize) -> bool {
-    source_mode == 2
-        || (source_mode == 0
+fn uses_speech(source: &source::Source, source_mode: TranscriptSource) -> bool {
+    source_mode == TranscriptSource::Asr
+        || (source_mode == TranscriptSource::Auto
             && source.selected_subtitle.is_none()
             && source.subtitle_request.is_none()
             && source.subtitle_read_error.is_none()
@@ -171,10 +175,10 @@ fn uses_speech(source: &source::Source, source_mode: usize) -> bool {
 
 fn automatic_subtitle_fallback(
     source: &mut source::Source,
-    source_mode: usize,
+    source_mode: TranscriptSource,
     error: Option<&str>,
 ) -> bool {
-    if source_mode != 0
+    if source_mode != TranscriptSource::Auto
         || source.selected_subtitle.is_some()
         || matches!(
             source.subtitle_read_error,
@@ -202,7 +206,7 @@ fn automatic_subtitle_fallback(
     true
 }
 
-fn subtitle_needs_confirmation(source: &source::Source, source_mode: usize) -> bool {
+fn subtitle_needs_confirmation(source: &source::Source, source_mode: TranscriptSource) -> bool {
     !uses_speech(source, source_mode)
         && (source.selected_subtitle.is_none()
             || source.subtitle_request.is_some()
@@ -562,14 +566,10 @@ impl Desktop {
         message: &str,
         cx: &mut Context<Self>,
     ) -> Div {
-        // A localized first line is the summary; only a raw tool line is replaced.
-        let first = message.lines().next().unwrap_or(message);
         let summary = if source::is_login_failure(message) {
             "字幕需要登录，或改用语音识别"
-        } else if first.contains("WARNING:") || first.contains("ERROR:") {
-            "无法读取字幕，可重试或改用语音识别"
         } else {
-            first
+            readable_first_line(message).unwrap_or("无法读取字幕，可重试或改用语音识别")
         };
         let details = if summary != message { message } else { "" };
         let id = text_id(kind, message);
@@ -641,7 +641,7 @@ impl Desktop {
         if explicit {
             // The requested text source takes effect before I/O. A failed
             // caption read must never silently keep the previous ASR choice.
-            self.task_options.source_mode = 1;
+            self.task_options.source_mode = TranscriptSource::Subtitle;
         }
         if let Some(source) = &mut self.source_preview {
             source.subtitle_request = Some(track.clone());
@@ -692,7 +692,7 @@ impl Desktop {
                             source.subtitle_read_error = None;
                         }
                         if explicit {
-                            this.task_options.source_mode = 1;
+                            this.task_options.source_mode = TranscriptSource::Subtitle;
                         }
                         this.save_current_draft(cx);
                     }
@@ -899,7 +899,7 @@ impl Desktop {
         self.subtitle_generation = self.subtitle_generation.wrapping_add(1);
         self.subtitle_loading = false;
         self.subtitle_error = None;
-        self.task_options.source_mode = 2;
+        self.task_options.source_mode = TranscriptSource::Asr;
         if let Some(source) = &mut self.source_preview {
             source.subtitle_request = None;
             source.subtitle_read_error = None;
@@ -923,7 +923,7 @@ impl Desktop {
         self.subtitle_generation = self.subtitle_generation.wrapping_add(1);
         self.subtitle_loading = false;
         self.subtitle_error = None;
-        self.task_options.source_mode = 1;
+        self.task_options.source_mode = TranscriptSource::Subtitle;
         if let Some(source) = &mut self.source_preview {
             source.subtitle_request = None;
             source.subtitle_read_error = None;
@@ -1039,10 +1039,8 @@ impl Desktop {
             view = view.child(
                 v_flex()
                     .gap_2()
-                    // 字段 label 与选中 tab 重复（workbench#10）：placeholder 已说明用途，
-                    // 去除后两个 tab 的内容区起点一致
-                    // M3 hero search: one elevated pill owns the field and its
-                    // forward action, so the start button reads as part of the input.
+                    // One elevated pill owns the field and its forward action, so
+                    // the start button reads as part of the input.
                     .child(
                         h_flex()
                             .w_full()
@@ -1208,7 +1206,7 @@ impl Desktop {
         let mut list = v_flex()
             .id("source-candidates")
             // 视口按字号缩放（约 3 行 + 露出第 4 行一角）；内边距让
-            // 行的 hover/press 涂层不贴容器发丝边（review#3/#4）
+            // 行的 hover/press 涂层不贴容器发丝边
             .max_h(rems(20.))
             .overflow_y_scroll()
             .p_1()
@@ -1362,8 +1360,8 @@ impl Desktop {
                                     })
                                     // 空选择即不可执行：与开始转换同一纪律
                                     .disabled(selected_count == 0)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.enqueue_selected_candidates(window, cx)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.enqueue_selected_candidates(cx)
                                     })),
                             ),
                     )
@@ -1412,7 +1410,7 @@ impl Desktop {
                     .text_ellipsis()
                     .line_clamp(2)
                     .font_weight(FontWeight::MEDIUM)
-                    // 标题是行的扫描锚点：主墨色（review#1）
+                    // 标题是行的扫描锚点：主墨色
                     .text_color(color(INK))
                     .child(title.to_owned()),
             )
@@ -1475,18 +1473,12 @@ impl Desktop {
                                     .flex_shrink_0(),
                             )
                             .child(
-                                issue({
-                                    // A localized first line is the summary; only a
-                                    // raw tool line falls back to the generic message.
-                                    let first = error.lines().next().unwrap_or(error);
-                                    if source::is_login_failure(error) {
-                                        "视频需要登录后读取，请登录后重试预览".to_owned()
-                                    } else if first.contains("WARNING:") || first.contains("ERROR:")
-                                    {
-                                        "暂时无法读取这个视频，请检查链接或稍后重试".to_owned()
-                                    } else {
-                                        first.to_owned()
-                                    }
+                                issue(if source::is_login_failure(error) {
+                                    "视频需要登录后读取，请登录后重试预览".to_owned()
+                                } else {
+                                    readable_first_line(error)
+                                        .unwrap_or("暂时无法读取这个视频，请检查链接或稍后重试")
+                                        .to_owned()
                                 })
                                 .flex_1()
                                 .min_w_0(),
@@ -1663,20 +1655,24 @@ impl Desktop {
                 .rounded(px(3.)).bg(color(INK)).text_color(color(CANVAS))
                 .text_size(rems(10. / 14.)).child(duration));
         }
+        let pending = source.subtitle_request.is_some() || source.subtitle_read_error.is_some()
+            || self.subtitle_error.is_some();
+        let confirmed_subtitle = !self.subtitle_loading && !pending && !self.import_uses_speech()
+            && source.selected_subtitle.is_some();
         let subtitle_status = if self.subtitle_loading { "正在读取字幕…" }
-            else if source.subtitle_request.is_some() || source.subtitle_read_error.is_some() || self.subtitle_error.is_some() {
-                "文字来源待确认"
-            } else if self.import_uses_speech() { "将识别视频声音" }
-            else if source.selected_subtitle.is_some() { "有字幕，将直接使用" }
+            else if pending { "文字来源待确认" }
+            else if self.import_uses_speech() { "将识别视频声音" }
+            else if confirmed_subtitle { "有字幕，将直接使用" }
             else { "文字来源待确认" };
-        let confirmed_subtitle = subtitle_status == "有字幕，将直接使用";
         let platform = if !source.online { "本地视频".to_owned() }
-            else { url::Url::parse(&source.input).ok().and_then(|url| url.host_str().map(str::to_owned))
-                .map(|host| {
-                    if host == "bilibili.com" || host.ends_with(".bilibili.com") || host == "b23.tv" { "Bilibili".into() }
-                    else if host == "youtube.com" || host.ends_with(".youtube.com") || host == "youtu.be" { "YouTube".into() }
-                    else { host }
-                }).unwrap_or_default() };
+            else {
+                match course2md::config::known_video_site(&source.input) {
+                    Some("bilibili") => "Bilibili".to_owned(),
+                    Some("youtube") => "YouTube".to_owned(),
+                    _ => url::Url::parse(&source.input).ok()
+                        .and_then(|url| url.host_str().map(str::to_owned)).unwrap_or_default(),
+                }
+            };
         let metadata = [platform, source.author.clone()].into_iter()
             .filter(|part| !part.trim().is_empty()).collect::<Vec<_>>().join(" · ");
         let details = v_flex().gap_3().child(help(source.input.clone())).when(
@@ -1720,7 +1716,7 @@ impl Desktop {
             }))
             .child(selected)
             .when(!self.online && self.can_start_input(cx), |card| card.child(
-                h_flex().w_full().justify_end().child(self.box_bottom_row(false, cx))))
+                h_flex().w_full().justify_end().child(self.box_bottom_row(cx))))
             .child(motion::disclosure("source-details-disclosure", self.show_preview_details, details)))
     }
 
@@ -1752,7 +1748,7 @@ impl Desktop {
         } else if speech {
             "识别视频声音".into()
         } else if let Some(subtitle) = &source.selected_subtitle {
-            // 自动选择的解析结果就是当前值，与显式选择同样只显示字幕名（review2#4）
+            // 自动选择的解析结果就是当前值，与显式选择同样只显示字幕名
             subtitle.label.clone()
         } else {
             match &source.subtitles {
@@ -1783,7 +1779,7 @@ impl Desktop {
                 .child(
                     accessible_text("import-text-source-state", description)
                         .font_weight(FontWeight::MEDIUM)
-                        // 值与其「更换」动作收成一个对象行，不用 flex_1 把两者钉到两端（review2#3）
+                        // 值与其「更换」动作收成一个对象行，不用 flex_1 把两者钉到两端
                         .min_w_0()
                         .whitespace_normal(),
                 )
@@ -2008,19 +2004,23 @@ impl Desktop {
     fn import_text_mode_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let selector = SingleChoiceGroup::new("conversion-text-mode", "文字来源方式")
             .segmented()
-            .options([("0", "自动"), ("1", "仅字幕"), ("2", "语音识别")])
-            .icon("0", icons::auto_fix())
-            .icon("1", icons::subtitles())
-            .icon("2", icons::mic())
-            .selected(self.task_options.source_mode.to_string())
+            .options(TEXT_SOURCE_CHOICES.map(|(mode, label)| (text_source_id(mode), label)))
+            .icon(text_source_id(TranscriptSource::Auto), icons::auto_fix())
+            .icon(text_source_id(TranscriptSource::Subtitle), icons::subtitles())
+            .icon(text_source_id(TranscriptSource::Asr), icons::mic())
+            .selected(text_source_id(self.task_options.source_mode))
             .on_change(cx.listener(|this, value: &SharedString, _, cx| {
-                let Ok(mode) = value.parse::<usize>() else {
+                let Some(mode) = TEXT_SOURCE_CHOICES
+                    .iter()
+                    .map(|(mode, _)| *mode)
+                    .find(|mode| text_source_id(*mode) == value.as_ref())
+                else {
                     return;
                 };
-                if mode == 2 {
+                if mode == TranscriptSource::Asr {
                     this.use_speech(cx);
                 } else {
-                    apply_text_source_mode(&mut this.task_options, mode);
+                    this.task_options.source_mode = mode;
                     this.save_current_draft(cx);
                     this.advance_conversion_when_ready(cx);
                     cx.notify();
@@ -2030,36 +2030,30 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .gap(rems(24. / 14.))
-            .child(import_option_field(
+            .child(import_option_section(
                 "conversion-text-mode-label",
-                icons::subtitles(),
                 "文字来源",
-                "",
                 v_flex().w_full().gap_2().child(selector).when(
-                    self.task_options.source_mode == 0,
+                    self.task_options.source_mode == TranscriptSource::Auto,
                     |view| {
                         view.child(
-                            div()
-                                .text_size(TEXT_AUX)
-                                .text_color(color(GRAY))
-                                .child("有字幕时直接用字幕，没有字幕时识别视频声音"),
+                            aux_text("有字幕时直接用字幕，没有字幕时识别视频声音"),
                         )
                     },
                 ),
             ));
-        if self.task_options.source_mode != 1 {
-            view = view.child(import_option_field(
+        if self.task_options.source_mode != TranscriptSource::Subtitle {
+            view = view.child(outlined_field_label(
                 "conversion-speech-label",
-                icons::mic(),
                 "语音识别",
-                "",
+                TEXT_AUX,
                 self.import_speech_options(window, cx),
             ));
         }
         view
     }
 
-    fn import_ai_options(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn import_ai_options(&self, cx: &mut Context<Self>) -> Div {
         let mut choices = v_flex().w_full().min_w_0().gap_2();
         for (index, option) in [
             ConversionAiOption::Proofread,
@@ -2088,13 +2082,7 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .gap(rems(24. / 14.))
-            .child(import_option_field(
-                "import-ai-label",
-                icons::subtitles(),
-                "AI 处理",
-                "",
-                choices,
-            ));
+            .child(import_option_section("import-ai-label", "AI 处理", choices));
         if self.task_options.llm || self.task_options.summarize {
             let mut service = v_flex()
                 .w_full()
@@ -2102,7 +2090,7 @@ impl Desktop {
                 .gap_2()
                 .child(self.task_service_picker(ServicePurpose::Ai, cx));
             if let Some(selected) = self.selected_task_service(ServicePurpose::Ai) {
-                service = service.child(div().text_size(TEXT_AUX).text_color(color(GRAY)).child(
+                service = service.child(aux_text(
                     format!(
                         "{}会发送到 {}",
                         if self.task_options.llm && self.task_options.vision {
@@ -2115,11 +2103,9 @@ impl Desktop {
                 ));
             }
             view = view.child(if self.selected_task_service(ServicePurpose::Ai).is_some() {
-                import_option_field("import-ai-service-label", icons::settings(), "AI 服务", "", service)
+                outlined_field_label("import-ai-service-label", "AI 服务", TEXT_AUX, service)
             } else {
-                v_flex().w_full().gap_2()
-                    .child(div().text_size(TEXT_AUX).text_color(color(GRAY)).child("AI 服务"))
-                    .child(service)
+                import_option_label("import-ai-service-label", "AI 服务", service)
             });
         }
         view
@@ -2170,14 +2156,13 @@ impl Desktop {
             .iter()
             .enumerate()
             .filter(|(index, _)| {
-                *index == 0
-                    || *index == 3
-                    || *index == crate::CLOUD_PROVIDER_INDEX
+                use course2md::config::AsrProvider;
+                // Automatic, CPU and the cloud service are always offered.
+                let provider = crate::asr_provider_from_index(*index);
+                matches!(provider, None | Some(AsrProvider::Cpu | AsrProvider::Api))
                     || *index == current
-                    || self.environment.as_ref().is_some_and(|environment| {
-                        crate::asr_provider_from_index(*index)
-                            .is_some_and(|provider| environment.supports(provider))
-                    })
+                    || provider.zip(self.environment.as_ref())
+                        .is_some_and(|(provider, environment)| environment.supports(provider))
             })
             .map(|(index, (_, label))| (index, *label))
             .collect();
@@ -2204,7 +2189,7 @@ impl Desktop {
                             .checked(index == current)
                             .on_click(move |_, _, cx| {
                                 let _ = entity.update(cx, |this, cx| {
-                                    apply_local_engine(&mut this.task_options, index);
+                                    this.task_options.provider = index;
                                     this.persist_task_options(cx);
                                 });
                             }),
@@ -2216,10 +2201,7 @@ impl Desktop {
             view = view
                 .child(self.task_service_picker(ServicePurpose::Speech, cx))
                 .child(
-                    div()
-                        .text_size(TEXT_AUX)
-                        .text_color(color(GRAY))
-                        .child("音频会发送到所选识别服务"),
+                    aux_text("音频会发送到所选识别服务"),
                 );
         } else {
             let (provider, model, root) = self.import_model_request();
@@ -2236,7 +2218,7 @@ impl Desktop {
                     })
                 });
             if ready {
-                view = view.child(div().text_size(TEXT_AUX).text_color(color(GRAY)).child(
+                view = view.child(aux_text(
                     format!(
                         "模型已下载 · {}",
                         crate::settings_ui::model_diagnostics::model_display_name(&model)
@@ -2291,8 +2273,7 @@ impl Desktop {
                                         }))
                             })),
                 ).when(self.job.is_some(), |view| view.child(
-                    div().text_size(TEXT_AUX).text_color(color(GRAY))
-                        .child("当前处理结束后可准备模型")));
+                    aux_text("当前任务完成后才能下载模型")));
             } else {
                 view = view.child(self.model_readiness_panel_with(
                     provider,
@@ -2314,7 +2295,7 @@ impl Desktop {
     }
 
     fn missing_import_service(&self) -> Option<ServicePurpose> {
-        let separate_subtitle = self.task_options.source_mode != 2
+        let separate_subtitle = self.task_options.source_mode != TranscriptSource::Asr
             && self
                 .workspace
                 .as_ref()
@@ -2465,8 +2446,8 @@ impl Desktop {
         );
         v_flex().w_full().min_w_0()
             .when(self.source_preview.is_some(), |view| view.child(
-                import_option_field(
-                    "import-title-label", icons::subtitles(), "笔记名称", "",
+                import_option_label(
+                    "import-title-label", "笔记名称",
                     crate::focus_scroll::RevealFocus::new(
                         ("import-title-focus", self.validation_attempt),
                         text_input(&self.inputs[&Field::Title]).w_full(),
@@ -2474,16 +2455,15 @@ impl Desktop {
                     ),
                 ),
             ))
-            .child(import_option_field(
+            .child(outlined_field_label(
             "import-destination-label",
-            icons::folder_open(),
             "保存到",
-            "",
+            TEXT_AUX,
             view,
         ))
     }
 
-    fn import_exports(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn import_exports(&self, cx: &mut Context<Self>) -> Div {
         let mut choices = h_flex().w_full().min_w_0().gap_2().flex_wrap();
         for (index, label) in ["Markdown", "网页", "JSON"].into_iter().enumerate() {
             choices = choices.child(
@@ -2501,11 +2481,9 @@ impl Desktop {
                 })),
             );
         }
-        v_flex().w_full().min_w_0().child(import_option_field(
+        v_flex().w_full().min_w_0().child(import_option_section(
             "import-exports-label",
-            icons::download(),
             "同时导出",
-            "",
             choices,
         )).when(self.online, |view| view.child(
             div().w_full().min_w_0().pt(rems(24. / 14.))
@@ -2588,8 +2566,8 @@ impl Desktop {
     }
 
     /// Conversion starts only from the explicit action beside the preview.
-    fn box_bottom_row(&self, unavailable: bool, cx: &mut Context<Self>) -> Div {
-        let disabled = unavailable || self.pending_conversion.is_some()
+    fn box_bottom_row(&self, cx: &mut Context<Self>) -> Div {
+        let disabled = self.pending_conversion.is_some()
             || self.source_preview.is_none() || self.preview_cancel.is_some();
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("start-conversion"), disabled, cx)
@@ -2682,11 +2660,11 @@ impl Desktop {
 
     pub fn new_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let opening_result = self.reading && self.following_conversion.is_some();
-        let linked_task = self.workbench_linked_task(cx).cloned();
-        if linked_task.is_none()
+        let linked_state = self.workbench_linked_task(cx).map(|task| task.state);
+        if linked_state.is_none()
             && !self.task_options.uses_cloud_provider()
             && (self.import_uses_speech()
-                || (self.generation_options_open && self.task_options.source_mode != 1))
+                || (self.generation_options_open && self.task_options.source_mode != TranscriptSource::Subtitle))
         {
             let (provider, model, root) = self.import_model_request();
             self.ensure_model_diagnostic(provider, Some(&model), &root, cx);
@@ -2716,18 +2694,19 @@ impl Desktop {
                 message,
             ));
         }
-        let has_linked_task = linked_task.is_some();
-        if let Some(task) = linked_task.filter(|task| !matches!(task.state,
-            workspace::TaskState::Queued | workspace::TaskState::Running | workspace::TaskState::Pausing)) {
+        let has_linked_task = linked_state.is_some();
+        // Queued and running tasks are shown by the active task list below.
+        let settled_task = linked_state
+            .filter(|state| !matches!(state,
+                workspace::TaskState::Queued | workspace::TaskState::Running | workspace::TaskState::Pausing))
+            .and_then(|_| self.workbench_linked_task(cx).cloned());
+        if let Some(task) = settled_task {
             let task_view = match task.state {
                 workspace::TaskState::Complete | workspace::TaskState::Partial
                     if opening_result =>
                 {
                     self.box_task_opening_result(&task, cx)
                 }
-                workspace::TaskState::Queued
-                | workspace::TaskState::Running
-                | workspace::TaskState::Pausing => self.box_task_running(&task, window, cx),
                 _ => self.box_task_attention(&task, cx),
             };
             view = view.child(
@@ -2780,14 +2759,13 @@ impl Desktop {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.generation_options_open = false; cx.notify();
                             }))))
-                    .child(div().text_size(TEXT_AUX).text_color(color(GRAY))
-                        .child("只对接下来添加的视频生效，长期默认值在设置里改")))
+                    .child(aux_text("仅对本次生效")))
                 .child(self.import_text_mode_options(window, cx))
                 .child(div().h(px(1.)).bg(color(HAIRLINE)))
-                .child(self.import_ai_options(window, cx))
+                .child(self.import_ai_options(cx))
                 .child(div().h(px(1.)).bg(color(HAIRLINE)))
                 .child(self.import_destination(cx))
-                .child(self.import_exports(window, cx))
+                .child(self.import_exports(cx))
                 .child(h_flex().w_full().justify_end().pt(rems(8. / 14.))
                     .child(quiet("reset-task-overrides").icon(icons::refresh()).label("恢复 AI 默认")
                         .on_click(cx.listener(|this, _, _, cx| this.reset_task_ai_overrides(cx))))))
@@ -2838,9 +2816,7 @@ impl Desktop {
                 .child(h_flex().size(rems(88. / 14.)).rounded_full()
                     .items_center().justify_center().bg(color(SECONDARY_CONTAINER))
                     .child(icons::file_upload().size(rems(40. / 14.)).text_color(color(ACCENT))))
-                .child(div().text_size(rems(28. / 14.)).font_weight(FontWeight::SEMIBOLD).child("松开以添加视频"))
-                .child(div().text_center().text_size(TEXT_BODY).text_color(color(GRAY))
-                    .child("读取视频信息后，确认选项即可开始转换")))
+                .child(div().text_size(rems(28. / 14.)).font_weight(FontWeight::SEMIBOLD).child("松开以添加视频")))
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
                 this.drop_source_files(paths.paths(), window, cx);
             }))
@@ -2873,7 +2849,7 @@ impl Desktop {
             });
         let checking_components = !preferences_blocked
             && self.environment.is_none()
-            && submission_error.as_deref() == Some("正在检查所需组件…");
+            && submission_error.is_some();
         let mut inset = v_flex().w_full().min_w_0().gap_3();
         let mut actions = h_flex().gap_2().flex_wrap();
         if self.environment.as_ref().is_some_and(|environment| {
@@ -2887,9 +2863,8 @@ impl Desktop {
                     .icon(icons::settings())
                     .label("检查所需组件")
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.settings_tab = crate::settings_ui::SettingsTab::Application;
-                        this.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
                         this.open_settings(window, cx);
+                        this.select_settings_tab(crate::settings_ui::SettingsTab::Application, window, cx);
                     })),
             );
         }
@@ -3080,12 +3055,10 @@ impl Desktop {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConversionAiOption, ConversionFollow, ConversionGate, apply_conversion_ai_option,
-        apply_local_engine, apply_speech_location, apply_text_source_mode,
-        automatic_subtitle_fallback, completed_input_task, conversion_ai_option_enabled,
-        conversion_ai_option_label, conversion_gate, submitted_input_task,
-        subtitle_needs_confirmation, uses_speech,
+        ConversionFollow, ConversionGate, automatic_subtitle_fallback, completed_input_task,
+        conversion_gate, submitted_input_task, subtitle_needs_confirmation, uses_speech,
     };
+    use course2md::config::TranscriptSource;
     use crate::{ConversionOptions, source, workspace};
     use course2md::subtitle::{CachedSubtitle, SubtitleEvidence, SubtitleReadError};
 
@@ -3720,9 +3693,9 @@ mod tests {
                 }),
                 ..Default::default()
             };
-            assert!(automatic_subtitle_fallback(&mut source, 0, None));
-            assert!(uses_speech(&source, 0));
-            assert!(!subtitle_needs_confirmation(&source, 0));
+            assert!(automatic_subtitle_fallback(&mut source, TranscriptSource::Auto, None));
+            assert!(uses_speech(&source, TranscriptSource::Auto));
+            assert!(!subtitle_needs_confirmation(&source, TranscriptSource::Auto));
             assert!(source.subtitle_request.is_none());
             assert!(source.subtitle_read_error.is_none());
         }
@@ -3740,15 +3713,15 @@ mod tests {
             ..Default::default()
         };
         let original = source.clone();
-        assert!(!automatic_subtitle_fallback(&mut source, 1, None));
+        assert!(!automatic_subtitle_fallback(&mut source, TranscriptSource::Subtitle, None));
         assert_eq!(source, original);
-        assert!(subtitle_needs_confirmation(&source, 1));
+        assert!(subtitle_needs_confirmation(&source, TranscriptSource::Subtitle));
 
         source.subtitle_read_error = Some(SubtitleReadError::Cancelled);
         let cancelled = source.clone();
-        assert!(!automatic_subtitle_fallback(&mut source, 0, None));
+        assert!(!automatic_subtitle_fallback(&mut source, TranscriptSource::Auto, None));
         assert_eq!(source, cancelled);
-        assert!(!uses_speech(&source, 0));
+        assert!(!uses_speech(&source, TranscriptSource::Auto));
     }
 
     #[test]
@@ -3762,7 +3735,7 @@ mod tests {
             },
             ..Default::default()
         };
-        assert!(subtitle_needs_confirmation(&source, 0));
+        assert!(subtitle_needs_confirmation(&source, TranscriptSource::Auto));
         source.selected_subtitle = Some(CachedSubtitle {
             source_identity: source.identity.clone(),
             track_id: track.id.clone(),
@@ -3770,23 +3743,23 @@ mod tests {
             path: "lesson.srt".into(),
             events: Vec::new(),
         });
-        assert!(!subtitle_needs_confirmation(&source, 0));
+        assert!(!subtitle_needs_confirmation(&source, TranscriptSource::Auto));
 
         source.subtitle_request = Some(track);
-        assert!(subtitle_needs_confirmation(&source, 0));
+        assert!(subtitle_needs_confirmation(&source, TranscriptSource::Auto));
         source.subtitle_request = None;
         source.subtitle_read_error = Some(SubtitleReadError::Failed {
             message: "无法读取新字幕，原正文仍保留".into(),
         });
-        assert!(subtitle_needs_confirmation(&source, 0));
+        assert!(subtitle_needs_confirmation(&source, TranscriptSource::Auto));
 
         // Cancelling the replacement or choosing the cached text restores the
         // confirmed source without opening unrelated generation preferences.
         source.subtitle_read_error = None;
-        assert!(!subtitle_needs_confirmation(&source, 1));
+        assert!(!subtitle_needs_confirmation(&source, TranscriptSource::Subtitle));
         source.selected_subtitle = None;
-        assert!(subtitle_needs_confirmation(&source, 1));
-        assert!(!subtitle_needs_confirmation(&source, 2));
+        assert!(subtitle_needs_confirmation(&source, TranscriptSource::Subtitle));
+        assert!(!subtitle_needs_confirmation(&source, TranscriptSource::Asr));
     }
 
     #[test]
@@ -3795,84 +3768,24 @@ mod tests {
             subtitles: SubtitleEvidence::NoneFound,
             ..Default::default()
         };
-        assert!(uses_speech(&source, 0));
-        assert!(!uses_speech(&source, 1));
+        assert!(uses_speech(&source, TranscriptSource::Auto));
+        assert!(!uses_speech(&source, TranscriptSource::Subtitle));
         source.subtitle_request = Some(course2md::subtitle::file_track("lesson.srt".into(), None));
-        assert!(!uses_speech(&source, 0));
-        assert!(!uses_speech(&source, 1));
+        assert!(!uses_speech(&source, TranscriptSource::Auto));
+        assert!(!uses_speech(&source, TranscriptSource::Subtitle));
         source.subtitle_request = None;
         source.subtitle_read_error = Some(SubtitleReadError::Failed {
             message: "字幕文件无法读取".into(),
         });
-        assert!(!uses_speech(&source, 0));
-        assert!(uses_speech(&source, 2));
+        assert!(!uses_speech(&source, TranscriptSource::Auto));
+        assert!(uses_speech(&source, TranscriptSource::Asr));
         source.subtitle_read_error = None;
         source.subtitles = SubtitleEvidence::Unchecked;
-        assert!(!uses_speech(&source, 0));
+        assert!(!uses_speech(&source, TranscriptSource::Auto));
         source.subtitles = SubtitleEvidence::Failed {
             message: "请求失败".into(),
         };
-        assert!(uses_speech(&source, 0));
-        assert!(!uses_speech(&source, 1));
-    }
-
-    #[test]
-    fn open_advanced_options_applies_source_and_engine_choices() {
-        let mut options = ConversionOptions::default();
-        let initial_mode = options.source_mode;
-        let next_mode = if initial_mode == 0 { 1 } else { 0 };
-        apply_text_source_mode(&mut options, next_mode);
-        assert_eq!(options.source_mode, next_mode);
-        apply_text_source_mode(&mut options, 2);
-        assert_eq!(options.source_mode, 2);
-
-        let local_provider = 3;
-        apply_speech_location(&mut options, true, local_provider);
-        assert_eq!(options.provider, crate::CLOUD_PROVIDER_INDEX);
-        apply_speech_location(&mut options, false, local_provider);
-        assert_eq!(options.provider, local_provider);
-        apply_local_engine(&mut options, 0);
-        assert_eq!(options.provider, 0);
-        apply_local_engine(&mut options, 1);
-        assert_eq!(options.provider, 1);
-    }
-
-    #[test]
-    fn conversion_ai_rows_have_no_leading_icon_column_and_toggles_update_options() {
-        assert_eq!(
-            conversion_ai_option_label(ConversionAiOption::Proofread),
-            "校对文字和标点"
-        );
-        assert_eq!(
-            conversion_ai_option_label(ConversionAiOption::Vision),
-            "校对时附带对应截图"
-        );
-        assert_eq!(
-            conversion_ai_option_label(ConversionAiOption::Summary),
-            "在开头生成摘要"
-        );
-
-        let mut options = ConversionOptions::default();
-        for option in [
-            ConversionAiOption::Proofread,
-            ConversionAiOption::Vision,
-            ConversionAiOption::Summary,
-        ] {
-            let before = conversion_ai_option_enabled(&options, option);
-            apply_conversion_ai_option(&mut options, option, !before);
-            assert_eq!(
-                conversion_ai_option_enabled(&options, option),
-                !before,
-                "{} must update conversion options",
-                conversion_ai_option_label(option)
-            );
-            apply_conversion_ai_option(&mut options, option, before);
-            assert_eq!(
-                conversion_ai_option_enabled(&options, option),
-                before,
-                "{} must restore conversion options",
-                conversion_ai_option_label(option)
-            );
-        }
+        assert!(uses_speech(&source, TranscriptSource::Auto));
+        assert!(!uses_speech(&source, TranscriptSource::Subtitle));
     }
 }
