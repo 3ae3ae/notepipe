@@ -2788,7 +2788,10 @@ mod tests {
         assert_eq!(options[0].label, "全部笔记");
         assert_eq!(options[1].folder, Some(0));
         assert_eq!(options[2].label, "讲座");
-        assert_eq!(super::library_filter_selected(&options, &root, crate::FolderFilter::All), "all");
+        assert_eq!(
+            super::library_filter_selected(&options, &root, crate::FolderFilter::All),
+            "all"
+        );
         assert_eq!(
             super::library_filter_selected(&options, &root, crate::FolderFilter::Folder(2)),
             "f-0-2"

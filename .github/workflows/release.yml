@@ -122,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/desktop-deps
-      # Desktop tests already ran on the pull request for this revision.
+      # Tag builds package the locked inputs; pull-request desktop tests are not implied here.
       - name: Build CLI engine and desktop app
         run: |
           cargo build --release --locked

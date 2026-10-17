@@ -4,7 +4,7 @@
 set -uo pipefail
 
 VIDEO="${1:?usage: bench-mac.sh <video> [outdir]}"
-OUT="${2:-/tmp/c2m-bench}"
+OUT="$(mktemp -d "${2:-/tmp/c2m-bench}.XXXXXX")"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$REPO/target/release/course2md"
 PM_LOG="$(mktemp -t c2m-pm)"

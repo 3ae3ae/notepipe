@@ -22,4 +22,4 @@ python3 desktop/assets/icon-design/export.py
 
 脚本调用 Apple 的 `ictool` 原生渲染器导出各外观，再生成 `desktop/assets/` 下的 `icon.icns`、`icon.ico`、`icon.png` 及小尺寸 PNG；Pillow 只负责静态排版、颜色转换和缩放。此版本使用 Icon Composer 2.0 / 115.1、设计代际 27。
 
-macOS 使用默认外观的静态 `icon.icns`，兼容 macOS 14 起的现有应用包；`.icon` 源文件保留所有可编辑材质与外观。Windows 的 `icon.ico` 包含 16、20、24、32、40、48、64、96、128、256 像素，在 `build.rs` 中编译为编号 `1` 的资源。Linux 使用 `icon.png`。修改后应运行导出脚本，再重新构建 Windows 程序。
+macOS 使用默认外观的静态 `icon.icns`，兼容 macOS 15 起的现有应用包；`.icon` 源文件保留所有可编辑材质与外观。Windows 的 `icon.ico` 包含 16、20、24、32、40、48、64、96、128、256 像素，在 `build.rs` 中编译为编号 `1` 的资源。Linux 使用 `icon.png`。修改后应运行导出脚本，再重新构建 Windows 程序。

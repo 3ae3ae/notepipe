@@ -16,7 +16,7 @@ COURSE2MD_BIN="$PWD/target/debug/course2md" cargo run --manifest-path desktop/Ca
 
 `just install` (macOS) installs the current checkout as `/Applications/course2md.app`, keeping existing notes and settings.
 
-`sources.py` fast-forwards `~/Developer/zed` and `~/Developer/gpui-component` (override with `--developer-dir`, skip pulling with `--no-pull`), then creates worktrees under `desktop/.deps`. It maps GPUI Component's `gpui-pre` crates to Zed's GPUI and applies the reviewed patches in [`patches/`](patches/README.md). Your own checkouts must be clean and are never modified. Release builds use `--locked`, which checks out the revisions frozen in `sources.lock.json`.
+`sources.py` fast-forwards `~/Developer/zed` and `~/Developer/gpui-component` (override with `--developer-dir`, skip pulling with `--no-pull`), then creates worktrees under `desktop/.deps`. It maps GPUI Component's `gpui-pre` crates to Zed's GPUI and applies the reviewed patches in [`patches/`](patches/README.md). Your own checkouts are only fast-forwarded, never patched. Release builds use `--locked`, which checks out the revisions frozen in `sources.lock.json`.
 
 The app looks for the engine in `COURSE2MD_BIN`, then beside its own executable, then on PATH.
 

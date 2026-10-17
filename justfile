@@ -20,6 +20,10 @@ install:
             pgrep -f "$dest/Contents/MacOS/course2md-desktop" >/dev/null || break
             sleep 0.3
         done
+        if pgrep -f "$dest/Contents/MacOS/course2md-desktop" >/dev/null; then
+            echo "course2md did not quit; refusing to replace the installed app." >&2
+            exit 1
+        fi
     fi
     staging=/Applications/.course2md.app.installing
     rm -rf "$staging"

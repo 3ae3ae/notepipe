@@ -19,6 +19,5 @@ macOS bundles keep the full SemVer in `Course2mdVersion` and use Apple's numeric
 
 Recipes are rendered from `packaging/homebrew/` and `packaging/aur/`. Change these templates, not the external repositories, which later releases overwrite. To retry a channel, run `brew-tap` or `aur` manually with `version`; `aur` accepts `dry_run: true`, and `packaging/aur/update-aur.sh <version> --dry-run` runs the same validation locally on Arch.
 
-The Homebrew job pushes the tap with the `AUR_SSH_PRIVATE_KEY` secret, which is also authorized on GitHub. A dedicated tap deploy key would be cleaner.
 
 User documentation lives in the [GitHub Wiki](https://github.com/mizorewww/course2md/wiki) (`git clone git@github.com:mizorewww/course2md.wiki.git`). Keep the Chinese and English pages aligned.

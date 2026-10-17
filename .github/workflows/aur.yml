@@ -71,5 +71,5 @@ jobs:
           if [ "$DRY_RUN" = true ]; then mode="--dry-run"; fi
           su builder -s /bin/bash -c "
             export GIT_SSH_COMMAND='ssh -i /home/builder/.ssh/aur_key -o User=aur -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/home/builder/.ssh/known_hosts -o IdentitiesOnly=yes'
-            packaging/aur/update-aur.sh '${VERSION#v}' '$mode'
+            packaging/aur/update-aur.sh '$VERSION' '$mode'
           "
