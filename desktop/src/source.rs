@@ -438,7 +438,7 @@ pub fn probe(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<Sou
             unavailable_entries,
         } => {
             // 分 P 视频的 flat 探测只有裸链接：补真实分集标题与首帧预览图。
-            // 辅助探测失败不影响候选（interaction.md：辅助探测失败不阻断任务）。
+            // 辅助探测失败不影响候选（辅助探测失败不阻断任务）。
             if !cancel.load(Ordering::Relaxed) {
                 course2md::fetch::enrich_bilibili_candidates(&mut candidates);
             }

@@ -195,15 +195,7 @@ fn prompt_model_choice() -> Result<String> {
     let models = crate::config::local_models(AsrProvider::Coreml);
     let items: Vec<String> = models
         .iter()
-        .map(|m| {
-            let note = match m.id {
-                "qwen3-1.7b" => crate::tr!("（推荐，下载约 2.3GB / Recommended, ~2.3GB）"),
-                "qwen3-0.6b" => crate::tr!("（低功耗，约 1GB / Low power, ~1GB）"),
-                "whisper" => crate::tr!("（多语种 / Multilingual）"),
-                _ => "",
-            };
-            format!("{}{note}", m.label)
-        })
+        .map(|m| format!("{}{}", m.label, crate::tr!(m.note)))
         .collect();
     let choice = dialoguer::Select::new()
         .with_prompt(crate::tr!("选择识别模型 / Choose a speech model"))

@@ -141,31 +141,39 @@ impl fmt::Display for AsrProvider {
 pub struct LocalModel {
     pub id: &'static str,
     pub label: &'static str,
+    /// Optional choice hint; the selected language is resolved at display time.
+    pub note: &'static str,
 }
 
 const QWEN3_1_7B: LocalModel = LocalModel {
     id: DEFAULT_ASR_MODEL,
     label: "Qwen3 1.7B",
+    note: "（推荐，下载约 2.3GB / Recommended, ~2.3GB）",
 };
 const QWEN3_0_6B: LocalModel = LocalModel {
     id: "qwen3-0.6b",
     label: "Qwen3 0.6B",
+    note: "（低功耗，约 1GB / Low power, ~1GB）",
 };
 const WHISPER: LocalModel = LocalModel {
     id: "whisper",
     label: "Whisper",
+    note: "（多语种 / Multilingual）",
 };
 const WHISPER_TINY: LocalModel = LocalModel {
     id: "whisper-tiny",
     label: "Whisper Tiny",
+    note: "",
 };
 const WHISPER_BASE: LocalModel = LocalModel {
     id: "whisper-base",
     label: "Whisper Base",
+    note: "",
 };
 const WHISPER_SMALL: LocalModel = LocalModel {
     id: "whisper-small",
     label: "Whisper Small",
+    note: "",
 };
 
 /// 每种本地后端可选的模型（第一项为默认）。云端后端没有本地模型。

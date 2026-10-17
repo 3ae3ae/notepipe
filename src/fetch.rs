@@ -434,7 +434,7 @@ fn apply_bilibili_view(candidates: &mut [SourceCandidate], bvid: &str, view: &Bi
 }
 
 /// 用 Bilibili web API 补全分 P 候选的分集标题、首帧预览图与时长。
-/// 辅助探测：任何失败都保留原候选，不阻断任务（见 interaction.md）。
+/// 辅助探测：任何失败都保留原候选，不阻断任务。
 pub fn enrich_bilibili_candidates(candidates: &mut [SourceCandidate]) {
     let mut bvids = Vec::new();
     for candidate in candidates.iter() {
