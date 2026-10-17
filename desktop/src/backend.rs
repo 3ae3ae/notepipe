@@ -53,11 +53,8 @@ pub enum Event {
     #[serde(rename = "model_ready")]
     ModelReady {
         operation: String,
-        dir: PathBuf,
         #[serde(default)]
         model: Option<String>,
-        #[serde(default)]
-        status: Option<serde_json::Value>,
     },
     Error {
         message: String,
@@ -625,7 +622,10 @@ mod tests {
             r#"{"type":"model_ready","operation":"prepare","dir":"/tmp/models","model":"qwen3-1.7b"}"#,
         )
         .unwrap();
-        assert!(matches!(event, Event::ModelReady { dir, .. } if dir == Path::new("/tmp/models")));
+        assert!(matches!(
+            event,
+            Event::ModelReady { model, .. } if model.as_deref() == Some("qwen3-1.7b")
+        ));
     }
 
     #[test]

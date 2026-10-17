@@ -113,7 +113,12 @@ pub(crate) struct ApplePart {
 
 const QWEN_17: &[ApplePart] = &[ApplePart {
     repo: "aufklarer/Qwen3-ASR-1.7B-MLX-8bit",
-    files: &["config.json", "vocab.json", "merges.txt", "tokenizer_config.json"],
+    files: &[
+        "config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+    ],
     bundles: &[],
     weights: true,
 }];

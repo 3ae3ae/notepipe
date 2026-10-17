@@ -299,15 +299,14 @@ pub fn prepare_model(model: &str) -> Result<()> {
 /// Cache-only preparation before downloading user media; inference loads weights once later.
 fn cache_manifest(model: &str) -> Result<String> {
     let Some(parts) = crate::models::status::apple_parts(model) else {
-        anyhow::bail!(
-            "不支持的 Apple 模型 / Unsupported Apple model: {model}"
-        );
+        anyhow::bail!("不支持的 Apple 模型 / Unsupported Apple model: {model}");
     };
     let items: Vec<serde_json::Value> = parts
         .iter()
         .chain(std::iter::once(&crate::models::status::APPLE_VAD))
         .map(|part| {
-            let mut files: Vec<String> = part.files.iter().map(|file| (*file).to_string()).collect();
+            let mut files: Vec<String> =
+                part.files.iter().map(|file| (*file).to_string()).collect();
             files.extend(part.bundles.iter().map(|bundle| format!("{bundle}/**")));
             serde_json::json!({"repo": part.repo, "files": files})
         })

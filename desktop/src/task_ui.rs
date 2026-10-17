@@ -449,10 +449,10 @@ pub(crate) fn task_requires_service_repair(task: &TaskRecord) -> bool {
 /// 组件 key → 补做按钮文案的唯一来源（任务卡/笔记库/阅读页共用，防止多处漂移）。
 pub(crate) fn retry_component_label(component: &str) -> &'static str {
     match Component::parse(component) {
-        Some(Component::Screenshots) => course2md::tr!("补生成截图"),
+        Some(Component::Screenshots) => course2md::tr!("重新生成截图"),
         Some(Component::Proofreading) => course2md::tr!("重试 AI 校对"),
-        Some(Component::Summary) => course2md::tr!("补生成摘要"),
-        Some(Component::Exports) => course2md::tr!("仅补导出"),
+        Some(Component::Summary) => course2md::tr!("重新生成摘要"),
+        Some(Component::Exports) => course2md::tr!("重新导出"),
         None => course2md::tr!("补全未完成部分"),
     }
 }
@@ -2960,8 +2960,8 @@ impl Desktop {
                         && task.handled_by.is_none()
                         && !(requires_repair && ai_component)
                     {
-                        actions = actions
-                            .child(self.retry_component_action(task, component, label, style, cx));
+                        actions =
+                            actions.child(self.retry_component_action(task, component, style, cx));
                     }
                 }
             }
@@ -3090,7 +3090,6 @@ impl Desktop {
         &self,
         task: &TaskRecord,
         component: &str,
-        label: &str,
         style: RecoveryStyle,
         cx: &mut Context<Self>,
     ) -> Button {
@@ -3099,7 +3098,7 @@ impl Desktop {
         style
             .button(&format!("retry-{component}"), &task.id, Emphasis::Quiet)
             .icon(icons::refresh())
-            .label(course2md::tr!("仅补{}", label))
+            .label(retry_component_label(&component))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.reprocess_task(id.clone(), vec![component.clone()], Vec::new(), cx)
             }))
@@ -3627,8 +3626,7 @@ impl Desktop {
                 if requires_repair && ai_component(component).is_some() {
                     continue;
                 }
-                actions =
-                    actions.child(self.retry_component_action(task, component, label, style, cx));
+                actions = actions.child(self.retry_component_action(task, component, style, cx));
             }
             let details_id = id.clone();
             actions = actions.child(

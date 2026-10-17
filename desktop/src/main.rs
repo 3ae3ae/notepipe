@@ -986,8 +986,16 @@ impl Desktop {
                     self.pending_done = Some(done);
                     immediate = true;
                 }
-                Event::ModelReady { .. } => {
-                    self.task_status = course2md::tr!("模型已就绪").into();
+                Event::ModelReady { operation, model } => {
+                    let name = model.map(|model| format!("{model} · ")).unwrap_or_default();
+                    self.task_status = format!(
+                        "{name}{}",
+                        if operation == "prepare" {
+                            course2md::tr!("模型已就绪")
+                        } else {
+                            course2md::tr!("模型已下载")
+                        }
+                    );
                     immediate = true;
                 }
                 Event::Exit { success, cancelled } => {

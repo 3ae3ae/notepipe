@@ -563,6 +563,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)	加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)	Loading recognition model (first use may need to download files) / Loading speech model (first use may download files)	載入識別模型（首次可能需要下載）/ Loading speech model (first use may download files)	認識モデルの読み込み (初回使用にはファイルのダウンロードが必要な場合があります) / 音声モデルの読み込み (初回使用にはファイルのダウンロードが必要な場合があります)
 匹配截图 {} / {}	匹配截图 {}	{}	匹配截圖 {}	スクリーンショット {} と一致
 协议	协议	agreement	協議	合意
+占用空间	占用空间	Disk usage	佔用空間	使用容量
 占用空间 {}	占用空间 {}	Occupies space {}	佔用空間 {}	スペース {} を占有します
 卡片	卡片	card	卡片	カード
 原任务仍在处理，请先暂停并等候当前步骤结束	原任务仍在处理，请先暂停并等候当前步骤结束	The original task is still being processed, please pause and wait for the current step to end.	原任務仍在處理，請先暫停並等候當前步驟結束	元のタスクはまだ処理中です。一時停止して、現在のステップが終了するまでお待ちください。
@@ -1532,7 +1533,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 模型名 / Model name (e.g. deepseek-chat)	模型名	Model name (e.g. deepseek-chat)	模型名	機種名
 模型名称或 Hugging Face 仓库（如 org/model）	模型名称或 Hugging Face 仓库（如 org/model）	Model name or Hugging Face repository (e.g. org/model)	模型名稱或 Hugging Face 倉庫（如 org/model）	モデル名またはハグフェイスリポジトリ (例: 組織/モデル)
 模型尚未下载	模型尚未下载	The model has not been downloaded yet	模型尚未下載	モデルはまだダウンロードされていません
-模型已下载	模型已下载	Model downloaded	模型已下載	ダウンロードされたモデル
+模型已下载	模型已下载	Model downloaded	模型已下載	モデルをダウンロードしました
 模型已下载 · {}	模型已下载 · {}	Model has been downloaded · {}	模型已下載 · {}	モデルはダウンロードされました · {}
 模型已就绪	模型已就绪	Model ready	模型已就緒	モデルの準備が完了
 模型文件下载不完整，请重新运行 course2md models download / Model download incomplete; run course2md models download again	模型文件下载不完整，请重新运行 course2md models download	Model download incomplete; run course2md models download again	模型檔案下載不完整，請重新執行 course2md models download	モデル ファイルのダウンロードが不完全です。course2md モデルのダウンロードを再実行してください。
@@ -2240,6 +2241,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 重新定位…	重新定位…	Reposition…	重新定位…	位置を変更…
 重新定位笔记库	重新定位笔记库	Relocate note library	重新定位筆記庫	ノートライブラリを再配置する
 重新导入 Codex 登录	重新导入 Codex 登录	Reimport Codex login	重新匯入 Codex 登入	Codex ログインを再インポートする
+重新导出	重新导出	Export again	重新匯出	再書き出し
 重新开始整理（保留损坏文件）	重新开始整理（保留损坏文件）	Restart decluttering (keep damaged files)	重新開始整理（保留損壞檔案）	整理整頓を再開します (破損したファイルを保持します)
 重新扫描笔记库	重新扫描笔记库	Rescan the note library	重新掃描筆記庫	ノートライブラリを再スキャンする
 重新检查	重新检查	Check again	重新檢查	再確認
@@ -2249,6 +2251,8 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 重新检查模型	重新检查模型	Recheck model	重新檢查模型	モデルの再チェック
 重新检查环境	重新检查环境	Check the environment again	重新檢查環境	環境を再確認
 重新生成已有摘要 / Regenerate existing summaries	重新生成已有摘要	Regenerate existing summaries	重新生成已有摘要	既存の要約を再生成する
+重新生成截图	重新生成截图	Regenerate screenshots	重新產生截圖	スクリーンショットを再生成
+重新生成摘要	重新生成摘要	Regenerate summary	重新產生摘要	要約を再生成
 重新登录 Bilibili	重新登录 Bilibili	Sign in to Bilibili again	重新登入 Bilibili	Bilibili に再ログイン
 重新读取	重新读取	Read again	重新讀取	再読み込み
 重新读取字幕	重新读取字幕	Reread subtitles	重新讀取字幕	字幕を読み直す
