@@ -114,12 +114,16 @@ impl Desktop {
             if links.len() > 1 {
                 self.source_candidates = links
                     .into_iter()
-                    .map(|input| source::SourceCandidate {
-                        title: input.clone(),
-                        input,
-                        identity: None,
-                        duration: None,
-                        thumbnail: None,
+                    .map(|input| {
+                        let mut candidate = source::SourceCandidate {
+                            title: input.clone(),
+                            input,
+                            identity: None,
+                            duration: None,
+                            thumbnail: None,
+                        };
+                        candidate.identity = course2md::fetch::candidate_identity(&candidate);
+                        candidate
                     })
                     .collect();
                 self.source_collection_title = Some("分享内容中有多个链接，请选择一个视频".into());
@@ -127,13 +131,13 @@ impl Desktop {
                 cx.notify();
                 return;
             }
-            if let Some(link) = links.into_iter().next() {
-                if input != link {
-                    self.inputs[&Field::Source].update(cx, |state, cx| {
-                        state.set_value(link.clone(), window, cx);
-                    });
-                    input = link;
-                }
+            if let Some(link) = links.into_iter().next()
+                && input != link
+            {
+                self.inputs[&Field::Source].update(cx, |state, cx| {
+                    state.set_value(link.clone(), window, cx);
+                });
+                input = link;
             }
             if let Err(error) = source::validate_url(&input) {
                 self.source_validation = Some(error.to_string());
@@ -171,12 +175,15 @@ impl Desktop {
             {
                 let _ = cx.update_window(handle, |_, window, cx| this.update(cx, |this, cx| {
                     if this.preview_generation != generation || this.value(Field::Source, cx) != request_input { return; }
-                    if let Some((id, revision)) = &token {
-                        if !this.workspace.as_ref().is_some_and(|workspace| workspace.state.matches_input(id, *revision)) { return; }
+                    if let Some((id, revision)) = &token
+                        && !this.workspace.as_ref().is_some_and(|workspace| workspace.state.matches_input(id, *revision))
+                    {
+                        return;
                     }
                     this.preview_cancel = None;
                     match result {
-                        Ok(source::SourceProbe::Single(mut source)) => {
+                        Ok(source::SourceProbe::Single(source)) => {
+                            let mut source = *source;
                             if let course2md::subtitle::SubtitleEvidence::Found { tracks, .. } = &mut source.subtitles {
                                 course2md::subtitle::sort_tracks(tracks, &this.preferences.generation().preferred_subtitle_languages, "zh-Hans", source.original_language.as_deref());
                             }
@@ -207,7 +214,13 @@ impl Desktop {
                             this.source_collection_name = (!title.is_empty()).then(|| title.clone());
                             this.source_collection_title = Some(if title.is_empty() { "请选择本次处理的视频".into() } else { title });
                             this.start_source_cover_fetch(&candidates, generation, window, cx);
-                            this.source_candidates = candidates;
+                            this.source_candidates = candidates
+                                .into_iter()
+                                .map(|mut candidate| {
+                                    candidate.identity = course2md::fetch::candidate_identity(&candidate);
+                                    candidate
+                                })
+                                .collect();
                             if this.source_candidates.is_empty() {
                                 this.preview_error = Some("还无法确定要处理哪个视频。请复制具体视频的链接。".into());
                             } else if unavailable_entries > 0 {
@@ -320,18 +333,16 @@ impl Desktop {
     }
 
     fn current_folder_origin(&self) -> FolderOrigin {
-        if self.page == Page::New {
-            if let Some(workspace) = &self.workspace {
-                if let Some(draft) = workspace.state.draft() {
-                    if let Some(library) = workspace.state.library(&draft.library_id) {
-                        return FolderOrigin {
-                            root: library.root.clone(),
-                            draft_id: Some(draft.id.clone()),
-                            saving: false,
-                        };
-                    }
-                }
-            }
+        if self.page == Page::New
+            && let Some(workspace) = &self.workspace
+            && let Some(draft) = workspace.state.draft()
+            && let Some(library) = workspace.state.library(&draft.library_id)
+        {
+            return FolderOrigin {
+                root: library.root.clone(),
+                draft_id: Some(draft.id.clone()),
+                saving: false,
+            };
         }
         FolderOrigin {
             root: self.library_root.clone(),

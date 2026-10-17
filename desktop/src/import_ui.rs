@@ -1178,20 +1178,17 @@ impl Desktop {
         // 在线列表走多选批量入队；本地多文件拖入保持单选（本地身份要做内容哈希，
         // 逐个走原读取确认流程）。身份可确认的候选才可勾选；其余保持单条打开。
         let batch = self.online;
-        let identities: Vec<Option<String>> = self
+        // Identities are resolved once when the candidates arrive.
+        let identities: Vec<Option<&str>> = self
             .source_candidates
             .iter()
-            .map(course2md::fetch::candidate_identity)
-            .collect();
-        let noted_sources: std::collections::HashSet<&str> = self
-            .courses
-            .iter()
-            .filter_map(|course| course.manifest.as_ref())
-            .map(|manifest| manifest.source_id.as_str())
+            .map(|candidate| candidate.identity.as_deref())
             .collect();
         let noted: Vec<bool> = identities
             .iter()
-            .map(|identity| identity.as_deref().is_some_and(|identity| noted_sources.contains(identity)))
+            .map(|identity| {
+                identity.is_some_and(|identity| self.notes_for_source(identity).next().is_some())
+            })
             .collect();
         let selectable: Vec<String> = self
             .source_candidates
@@ -2514,14 +2511,7 @@ impl Desktop {
                     .and_then(|draft| workspace.state.library(&draft.library_id))
             })
             .map(|library| &library.root);
-        self.courses
-            .iter()
-            .filter(|course| {
-                course
-                    .manifest
-                    .as_ref()
-                    .is_some_and(|manifest| manifest.source_id == source.identity)
-            })
+        self.notes_for_source(&source.identity)
             .min_by_key(|course| !preferred.is_some_and(|root| course.dir.starts_with(root)))
     }
 

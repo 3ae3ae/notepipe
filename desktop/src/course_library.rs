@@ -353,6 +353,8 @@ pub(super) struct LibraryViewCache {
     pub locations: BTreeMap<PathBuf, CourseLocation>,
     /// Task id → its video, for the notes in the library.
     sources: std::collections::HashMap<String, NoteSource>,
+    /// Source identity → indices into `Desktop::courses` of its notes.
+    notes_by_source: std::collections::HashMap<String, Vec<usize>>,
     pub recovery: BTreeMap<PathBuf, organize::Recovery>,
     pub title_recovery: BTreeMap<PathBuf, organize::Recovery>,
     aliases: BTreeMap<PathBuf, BTreeMap<PathBuf, String>>,
@@ -520,7 +522,27 @@ impl Desktop {
             .collect()
     }
 
+    /// Notes already made from the video with this identity.
+    pub(crate) fn notes_for_source(&self, identity: &str) -> impl Iterator<Item = &Course> {
+        self.library_view_cache
+            .notes_by_source
+            .get(identity)
+            .into_iter()
+            .flatten()
+            .filter_map(|index| self.courses.get(*index))
+    }
+
     fn index_note_sources(&mut self) {
+        let mut notes_by_source: std::collections::HashMap<String, Vec<usize>> = Default::default();
+        for (index, course) in self.courses.iter().enumerate() {
+            if let Some(manifest) = &course.manifest {
+                notes_by_source
+                    .entry(manifest.source_id.clone())
+                    .or_default()
+                    .push(index);
+            }
+        }
+        self.library_view_cache.notes_by_source = notes_by_source;
         let wanted: std::collections::HashSet<&str> = self
             .courses
             .iter()
