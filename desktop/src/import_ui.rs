@@ -2685,7 +2685,7 @@ impl Desktop {
                 .child(accessible_text("workbench-title", "把视频整理成笔记")
                     .role(Role::Heading).text_size(rems(if compact { 28. / 14. } else { 36. / 14. }))
                     .line_height(rems(if compact { 36. / 14. } else { 44. / 14. })).font_weight(FontWeight::SEMIBOLD))
-                .child(div().text_center().text_size(rems(if compact { 14. / 14. } else { 16. / 14. }))
+                .child(div().text_center().text_size(if compact { TEXT_BODY } else { TEXT_LEAD })
                     .line_height(rems(24. / 14.)).text_color(color(GRAY))
                     .child("粘贴链接或拖入本地视频，自动生成带截图的笔记")))
             .child(input);

@@ -2209,8 +2209,10 @@ mod tests {
         assert!(accept_source(&mut draft, revision, source("B", "title-b")));
         draft.options.llm = true;
         draft.overrides.insert(Override::Proofread);
-        let mut defaults = ConversionOptions::default();
-        defaults.summarize = true;
+        let defaults = ConversionOptions {
+            summarize: true,
+            ..Default::default()
+        };
         draft.inherit(&defaults);
         assert!(draft.options.llm && draft.options.summarize);
     }
@@ -2676,8 +2678,10 @@ mod tests {
     }
 
     fn publish_note(state: &State, task_id: &str, partial: bool) -> PathBuf {
-        let mut outcomes = course2md::artifact::Outcomes::default();
-        outcomes.transcript = course2md::artifact::Outcome::succeeded();
+        let mut outcomes = course2md::artifact::Outcomes {
+            transcript: course2md::artifact::Outcome::succeeded(),
+            ..Default::default()
+        };
         if partial {
             outcomes.proofreading = course2md::artifact::Outcome::failed("校对未完成");
         }
@@ -2781,10 +2785,12 @@ mod tests {
         snapshot.options.llm = true;
         snapshot.options.summarize = summarize;
         let id = ws.state.enqueue(snapshot, None).unwrap().0;
-        let mut outcomes = course2md::artifact::Outcomes::default();
-        outcomes.transcript = course2md::artifact::Outcome::succeeded();
-        outcomes.proofreading = course2md::artifact::Outcome::failed("校对请求结果尚不确定");
-        outcomes.summary = summary;
+        let outcomes = course2md::artifact::Outcomes {
+            transcript: course2md::artifact::Outcome::succeeded(),
+            proofreading: course2md::artifact::Outcome::failed("校对请求结果尚不确定"),
+            summary,
+            ..Default::default()
+        };
         let version = publish_note_with_outcomes(&ws.state, &id, outcomes.clone());
         let task = ws.state.task_mut(&id).unwrap();
         task.state = TaskState::Uncertain;
@@ -2945,10 +2951,10 @@ mod tests {
             .0;
         ws.state.task_mut(&id).unwrap().state = TaskState::Uncertain;
         let first = write_unknown(ws.state.task(&id).unwrap(), 1);
-        ws.state.authorize_uncertain(&id, &[first.clone()]).unwrap();
-        assert!(ws.state.authorize_uncertain(&id, &[first.clone()]).is_err());
+        ws.state.authorize_uncertain(&id, std::slice::from_ref(&first)).unwrap();
+        assert!(ws.state.authorize_uncertain(&id, std::slice::from_ref(&first)).is_err());
         ws.state.task_mut(&id).unwrap().state = TaskState::Uncertain;
-        assert!(ws.state.authorize_uncertain(&id, &[first.clone()]).is_err());
+        assert!(ws.state.authorize_uncertain(&id, std::slice::from_ref(&first)).is_err());
         let second = write_unknown(ws.state.task(&id).unwrap(), 2);
         assert!(ws.state.authorize_uncertain(&id, &[first]).is_err());
         ws.state.authorize_uncertain(&id, &[second]).unwrap();
@@ -3310,8 +3316,10 @@ mod tests {
             .0;
         ws.state.task_mut(&id).unwrap().state = TaskState::Running;
         ws.save().unwrap();
-        let mut outcomes = artifact::Outcomes::default();
-        outcomes.transcript = artifact::Outcome::succeeded();
+        let outcomes = artifact::Outcomes {
+            transcript: artifact::Outcome::succeeded(),
+            ..Default::default()
+        };
         let version = publish_note_with_exports(
             &ws.state,
             &id,
@@ -3356,8 +3364,10 @@ mod tests {
             .enqueue(plan(&ws.state.default_library), None)
             .unwrap()
             .0;
-        let mut outcomes = artifact::Outcomes::default();
-        outcomes.transcript = artifact::Outcome::succeeded();
+        let mut outcomes = artifact::Outcomes {
+            transcript: artifact::Outcome::succeeded(),
+            ..Default::default()
+        };
         outcomes
             .exports
             .insert("html".into(), artifact::Outcome::failed("disk full"));

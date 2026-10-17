@@ -1765,16 +1765,16 @@ impl Desktop {
         {
             self.clear_task_card_motion(&previous);
         }
-        if let Some(workspace) = &mut self.workspace {
-            if let Err(error) = workspace.transaction(|state| {
+        if let Some(workspace) = &mut self.workspace
+            && let Err(error) = workspace.transaction(|state| {
                 state.selected_task = Some(id.to_owned());
                 if let Some(task) = state.task_mut(id) {
                     task.unread = false;
                 }
                 Ok(())
-            }) {
-                self.workspace_error = Some(format!("任务选择尚未保存：{error:#}"));
-            }
+            })
+        {
+            self.workspace_error = Some(format!("任务选择尚未保存：{error:#}"));
         }
         cx.notify();
     }
@@ -2629,13 +2629,13 @@ impl Desktop {
                 move |this, _, _, cx| {
                     if is_selected {
                         this.clear_task_card_motion(&id);
-                        if let Some(workspace) = &mut this.workspace {
-                            if let Err(error) = workspace.transaction(|state| {
+                        if let Some(workspace) = &mut this.workspace
+                            && let Err(error) = workspace.transaction(|state| {
                                 state.selected_task = None;
                                 Ok(())
-                            }) {
-                                this.workspace_error = Some(format!("任务选择尚未保存：{error:#}"));
-                            }
+                            })
+                        {
+                            this.workspace_error = Some(format!("任务选择尚未保存：{error:#}"));
                         }
                         cx.notify();
                     } else {
@@ -2869,25 +2869,21 @@ impl Desktop {
             if let Some(feedback) = self.task_feedback_view(task) {
                 card = card.child(feedback);
             }
-            if task.state == TaskState::Partial {
-                if task.artifact.is_some() {
-                    if !failures.is_empty() {
-                        card = card.child(
-                            accessible_text(
-                                SharedString::from(format!("task-partial-summary-{id}")),
-                                failures
-                                    .iter()
-                                    .map(|(_, label, _)| {
-                                        crate::activity::component_failure_message(label, None)
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("、"),
-                            )
-                            .text_size(TEXT_BODY)
-                            .text_color(color(GRAY)),
-                        );
-                    }
-                }
+            if task.state == TaskState::Partial && task.artifact.is_some() && !failures.is_empty() {
+                card = card.child(
+                    accessible_text(
+                        SharedString::from(format!("task-partial-summary-{id}")),
+                        failures
+                            .iter()
+                            .map(|(_, label, _)| {
+                                crate::activity::component_failure_message(label, None)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("、"),
+                    )
+                    .text_size(TEXT_BODY)
+                    .text_color(color(GRAY)),
+                );
             }
         }
         card.into_any_element()
@@ -3666,6 +3662,59 @@ fn validate_plan_config(source: &str, config: &course2md::settings::ConfigFile) 
     Ok(())
 }
 
+/// Unfinished parts of a published note: (component, label, outcome).
+pub(crate) fn task_component_failures(
+    task: &TaskRecord,
+) -> Vec<(String, String, course2md::artifact::Outcome)> {
+    let value = &task.outcomes;
+    let mut results = Vec::new();
+    for (component, label) in [
+        (Component::Screenshots, "截图"),
+        (Component::Proofreading, "校对"),
+        (Component::Summary, "摘要"),
+    ] {
+        let key = component.as_str();
+        if let Some(outcome) = value
+            .get(key)
+            .and_then(|v| serde_json::from_value::<course2md::artifact::Outcome>(v.clone()).ok())
+            .filter(|outcome| {
+                matches!(
+                    outcome.status,
+                    course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
+                )
+            })
+        {
+            results.push((key.into(), label.into(), outcome));
+        }
+    }
+    if let Some(exports) = value.get(Component::Exports.as_str()).and_then(|v| v.as_object()) {
+        let failures: Vec<course2md::artifact::Outcome> = exports
+            .values()
+            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+            .filter(|o: &course2md::artifact::Outcome| {
+                matches!(
+                    o.status,
+                    course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
+                )
+            })
+            .collect();
+        if !failures.is_empty() {
+            results.push((
+                Component::Exports.as_str().into(),
+                "导出".into(),
+                course2md::artifact::Outcome::failed(
+                    failures
+                        .iter()
+                        .filter_map(|o| o.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("；"),
+                ),
+            ));
+        }
+    }
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3780,9 +3829,11 @@ mod tests {
             time::{Duration, UNIX_EPOCH},
         };
 
-        let mut outcomes = Outcomes::default();
-        outcomes.transcript = Outcome::succeeded();
-        outcomes.proofreading = Outcome::failed("服务拒绝凭据");
+        let outcomes = Outcomes {
+            transcript: Outcome::succeeded(),
+            proofreading: Outcome::failed("服务拒绝凭据"),
+            ..Default::default()
+        };
         let old_manifest = Manifest {
             schema: 1,
             task_id: "old".into(),
@@ -3942,9 +3993,11 @@ mod tests {
     #[test]
     fn completed_ai_attempts_use_component_results_to_classify_success() {
         use course2md::artifact::{Outcome, Outcomes, Status};
-        let mut outcomes = Outcomes::default();
-        outcomes.proofreading = Outcome::failed("服务拒绝凭据");
-        outcomes.summary = Outcome::succeeded();
+        let mut outcomes = Outcomes {
+            proofreading: Outcome::failed("服务拒绝凭据"),
+            summary: Outcome::succeeded(),
+            ..Default::default()
+        };
         let value = serde_json::to_value(&outcomes).unwrap();
         assert_eq!(
             ai_stage_outcome("llm", Some(&value)),
@@ -4262,9 +4315,11 @@ mod tests {
         use crate::workspace::{Intent, TaskPlan, TaskRecord, TaskState};
         use course2md::artifact::{Outcome, Outcomes, Status};
 
-        let mut outcomes = Outcomes::default();
-        outcomes.transcript = Outcome::succeeded();
-        outcomes.screenshots = Outcome::succeeded();
+        let mut outcomes = Outcomes {
+            transcript: Outcome::succeeded(),
+            screenshots: Outcome::succeeded(),
+            ..Default::default()
+        };
         outcomes.proofreading = Outcome {
             status: Status::Partial,
             message: Some("部分校对请求尚未完成".into()),
@@ -4391,54 +4446,4 @@ mod tests {
             2
         );
     }
-}
-pub(crate) fn task_component_failures(
-    task: &TaskRecord,
-) -> Vec<(String, String, course2md::artifact::Outcome)> {
-    let value = &task.outcomes;
-    let mut results = Vec::new();
-    for (key, label) in [
-        ("screenshots", "截图"),
-        ("proofreading", "校对"),
-        ("summary", "摘要"),
-    ] {
-        if let Some(outcome) = value
-            .get(key)
-            .and_then(|v| serde_json::from_value::<course2md::artifact::Outcome>(v.clone()).ok())
-            .filter(|outcome| {
-                matches!(
-                    outcome.status,
-                    course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
-                )
-            })
-        {
-            results.push((key.into(), label.into(), outcome));
-        }
-    }
-    if let Some(exports) = value.get("exports").and_then(|v| v.as_object()) {
-        let failures: Vec<course2md::artifact::Outcome> = exports
-            .values()
-            .filter_map(|v| serde_json::from_value(v.clone()).ok())
-            .filter(|o: &course2md::artifact::Outcome| {
-                matches!(
-                    o.status,
-                    course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
-                )
-            })
-            .collect();
-        if !failures.is_empty() {
-            results.push((
-                "exports".into(),
-                "导出".into(),
-                course2md::artifact::Outcome::failed(
-                    failures
-                        .iter()
-                        .filter_map(|o| o.message.clone())
-                        .collect::<Vec<_>>()
-                        .join("；"),
-                ),
-            ));
-        }
-    }
-    results
 }
