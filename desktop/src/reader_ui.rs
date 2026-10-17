@@ -415,6 +415,7 @@ pub(crate) struct State {
     toc_open: Option<bool>,
     find_return_focus: Option<FocusHandle>,
     matches: Rc<Vec<Match>>,
+    search_index: Vec<nav::PreparedText>,
     match_index: usize,
     loaded: Option<PathBuf>,
     generation: u64,
@@ -555,6 +556,7 @@ impl State {
             toc_open: None,
             find_return_focus: None,
             matches: Rc::new(Vec::new()),
+            search_index: Vec::new(),
             match_index: 0,
             loaded: None,
             generation: 0,
@@ -2198,6 +2200,19 @@ impl Desktop {
     }
     fn update_reader_matches(&mut self, cx: &mut Context<Self>) {
         let query = self.reader_ui.find.read(cx).value().to_string();
+        if let Some(preview) = &self.preview {
+            if self.reader_ui.search_index.len() != preview.blocks.len() {
+                self.reader_ui.search_index = preview
+                    .blocks
+                    .iter()
+                    .map(|block| {
+                        block_text(block)
+                            .map(nav::prepare_text)
+                            .unwrap_or_else(|| nav::prepare_text(""))
+                    })
+                    .collect();
+            }
+        }
         self.reader_ui.matches = self
             .preview
             .as_ref()
@@ -2207,9 +2222,11 @@ impl Desktop {
                         .blocks
                         .iter()
                         .enumerate()
-                        .flat_map(|(block, value)| {
-                            block_text(value)
-                                .map(|text| nav::text_matches(text, &query))
+                        .flat_map(|(block, _)| {
+                            self.reader_ui
+                                .search_index
+                                .get(block)
+                                .map(|prepared| nav::text_matches_prepared(prepared, &query))
                                 .unwrap_or_default()
                                 .into_iter()
                                 .map(move |range| Match { block, range })

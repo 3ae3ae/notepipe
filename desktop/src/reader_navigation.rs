@@ -179,11 +179,12 @@ pub fn nearest_time(
 }
 
 /// Map case-folded matches back to valid UTF-8 ranges, including expanding lowercase chars.
-pub fn text_matches(text: &str, query: &str) -> Vec<Range<usize>> {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return Vec::new();
-    }
+pub struct PreparedText {
+    pub lower: String,
+    pub mapping: Vec<(usize, usize)>,
+}
+
+pub fn prepare_text(text: &str) -> PreparedText {
     let mut lower = String::new();
     let mut mapping = Vec::new();
     for (start, character) in text.char_indices() {
@@ -196,12 +197,25 @@ pub fn text_matches(text: &str, query: &str) -> Vec<Range<usize>> {
             ));
         }
     }
-    lower
+    PreparedText { lower, mapping }
+}
+
+pub fn text_matches_prepared(prepared: &PreparedText, query: &str) -> Vec<Range<usize>> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    prepared
+        .lower
         .match_indices(&query)
         .filter_map(|(start, value)| {
-            Some(mapping.get(start)?.0..mapping.get(start + value.len() - 1)?.1)
+            Some(prepared.mapping.get(start)?.0..prepared.mapping.get(start + value.len() - 1)?.1)
         })
         .collect()
+}
+
+pub fn text_matches(text: &str, query: &str) -> Vec<Range<usize>> {
+    text_matches_prepared(&prepare_text(text), query)
 }
 
 /// A contents list describes topics. Frame boundaries remain in the article,
