@@ -229,6 +229,20 @@ struct CodexFailure {
     http_status: Option<u16>,
 }
 
+/// One status classification for both Codex and OpenAI-compatible tests.
+/// A rate limit, server error or transport loss leaves the outcome unknown;
+/// explicit credential, model or parameter rejections are configuration errors.
+fn classify_status(status: Option<u16>, model_error: bool, transport: bool) -> TestOutcome {
+    match status {
+        Some(401 | 403) => TestOutcome::AuthenticationRefused,
+        Some(404) if model_error => TestOutcome::ModelRefused,
+        Some(400 | 422) if model_error => TestOutcome::ModelRefused,
+        Some(429 | 500..=599) => TestOutcome::OutcomeUnknown,
+        None if transport => TestOutcome::OutcomeUnknown,
+        _ => TestOutcome::ContractMismatch,
+    }
+}
+
 /// A missing or refused login is a configuration refusal and blocks a repair.
 /// Transport failures, timeouts, rate limits and server errors leave the result
 /// unknown; any other answer did not satisfy the check.
@@ -246,12 +260,10 @@ fn codex_failure(error: &anyhow::Error) -> CodexFailure {
         matches!(cause.downcast_ref(), Some(ureq::Error::Transport(_)))
             || cause.downcast_ref::<std::io::Error>().is_some()
     });
-    let outcome = match http_status {
-        _ if login => TestOutcome::AuthenticationRefused,
-        Some(401 | 403) => TestOutcome::AuthenticationRefused,
-        Some(status) if status == 429 || status >= 500 => TestOutcome::OutcomeUnknown,
-        None if transport => TestOutcome::OutcomeUnknown,
-        _ => TestOutcome::ContractMismatch,
+    let outcome = if login {
+        TestOutcome::AuthenticationRefused
+    } else {
+        classify_status(http_status, false, transport)
     };
     CodexFailure {
         outcome,
@@ -419,15 +431,7 @@ fn run_test(
             "model_not_supported",
         ]
         .contains(&code.as_str());
-        evidence.outcome = if response.status >= 500 {
-            TestOutcome::OutcomeUnknown
-        } else if response.status == 429 {
-            TestOutcome::ContractMismatch
-        } else if model_error {
-            TestOutcome::ModelRefused
-        } else {
-            TestOutcome::ContractMismatch
-        };
+        evidence.outcome = classify_status(Some(response.status), model_error, false);
         evidence.message = if response.status >= 500 {
             course2md::tr!("服务返回错误，未收到确定结果，测试可能已产生费用")
         } else if response.status == 429 {

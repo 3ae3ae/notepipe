@@ -157,7 +157,9 @@ pub fn is_local_identity(identity: &str) -> bool {
     identity.starts_with("local:sha256:")
 }
 
-pub fn is_login_failure(message: &str) -> bool {
+/// Legacy stored subtitle text predates typed causes. New code must carry
+/// [`FailureKind`] from the probe; this helper is only for old workspace strings.
+pub(crate) fn legacy_login_failure_from_text(message: &str) -> bool {
     failure_kind(message) == FailureKind::LoginRequired
 }
 
@@ -1024,26 +1026,26 @@ mod tests {
             Some("无法找到这个视频，请检查链接或确认视频仍可访问。")
         );
         assert_eq!(message.matches(raw).count(), 1);
-        assert!(!is_login_failure(&message));
+        assert!(!legacy_login_failure_from_text(&message));
         let subtitle_message = subtitle_failure_message(&error);
         assert!(subtitle_message.starts_with("字幕链接暂时无法访问"));
         assert!(!subtitle_message.contains("无法找到这个视频"));
-        assert!(!is_login_failure(&format!(
+        assert!(!legacy_login_failure_from_text(&format!(
             "{message}\nPlease log in to Bilibili"
         )));
         let forbidden =
             preview_command_error("yt-dlp", Some(1), "ERROR: HTTP Error 403: Forbidden")
                 .to_string();
         assert!(forbidden.starts_with("视频平台拒绝访问"));
-        assert!(!is_login_failure(&forbidden));
+        assert!(!legacy_login_failure_from_text(&forbidden));
         let timeout =
             preview_command_error("yt-dlp", Some(1), "ERROR: Connection timed out").to_string();
         assert!(timeout.starts_with("读取视频信息超时"));
-        assert!(!is_login_failure(&timeout));
+        assert!(!legacy_login_failure_from_text(&timeout));
         let login =
             preview_command_error("yt-dlp", Some(1), "ERROR: Sign in to read these subtitles")
                 .to_string();
-        assert!(is_login_failure(&login));
+        assert!(legacy_login_failure_from_text(&login));
         let unknown =
             preview_command_error("yt-dlp", Some(1), "ERROR: Unsupported URL: example.test")
                 .to_string();

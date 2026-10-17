@@ -628,7 +628,7 @@ impl Desktop {
     }
 
     fn subtitle_issue(&self, kind: &str, message: &str, cx: &mut Context<Self>) -> Div {
-        let summary = if source::is_login_failure(message) {
+        let summary = if source::legacy_login_failure_from_text(message) {
             course2md::tr!("字幕需要登录，或改用语音识别")
         } else {
             readable_first_line(message)
@@ -1596,7 +1596,7 @@ impl Desktop {
                                     .flex_shrink_0(),
                             )
                             .child(
-                                issue(if source::is_login_failure(error) {
+                                issue(if source::legacy_login_failure_from_text(error) {
                                     course2md::tr!("视频需要登录后读取，请登录后重试预览")
                                         .to_owned()
                                 } else {
@@ -1624,7 +1624,7 @@ impl Desktop {
                             )
                             .when(
                                 self.online
-                                    && source::is_login_failure(error)
+                                    && source::legacy_login_failure_from_text(error)
                                     && course2md::auth::is_bilibili_url(
                                         &self.value(Field::Source, cx),
                                     ),
@@ -2221,7 +2221,7 @@ impl Desktop {
                                     SubtitleEvidence::Failed { message } => Some(message.as_str()),
                                     _ => None,
                                 })
-                                .is_some_and(source::is_login_failure),
+                                .is_some_and(source::legacy_login_failure_from_text),
                         |view| {
                             view.child(
                                 outline_pill("login-for-subtitles")

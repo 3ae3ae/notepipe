@@ -1512,13 +1512,6 @@ impl Desktop {
             .resolve_for_execution_with_secrets(&task.plan.config, &refs, secrets)?
             .into_config();
         let course_id = workspace::course_dir_name(&task.plan.source_id);
-        let subtitle_events = if task.plan.options.source_mode != TranscriptSource::Asr
-            && task.plan.subtitle.is_none()
-        {
-            workspace::task_subtitle_events(task)?
-        } else {
-            None
-        };
         let service_versions = [("asr", refs.asr), ("llm", refs.llm)]
             .into_iter()
             .filter_map(|(purpose, reference)| reference.map(|r| (purpose.to_owned(), r)))
@@ -1550,7 +1543,7 @@ impl Desktop {
             } else {
                 None
             },
-            subtitle_events,
+            subtitle_events: None,
             config,
             work_dir: task.work_dir.clone(),
             allow_unauthenticated_asr: task
@@ -1705,17 +1698,76 @@ impl Desktop {
         if task.state != TaskState::Queued || task.intent != Intent::Run {
             return;
         }
-        let request = self.request_for(&task, &secrets).and_then(|request| {
+        let request = match self.request_for(&task, &secrets) {
+            Ok(request) => request,
+            Err(error) => {
+                self.fail_task_before_start(&task.id, format!("{error:#}"));
+                cx.notify();
+                return;
+            }
+        };
+        let read_task = task.clone();
+        let read = crate::spawn_blocking_io(move || {
+            let mut request = request;
+            if read_task.plan.options.source_mode != TranscriptSource::Asr
+                && read_task.plan.subtitle.is_none()
+            {
+                request.subtitle_events = workspace::task_subtitle_events(&read_task)?;
+            }
             request.validate()?;
-            self.write_task_control(&task, Vec::new())?;
-            Ok(request)
+            Ok::<_, anyhow::Error>(request)
         });
-        let result = request.and_then(|request| {
-            // The durable running state must exist before the subprocess can do work.
-            self.workspace
-                .as_mut()
-                .context(course2md::tr!("任务记录不可用"))?
-                .transaction(|state| {
+        let desktop = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            let request = match read.recv().await {
+                Ok(Ok(request)) => request,
+                Ok(Err(error)) => {
+                    let _ = desktop.update(cx, |this, cx| {
+                        this.fail_task_before_start(&task.id, format!("{error:#}"));
+                        cx.notify();
+                    });
+                    return;
+                }
+                Err(error) => {
+                    let _ = desktop.update(cx, |this, cx| {
+                        this.fail_task_before_start(&task.id, error.to_string());
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let _ = desktop.update(cx, |this, cx| {
+                this.start_task_request(task, request, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn start_task_request(
+        &mut self,
+        task: TaskRecord,
+        request: course2md::execution::Request,
+        cx: &mut Context<Self>,
+    ) {
+        if self.job.is_some()
+            || self.closing
+            || task.state != TaskState::Queued
+            || task.intent != Intent::Run
+        {
+            return;
+        }
+        if let Err(error) = self.write_task_control(&task, Vec::new()) {
+            self.fail_task_before_start(&task.id, format!("{error:#}"));
+            cx.notify();
+            return;
+        }
+        let running = self
+            .workspace
+            .as_mut()
+            .context(course2md::tr!("任务记录不可用"))
+            .and_then(|workspace| {
+                workspace.transaction(|state| {
                     let record = state
                         .task_mut(&task.id)
                         .context(course2md::tr!("任务不存在"))?;
@@ -1723,26 +1775,43 @@ impl Desktop {
                     record.error = None;
                     record.updated = workspace::now();
                     Ok(())
-                })?;
-            Job::start_task(&request)
-        });
-        match result {
-            Ok(job) => {
-                self.job = Some(job);
-                self.active_task = Some(task.id.clone());
-                self.kind = Kind::Convert;
-                self.cancelling = false;
-                self.progress.clear();
-                self.logs.clear();
-                self.pending_done = None;
-                self.task_error = None;
-                self.task_status = course2md::tr!("正在生成《{}》", task.plan.title);
-            }
-            Err(error) => {
-                self.fail_task_before_start(&task.id, format!("{error:#}"));
-            }
+                })
+            });
+        if let Err(error) = running {
+            self.fail_task_before_start(&task.id, format!("{error:#}"));
+            cx.notify();
+            return;
         }
-        cx.notify();
+        // Starting the child and writing the full request to stdin can block on a pipe;
+        // keep it off the UI thread.
+        let started = crate::spawn_blocking_io(move || Job::start_task(&request));
+        let desktop = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            let job = started.recv().await;
+            let _ = desktop.update(cx, |this, cx| match job {
+                Ok(Ok(job)) => {
+                    this.job = Some(job);
+                    this.active_task = Some(task.id.clone());
+                    this.kind = Kind::Convert;
+                    this.cancelling = false;
+                    this.progress.clear();
+                    this.logs.clear();
+                    this.pending_done = None;
+                    this.task_error = None;
+                    this.task_status = course2md::tr!("正在生成《{}》", task.plan.title);
+                    cx.notify();
+                }
+                Ok(Err(error)) => {
+                    this.fail_task_before_start(&task.id, format!("{error:#}"));
+                    cx.notify();
+                }
+                Err(_) => {
+                    this.fail_task_before_start(&task.id, crate::interrupted().to_owned());
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn fail_task_before_start(&mut self, task_id: &str, message: String) {
