@@ -105,7 +105,11 @@ impl Request {
         reader.take(MAX_REQUEST_BYTES + 1).read_to_end(&mut data)?;
         anyhow::ensure!(
             data.len() as u64 <= MAX_REQUEST_BYTES,
-            crate::tr!("任务参数过大 / Task input exceeds 16 MiB")
+            crate::tr!(
+                "任务参数过大（上限 {} MiB） / Task input exceeds {} MiB",
+                MAX_REQUEST_BYTES / (1024 * 1024),
+                MAX_REQUEST_BYTES / (1024 * 1024)
+            )
         );
         // serde's error can include unknown field names. Do not echo attacker-supplied
         // values or accidentally repeat a secret from a malformed JSON document.

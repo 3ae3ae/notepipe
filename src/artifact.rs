@@ -316,10 +316,6 @@ pub async fn publish(
             outcomes,
         )
     };
-    // 无 Tokio reactor 的上下文（桌面单元测试）直接同步执行；有 reactor 时不占 worker 线程
-    if tokio::runtime::Handle::try_current().is_err() {
-        return publish();
-    }
     tokio::task::spawn_blocking(publish)
         .await
         .context(crate::tr!("发布工作进程中断 / Publish worker interrupted"))?

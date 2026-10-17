@@ -206,13 +206,16 @@ pub fn wait_ready(
         }
         if let Some(st) = child.try_wait() {
             anyhow::bail!(
-                "{} 启动失败 / exited during startup ({st}); see error details",
+                "{} 启动失败（{st}） / {} exited during startup ({st})",
+                child.name(),
                 child.name()
             );
         }
         if t0.elapsed() > timeout {
             anyhow::bail!(
-                "{} 启动超时 / startup timed out ({:.0}s)",
+                "{} 启动超时（{:.0} 秒） / {} startup timed out after {:.0}s",
+                child.name(),
+                timeout.as_secs_f64(),
                 child.name(),
                 timeout.as_secs_f64()
             );
@@ -307,10 +310,7 @@ pub fn lock_file(path: &Path) -> Result<FileLock> {
         .truncate(false)
         .open(path)?;
     file.try_lock().with_context(|| {
-        format!(
-            "目录正被另一任务使用 / Directory is in use: {}. 请等待任务结束 / Wait for it to finish.",
-            path.display()
-        )
+        crate::tr!("目录正被另一任务使用：{}。请等待任务结束", path.display()).to_string()
     })?;
     Ok(FileLock { file })
 }
@@ -323,7 +323,7 @@ pub fn free_port() -> Result<u16> {
 }
 
 /// 临时工作目录（chunk / worker 脚本等中间产物）：创建失败立即报错，
-/// Drop 时尽力清理整个目录。目录名带 tag 与 pid 区分来源与并发实例。
+/// Drop 时尽力清理整个目录。目录名带 tag 与随机后缀，避免并发实例冲突。
 pub struct TempWorkDir {
     dir: tempfile::TempDir,
 }
@@ -342,6 +342,62 @@ impl TempWorkDir {
     pub fn path(&self) -> &Path {
         self.dir.path()
     }
+}
+
+/// Runs `work` for every item on a bounded number of OS threads, preserving
+/// input order. Workers stop taking new items after the first error, but every
+/// started item is joined so confirmed side effects can still be saved.
+pub fn map_pool<T, R>(
+    items: Vec<T>,
+    workers: usize,
+    work: impl Fn(T) -> Result<R> + Sync,
+) -> Result<Vec<R>>
+where
+    T: Send,
+    R: Send,
+{
+    let total = items.len();
+    let queue = std::sync::Mutex::new(items.into_iter().enumerate());
+    let results: std::sync::Mutex<Vec<Option<R>>> =
+        std::sync::Mutex::new(std::iter::repeat_with(|| None).take(total).collect());
+    let first_error = std::sync::Mutex::new(None::<anyhow::Error>);
+    std::thread::scope(|scope| {
+        for _ in 0..workers.max(1).min(total.max(1)) {
+            scope.spawn(|| {
+                loop {
+                    if let Err(error) = crate::dispatch::check_control() {
+                        let mut guard = lock_recover(&first_error);
+                        if guard.is_none() {
+                            *guard = Some(error);
+                        }
+                        break;
+                    }
+                    let next = lock_recover(&queue).next();
+                    let Some((index, item)) = next else { break };
+                    if lock_recover(&first_error).is_some() {
+                        break;
+                    }
+                    match work(item) {
+                        Ok(value) => lock_recover(&results)[index] = Some(value),
+                        Err(error) => {
+                            let mut guard = lock_recover(&first_error);
+                            if guard.is_none() {
+                                *guard = Some(error);
+                            }
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    if let Some(error) = lock_recover(&first_error).take() {
+        return Err(error);
+    }
+    Ok(lock_recover(&results)
+        .iter_mut()
+        .map(|value| value.take().expect("worker filled every index"))
+        .collect())
 }
 
 #[cfg(test)]

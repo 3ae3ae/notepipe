@@ -876,26 +876,30 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
                     tmp
                 } else {
                     anyhow::bail!(
-                        "未找到下载的视频 / Downloaded video missing (expected {} or {})",
-                        tmp.display(),
-                        merged.display()
+                        "{}",
+                        crate::tr!(
+                            "未找到下载的视频（期望 {} 或 {}） / Downloaded video missing (expected {} or {})",
+                            tmp.display(),
+                            merged.display(),
+                            tmp.display(),
+                            merged.display()
+                        )
                     );
                 };
                 tokio::fs::rename(&produced, dest).await?;
                 return Ok(());
             }
             Err(e) => {
-                let text = format!("{e:#}");
-                if is_bilibili_412(&text) {
-                    match bilibili_retry_delay(&text, bilibili_412_retries) {
+                if e.downcast_ref::<Bilibili412>().is_some() {
+                    match bilibili_retry_delay_steps(bilibili_412_retries) {
                         Some(delay) => {
                             bilibili_412_retries += 1;
                             next_delay = Some(delay);
                         }
                         // 412 重试耗尽，不再进下一轮
-                        None => return Err(e),
+                        None => return Err(bilibili_hint(e)),
                     }
-                } else if is_deterministic_download_error(&text) {
+                } else if is_deterministic_download_error(&format!("{e:#}")) {
                     return Err(e);
                 } else {
                     next_delay = None;
@@ -920,14 +924,40 @@ pub fn is_bilibili_412(stderr: &str) -> bool {
 
 /// Shared by CLI extraction and the desktop preview. At most three attempts.
 pub fn bilibili_retry_delay(stderr: &str, retries: usize) -> Option<std::time::Duration> {
-    if !is_bilibili_412(stderr) {
-        return None;
-    }
+    is_bilibili_412(stderr)
+        .then(|| bilibili_retry_delay_steps(retries))
+        .flatten()
+}
+
+fn bilibili_retry_delay_steps(retries: usize) -> Option<std::time::Duration> {
     [2, 5]
         .get(retries)
         .copied()
         .map(std::time::Duration::from_secs)
 }
+
+/// Machine consumers (the desktop task protocol) get desktop-specific guidance.
+pub fn bilibili_hint(error: anyhow::Error) -> anyhow::Error {
+    if crate::progress::is_json() {
+        error.context(BILIBILI_412_DESKTOP_HINT)
+    } else {
+        error.context(BILIBILI_412_HINT)
+    }
+}
+
+/// Marker in the error chain: yt-dlp was rejected by Bilibili with HTTP 412.
+#[derive(Debug)]
+pub struct Bilibili412;
+
+impl std::fmt::Display for Bilibili412 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("bilibili http 412")
+    }
+}
+impl std::error::Error for Bilibili412 {}
+
+pub const BILIBILI_412_DESKTOP_HINT: &str =
+    "B 站暂时限制了访问。请稍后重试；若持续失败，请在设置的账号中重新登录 B 站，或改用本地视频。";
 
 pub const BILIBILI_412_HINT: &str = "B 站暂时限制了访问。请稍后重试；若持续失败，运行 course2md --login bilibili 重新登录，或导入本地视频。 / Bilibili is temporarily limiting access. Retry later; if it keeps failing, run course2md --login bilibili to log in again, or import a local video.";
 
@@ -963,7 +993,7 @@ async fn run_output(cmd: &mut Command) -> Result<std::process::Output> {
         }
         let error = crate::error::cmd_error("yt-dlp", out.status.code(), &stderr);
         return if is_bilibili_412(&stderr) {
-            Err(error.context(BILIBILI_412_HINT))
+            Err(bilibili_hint(error))
         } else {
             Err(error)
         };
@@ -1016,18 +1046,26 @@ async fn run_download(cmd: &mut Command) -> Result<()> {
         }
     };
     let err = async {
-        let mut text = String::new();
+        use std::collections::VecDeque;
+        // Keep the tail, not the head: yt-dlp ends with the actionable error.
+        const STDERR_TAIL_BYTES: usize = 64 * 1024;
+        let mut tail: VecDeque<String> = VecDeque::new();
+        let mut bytes = 0usize;
         while let Ok(Some(line)) = stderr_pipe.next_line().await {
             parse_ytdlp_progress(&line);
-            if text.len() < 64 * 1024 {
-                text.push_str(&line);
-                text.push('\n');
+            bytes += line.len() + 1;
+            tail.push_back(line);
+            while bytes > STDERR_TAIL_BYTES {
+                let Some(old) = tail.pop_front() else { break };
+                bytes = bytes.saturating_sub(old.len() + 1);
             }
         }
-        text
+        tail.into_iter().collect::<Vec<_>>().join("\n")
     };
     let (status, (), stderr) = tokio::join!(wait, out, err);
-    let status = status.context(crate::tr!("等待 yt-dlp 结束失败"))?;
+    let status = status.context(crate::tr!(
+        "等待 yt-dlp 结束失败 / Failed waiting for yt-dlp to exit"
+    ))?;
     if status.success() {
         if !stderr.trim().is_empty() {
             tracing::debug!("{}", stderr.trim());
@@ -1036,7 +1074,7 @@ async fn run_download(cmd: &mut Command) -> Result<()> {
     }
     let error = crate::error::cmd_error("yt-dlp", status.code(), &stderr);
     Err(if is_bilibili_412(&stderr) {
-        error.context(BILIBILI_412_HINT)
+        bilibili_hint(error.context(Bilibili412))
     } else {
         error
     })

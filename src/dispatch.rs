@@ -14,6 +14,13 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
+/// Durable receipts describe a service snapshot without a stored configuration.
+pub const SNAPSHOT_PREFIX: &str = "snapshot:";
+
+pub fn snapshot_id(digest: &str) -> String {
+    format!("{SNAPSHOT_PREFIX}{digest}")
+}
+
 /// 任务运行意图：桌面端写入 control.json，引擎在每个安全边界读取。
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -101,6 +108,20 @@ impl Failure {
             message: message.into(),
             ..Self::local("")
         }
+    }
+}
+
+struct Rejection {
+    retryable: bool,
+    unsupported_response_format: bool,
+    message: String,
+}
+
+fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
+    Rejection {
+        retryable: status == 429,
+        unsupported_response_format: rejects_response_format(status, value),
+        message: rejection_message(status),
     }
 }
 
@@ -398,7 +419,7 @@ impl Ledger {
             .service_versions
             .get(service)
             .cloned()
-            .unwrap_or_else(|| format!("snapshot:{}", execution::digest(endpoint.as_bytes())));
+            .unwrap_or_else(|| snapshot_id(&execution::digest(endpoint.as_bytes())));
         let stable_id = execution::digest(&serde_json::to_vec(&serde_json::json!({"service_version":service_version,"purpose":purpose,"endpoint":endpoint,"payload":identity})).map_err(Failure::local)?);
         let lock = self
             .locks
@@ -514,21 +535,21 @@ impl Ledger {
         };
         receipt.http_status = Some(response.status);
         let value = serde_json::from_slice::<Value>(&response.body);
-        if response.status == 429 || (400..500).contains(&response.status) {
+        if (400..500).contains(&response.status) {
+            let rejection = classify_rejection(response.status, value.as_ref().ok());
             receipt.state = State::Rejected;
-            receipt.unsupported_response_format =
-                rejects_response_format(response.status, value.as_ref().ok());
-            receipt.message = Some(rejection_message(response.status));
+            receipt.unsupported_response_format = rejection.unsupported_response_format;
+            receipt.message = Some(rejection.message.clone());
             // Error bodies may echo credentials. Keep status, not the untrusted body.
             self.save(&receipt)?;
             // Each caller bounds its retry loop; a later task continuation may retry
             // a confirmed rejection without requiring uncertain-request authorization.
             return Err(Failure {
-                unsupported_response_format: receipt.unsupported_response_format,
+                unsupported_response_format: rejection.unsupported_response_format,
                 ..Failure::with_status(
                     Some(response.status),
-                    response.status == 429,
-                    receipt.message.unwrap_or_default(),
+                    rejection.retryable,
+                    rejection.message,
                 )
             });
         }
@@ -588,18 +609,19 @@ pub fn json_request_described(
         ..Failure::with_status(None, e.definitely_unsent, e.message)
     })?;
     if !(200..300).contains(&response.status) {
+        let rejection = classify_rejection(
+            response.status,
+            serde_json::from_slice::<Value>(&response.body)
+                .ok()
+                .as_ref(),
+        );
         return Err(Failure {
             uncertain: response.status >= 500,
-            unsupported_response_format: rejects_response_format(
-                response.status,
-                serde_json::from_slice::<Value>(&response.body)
-                    .ok()
-                    .as_ref(),
-            ),
+            unsupported_response_format: rejection.unsupported_response_format,
             ..Failure::with_status(
                 Some(response.status),
-                response.status == 429,
-                rejection_message(response.status),
+                rejection.retryable,
+                rejection.message,
             )
         });
     }
@@ -635,15 +657,16 @@ pub fn receive(
     };
     let status = response.status();
     let mut body = Vec::new();
+    const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
     response
         .into_reader()
-        .take(32 * 1024 * 1024 + 1)
+        .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut body)
         .map_err(|_| NetworkFailure {
             message: crate::tr!("服务响应接收中断 / Service response was interrupted").into(),
             definitely_unsent: false,
         })?;
-    if body.len() > 32 * 1024 * 1024 {
+    if body.len() as u64 > MAX_RESPONSE_BYTES {
         return Err(NetworkFailure {
             message: crate::tr!(
                 "服务响应超过接收上限 / Service response exceeds the receiving limit"
