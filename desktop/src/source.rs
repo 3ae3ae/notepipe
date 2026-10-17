@@ -44,7 +44,7 @@ pub use course2md::fetch::SourceCandidate;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SourceProbe {
-    Single(Source),
+    Single(Box<Source>),
     Collection {
         title: String,
         candidates: Vec<SourceCandidate>,
@@ -391,7 +391,7 @@ pub fn video_links(input: &str) -> Vec<String> {
 pub fn probe(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<SourceProbe> {
     check_cancel(&cancel)?;
     if !online {
-        return inspect_local(input, &cancel).map(SourceProbe::Single);
+        return inspect_local(input, &cancel).map(|source| SourceProbe::Single(Box::new(source)));
     }
     validate_url(&input)?;
     let output = online_metadata(&input, true, &cancel);
@@ -462,7 +462,7 @@ pub fn probe(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<Sou
                     Err(error) => source.cover_error = Some(format!("{error:#}")),
                 }
             }
-            SourceProbe::Single(source)
+            SourceProbe::Single(Box::new(source))
         }
     };
     check_cancel(&cancel)?;
@@ -547,7 +547,7 @@ pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathB
     let mut bytes = Vec::new();
     let mut buffer = [0; 32 * 1024];
     loop {
-        check_cancel(&cancel)?;
+        check_cancel(cancel)?;
         let count = reader.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -555,7 +555,7 @@ pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathB
         bytes.extend_from_slice(&buffer[..count]);
         ensure!(bytes.len() <= 12 * 1024 * 1024, "封面超过读取上限");
     }
-    check_cancel(&cancel)?;
+    check_cancel(cancel)?;
     let image = image::load_from_memory(&bytes).context("封面格式无法识别")?;
     let file = tempfile::Builder::new()
         .suffix(".jpg")
@@ -672,7 +672,7 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
         }
         Err(error) => source.cover_error = Some(format!("{error:#}")),
     }
-    check_cancel(&cancel)?;
+    check_cancel(cancel)?;
     Ok(source)
 }
 
@@ -975,7 +975,7 @@ mod tests {
 
     fn single_video(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<Source> {
         match probe(input, online, cancel)? {
-            SourceProbe::Single(source) => Ok(source),
+            SourceProbe::Single(source) => Ok(*source),
             _ => anyhow::bail!("not a single video"),
         }
     }

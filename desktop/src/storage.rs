@@ -668,10 +668,10 @@ fn copy_journal(
 }
 
 pub fn relocate_path(path: &mut PathBuf, source: &Path, destination: &Path) {
-    if path.is_absolute() {
-        if let Ok(relative) = path.strip_prefix(source) {
-            *path = destination.join(relative);
-        }
+    if path.is_absolute()
+        && let Ok(relative) = path.strip_prefix(source)
+    {
+        *path = destination.join(relative);
     }
 }
 
@@ -919,20 +919,27 @@ mod tests {
             verified: true,
             journal_path: prepared.path.clone(),
         };
-        assert!(cleanup_backup(&backup, &[backup.path.clone()], &AtomicBool::new(false)).is_err());
+        assert!(
+            cleanup_backup(
+                &backup,
+                std::slice::from_ref(&backup.path),
+                &AtomicBool::new(false)
+            )
+            .is_err()
+        );
         assert!(backup.path.join("notes/course.md").is_file());
         prepared.journal.cleanup_started = true;
         save_journal(&prepared.path, &prepared.journal).unwrap();
         std::fs::remove_dir_all(&backup.path).unwrap();
         cleanup_backup(
             &backup,
-            &[backup.current_root.clone()],
+            std::slice::from_ref(&backup.current_root),
             &AtomicBool::new(false),
         )
         .unwrap();
         cleanup_backup(
             &backup,
-            &[backup.current_root.clone()],
+            std::slice::from_ref(&backup.current_root),
             &AtomicBool::new(false),
         )
         .unwrap();

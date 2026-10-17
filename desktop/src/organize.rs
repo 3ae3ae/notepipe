@@ -24,10 +24,10 @@ pub fn relative_key(root: &Path, course: &Path) -> Result<PathBuf> {
                 .components()
                 .all(|part| matches!(part, std::path::Component::Normal(_)))
     };
-    if let Ok(key) = course.strip_prefix(root) {
-        if valid(key) {
-            return Ok(key.to_path_buf());
-        }
+    if let Ok(key) = course.strip_prefix(root)
+        && valid(key)
+    {
+        return Ok(key.to_path_buf());
     }
     let root = std::fs::canonicalize(root).context("笔记库文件夹暂时无法访问")?;
     let course = std::fs::canonicalize(course).context("笔记位置暂时无法访问")?;
@@ -85,7 +85,10 @@ fn recover_metadata<T: serde::de::DeserializeOwned + Serialize + Default>(
     filename: &str,
     rebuild: bool,
 ) -> Result<(T, PathBuf)> {
-    ensure!(root.is_dir(), "笔记库文件夹暂时无法访问，请重新连接磁盘后再试");
+    ensure!(
+        root.is_dir(),
+        "笔记库文件夹暂时无法访问，请重新连接磁盘后再试"
+    );
     let path = root.join(filename);
     let _lock = course2md::runtime::lock_file(&path.with_extension("lock"))?;
     let original = std::fs::read(&path).context("无法读取并保留原记录，尚未恢复")?;
@@ -170,7 +173,10 @@ pub struct Library {
 }
 impl Library {
     pub fn load(root: &Path) -> Result<Self> {
-        ensure!(root.is_dir(), "笔记库文件夹暂时无法访问，请重新连接磁盘后再试");
+        ensure!(
+            root.is_dir(),
+            "笔记库文件夹暂时无法访问，请重新连接磁盘后再试"
+        );
         match std::fs::read(root.join(FILE)) {
             Ok(bytes) => {
                 serde_json::from_slice(&bytes).context("文件夹信息损坏；原文件已保留，请修复后重试")
@@ -180,7 +186,10 @@ impl Library {
         }
     }
     pub fn edit(root: &Path, change: impl FnOnce(&mut Self) -> Result<()>) -> Result<Self> {
-        ensure!(root.is_dir(), "笔记库文件夹暂时无法访问，请重新连接磁盘后再试");
+        ensure!(
+            root.is_dir(),
+            "笔记库文件夹暂时无法访问，请重新连接磁盘后再试"
+        );
         let _lock = course2md::runtime::lock_file(&root.join(".course2md-library.lock"))?;
         let mut library = Self::load(root)?;
         change(&mut library)?;
@@ -191,10 +200,7 @@ impl Library {
         let name = name.trim();
         ensure!(!name.is_empty(), "请输入文件夹名称");
         ensure!(name.chars().count() <= 60, "文件夹名称最多 60 个字符");
-        ensure!(
-            name != "未分类",
-            "「未分类」已被使用，请换一个文件夹名称"
-        );
+        ensure!(name != "未分类", "「未分类」已被使用，请换一个文件夹名称");
         ensure!(!self.folders.iter().any(|(key, value)| Some(*key) != id && value.to_lowercase() == name.to_lowercase()), "已有同名文件夹");
         let id = match id {
             Some(id) => {

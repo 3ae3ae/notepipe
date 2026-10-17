@@ -963,19 +963,20 @@ impl Desktop {
     }
 
     pub fn poll_storage(&mut self, cx: &mut Context<Self>) {
-        if !self.storage_ui.busy && self.job.is_none() {
-            if let Some(id) = self.storage_ui.resume_task.take() {
-                let can_resume = self
-                    .workspace
-                    .as_ref()
-                    .and_then(|workspace| workspace.state.task(&id))
-                    .is_some_and(|task| {
-                        task.state == workspace::TaskState::Paused
-                            && task.intent == workspace::Intent::Pause
-                    });
-                if can_resume {
-                    self.set_task_intent(id, workspace::Intent::Run, cx);
-                }
+        if !self.storage_ui.busy
+            && self.job.is_none()
+            && let Some(id) = self.storage_ui.resume_task.take()
+        {
+            let can_resume = self
+                .workspace
+                .as_ref()
+                .and_then(|workspace| workspace.state.task(&id))
+                .is_some_and(|task| {
+                    task.state == workspace::TaskState::Paused
+                        && task.intent == workspace::Intent::Pause
+                });
+            if can_resume {
+                self.set_task_intent(id, workspace::Intent::Run, cx);
             }
         }
     }
