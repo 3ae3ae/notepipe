@@ -70,8 +70,8 @@ enum Interrupted {
 impl std::fmt::Display for Interrupted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Interrupted::Cancelled => "已取消读取",
-            Interrupted::TimedOut => "读取超时，请重试",
+            Interrupted::Cancelled => course2md::tr!("已取消读取"),
+            Interrupted::TimedOut => course2md::tr!("读取超时，请重试"),
         })
     }
 }
@@ -177,18 +177,24 @@ fn preview_command_error(program: &str, code: Option<i32>, stderr: &str) -> anyh
     let kind = failure_kind(stderr);
     let failure = |message: String| anyhow::Error::new(CommandFailure { kind, message });
     let summary = match kind {
-        FailureKind::NotFound => "无法找到这个视频，请检查链接或确认视频仍可访问。".to_owned(),
-        FailureKind::Forbidden => "视频平台拒绝访问，请确认访问权限".to_owned(),
-        FailureKind::Timeout => "读取视频信息超时，请检查网络后重新读取。".to_owned(),
-        FailureKind::RateLimited => "平台暂时限制读取，请稍后重试".to_owned(),
-        FailureKind::LoginRequired => "视频平台要求登录后读取，请登录对应账号后重试。".to_owned(),
+        FailureKind::NotFound => {
+            course2md::tr!("无法找到这个视频，请检查链接或确认视频仍可访问。").to_owned()
+        }
+        FailureKind::Forbidden => course2md::tr!("视频平台拒绝访问，请确认访问权限").to_owned(),
+        FailureKind::Timeout => {
+            course2md::tr!("读取视频信息超时，请检查网络后重新读取。").to_owned()
+        }
+        FailureKind::RateLimited => course2md::tr!("平台暂时限制读取，请稍后重试").to_owned(),
+        FailureKind::LoginRequired => {
+            course2md::tr!("视频平台要求登录后读取，请登录对应账号后重试。").to_owned()
+        }
         FailureKind::Other if !cause.is_empty() => {
             cause.trim_start_matches("ERROR:").trim().to_owned()
         }
         // No stderr at all: the program and exit code only go to the log.
         FailureKind::Other => {
             eprintln!("{program} exited without output (code {code:?})");
-            return failure("读取失败，请重试".into());
+            return failure(course2md::tr!("读取失败，请重试").into());
         }
     };
     let details = lines
@@ -212,13 +218,19 @@ fn preview_command_error(program: &str, code: Option<i32>, stderr: &str) -> anyh
 fn subtitle_failure_message(error: &anyhow::Error) -> String {
     let message = format!("{error:#}");
     let summary = match error_kind(error) {
-        FailureKind::NotFound => "字幕链接暂时无法访问，请重新读取字幕，或选择其他文字来源。",
-        FailureKind::Forbidden => {
-            "平台拒绝了这次字幕读取，请确认视频的访问权限，或选择其他文字来源。"
+        FailureKind::NotFound => {
+            course2md::tr!("字幕链接暂时无法访问，请重新读取字幕，或选择其他文字来源。")
         }
-        FailureKind::Timeout => "读取字幕超时，请检查网络后重新读取字幕。",
-        FailureKind::RateLimited => "平台暂时限制了字幕读取，请稍后重试，或选择其他文字来源。",
-        FailureKind::LoginRequired => "平台要求登录后读取字幕，请登录对应账号后重试。",
+        FailureKind::Forbidden => {
+            course2md::tr!("平台拒绝了这次字幕读取，请确认视频的访问权限，或选择其他文字来源。")
+        }
+        FailureKind::Timeout => course2md::tr!("读取字幕超时，请检查网络后重新读取字幕。"),
+        FailureKind::RateLimited => {
+            course2md::tr!("平台暂时限制了字幕读取，请稍后重试，或选择其他文字来源。")
+        }
+        FailureKind::LoginRequired => {
+            course2md::tr!("平台要求登录后读取字幕，请登录对应账号后重试。")
+        }
         FailureKind::Other => return message,
     };
     let details = message.lines().skip(1).collect::<Vec<_>>().join("\n");
@@ -315,7 +327,9 @@ fn command_once(
     }
     let mut child = command.spawn().map_err(|error| {
         eprintln!("cannot start {name}: {error}");
-        anyhow::anyhow!("缺少读取视频所需的组件，请在设置中检查运行环境")
+        anyhow::anyhow!(course2md::tr!(
+            "缺少读取视频所需的组件，请在设置中检查运行环境"
+        ))
     })?;
     let status = loop {
         if cancel.load(Ordering::Relaxed) || start.elapsed() > PREVIEW_TIMEOUT {
@@ -340,7 +354,7 @@ fn command_once(
         file.take(32 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
         ensure!(
             bytes.len() <= 32 * 1024 * 1024,
-            "返回的视频信息超过读取上限，请复制具体单集的链接"
+            course2md::tr!("返回的视频信息超过读取上限，请复制具体单集的链接")
         );
         Ok(bytes)
     };
@@ -357,11 +371,12 @@ fn command_once(
 }
 
 pub fn validate_url(input: &str) -> Result<url::Url> {
-    let url =
-        url::Url::parse(input).context("请输入完整的视频链接，以 https:// 或 http:// 开头")?;
+    let url = url::Url::parse(input).context(course2md::tr!(
+        "请输入完整的视频链接，以 https:// 或 http:// 开头"
+    ))?;
     ensure!(
         matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-        "请输入完整的视频链接，以 https:// 或 http:// 开头"
+        course2md::tr!("请输入完整的视频链接，以 https:// 或 http:// 开头")
     );
     Ok(url)
 }
@@ -553,13 +568,18 @@ pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathB
             break;
         }
         bytes.extend_from_slice(&buffer[..count]);
-        ensure!(bytes.len() <= 12 * 1024 * 1024, "封面超过读取上限");
+        ensure!(
+            bytes.len() <= 12 * 1024 * 1024,
+            course2md::tr!("封面超过读取上限")
+        );
     }
     check_cancel(cancel)?;
-    let image = image::load_from_memory(&bytes).context("封面格式无法识别")?;
-    let file = tempfile::Builder::new()
-        .suffix(".jpg")
-        .tempfile_in(target.parent().context("封面缓存位置无效")?)?;
+    let image = image::load_from_memory(&bytes).context(course2md::tr!("封面格式无法识别"))?;
+    let file = tempfile::Builder::new().suffix(".jpg").tempfile_in(
+        target
+            .parent()
+            .context(course2md::tr!("封面缓存位置无效"))?,
+    )?;
     image
         .thumbnail(1280, 720)
         .to_rgb8()
@@ -571,12 +591,13 @@ pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathB
 
 fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
     let path = course2md::config::expand_tilde(input.into());
-    ensure!(path.is_file(), "视频文件不存在，请重新选择");
-    let path = std::fs::canonicalize(path).context("无法读取所选视频的位置，请重新选择")?;
-    let before_probe = std::fs::metadata(&path).context("无法读取所选视频")?;
+    ensure!(path.is_file(), course2md::tr!("视频文件不存在，请重新选择"));
+    let path = std::fs::canonicalize(path)
+        .context(course2md::tr!("无法读取所选视频的位置，请重新选择"))?;
+    let before_probe = std::fs::metadata(&path).context(course2md::tr!("无法读取所选视频"))?;
     let input = path
         .to_str()
-        .context("文件名含有无法识别的字符，请改名后重试")?
+        .context(course2md::tr!("文件名含有无法识别的字符，请改名后重试"))?
         .to_owned();
     let bytes = command(
         "ffprobe",
@@ -592,12 +613,12 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
         cancel,
     )?;
     let meta: serde_json::Value =
-        serde_json::from_slice(&bytes).context("无法读取所选视频的信息")?;
+        serde_json::from_slice(&bytes).context(course2md::tr!("无法读取所选视频的信息"))?;
     ensure!(
         meta["streams"]
             .as_array()
             .is_some_and(|streams| streams.iter().any(|stream| stream["codec_type"] == "video")),
-        "所选文件不包含视频画面"
+        course2md::tr!("所选文件不包含视频画面")
     );
     let mut source = Source {
         input,
@@ -629,11 +650,12 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
         online: false,
         ..Source::default()
     };
-    let after_probe = std::fs::metadata(&path).context("视频在读取期间已移动或无法访问")?;
+    let after_probe =
+        std::fs::metadata(&path).context(course2md::tr!("视频在读取期间已移动或无法访问"))?;
     ensure!(
         before_probe.len() == after_probe.len()
             && before_probe.modified().ok() == after_probe.modified().ok(),
-        "视频在读取期间发生变化，请等文件保存完成后重新读取"
+        course2md::tr!("视频在读取期间发生变化，请等文件保存完成后重新读取")
     );
     source.subtitles = local_subtitle_evidence(&path, &meta, &source.identity);
     let target = cache_file("covers", &source.identity, "jpg")?;
@@ -642,9 +664,11 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
         check_cancel(cancel)?;
         return Ok(source);
     }
-    let file = tempfile::Builder::new()
-        .suffix(".jpg")
-        .tempfile_in(target.parent().context("封面缓存位置无效")?)?;
+    let file = tempfile::Builder::new().suffix(".jpg").tempfile_in(
+        target
+            .parent()
+            .context(course2md::tr!("封面缓存位置无效"))?,
+    )?;
     let offset = (source.duration * 0.1).min(10.).to_string();
     match command(
         "ffmpeg",
@@ -662,7 +686,7 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
             "scale=960:-2",
             file.path()
                 .to_str()
-                .context("文件名含有无法识别的字符，请改名后重试")?,
+                .context(course2md::tr!("文件名含有无法识别的字符，请改名后重试"))?,
         ],
         cancel,
     ) {
@@ -736,7 +760,7 @@ fn local_subtitle_evidence(
         }
     } else if image_tracks > 0 {
         SubtitleEvidence::Unsupported {
-            message: "内嵌字幕无法读取".into(),
+            message: course2md::tr!("内嵌字幕无法读取").into(),
         }
     } else {
         SubtitleEvidence::NoneFound
@@ -754,7 +778,7 @@ pub fn refresh_subtitles(
             course2md::fetch::local_content_identity(Path::new(&source.input), &cancel)?;
         ensure!(
             current_identity == source.identity,
-            "视频文件内容发生变化，请重新读取视频"
+            course2md::tr!("视频文件内容发生变化，请重新读取视频")
         );
         let bytes = command(
             "ffprobe",
@@ -774,7 +798,7 @@ pub fn refresh_subtitles(
         course2md::fetch::OnlineProbe::Video { mut video } => {
             ensure!(
                 video.identity == source.identity,
-                "视频来源发生变化，请重新读取视频"
+                course2md::tr!("视频来源发生变化，请重新读取视频")
             );
             if let course2md::subtitle::SubtitleEvidence::Found { tracks, .. } =
                 &mut video.subtitles
@@ -789,7 +813,7 @@ pub fn refresh_subtitles(
             check_cancel(&cancel)?;
             Ok(video.subtitles)
         }
-        _ => anyhow::bail!("还无法确定字幕对应哪个视频，请重新读取视频"),
+        _ => anyhow::bail!(course2md::tr!("还无法确定字幕对应哪个视频，请重新读取视频")),
     }
 }
 
@@ -806,7 +830,7 @@ pub fn read_subtitle(
         check_cancel(&cancel)?;
         ensure!(
             !source.identity.is_empty(),
-            "请先重新读取视频，确认字幕对应的来源"
+            course2md::tr!("请先重新读取视频，确认字幕对应的来源")
         );
         let cache = course2md::config::cache_dir().join("subtitles");
         std::fs::create_dir_all(&cache)?;
@@ -817,7 +841,7 @@ pub fn read_subtitle(
             SubtitleOrigin::File { path } => {
                 ensure!(
                     course2md::subtitle::is_subtitle_file(path),
-                    "请选择 SRT 或 VTT 字幕文件"
+                    course2md::tr!("请选择 SRT 或 VTT 字幕文件")
                 );
                 course2md::subtitle::read_subtitle_text(path)?
             }
@@ -827,12 +851,12 @@ pub fn read_subtitle(
                         && track
                             .id
                             .starts_with(&format!("{}:embedded:", source.identity)),
-                    "所选内嵌字幕与当前视频不一致，请重新选择字幕"
+                    course2md::tr!("所选内嵌字幕与当前视频不一致，请重新选择字幕")
                 );
                 ensure!(
                     course2md::fetch::local_content_identity(Path::new(&source.input), &cancel)?
                         == source.identity,
-                    "视频内容发生变化，请重新读取视频"
+                    course2md::tr!("视频内容发生变化，请重新读取视频")
                 );
                 let file = temp.path().join("embedded.srt");
                 command(
@@ -847,7 +871,8 @@ pub fn read_subtitle(
                         &format!("0:{stream_index}"),
                         "-c:s",
                         "srt",
-                        file.to_str().context("字幕缓存路径无法编码")?,
+                        file.to_str()
+                            .context(course2md::tr!("字幕缓存路径无法编码"))?,
                     ],
                     &cancel,
                 )?;
@@ -863,7 +888,7 @@ pub fn read_subtitle(
                         && track
                             .id
                             .starts_with(&format!("{}:subtitle:", source.identity)),
-                    "所选字幕与当前视频不一致，请重新选择字幕"
+                    course2md::tr!("所选字幕与当前视频不一致，请重新选择字幕")
                 );
                 if let Some(text) = inline_text {
                     text.clone()
@@ -890,7 +915,9 @@ pub fn read_subtitle(
                             "--retries",
                             "1",
                             "-o",
-                            template.to_str().context("字幕缓存路径无法编码")?,
+                            template
+                                .to_str()
+                                .context(course2md::tr!("字幕缓存路径无法编码"))?,
                             if *automatic {
                                 "--write-auto-subs"
                             } else {
@@ -908,12 +935,13 @@ pub fn read_subtitle(
                     )? {
                         course2md::fetch::OnlineProbe::Video { video } => ensure!(
                             video.identity == source.identity,
-                            "视频来源发生变化，请重新读取并选择字幕"
+                            course2md::tr!("视频来源发生变化，请重新读取并选择字幕")
                         ),
-                        _ => anyhow::bail!("无法确认字幕对应的视频，请重新读取"),
+                        _ => anyhow::bail!(course2md::tr!("无法确认字幕对应的视频，请重新读取")),
                     }
-                    let file = course2md::subtitle::pick_subtitle_file(temp.path())
-                        .context("所选字幕没有下载成功，请重新读取字幕或选择其他文字来源")?;
+                    let file = course2md::subtitle::pick_subtitle_file(temp.path()).context(
+                        course2md::tr!("所选字幕没有下载成功，请重新读取字幕或选择其他文字来源"),
+                    )?;
                     course2md::subtitle::read_subtitle_text(&file)?
                 }
             }
@@ -922,7 +950,7 @@ pub fn read_subtitle(
         let events = course2md::subtitle::parse_subtitle(&text);
         if events.is_empty() {
             return Err(SubtitleReadError::NoReadableText {
-                message: "这份字幕未包含可读取的文字，请选择其他字幕".into(),
+                message: course2md::tr!("这份字幕未包含可读取的文字，请选择其他字幕").into(),
             }
             .into());
         }

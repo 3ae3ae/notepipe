@@ -206,14 +206,14 @@ pub fn transfer_status(
         if let Some(speed) = &metrics.speed {
             meters = meters.child(transfer_meter(
                 SharedString::from(format!("{id:?}-speed")),
-                "速度",
+                course2md::tr!("速度"),
                 speed.clone(),
             ));
         }
         if let Some(TransferEta::Remaining(value)) = &metrics.eta {
             meters = meters.child(transfer_meter(
                 SharedString::from(format!("{id:?}-eta")),
-                "预计剩余",
+                course2md::tr!("预计剩余"),
                 value.clone(),
             ));
         }

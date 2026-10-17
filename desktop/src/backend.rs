@@ -125,13 +125,16 @@ impl Job {
         }
         let mut child = command
             .spawn()
-            .with_context(|| format!("启动 {} 失败", bin.display()))?;
+            .with_context(|| course2md::tr!("启动 {} 失败", bin.display()))?;
         if let Some(bytes) = input.as_mut() {
             let sent = child
                 .stdin
                 .take()
-                .context("无法传递任务参数")
-                .and_then(|mut pipe| pipe.write_all(bytes).context("传递任务参数失败"));
+                .context(course2md::tr!("无法传递任务参数"))
+                .and_then(|mut pipe| {
+                    pipe.write_all(bytes)
+                        .context(course2md::tr!("传递任务参数失败"))
+                });
             use zeroize::Zeroize;
             bytes.zeroize();
             if let Err(error) = sent {
@@ -142,8 +145,14 @@ impl Job {
         }
         let (tx, events) = mpsc::sync_channel(512);
         let (cancel, cancelled) = mpsc::channel();
-        let stdout = child.stdout.take().context("缺少 stdout 管道")?;
-        let stderr = child.stderr.take().context("缺少 stderr 管道")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context(course2md::tr!("缺少 stdout 管道"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .context(course2md::tr!("缺少 stderr 管道"))?;
         let readers = [
             reader(stdout, tx.clone(), true, redactions.clone()),
             reader(stderr, tx.clone(), false, redactions),
@@ -206,11 +215,14 @@ impl Redactions {
         let mut keys: Vec<_> = self.0.iter().filter(|key| !key.is_empty()).collect();
         keys.sort_by_key(|key| std::cmp::Reverse(key.len()));
         for key in keys {
-            result = result.replace(key, "[已隐藏密钥]");
+            result = result.replace(key, course2md::tr!("[已隐藏密钥]"));
             // Tool diagnostics can contain JSON embedded in ordinary stderr text.
             let encoded = serde_json::to_string(key).unwrap_or_default();
             if encoded.len() > 2 {
-                result = result.replace(&encoded[1..encoded.len() - 1], "[已隐藏密钥]");
+                result = result.replace(
+                    &encoded[1..encoded.len() - 1],
+                    course2md::tr!("[已隐藏密钥]"),
+                );
             }
         }
         result
@@ -298,7 +310,7 @@ fn reader(
                     }
                 }
                 Err(error) => Event::Error {
-                    message: format!("读取任务输出失败：{error}"),
+                    message: course2md::tr!("读取任务输出失败：{}", error),
                 },
             };
             if tx.send(event).is_err() {
@@ -371,8 +383,7 @@ pub fn resolve_cli() -> Result<PathBuf> {
         let path = PathBuf::from(path);
         anyhow::ensure!(
             path.is_file(),
-            "COURSE2MD_BIN 指向的文件不存在：{}",
-            path.display()
+            course2md::tr!("COURSE2MD_BIN 指向的文件不存在：{}", path.display())
         );
         return Ok(path);
     }
@@ -385,7 +396,9 @@ pub fn resolve_cli() -> Result<PathBuf> {
     candidates
         .into_iter()
         .find(|p| p.is_file())
-        .context("找不到 course2md 引擎。请将 CLI 放在应用旁，或设置 COURSE2MD_BIN。")
+        .context(course2md::tr!(
+            "找不到 course2md 引擎。请将 CLI 放在应用旁，或设置 COURSE2MD_BIN。"
+        ))
 }
 
 #[derive(Clone)]

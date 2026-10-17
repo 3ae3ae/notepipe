@@ -11,10 +11,10 @@ impl Desktop {
         // 纯文字标题，与打开它的「添加语音服务」/「添加 AI 服务」同一写法
         let editing = editor.form.draft.based_on.is_some();
         let title = match (purpose == ServicePurpose::Speech, editing) {
-            (true, false) => "添加语音服务",
-            (true, true) => "编辑语音服务",
-            (false, false) => "添加 AI 服务",
-            (false, true) => "编辑 AI 服务",
+            (true, false) => course2md::tr!("添加语音服务"),
+            (true, true) => course2md::tr!("编辑语音服务"),
+            (false, false) => course2md::tr!("添加 AI 服务"),
+            (false, true) => course2md::tr!("编辑 AI 服务"),
         };
         v_flex()
             .w_full()
@@ -123,10 +123,10 @@ impl Desktop {
             let name = current_version
                 .as_ref()
                 .map(|version| version.config.name.clone())
-                .unwrap_or_else(|| "选择服务".into());
+                .unwrap_or_else(|| course2md::tr!("选择服务").into());
             let detail = current_version.as_ref().map(|version| {
                 let state = if old_current.is_some() {
-                    " · 当前使用修改前的配置"
+                    course2md::tr!(" · 当前使用修改前的配置")
                 } else {
                     ""
                 };
@@ -140,17 +140,17 @@ impl Desktop {
                         .filter(|old| old.service_id == version.service_id)
                     {
                         if old.id == version.id {
-                            "当前使用修改前的配置".into()
+                            course2md::tr!("当前使用修改前的配置").into()
                         } else {
                             let changed = version.changes_since(old);
                             if changed.is_empty() {
-                                "配置内容相同".into()
+                                course2md::tr!("配置内容相同").into()
                             } else {
-                                format!("已修改：{}", changed.join("、"))
+                                course2md::tr!("已修改：{}", changed.join(course2md::tr!("、")))
                             }
                         }
                     } else if current.as_ref() == Some(&version.id) {
-                        "当前使用".into()
+                        course2md::tr!("当前使用").into()
                     } else {
                         String::new()
                     };
@@ -167,17 +167,17 @@ impl Desktop {
                     button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL)
                 })
                 .py_2()
-                .accessibility_label(format!(
+                .accessibility_label(course2md::tr!(
                     "{}：{}{}",
                     if purpose == ServicePurpose::Speech {
-                        "语音服务"
+                        course2md::tr!("语音服务")
                     } else {
-                        "AI 服务"
+                        course2md::tr!("AI 服务")
                     },
                     name,
                     detail
                         .as_ref()
-                        .map(|detail| format!("，{detail}"))
+                        .map(|detail| course2md::tr!("，{}", detail))
                         .unwrap_or_default()
                 ))
                 .child(
@@ -287,14 +287,14 @@ impl Desktop {
                     .w(rems(48. / 14.))
                     .h(rems(56. / 14.))
                     .px_0()
-                    .accessibility_label("编辑服务")
-                    .tooltip("编辑服务")
+                    .accessibility_label(course2md::tr!("编辑服务"))
+                    .tooltip(course2md::tr!("编辑服务"))
             })
             .when(!current_task || editor_version.is_none(), |button| {
                 button.label(match (purpose, editor_version.is_some()) {
-                    (_, true) => "编辑",
-                    (ServicePurpose::Speech, false) => "添加语音服务",
-                    (ServicePurpose::Ai, false) => "添加 AI 服务",
+                    (_, true) => course2md::tr!("编辑"),
+                    (ServicePurpose::Speech, false) => course2md::tr!("添加语音服务"),
+                    (ServicePurpose::Ai, false) => course2md::tr!("添加 AI 服务"),
                 })
             })
             .self_start()
@@ -325,7 +325,7 @@ impl Desktop {
                     .child(
                         text(
                             ("service-only-this-note", purpose as usize),
-                            "仅用于这次笔记",
+                            course2md::tr!("仅用于这次笔记"),
                         )
                         .text_sm()
                         .text_color(color(GRAY)),
@@ -335,7 +335,7 @@ impl Desktop {
                             .settings_text()
                             .ghost()
                             .icon(icons::refresh())
-                            .label("恢复默认")
+                            .label(course2md::tr!("恢复默认"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.bind_service(purpose, None, true, cx);
                             })),
@@ -366,18 +366,18 @@ impl Desktop {
                             .child(text(
                                 ("default-service-label", purpose as usize),
                                 if purpose == ServicePurpose::Ai {
-                                    "AI 服务"
+                                    course2md::tr!("AI 服务")
                                 } else {
-                                    "语音服务"
+                                    course2md::tr!("语音服务")
                                 },
                             ))
                             .child(
                                 text(
                                     ("default-service-missing", purpose as usize),
                                     if purpose == ServicePurpose::Ai {
-                                        "尚未添加，校对和摘要需要先添加一个服务"
+                                        course2md::tr!("尚未添加，校对和摘要需要先添加一个服务")
                                     } else {
-                                        "尚未添加，请先添加一个语音服务"
+                                        course2md::tr!("尚未添加，请先添加一个语音服务")
                                     },
                                 )
                                 .text_size(TEXT_SETTINGS_AUX)
@@ -390,18 +390,18 @@ impl Desktop {
             settings_row(
                 ("default-service-label", purpose as usize),
                 if purpose == ServicePurpose::Speech {
-                    "语音服务"
+                    course2md::tr!("语音服务")
                 } else {
-                    "AI 服务"
+                    course2md::tr!("AI 服务")
                 },
                 // Nothing is sent anywhere until a service exists to choose.
                 if purpose == ServicePurpose::Ai && has_services {
                     if self.preferences.generation().ai_proofread
                         && self.preferences.generation().vision
                     {
-                        "文字及对应截图会发送到所选服务"
+                        course2md::tr!("文字及对应截图会发送到所选服务")
                     } else {
-                        "校对与摘要会把文字发送到所选服务"
+                        course2md::tr!("校对与摘要会把文字发送到所选服务")
                     }
                 } else {
                     ""
@@ -420,10 +420,12 @@ impl Desktop {
         let result = if current_task {
             self.workspace
                 .as_mut()
-                .ok_or_else(|| anyhow!("当前笔记信息暂时不可用"))
+                .ok_or_else(|| anyhow!(course2md::tr!("当前笔记信息暂时不可用")))
                 .and_then(|workspace| {
                     workspace.transaction(|state| {
-                        let draft = state.draft_mut().context("找不到当前笔记")?;
+                        let draft = state
+                            .draft_mut()
+                            .context(course2md::tr!("找不到当前笔记"))?;
                         match purpose {
                             ServicePurpose::Speech => draft.asr_service = id,
                             ServicePurpose::Ai => draft.ai_service = id,
@@ -438,7 +440,7 @@ impl Desktop {
             Ok(()) => {
                 self.set_settings_feedback(
                     PreferenceGroup::Services,
-                    "服务选择已保存".into(),
+                    course2md::tr!("服务选择已保存").into(),
                     false,
                     cx,
                 );
@@ -449,7 +451,7 @@ impl Desktop {
             Err(error) => {
                 self.set_settings_feedback(
                     PreferenceGroup::Services,
-                    format!("服务选择尚未保存：{error:#}"),
+                    course2md::tr!("服务选择尚未保存：{}", format!("{error:#}")),
                     true,
                     cx,
                 );
@@ -499,7 +501,8 @@ impl Desktop {
             .as_ref()
             .and_then(|workspace| workspace.state.tasks.iter().find(|task| task.id == task_id))
         else {
-            self.workspace_error = Some("原任务已不可用，尚未修改服务或创建补做任务".into());
+            self.workspace_error =
+                Some(course2md::tr!("原任务已不可用，尚未修改服务或创建补做任务").into());
             cx.notify();
             return;
         };
@@ -565,13 +568,13 @@ impl Desktop {
             }
         }
         let title = if repair_task.is_some() {
-            "修复服务并补做"
+            course2md::tr!("修复服务并补做")
         } else {
             match (draft.protocol.purpose(), target.is_some()) {
-                (ServicePurpose::Speech, true) => "为这次笔记设置语音服务",
-                (ServicePurpose::Ai, true) => "为这次笔记设置 AI 服务",
-                (ServicePurpose::Speech, false) => "设置语音服务",
-                (ServicePurpose::Ai, false) => "设置 AI 服务",
+                (ServicePurpose::Speech, true) => course2md::tr!("为这次笔记设置语音服务"),
+                (ServicePurpose::Ai, true) => course2md::tr!("为这次笔记设置 AI 服务"),
+                (ServicePurpose::Speech, false) => course2md::tr!("设置语音服务"),
+                (ServicePurpose::Ai, false) => course2md::tr!("设置 AI 服务"),
             }
         };
         let kind = if draft.protocol.purpose() == ServicePurpose::Speech {
@@ -697,11 +700,11 @@ impl Desktop {
         let awaiting_binding = editor.pending_binding.is_some();
         let configuration_saved = editor.saved_configuration.is_some() || awaiting_binding;
         let repair_submit_label = if awaiting_binding {
-            "重试补做"
+            course2md::tr!("重试补做")
         } else if configuration_saved {
-            "开始补做"
+            course2md::tr!("开始补做")
         } else {
-            "保存并补做"
+            course2md::tr!("保存并补做")
         };
         let repair_refusal = self.repair_service_refusal(cx);
         let repair_refused = repair_refusal.is_some();
@@ -717,10 +720,10 @@ impl Desktop {
             })
         };
         let test_label = match editor.test_kind {
-            TestKind::Speech => "语音",
-            TestKind::Proofread => "校对",
-            TestKind::Summary => "摘要",
-            TestKind::Vision => "截图校对",
+            TestKind::Speech => course2md::tr!("语音"),
+            TestKind::Proofread => course2md::tr!("校对"),
+            TestKind::Summary => course2md::tr!("摘要"),
+            TestKind::Vision => course2md::tr!("截图校对"),
         };
         let test_outcome_unknown = editor
             .evidence
@@ -736,9 +739,9 @@ impl Desktop {
             .track_scroll(&editor.scroll)
             .role(if inline { Role::Group } else { Role::Dialog })
             .aria_label(if protocol.purpose() == ServicePurpose::Speech {
-                "设置语音服务"
+                course2md::tr!("设置语音服务")
             } else {
-                "设置 AI 服务"
+                course2md::tr!("设置 AI 服务")
             })
             .gap_6()
             // The outward-paint allowance is cancelled outside so cards keep the pane edges.
@@ -749,27 +752,35 @@ impl Desktop {
             .pb_3();
         use crate::settings_ui::{SettingsGroup, setting_surface};
         // 连接字段与其他设置页同一组卡片：每个字段一项，项间内缩分隔线
-        let mut connection = SettingsGroup::new("service-connection-heading", "连接信息")
-            .child(setting_surface().child(self.service_field(FormField::Name, "服务名称", None)))
-            .child(
-                setting_surface()
-                    .child(setting_label(
-                        "service-protocol-heading",
-                        if protocol.purpose() == ServicePurpose::Speech {
-                            "接口类型"
-                        } else {
-                            "服务类型"
-                        },
-                    ))
-                    .child(
-                        self.service_protocol_choices(
-                            FormOwner::Editor,
-                            self.setting_choices("service-protocol", "服务接口类型"),
-                            cx,
-                        )
-                        .disabled(awaiting_binding),
-                    ),
-            );
+        let mut connection =
+            SettingsGroup::new("service-connection-heading", course2md::tr!("连接信息"))
+                .child(setting_surface().child(self.service_field(
+                    FormField::Name,
+                    course2md::tr!("服务名称"),
+                    None,
+                )))
+                .child(
+                    setting_surface()
+                        .child(setting_label(
+                            "service-protocol-heading",
+                            if protocol.purpose() == ServicePurpose::Speech {
+                                course2md::tr!("接口类型")
+                            } else {
+                                course2md::tr!("服务类型")
+                            },
+                        ))
+                        .child(
+                            self.service_protocol_choices(
+                                FormOwner::Editor,
+                                self.setting_choices(
+                                    "service-protocol",
+                                    course2md::tr!("服务接口类型"),
+                                ),
+                                cx,
+                            )
+                            .disabled(awaiting_binding),
+                        ),
+                );
         // Codex 端点固定、凭据由登录态持有：不展示地址与认证编辑
         if protocol != ServiceProtocol::CodexResponses {
             let address = editor.form.value(FormField::Address, cx);
@@ -778,12 +789,15 @@ impl Desktop {
                 .filter(|endpoint| endpoint != address.trim());
             connection = connection.child(
                 setting_surface()
-                    .child(self.service_field(FormField::Address, "服务地址", None))
+                    .child(self.service_field(FormField::Address, course2md::tr!("服务地址"), None))
                     .when_some(endpoint, |item, endpoint| {
                         item.child(
-                            text("service-actual-endpoint", format!("实际地址：{endpoint}"))
-                                .text_size(TEXT_SETTINGS_AUX)
-                                .text_color(color(GRAY)),
+                            text(
+                                "service-actual-endpoint",
+                                course2md::tr!("实际地址：{}", endpoint),
+                            )
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .text_color(color(GRAY)),
                         )
                     }),
             );
@@ -791,11 +805,17 @@ impl Desktop {
         if !protocol.keyless() {
             connection = connection.child(
                 setting_surface()
-                    .child(setting_label("service-auth-heading", "认证方式"))
+                    .child(setting_label(
+                        "service-auth-heading",
+                        course2md::tr!("认证方式"),
+                    ))
                     .child(
                         self.service_auth_choices(
                             FormOwner::Editor,
-                            self.setting_choices("service-auth-mode", "服务认证方式"),
+                            self.setting_choices(
+                                "service-auth-mode",
+                                course2md::tr!("服务认证方式"),
+                            ),
                             cx,
                         )
                         .disabled(awaiting_binding),
@@ -813,9 +833,12 @@ impl Desktop {
                 ));
                 if editor.form.draft.credential.is_some() {
                     key = key.child(
-                        text("service-key-existing", "已保存密钥，留空则保留")
-                            .text_size(TEXT_SETTINGS_AUX)
-                            .text_color(color(GRAY)),
+                        text(
+                            "service-key-existing",
+                            course2md::tr!("已保存密钥，留空则保留"),
+                        )
+                        .text_size(TEXT_SETTINGS_AUX)
+                        .text_color(color(GRAY)),
                     );
                 }
                 for (index, name) in
@@ -827,7 +850,7 @@ impl Desktop {
                         control(("capture-environment-key", index))
                             .settings_text()
                             .icon(icons::content_copy())
-                            .label(format!("使用环境变量 {name}"))
+                            .label(course2md::tr!("使用环境变量 {}", name))
                             .disabled(awaiting_binding)
                             .self_start()
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -849,14 +872,19 @@ impl Desktop {
                                             editor.saved_configuration = None;
                                             editor.save_failed = false;
                                             editor.status = Some(
-                                                "已使用环境变量中的密钥，点击保存后生效".into(),
+                                                course2md::tr!(
+                                                    "已使用环境变量中的密钥，点击保存后生效"
+                                                )
+                                                .into(),
                                             );
                                         }
                                     }
                                     Err(error) => {
                                         if let Some(editor) = &mut this.settings_ui.editor {
-                                            editor.status =
-                                                Some(format!("凭据尚未保存：{error:#}"));
+                                            editor.status = Some(course2md::tr!(
+                                                "凭据尚未保存：{}",
+                                                format!("{error:#}")
+                                            ));
                                         }
                                     }
                                 }
@@ -869,9 +897,12 @@ impl Desktop {
             if let Some(source) = &editor.form.draft.credential_source {
                 connection = connection.detail(
                     div().px(rems(20. / 14.)).pb(rems(1.)).child(
-                        text("service-credential-source", format!("密钥来源：{source}"))
-                            .text_size(TEXT_SETTINGS_AUX)
-                            .text_color(color(GRAY)),
+                        text(
+                            "service-credential-source",
+                            course2md::tr!("密钥来源：{}", source),
+                        )
+                        .text_size(TEXT_SETTINGS_AUX)
+                        .text_color(color(GRAY)),
                     ),
                 );
             }
@@ -894,7 +925,7 @@ impl Desktop {
                         .gap_2()
                         .child(setting_label(
                             ("setting-field-label", 8 + FormField::Model as usize),
-                            "模型 ID",
+                            course2md::tr!("模型 ID"),
                         ))
                         .child(self.service_model_field(
                             FormOwner::Editor,
@@ -908,7 +939,7 @@ impl Desktop {
         if editor.target.is_some() {
             connection = connection.child(
                 self.setting_preference(
-                    "同时设为默认服务",
+                    course2md::tr!("同时设为默认服务"),
                     "",
                     Switch::new("service-also-default")
                         .checked(editor.also_default)
@@ -942,9 +973,9 @@ impl Desktop {
                     .ml(-crate::theme::QUIET_INSET)
                     .icon(icons::close())
                     .label(if configuration_saved {
-                        "关闭"
+                        course2md::tr!("关闭")
                     } else {
-                        "取消"
+                        course2md::tr!("取消")
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if this.close_service_editor(window, cx) && !inline {
@@ -958,7 +989,7 @@ impl Desktop {
                     .settings_text()
                     .icon(icons::science())
                     .label(if busy {
-                        format!("正在测试{test_label}…")
+                        course2md::tr!("正在测试{}…", test_label)
                     } else {
                         match editor
                             .evidence
@@ -966,18 +997,18 @@ impl Desktop {
                             .map(|evidence| evidence.outcome.clone())
                         {
                             Some(preferences::TestOutcome::Passed) => {
-                                format!("{test_label}通过 · 重测")
+                                course2md::tr!("{}通过 · 重测", test_label)
                             }
                             Some(preferences::TestOutcome::OutcomeUnknown) => {
-                                format!("{test_label}结果未确认 · 重试")
+                                course2md::tr!("{}结果未确认 · 重试", test_label)
                             }
                             Some(
                                 preferences::TestOutcome::AuthenticationRefused
                                 | preferences::TestOutcome::ModelRefused
                                 | preferences::TestOutcome::ContractMismatch
                                 | preferences::TestOutcome::SampleMismatch,
-                            ) => format!("{test_label}未通过 · 重试"),
-                            _ => format!("测试{test_label}"),
+                            ) => course2md::tr!("{}未通过 · 重试", test_label),
+                            _ => course2md::tr!("测试{}", test_label),
                         }
                     })
                     .loading(busy)
@@ -991,7 +1022,7 @@ impl Desktop {
                     quiet("save-repair-service-only")
                         .settings_text()
                         .icon(icons::save())
-                        .label("仅保存")
+                        .label(course2md::tr!("仅保存"))
                         .disabled(busy || awaiting_binding || editor.saved_configuration.is_some())
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.publish_service_editor(false, window, cx)
@@ -1004,9 +1035,9 @@ impl Desktop {
                     .label(if editor.repair_task.is_some() {
                         repair_submit_label
                     } else if awaiting_binding {
-                        "重试保存本次选择"
+                        course2md::tr!("重试保存本次选择")
                     } else {
-                        "保存"
+                        course2md::tr!("保存")
                     })
                     .disabled(editor.repair_task.is_some() && (busy || repair_refusal.is_some()))
                     .on_click(
@@ -1064,18 +1095,22 @@ impl Desktop {
         if protocol.purpose() == ServicePurpose::Ai {
             testing = testing.child(
                 div().self_start().max_w_full().child(
-                    self.setting_choices("service-test-purpose", "要测试的服务能力")
-                        .options(
-                            [TestKind::Proofread, TestKind::Summary, TestKind::Vision]
-                                .into_iter()
-                                .map(|kind| (kind.contract(), kind.label())),
-                        )
-                        .icon(TestKind::Proofread.contract(), icons::edit())
-                        .icon(TestKind::Summary.contract(), icons::summarize())
-                        .icon(TestKind::Vision.contract(), icons::image())
-                        .selected(editor.test_kind.contract())
-                        .disabled(busy)
-                        .on_change(cx.listener(move |this, selected: &SharedString, _, cx| {
+                    self.setting_choices(
+                        "service-test-purpose",
+                        course2md::tr!("要测试的服务能力"),
+                    )
+                    .options(
+                        [TestKind::Proofread, TestKind::Summary, TestKind::Vision]
+                            .into_iter()
+                            .map(|kind| (kind.contract(), kind.label())),
+                    )
+                    .icon(TestKind::Proofread.contract(), icons::edit())
+                    .icon(TestKind::Summary.contract(), icons::summarize())
+                    .icon(TestKind::Vision.contract(), icons::image())
+                    .selected(editor.test_kind.contract())
+                    .disabled(busy)
+                    .on_change(cx.listener(
+                        move |this, selected: &SharedString, _, cx| {
                             let Some(kind) =
                                 [TestKind::Proofread, TestKind::Summary, TestKind::Vision]
                                     .into_iter()
@@ -1103,7 +1138,8 @@ impl Desktop {
                                 editor.evidence = evidence;
                             }
                             cx.notify();
-                        })),
+                        },
+                    )),
                 ),
             );
         }
@@ -1119,7 +1155,7 @@ impl Desktop {
                             editor
                                 .status
                                 .clone()
-                                .unwrap_or_else(|| "正在测试服务…".into()),
+                                .unwrap_or_else(|| course2md::tr!("正在测试服务…").into()),
                         )
                         .text_sm(),
                     ),
@@ -1129,13 +1165,16 @@ impl Desktop {
             let (kind, label) = match evidence.outcome {
                 preferences::TestOutcome::Passed => (
                     BadgeKind::Success,
-                    format!("{}测试通过", editor.test_kind.label()),
+                    course2md::tr!("{}测试通过", editor.test_kind.label()),
                 ),
-                preferences::TestOutcome::OutcomeUnknown => {
-                    (BadgeKind::Warning, "结果尚未确认".to_owned())
+                preferences::TestOutcome::OutcomeUnknown => (
+                    BadgeKind::Warning,
+                    course2md::tr!("结果尚未确认").to_owned(),
+                ),
+                preferences::TestOutcome::NotSent => {
+                    (BadgeKind::Neutral, course2md::tr!("测试未发送").to_owned())
                 }
-                preferences::TestOutcome::NotSent => (BadgeKind::Neutral, "测试未发送".to_owned()),
-                _ => (BadgeKind::Danger, "测试未通过".to_owned()),
+                _ => (BadgeKind::Danger, course2md::tr!("测试未通过").to_owned()),
             };
             let mut result = v_flex()
                 .gap_3()
@@ -1158,13 +1197,18 @@ impl Desktop {
                 && editor.repair_task.is_none()
                 && awaiting_binding
             {
-                result = result
-                    .child(text("service-tested-save-state", "本次笔记的选择尚未保存").text_sm());
+                result = result.child(
+                    text(
+                        "service-tested-save-state",
+                        course2md::tr!("本次笔记的选择尚未保存"),
+                    )
+                    .text_sm(),
+                );
             }
             result = result.child(
                 text(
                     "service-test-time",
-                    format!(
+                    course2md::tr!(
                         "测试时间：{}",
                         crate::reader_navigation::timestamp_local(evidence.tested_at * 1000)
                     ),
@@ -1179,9 +1223,9 @@ impl Desktop {
                         .icon(icons::info())
                         .self_start()
                         .label(if editor.test_details_open {
-                            "收起测试详情"
+                            course2md::tr!("收起测试详情")
                         } else {
-                            "查看测试详情"
+                            course2md::tr!("查看测试详情")
                         })
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(editor) = &mut this.settings_ui.editor {
@@ -1212,9 +1256,12 @@ impl Desktop {
             ));
         }
         Some(
-            crate::settings_ui::SettingsGroup::new("service-test-heading", "检查服务")
-                .child(testing)
-                .into_any_element(),
+            crate::settings_ui::SettingsGroup::new(
+                "service-test-heading",
+                course2md::tr!("检查服务"),
+            )
+            .child(testing)
+            .into_any_element(),
         )
     }
 
@@ -1252,12 +1299,12 @@ impl Desktop {
                 footer.child(
                     text(
                         "service-test-fixed-reason",
-                        format!(
+                        course2md::tr!(
                             "{}：{}{}",
                             kind.label(),
                             evidence.message,
                             if repair_refused {
-                                "。修改配置或重新测试后再补做。"
+                                course2md::tr!("。修改配置或重新测试后再补做。")
                             } else {
                                 ""
                             }
@@ -1265,35 +1312,43 @@ impl Desktop {
                     )
                     .role(Role::Status)
                     .text_size(TEXT_SETTINGS_AUX)
-                    .text_color(color(if matches!(
-                        evidence.outcome,
-                        preferences::TestOutcome::OutcomeUnknown
-                            | preferences::TestOutcome::NotSent
-                    ) {
-                        WARNING
-                    } else {
-                        DANGER
-                    })),
+                    .text_color(color(
+                        if matches!(
+                            evidence.outcome,
+                            preferences::TestOutcome::OutcomeUnknown
+                                | preferences::TestOutcome::NotSent
+                        ) {
+                            WARNING
+                        } else {
+                            DANGER
+                        },
+                    )),
                 )
             })
             .when(configuration_saved && repair_task, |footer| {
                 footer.child(
-                    text("service-config-saved-only", "服务配置已保存，尚未开始补做")
-                        .text_size(TEXT_SETTINGS_AUX)
-                        .text_color(color(GRAY)),
+                    text(
+                        "service-config-saved-only",
+                        course2md::tr!("服务配置已保存，尚未开始补做"),
+                    )
+                    .text_size(TEXT_SETTINGS_AUX)
+                    .text_color(color(GRAY)),
                 )
             })
             .child(
                 theme::supporting_info(
                     "service-test-notice",
                     if test_outcome_unknown && repair_task {
-                        format!("上次结果未确认；重测或「{repair_submit_label}」都会再次发送请求，可能计费")
+                        course2md::tr!(
+                            "上次结果未确认；重测或「{}」都会再次发送请求，可能计费",
+                            repair_submit_label
+                        )
                     } else if test_outcome_unknown {
-                        "上次结果未确认；重测会再次发送，可能计费".to_owned()
+                        course2md::tr!("上次结果未确认；重测会再次发送，可能计费").to_owned()
                     } else if repair_task {
-                        format!("「{repair_submit_label}」会重新发送失败部分，可能计费")
+                        course2md::tr!("「{}」会重新发送失败部分，可能计费", repair_submit_label)
                     } else {
-                        service_test::TEST_NOTICE.to_owned()
+                        service_test::test_notice().to_owned()
                     },
                 )
                 .text_size(TEXT_SETTINGS_AUX),
@@ -1335,7 +1390,7 @@ impl Desktop {
         let cancel = Arc::new(AtomicBool::new(false));
         editor.test_running = Some(cancel.clone());
         editor.evidence = None;
-        editor.status = Some(format!("正在测试{}…", kind.label()));
+        editor.status = Some(course2md::tr!("正在测试{}…", kind.label()));
         let vault = self.preferences.vault();
         let task = crate::spawn_blocking_io(move || {
             service_test::test_service_blocking(&config, kind, vault.as_ref(), &cancel)
@@ -1371,7 +1426,7 @@ impl Desktop {
                             .insert(evidence.fingerprint.clone(), evidence.clone());
                         editor.evidence = Some(evidence);
                         if !persisted {
-                            editor.status = Some("测试结果尚未保存".into());
+                            editor.status = Some(course2md::tr!("测试结果尚未保存").into());
                         }
                     }
                 }
@@ -1476,7 +1531,7 @@ impl Desktop {
             Ok(version) => version,
             Err(error) => {
                 if let Some(editor) = &mut self.settings_ui.editor {
-                    editor.status = Some(format!("服务尚未保存：{error:#}"));
+                    editor.status = Some(course2md::tr!("服务尚未保存：{}", format!("{error:#}")));
                     editor.save_failed = true;
                 }
                 cx.notify();
@@ -1499,14 +1554,16 @@ impl Desktop {
             let binding = self
                 .workspace
                 .as_mut()
-                .ok_or_else(|| anyhow!("当前笔记信息暂时不可用"))
+                .ok_or_else(|| anyhow!(course2md::tr!("当前笔记信息暂时不可用")))
                 .and_then(|workspace| {
                     workspace.transaction(|state| {
                         let draft = state
                             .drafts
                             .iter_mut()
                             .find(|draft| draft.id == target)
-                            .context("原笔记已关闭；服务已保存，但未用于其他笔记")?;
+                            .context(course2md::tr!(
+                                "原笔记已关闭；服务已保存，但未用于其他笔记"
+                            ))?;
                         let selected =
                             (scope == BindingScope::CurrentTask).then(|| version.id.clone());
                         match version.config.protocol.purpose() {
@@ -1519,7 +1576,10 @@ impl Desktop {
             if let Err(error) = binding {
                 if let Some(editor) = &mut self.settings_ui.editor {
                     editor.pending_binding = Some(version);
-                    editor.status = Some(format!("服务已保存，本次选择尚未保存：{error:#}"));
+                    editor.status = Some(course2md::tr!(
+                        "服务已保存，本次选择尚未保存：{}",
+                        format!("{error:#}")
+                    ));
                 }
                 cx.notify();
                 return;
@@ -1530,13 +1590,19 @@ impl Desktop {
         {
             if let Some(editor) = &mut self.settings_ui.editor {
                 editor.pending_binding = Some(version);
-                editor.status = Some("服务已保存，补做任务尚未创建。请重试补做。".into());
+                editor.status =
+                    Some(course2md::tr!("服务已保存，补做任务尚未创建。请重试补做。").into());
             }
             cx.notify();
             return;
         }
         self.refresh_dispatch_controls(cx);
-        self.set_settings_feedback(PreferenceGroup::Services, "服务已保存".into(), false, cx);
+        self.set_settings_feedback(
+            PreferenceGroup::Services,
+            course2md::tr!("服务已保存").into(),
+            false,
+            cx,
+        );
         self.restore_service_focus(window, cx);
         if !inline {
             window.close_dialog(cx);
@@ -1598,33 +1664,40 @@ impl Desktop {
         }
         .and_then(|id| self.preferences.version(id))
         .map(|default| {
-            format!(
+            course2md::tr!(
                 "当前默认：{} · v{} · {}",
-                default.config.name, default.number, default.config.model
+                default.config.name,
+                default.number,
+                default.config.model
             )
         })
-        .unwrap_or_else(|| "当前尚未设置默认服务".to_owned());
-        let next = format!(
+        .unwrap_or_else(|| course2md::tr!("当前尚未设置默认服务").to_owned());
+        let next = course2md::tr!(
             "更新为：{} · v{} · {}",
-            version.config.name, version.number, version.config.model
+            version.config.name,
+            version.number,
+            version.config.model
         );
         let weak = cx.weak_entity();
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let id = version_id.clone();
             dialog
-                .title("更新默认服务")
+                .title(course2md::tr!("更新默认服务"))
                 .child(text("default-service-previous", previous.clone()))
                 .child(text("default-service-next", next.clone()))
                 .child(
-                    text("default-service-consequence", "仅影响以后生成的笔记")
-                        .text_sm()
-                        .text_color(color(GRAY)),
+                    text(
+                        "default-service-consequence",
+                        course2md::tr!("仅影响以后生成的笔记"),
+                    )
+                    .text_sm()
+                    .text_color(color(GRAY)),
                 )
                 .button_props(
                     gpui_component::dialog::DialogButtonProps::default()
-                        .ok_text("用于以后生成")
-                        .cancel_text("保留原默认")
+                        .ok_text(course2md::tr!("用于以后生成"))
+                        .cancel_text(course2md::tr!("保留原默认"))
                         .show_cancel(true),
                 )
                 .on_ok(move |_, _, cx| {
@@ -1632,14 +1705,14 @@ impl Desktop {
                         match this.preferences.set_default_service(purpose, Some(&id)) {
                             Ok(()) => this.set_settings_feedback(
                                 PreferenceGroup::Services,
-                                "已更新默认服务".into(),
+                                course2md::tr!("已更新默认服务").into(),
                                 false,
                                 cx,
                             ),
                             Err(error) => {
                                 this.set_settings_feedback(
                                     PreferenceGroup::Services,
-                                    "默认服务尚未更改，请重试".into(),
+                                    course2md::tr!("默认服务尚未更改，请重试").into(),
                                     true,
                                     cx,
                                 );
@@ -1695,21 +1768,24 @@ impl Desktop {
             let weak = weak.clone();
             let id = service_id.clone();
             dialog
-                .title("删除此服务")
+                .title(course2md::tr!("删除此服务"))
                 .child(text(
                     "delete-service-consequence",
-                    "将删除此服务配置，已有笔记不受影响",
+                    course2md::tr!("将删除此服务配置，已有笔记不受影响"),
                 ))
                 .when(affected > 0, |dialog| {
                     dialog.child(text(
                         "delete-service-affected",
-                        format!("有 {affected} 个未完成任务引用此服务；相关后续请求会停止派发"),
+                        course2md::tr!(
+                            "有 {} 个未完成任务引用此服务；相关后续请求会停止派发",
+                            affected
+                        ),
                     ))
                 })
                 .button_props(
                     gpui_component::dialog::DialogButtonProps::default()
-                        .ok_text("删除服务")
-                        .cancel_text("保留服务")
+                        .ok_text(course2md::tr!("删除服务"))
+                        .cancel_text(course2md::tr!("保留服务"))
                         .show_cancel(true),
                 )
                 .on_ok(move |_, _, cx| {
@@ -1718,7 +1794,7 @@ impl Desktop {
                             this.refresh_dispatch_controls(cx);
                             this.set_settings_feedback(
                                 PreferenceGroup::Services,
-                                "已删除此服务".into(),
+                                course2md::tr!("已删除此服务").into(),
                                 false,
                                 cx,
                             );
@@ -1732,13 +1808,14 @@ impl Desktop {
                             let blocked = this.preferences.is_service_retired(&id);
                             this.set_settings_feedback(
                                 PreferenceGroup::Services,
-                                format!(
-                                    "{}：{error:#}",
+                                course2md::tr!(
+                                    "{}：{}",
                                     if blocked {
-                                        "已停止派发，删除记录尚未完整保存"
+                                        course2md::tr!("已停止派发，删除记录尚未完整保存")
                                     } else {
-                                        "尚未删除此服务"
-                                    }
+                                        course2md::tr!("尚未删除此服务")
+                                    },
+                                    format!("{error:#}")
                                 ),
                                 true,
                                 cx,
@@ -1765,7 +1842,12 @@ impl Desktop {
         match self.preferences.save_generation(next.clone()) {
             Ok(()) => {
                 self.settings_ui.pending_generation = None;
-                self.set_settings_feedback(PreferenceGroup::Generation, "已保存".into(), false, cx);
+                self.set_settings_feedback(
+                    PreferenceGroup::Generation,
+                    course2md::tr!("已保存").into(),
+                    false,
+                    cx,
+                );
                 self.refresh_preference_defaults(cx);
                 self.clear_resolved_generation_errors(previous);
                 if !self.preference_defaults_pending {
@@ -1808,8 +1890,10 @@ impl Desktop {
                 }
                 Err(error) => {
                     self.preference_defaults_pending = true;
-                    self.workspace_error =
-                        Some(format!("默认设置已保存，当前视频的选项尚未同步：{error:#}"))
+                    self.workspace_error = Some(course2md::tr!(
+                        "默认设置已保存，当前视频的选项尚未同步：{}",
+                        format!("{error:#}")
+                    ))
                 }
             }
         }

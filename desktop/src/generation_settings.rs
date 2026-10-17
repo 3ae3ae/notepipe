@@ -1,7 +1,7 @@
 //! Generation defaults page: speech/AI model, languages and vision switches.
 use super::model_diagnostics::{
-    LOCAL_ENGINES, UNSUPPORTED_MODEL, engine_from_id, engine_icon, engine_id, engine_offered,
-    model_supported,
+    LOCAL_ENGINES, engine_from_id, engine_icon, engine_id, engine_offered, model_supported,
+    unsupported_model,
 };
 use super::*;
 use course2md::config::{AsrProvider, local_models, model_label};
@@ -20,24 +20,24 @@ impl Desktop {
             [one] if ["zh-Hans", "zh-Hant", "en", "ja"].contains(&one.as_str()) => one.as_str(),
             _ => "custom",
         };
-        let languages = group("language-settings", "字幕与识别")
+        let languages = group("language-settings", course2md::tr!("字幕与识别"))
             .child(settings_stacked_row(
                 "default-text-source-label",
-                "文字来源",
+                course2md::tr!("文字来源"),
                 match value.options.transcript_source {
                     Some(course2md::config::TranscriptSource::Subtitle) => {
-                        "没有字幕时会提示选择字幕文件或改用语音识别"
+                        course2md::tr!("没有字幕时会提示选择字幕文件或改用语音识别")
                     }
                     Some(course2md::config::TranscriptSource::Asr) => {
-                        "识别视频声音，不使用现有字幕"
+                        course2md::tr!("识别视频声音，不使用现有字幕")
                     }
-                    _ => "有字幕时直接用字幕，没有字幕时识别视频声音",
+                    _ => course2md::tr!("有字幕时直接用字幕，没有字幕时识别视频声音"),
                 },
-                self.setting_choices("default-text-source", "文字来源")
+                self.setting_choices("default-text-source", course2md::tr!("文字来源"))
                     .options([
-                        ("auto", "自动"),
-                        ("subtitle", "仅字幕"),
-                        ("asr", "语音识别"),
+                        ("auto", course2md::tr!("自动")),
+                        ("subtitle", course2md::tr!("仅字幕")),
+                        ("asr", course2md::tr!("语音识别")),
                     ])
                     .icon("auto", icons::auto_fix())
                     .icon("subtitle", icons::subtitles())
@@ -60,7 +60,7 @@ impl Desktop {
             ))
             .child(settings_outlined_row(
                 "subtitle-language-label",
-                "字幕语言",
+                course2md::tr!("字幕语言"),
                 "",
                 v_flex()
                     .w_full()
@@ -75,22 +75,22 @@ impl Desktop {
                             .rounded(RADIUS_SMALL)
                             .w_full()
                             .label(match language {
-                                "zh-Hans" => "简体中文",
-                                "zh-Hant" => "繁體中文",
-                                "en" => "英语",
-                                "ja" => "日语",
-                                "custom" => "自定义优先级",
-                                _ => "自动",
+                                "zh-Hans" => course2md::tr!("简体中文"),
+                                "zh-Hant" => course2md::tr!("繁體中文"),
+                                "en" => course2md::tr!("英语"),
+                                "ja" => course2md::tr!("日语"),
+                                "custom" => course2md::tr!("自定义优先级"),
+                                _ => course2md::tr!("自动"),
                             })
                             .child(div().flex_1())
                             .child(icons::chevron_down().size_4())
                             .dropdown_menu(move |menu, _, _| {
                                 [
-                                    ("", "自动"),
-                                    ("zh-Hans", "简体中文"),
-                                    ("zh-Hant", "繁體中文"),
-                                    ("en", "英语"),
-                                    ("ja", "日语"),
+                                    ("", course2md::tr!("自动")),
+                                    ("zh-Hans", course2md::tr!("简体中文")),
+                                    ("zh-Hant", course2md::tr!("繁體中文")),
+                                    ("en", course2md::tr!("英语")),
+                                    ("ja", course2md::tr!("日语")),
                                 ]
                                 .into_iter()
                                 .fold(menu, |menu, (id, label)| {
@@ -133,7 +133,7 @@ impl Desktop {
                             .child(
                                 crate::theme::item_disclosure(
                                     "toggle-language-details",
-                                    "自定义语言优先级",
+                                    course2md::tr!("自定义语言优先级"),
                                     self.settings_ui.language_details_open,
                                 )
                                 .settings_text()
@@ -171,14 +171,14 @@ impl Desktop {
                                         text_input(&self.settings_ui.inputs[&EditField::Languages])
                                             .settings_text()
                                             .w_full()
-                                            .aria_label("语言优先级"),
+                                            .aria_label(course2md::tr!("语言优先级")),
                                     ),
                                 )
                                 .child(
                                     outline_pill("apply-languages")
                                         .settings_text()
                                         .icon(icons::check_circle())
-                                        .label("应用")
+                                        .label(course2md::tr!("应用"))
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.apply_language_preferences(cx)
                                         })),
@@ -187,11 +187,11 @@ impl Desktop {
                     )),
             ));
         let mut recognition =
-            group("asr-default-settings", "语音识别").child(settings_outlined_row(
+            group("asr-default-settings", course2md::tr!("语音识别")).child(settings_outlined_row(
                 "asr-method-label",
-                "识别方式",
+                course2md::tr!("识别方式"),
                 if online {
-                    "音频会发送到所选服务"
+                    course2md::tr!("音频会发送到所选服务")
                 } else {
                     ""
                 },
@@ -203,9 +203,9 @@ impl Desktop {
                         .rounded(RADIUS_SMALL)
                         .w_full()
                         .label(if online {
-                            "在线语音服务"
+                            course2md::tr!("在线语音服务")
                         } else {
-                            "本机"
+                            course2md::tr!("本机")
                         })
                         .child(div().flex_1())
                         .when(!online, |button| {
@@ -217,22 +217,25 @@ impl Desktop {
                         })
                         .child(icons::chevron_down().size_4())
                         .dropdown_menu(move |menu, _, _| {
-                            [(false, "本机识别"), (true, "在线语音服务")]
-                                .into_iter()
-                                .fold(menu, |menu, (use_online, label)| {
-                                    let entity = entity.clone();
-                                    menu.item(
-                                        PopupMenuItem::new(label)
-                                            .checked(online == use_online)
-                                            .on_click(move |_, _, cx| {
-                                                let _ = entity.update(cx, |this, cx| {
-                                                    let mut next = this.generation_edit_base();
-                                                    next.select_recognition_location(use_online);
-                                                    this.commit_generation(next, cx);
-                                                });
-                                            }),
-                                    )
-                                })
+                            [
+                                (false, course2md::tr!("本机识别")),
+                                (true, course2md::tr!("在线语音服务")),
+                            ]
+                            .into_iter()
+                            .fold(menu, |menu, (use_online, label)| {
+                                let entity = entity.clone();
+                                menu.item(
+                                    PopupMenuItem::new(label)
+                                        .checked(online == use_online)
+                                        .on_click(move |_, _, cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                let mut next = this.generation_edit_base();
+                                                next.select_recognition_location(use_online);
+                                                this.commit_generation(next, cx);
+                                            });
+                                        }),
+                                )
+                            })
                         })
                 }),
             ));
@@ -255,15 +258,20 @@ impl Desktop {
                         self.settings_ui.asr_details_open,
                         settings_stacked_row(
                             "asr-hardware-heading",
-                            "本机引擎",
+                            course2md::tr!("本机引擎"),
                             "",
                             engines
                                 .iter()
                                 .fold(
-                                    self.setting_choices("default-asr-hardware", "本机引擎")
-                                        .options(engines.iter().map(|engine| {
+                                    self.setting_choices(
+                                        "default-asr-hardware",
+                                        course2md::tr!("本机引擎"),
+                                    )
+                                    .options(
+                                        engines.iter().map(|engine| {
                                             (engine_id(*engine), crate::provider_label(*engine))
-                                        })),
+                                        }),
+                                    ),
                                     |choices, engine| {
                                         choices.icon(engine_id(*engine), engine_icon(*engine))
                                     },
@@ -284,11 +292,11 @@ impl Desktop {
                 model_panel,
             ));
         }
-        let mut ai = group("ai-default-settings", "AI 处理")
+        let mut ai = group("ai-default-settings", course2md::tr!("AI 处理"))
             .child(
                 setting_surface()
                     .child(settings_switch_row(
-                        "校对文字和标点",
+                        course2md::tr!("校对文字和标点"),
                         "",
                         Switch::new("default-ai-proofread")
                             .checked(value.ai_proofread)
@@ -299,7 +307,7 @@ impl Desktop {
                             })),
                     ))
                     .child(settings_switch_row(
-                        "在开头生成摘要",
+                        course2md::tr!("在开头生成摘要"),
                         "",
                         Switch::new("default-ai-summary")
                             .checked(value.ai_summary)
@@ -310,7 +318,7 @@ impl Desktop {
                             })),
                     ))
                     .child(settings_switch_row(
-                        "校对时附带对应截图",
+                        course2md::tr!("校对时附带对应截图"),
                         "",
                         Switch::new("default-ai-vision")
                             .checked(value.vision)
@@ -329,15 +337,15 @@ impl Desktop {
                 // As on the canvas, the rule is a list item showing its current value.
                 .child(settings_row(
                     "proofread-rules-label",
-                    "自定义校对规则",
+                    course2md::tr!("自定义校对规则"),
                     "",
                     quiet("show-proofread-rules")
                         .settings_text()
                         .mr(-crate::theme::QUIET_INSET)
                         .label(if value.prompt.is_some() {
-                            "已自定义"
+                            course2md::tr!("已自定义")
                         } else {
-                            "使用标准规则"
+                            course2md::tr!("使用标准规则")
                         })
                         .icon(if self.settings_ui.show_prompt {
                             icons::chevron_up()
@@ -368,7 +376,7 @@ impl Desktop {
                             Textarea::new(&self.settings_ui.prompt)
                                 .h(px(160.))
                                 .w_full()
-                                .aria_label("自定义校对规则"),
+                                .aria_label(course2md::tr!("自定义校对规则")),
                         )
                         .child(
                             h_flex()
@@ -378,7 +386,7 @@ impl Desktop {
                                     outline_pill("apply-proofread-rules")
                                         .settings_text()
                                         .icon(icons::save())
-                                        .label("应用校对规则")
+                                        .label(course2md::tr!("应用校对规则"))
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             let prompt = this
                                                 .settings_ui
@@ -399,7 +407,7 @@ impl Desktop {
                                     quiet("restore-proofread-rules")
                                         .settings_text()
                                         .icon(icons::refresh())
-                                        .label("恢复标准规则")
+                                        .label(course2md::tr!("恢复标准规则"))
                                         .disabled(value.prompt.is_none())
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             let mut next = this.generation_edit_base();
@@ -429,7 +437,7 @@ impl Desktop {
             .child(recognition)
             .child(ai)
             .child(
-                group("export-default-settings", "保存")
+                group("export-default-settings", course2md::tr!("保存"))
                     .child(
                         setting_surface().child(
                             h_flex()
@@ -442,7 +450,10 @@ impl Desktop {
                                         .flex_1()
                                         .min_w_0()
                                         .gap_1()
-                                        .child(text("settings-save-location", "保存位置"))
+                                        .child(text(
+                                            "settings-save-location",
+                                            course2md::tr!("保存位置"),
+                                        ))
                                         .child(
                                             text(
                                                 "settings-current-location",
@@ -461,7 +472,9 @@ impl Desktop {
                                                     .map(|library| {
                                                         library.root.display().to_string()
                                                     })
-                                                    .unwrap_or_else(|| "尚未设置".into()),
+                                                    .unwrap_or_else(|| {
+                                                        course2md::tr!("尚未设置").into()
+                                                    }),
                                             )
                                             .text_size(TEXT_SETTINGS_AUX)
                                             .text_color(color(GRAY))
@@ -476,7 +489,7 @@ impl Desktop {
                                 .child(
                                     outline_pill("settings-manage-storage")
                                         .settings_text()
-                                        .label("更改")
+                                        .label(course2md::tr!("更改"))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.select_settings_tab(
                                                 SettingsTab::Storage,
@@ -489,12 +502,15 @@ impl Desktop {
                     )
                     .child(settings_row(
                         "export-format-label",
-                        "同时导出",
+                        course2md::tr!("同时导出"),
                         "",
                         h_flex().w_full().gap_3().flex_wrap().children(
                             [
                                 (course2md::config::OutputFormat::Md, "Markdown"),
-                                (course2md::config::OutputFormat::Html, "网页"),
+                                (
+                                    course2md::config::OutputFormat::Html,
+                                    course2md::tr!("网页"),
+                                ),
                                 (course2md::config::OutputFormat::Json, "JSON"),
                             ]
                             .into_iter()
@@ -525,8 +541,8 @@ impl Desktop {
                     ))
                     .child(
                         setting_surface().child(settings_switch_row(
-                            "保留下载的视频",
-                            "可离线播放，会占用更多磁盘空间",
+                            course2md::tr!("保留下载的视频"),
+                            course2md::tr!("可离线播放，会占用更多磁盘空间"),
                             Switch::new("default-keep-video")
                                 .checked(value.options.keep_video.unwrap_or(false))
                                 .on_click(cx.listener(|this, enabled, _, cx| {
@@ -560,7 +576,7 @@ impl Desktop {
             let label = if canonical.is_some() {
                 model_label(canonical.as_deref().unwrap_or(selected))
             } else {
-                "自定义模型"
+                course2md::tr!("自定义模型")
             };
             let entity = cx.entity().downgrade();
             self.reveal_setting(
@@ -591,7 +607,7 @@ impl Desktop {
             models
                 .iter()
                 .fold(
-                    self.setting_choices("default-local-model", "默认识别模型")
+                    self.setting_choices("default-local-model", course2md::tr!("默认识别模型"))
                         .options(models.iter().map(|model| (model.id, model.label))),
                     |choices, model| choices.icon(model.id, icons::mic()),
                 )
@@ -638,9 +654,9 @@ impl Desktop {
                         icons::download()
                     })
                     .label(if self.settings_ui.model_details_open {
-                        "收起模型管理"
+                        course2md::tr!("收起模型管理")
                     } else {
-                        "管理模型与下载"
+                        course2md::tr!("管理模型与下载")
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.settings_ui.model_details_open = !this.settings_ui.model_details_open;
@@ -653,9 +669,9 @@ impl Desktop {
                     .mr(-crate::theme::QUIET_INSET)
                     .icon(icons::tune())
                     .label(if self.settings_ui.asr_details_open {
-                        "收起高级设置"
+                        course2md::tr!("收起高级设置")
                     } else {
-                        "高级识别设置"
+                        course2md::tr!("高级识别设置")
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.settings_ui.asr_details_open = !this.settings_ui.asr_details_open;
@@ -664,7 +680,7 @@ impl Desktop {
             );
         let mut view = v_flex().w_full().min_w_0().child(settings_stacked_row(
             "local-model-heading",
-            "识别模型",
+            course2md::tr!("识别模型"),
             "",
             v_flex()
                 .w_full()
@@ -675,7 +691,7 @@ impl Desktop {
         ));
         if !model_supported(provider, selected) {
             view = view.child(
-                text("unavailable-fixed-model", UNSUPPORTED_MODEL)
+                text("unavailable-fixed-model", unsupported_model())
                     .text_size(TEXT_SETTINGS_AUX)
                     .text_color(color(DANGER)),
             );
@@ -684,13 +700,13 @@ impl Desktop {
             view = view
                 .child(self.setting_field(
                     EditField::LocalModel,
-                    "模型名称或 Hugging Face 仓库（如 org/model）",
+                    course2md::tr!("模型名称或 Hugging Face 仓库（如 org/model）"),
                 ))
                 .child(
                     control("apply-custom-npu-model")
                         .settings_text()
                         .icon(icons::check_circle())
-                        .label("应用模型选择")
+                        .label(course2md::tr!("应用模型选择"))
                         .self_start()
                         .on_click(cx.listener(|this, _, _, cx| {
                             let model = this

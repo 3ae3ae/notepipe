@@ -136,9 +136,9 @@ impl AccountUi {
         {
             None
         } else if self.has_saved_login || matches!(self.status, Some(AccountStatus::Expired)) {
-            Some("重新登录 Bilibili")
+            Some(course2md::tr!("重新登录 Bilibili"))
         } else {
-            Some("登录 Bilibili")
+            Some(course2md::tr!("登录 Bilibili"))
         }
     }
 
@@ -197,7 +197,7 @@ impl Desktop {
                 let (saved, result) = received.unwrap_or_else(|_| {
                     (
                         this.account.has_saved_login,
-                        Err(crate::INTERRUPTED.to_owned()),
+                        Err(crate::interrupted().to_owned()),
                     )
                 });
                 if this.account.apply_status(generation, saved, result) {
@@ -221,30 +221,30 @@ impl Desktop {
     fn account_summary(&self, onboarding: bool, cx: &mut Context<Self>) -> Div {
         let saved = self.account.has_saved_login;
         let (kind, label) = if self.account.checking {
-            (BadgeKind::Progress, "验证中")
+            (BadgeKind::Progress, course2md::tr!("验证中"))
         } else if self.account.status_error.is_some() {
-            (BadgeKind::Warning, "暂时无法验证")
+            (BadgeKind::Warning, course2md::tr!("暂时无法验证"))
         } else {
             match &self.account.status {
-                Some(AccountStatus::Expired) => (BadgeKind::Warning, "登录已失效"),
-                Some(AccountStatus::Connected(_)) => (BadgeKind::Success, "已登录"),
-                _ if saved => (BadgeKind::Neutral, "已保存登录信息"),
-                _ => (BadgeKind::Neutral, "未登录"),
+                Some(AccountStatus::Expired) => (BadgeKind::Warning, course2md::tr!("登录已失效")),
+                Some(AccountStatus::Connected(_)) => (BadgeKind::Success, course2md::tr!("已登录")),
+                _ if saved => (BadgeKind::Neutral, course2md::tr!("已保存登录信息")),
+                _ => (BadgeKind::Neutral, course2md::tr!("未登录")),
             }
         };
         // The badge carries the state; the line adds only what it does not say.
         let detail = if self.account.checking {
             None
         } else if self.account.logout_failed {
-            Some("退出登录尚未完成，原登录状态已保留".to_owned())
+            Some(course2md::tr!("退出登录尚未完成，原登录状态已保留").to_owned())
         } else if self.account.status_error.is_some() {
-            saved.then(|| "已保存登录信息".to_owned())
+            saved.then(|| course2md::tr!("已保存登录信息").to_owned())
         } else {
             match &self.account.status {
                 Some(AccountStatus::Connected(profile)) if !profile.name.trim().is_empty() => {
                     Some(profile.name.clone())
                 }
-                None if saved => Some("尚未验证".to_owned()),
+                None if saved => Some(course2md::tr!("尚未验证").to_owned()),
                 _ => None,
             }
         };
@@ -267,7 +267,7 @@ impl Desktop {
                 quiet("account-refresh")
                     .settings_text()
                     .icon(icons::refresh())
-                    .label("重新检查")
+                    .label(course2md::tr!("重新检查"))
                     .disabled(self.account.checking)
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx)))
                     .into_any_element(),
@@ -276,7 +276,7 @@ impl Desktop {
                 quiet("account-logout")
                     .settings_text()
                     .icon(icons::logout())
-                    .label("退出登录")
+                    .label(course2md::tr!("退出登录"))
                     .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx)))
                     .into_any_element(),
             );
@@ -285,9 +285,9 @@ impl Desktop {
             id: "bilibili-account",
             icon: icons::tv(),
             title: if onboarding {
-                "账号状态"
+                course2md::tr!("账号状态")
             } else {
-                "Bilibili 账号"
+                course2md::tr!("Bilibili 账号")
             },
             status: (kind, label),
             detail,
@@ -295,9 +295,9 @@ impl Desktop {
             lines: vec![(
                 "policy",
                 if saved {
-                    "退出登录不会删除笔记"
+                    course2md::tr!("退出登录不会删除笔记")
                 } else {
-                    "登录后可读取账号有权访问的视频与字幕"
+                    course2md::tr!("登录后可读取账号有权访问的视频与字幕")
                 }
                 .into(),
                 false,
@@ -312,33 +312,35 @@ impl Desktop {
     /// row and the detail line, which each format their own wrapper.
     fn account_status_text(&self) -> String {
         if self.account.checking {
-            return "正在验证登录状态…".into();
+            return course2md::tr!("正在验证登录状态…").into();
         }
         if self.account.logout_failed {
-            return "退出登录尚未完成，原登录状态已保留".into();
+            return course2md::tr!("退出登录尚未完成，原登录状态已保留").into();
         }
         if self.account.status_error.is_some() {
             return if self.account.has_saved_login {
-                "暂时无法验证，已保存登录信息".into()
+                course2md::tr!("暂时无法验证，已保存登录信息").into()
             } else {
-                "暂时无法检查登录状态".into()
+                course2md::tr!("暂时无法检查登录状态").into()
             };
         }
         match &self.account.status {
             Some(AccountStatus::Connected(profile)) if !profile.name.trim().is_empty() => {
-                format!("已登录 · {}", profile.name)
+                course2md::tr!("已登录 · {}", profile.name)
             }
-            Some(AccountStatus::Connected(_)) => "已登录".into(),
-            Some(AccountStatus::Expired) => "登录已失效".into(),
-            Some(AccountStatus::Disconnected) => "未登录".into(),
-            None if self.account.has_saved_login => "已保存登录信息，尚未验证".into(),
-            None => "未登录".into(),
+            Some(AccountStatus::Connected(_)) => course2md::tr!("已登录").into(),
+            Some(AccountStatus::Expired) => course2md::tr!("登录已失效").into(),
+            Some(AccountStatus::Disconnected) => course2md::tr!("未登录").into(),
+            None if self.account.has_saved_login => {
+                course2md::tr!("已保存登录信息，尚未验证").into()
+            }
+            None => course2md::tr!("未登录").into(),
         }
     }
 
     /// Only rendered inside source details or a permission repair, never a permanent status row.
     pub fn source_account_row(&self, cx: &mut Context<Self>) -> Div {
-        let status = format!("Bilibili：{}", self.account_status_text());
+        let status = course2md::tr!("Bilibili：{}", self.account_status_text());
         let login_action = self.account.login_action();
         h_flex()
             .w_full()
@@ -361,7 +363,7 @@ impl Desktop {
                 control("source-account-refresh")
                     .ghost()
                     .icon(icons::refresh())
-                    .label("重新检查")
+                    .label(course2md::tr!("重新检查"))
                     .disabled(self.account.checking)
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
             )
@@ -401,7 +403,8 @@ impl Desktop {
                 self.account.logout_failed = false;
             }
             Err(_) => {
-                self.account.status_error = Some("退出登录尚未完成，原登录状态已保留".into());
+                self.account.status_error =
+                    Some(course2md::tr!("退出登录尚未完成，原登录状态已保留").into());
                 self.account.logout_failed = true;
             }
         }
@@ -451,9 +454,12 @@ impl Desktop {
             );
             dialog
                 .title(
-                    crate::settings_ui::settings_value("bilibili-dialog-title", "登录 Bilibili")
-                        .text_size(TEXT_TITLE)
-                        .font_weight(FontWeight::SEMIBOLD),
+                    crate::settings_ui::settings_value(
+                        "bilibili-dialog-title",
+                        course2md::tr!("登录 Bilibili"),
+                    )
+                    .text_size(TEXT_TITLE)
+                    .font_weight(FontWeight::SEMIBOLD),
                 )
                 .w(px(layout.dialog_width))
                 .margin_top(task_dialog_top(window))
@@ -487,7 +493,7 @@ impl Desktop {
                 _ => {
                     let _ = this.update(cx, |this, cx| {
                         if this.account.current(generation) {
-                            this.account.dialog = Some(QrDialogState::Error("获取二维码失败，请检查网络后重试".into()));
+                            this.account.dialog = Some(QrDialogState::Error(course2md::tr!("获取二维码失败，请检查网络后重试").into()));
                             cx.notify();
                         }
                     });
@@ -513,7 +519,7 @@ impl Desktop {
                 let Ok((next, result)) = task.recv().await else {
                     let _ = this.update(cx, |this, cx| {
                         if this.account.current(generation) {
-                            this.account.dialog = Some(QrDialogState::Error(crate::INTERRUPTED.into()));
+                            this.account.dialog = Some(QrDialogState::Error(crate::interrupted().into()));
                             cx.notify();
                         }
                     });
@@ -540,10 +546,10 @@ impl Desktop {
                                     this.account.logout_failed = false;
                                     (QrDialogState::Success(profile), false)
                                 }
-                                Err(_) => (QrDialogState::Error("账号已确认，但保存登录状态失败。请检查本地权限后重新扫码。".into()), false),
+                                Err(_) => (QrDialogState::Error(course2md::tr!("账号已确认，但保存登录状态失败。请检查本地权限后重新扫码。").into()), false),
                             }
                         }
-                        Err(_) => (QrDialogState::Error("登录请求失败，请检查网络后重新获取二维码".into()), false),
+                        Err(_) => (QrDialogState::Error(course2md::tr!("登录请求失败，请检查网络后重新获取二维码").into()), false),
                     };
                     if !keep_polling { this.account.modules = None; }
                     this.account.dialog = Some(state);
@@ -568,20 +574,21 @@ impl Desktop {
             .clone()
             .unwrap_or(QrDialogState::Generating);
         let (message, hint): (String, String) = match &state {
-            QrDialogState::Generating => ("正在获取二维码".into(), String::new()),
+            QrDialogState::Generating => (course2md::tr!("正在获取二维码").into(), String::new()),
             QrDialogState::Waiting(seconds) => (
-                "请使用 Bilibili App 扫码".into(),
-                format!("二维码约 {seconds} 秒后过期"),
+                course2md::tr!("请使用 Bilibili App 扫码").into(),
+                course2md::tr!("二维码约 {} 秒后过期", seconds),
             ),
             QrDialogState::Confirming(seconds) => (
-                "已扫码，请在手机上确认登录".into(),
-                format!("请在约 {seconds} 秒内确认"),
+                course2md::tr!("已扫码，请在手机上确认登录").into(),
+                course2md::tr!("请在约 {} 秒内确认", seconds),
             ),
-            QrDialogState::Expired => ("二维码已过期".into(), String::new()),
-            QrDialogState::Error(error) => ("登录未完成".into(), error.clone()),
-            QrDialogState::Success(profile) => {
-                ("已登录 Bilibili".into(), profile.name.trim().to_owned())
-            }
+            QrDialogState::Expired => (course2md::tr!("二维码已过期").into(), String::new()),
+            QrDialogState::Error(error) => (course2md::tr!("登录未完成").into(), error.clone()),
+            QrDialogState::Success(profile) => (
+                course2md::tr!("已登录 Bilibili").into(),
+                profile.name.trim().to_owned(),
+            ),
         };
         let retry = matches!(state, QrDialogState::Expired | QrDialogState::Error(_));
         let success = matches!(state, QrDialogState::Success(_));
@@ -739,11 +746,11 @@ impl Desktop {
                         icons::close()
                     })
                     .label(if retry_source {
-                        "重新预览"
+                        course2md::tr!("重新预览")
                     } else if success {
-                        "完成"
+                        course2md::tr!("完成")
                     } else {
-                        "取消"
+                        course2md::tr!("取消")
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         let retry = matches!(this.account.dialog, Some(QrDialogState::Success(_)))
@@ -759,7 +766,7 @@ impl Desktop {
                 view.child(
                     primary_pill("account-qr-retry")
                         .icon(icons::refresh())
-                        .label("刷新二维码")
+                        .label(course2md::tr!("刷新二维码"))
                         .on_click(cx.listener(|this, _, _, cx| this.start_account_qr(cx))),
                 )
             })

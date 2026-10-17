@@ -55,7 +55,7 @@ fn new_reference() -> String {
 fn validate_reference(reference: &str) -> Result<()> {
     let id = reference.strip_prefix("credential-").unwrap_or("");
     if uuid::Uuid::parse_str(id).is_err() {
-        bail!("凭据引用无效，请为此服务重新保存 API Key");
+        bail!(course2md::tr!("凭据引用无效，请为此服务重新保存 API Key"));
     }
     Ok(())
 }
@@ -134,7 +134,7 @@ impl Default for KeychainCredentialVault {
 impl CredentialVault for KeychainCredentialVault {
     fn insert(&self, secret: Secret) -> Result<CredentialRef> {
         if secret.is_empty() {
-            bail!("请输入 API Key");
+            bail!(course2md::tr!("请输入 API Key"));
         }
         let reference = new_reference();
         security_framework::passwords::set_generic_password(
@@ -142,7 +142,12 @@ impl CredentialVault for KeychainCredentialVault {
             &reference,
             secret.expose().as_bytes(),
         )
-        .map_err(|error| anyhow!("无法将 API Key 保存到钥匙串（系统代码 {}）", error.code()))?;
+        .map_err(|error| {
+            anyhow!(
+                "{}",
+                course2md::tr!("无法将 API Key 保存到钥匙串（系统代码 {}）", error.code())
+            )
+        })?;
         Ok(reference)
     }
 
@@ -150,13 +155,18 @@ impl CredentialVault for KeychainCredentialVault {
         validate_reference(reference)?;
         let bytes = security_framework::passwords::get_generic_password(&self.service, reference)
             .map_err(|error| match error.code() {
-            ERR_SEC_ITEM_NOT_FOUND => anyhow!("钥匙串中找不到此服务的凭据，请重新保存 API Key"),
-            code => anyhow!("暂时无法读取此服务的钥匙串凭据（系统代码 {code}）"),
+            ERR_SEC_ITEM_NOT_FOUND => anyhow!(course2md::tr!(
+                "钥匙串中找不到此服务的凭据，请重新保存 API Key"
+            )),
+            code => anyhow!(
+                "{}",
+                course2md::tr!("暂时无法读取此服务的钥匙串凭据（系统代码 {}）", code)
+            ),
         })?;
         // Keep the intermediate byte buffer zeroizing as well as the returned UTF-8 value.
         let bytes = Zeroizing::new(bytes);
         let value = std::str::from_utf8(&bytes)
-            .map_err(|_| anyhow!("此服务的凭据无法读取，请重新保存 API Key"))?;
+            .map_err(|_| anyhow!(course2md::tr!("此服务的凭据无法读取，请重新保存 API Key")))?;
         Ok(Secret::new(value))
     }
 
@@ -165,7 +175,10 @@ impl CredentialVault for KeychainCredentialVault {
         match security_framework::passwords::delete_generic_password(&self.service, reference) {
             Ok(()) => Ok(()),
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
-            Err(error) => bail!("无法移除此服务的钥匙串凭据（系统代码 {}）", error.code()),
+            Err(error) => bail!(
+                "{}",
+                course2md::tr!("无法移除此服务的钥匙串凭据（系统代码 {}）", error.code())
+            ),
         }
     }
 }
@@ -197,12 +210,12 @@ impl KeyringCredentialVault {
 impl CredentialVault for KeyringCredentialVault {
     fn insert(&self, secret: Secret) -> Result<CredentialRef> {
         if secret.is_empty() {
-            bail!("请输入 API Key");
+            bail!(course2md::tr!("请输入 API Key"));
         }
         let reference = new_reference();
         keyring::Entry::new(&self.service, &reference)
             .and_then(|entry| entry.set_password(secret.expose()))
-            .map_err(|_| anyhow!("无法将 API Key 保存到系统凭据库"))?;
+            .map_err(|_| anyhow!(course2md::tr!("无法将 API Key 保存到系统凭据库")))?;
         Ok(reference)
     }
 
@@ -212,9 +225,11 @@ impl CredentialVault for KeyringCredentialVault {
             .and_then(|entry| entry.get_password())
             .map_err(|error| match error {
                 keyring::Error::NoEntry => {
-                    anyhow!("系统凭据库中找不到此服务的凭据，请重新保存 API Key")
+                    anyhow!(course2md::tr!(
+                        "系统凭据库中找不到此服务的凭据，请重新保存 API Key"
+                    ))
                 }
-                _ => anyhow!("暂时无法读取系统凭据库中此服务的凭据"),
+                _ => anyhow!(course2md::tr!("暂时无法读取系统凭据库中此服务的凭据")),
             })?;
         Ok(Secret::new(password))
     }
@@ -226,7 +241,7 @@ impl CredentialVault for KeyringCredentialVault {
             .and_then(|entry| entry.delete_credential())
         {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => bail!("无法移除系统凭据库中此服务的凭据"),
+            Err(_) => bail!(course2md::tr!("无法移除系统凭据库中此服务的凭据")),
         }
     }
 }
@@ -263,7 +278,11 @@ impl FileCredentialVault {
 
     fn refuse_if_unreadable(&self) -> Result<()> {
         if let Some(error) = self.load_error {
-            bail!("{error}。请备份后删除该文件再重试：{}", self.path.display());
+            bail!(course2md::tr!(
+                "{}。请备份后删除该文件再重试：{}",
+                error,
+                self.path.display()
+            ));
         }
         Ok(())
     }
@@ -276,10 +295,14 @@ impl FileCredentialVault {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(BTreeMap::new());
             }
-            Err(_) => return Err("已保存的 API Key 文件无法读取，为避免丢失暂不写入"),
+            Err(_) => {
+                return Err(course2md::tr!(
+                    "已保存的 API Key 文件无法读取，为避免丢失暂不写入"
+                ));
+            }
         };
         let plain: BTreeMap<CredentialRef, String> = serde_json::from_slice(&bytes)
-            .map_err(|_| "已保存的 API Key 文件已损坏，为避免丢失暂不写入")?;
+            .map_err(|_| course2md::tr!("已保存的 API Key 文件已损坏，为避免丢失暂不写入"))?;
         Ok(plain
             .into_iter()
             .map(|(reference, value)| (reference, Zeroizing::new(value)))
@@ -300,14 +323,14 @@ impl FileCredentialVault {
 impl CredentialVault for FileCredentialVault {
     fn insert(&self, secret: Secret) -> Result<CredentialRef> {
         if secret.is_empty() {
-            bail!("请输入 API Key");
+            bail!(course2md::tr!("请输入 API Key"));
         }
         self.refuse_if_unreadable()?;
         let reference = new_reference();
         let mut values = self
             .values
             .lock()
-            .map_err(|_| anyhow!("暂时无法保存凭据"))?;
+            .map_err(|_| anyhow!(course2md::tr!("暂时无法保存凭据")))?;
         values.insert(
             reference.clone(),
             Zeroizing::new(secret.expose().to_owned()),
@@ -323,10 +346,10 @@ impl CredentialVault for FileCredentialVault {
         validate_reference(reference)?;
         self.values
             .lock()
-            .map_err(|_| anyhow!("暂时无法读取凭据"))?
+            .map_err(|_| anyhow!(course2md::tr!("暂时无法读取凭据")))?
             .get(reference)
             .map(|value| Secret::new(value.as_str()))
-            .ok_or_else(|| anyhow!("找不到此服务的凭据，请重新保存 API Key"))
+            .ok_or_else(|| anyhow!(course2md::tr!("找不到此服务的凭据，请重新保存 API Key")))
     }
 
     fn remove(&self, reference: &str) -> Result<()> {
@@ -335,7 +358,7 @@ impl CredentialVault for FileCredentialVault {
         let mut values = self
             .values
             .lock()
-            .map_err(|_| anyhow!("暂时无法移除凭据"))?;
+            .map_err(|_| anyhow!(course2md::tr!("暂时无法移除凭据")))?;
         let removed = values.remove(reference);
         if let Err(error) = self.persist(&values) {
             if let Some(value) = removed {

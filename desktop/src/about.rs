@@ -9,7 +9,7 @@ impl Desktop {
         let version = if commit.is_empty() {
             env!("CARGO_PKG_VERSION").to_owned()
         } else {
-            format!("{} · 构建 {commit}", env!("CARGO_PKG_VERSION"))
+            course2md::tr!("{} · 构建 {}", env!("CARGO_PKG_VERSION"), commit)
         };
         v_flex().w_full().min_w_0().gap(px(20.)).text_color(color(INK))
             .child(h_flex().w_full().min_w_0().items_center().gap(px(16.))
@@ -18,13 +18,13 @@ impl Desktop {
                     .child(accessible_text("about-name", "course2md").role(Role::Heading).text_size(TEXT_TITLE).font_weight(FontWeight::SEMIBOLD))
                     .child(accessible_text("about-build", version).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY))))
                 .child(h_flex().gap_2().items_center().flex_wrap()
-                    .child(quiet("about-project").settings_text().icon(icons::external_link()).label("项目主页")
+                    .child(quiet("about-project").settings_text().icon(icons::external_link()).label(course2md::tr!("项目主页"))
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md")))
-                    .child(quiet("about-issue").settings_text().icon(icons::edit()).label("发送反馈")
+                    .child(quiet("about-issue").settings_text().icon(icons::edit()).label(course2md::tr!("发送反馈"))
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/issues")))))
             .child(div().w_full().h(px(1.)).bg(color(HAIRLINE)))
             .child(v_flex().w_full().min_w_0().gap_3()
-                .child(accessible_text("about-license-title", "开源许可"))
+                .child(accessible_text("about-license-title", course2md::tr!("开源许可")))
                 .child(h_flex().gap_2().flex_wrap()
                     .child(settings_chip(outline_pill("about-license").settings_text()).icon(icons::code()).label("course2md · MIT")
                         .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/blob/main/LICENSE")))

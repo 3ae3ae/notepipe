@@ -116,7 +116,9 @@ impl State {
             .into_iter()
             .map(|field| {
                 let placeholder = match field {
-                    EditField::Languages => "按优先顺序填写语言代码，如 zh-Hans, en",
+                    EditField::Languages => {
+                        course2md::tr!("按优先顺序填写语言代码，如 zh-Hans, en")
+                    }
                     EditField::LocalModel => "",
                 };
                 (
@@ -583,18 +585,18 @@ impl SettingsTab {
     }
     fn label(self) -> &'static str {
         match self {
-            Self::Appearance => "外观",
-            Self::Generation => "生成笔记",
-            Self::Services => "服务与账号",
-            Self::Storage => "存储",
-            Self::Application => "应用",
+            Self::Appearance => course2md::tr!("外观"),
+            Self::Generation => course2md::tr!("生成笔记"),
+            Self::Services => course2md::tr!("服务与账号"),
+            Self::Storage => course2md::tr!("存储"),
+            Self::Application => course2md::tr!("应用"),
         }
     }
     /// The narrow rail has room for two characters.
     fn short_label(self) -> &'static str {
         match self {
-            Self::Generation => "笔记",
-            Self::Services => "服务",
+            Self::Generation => course2md::tr!("笔记"),
+            Self::Services => course2md::tr!("服务"),
             other => other.label(),
         }
     }
@@ -870,7 +872,7 @@ impl Desktop {
             .aria_label(
                 error
                     .as_ref()
-                    .map(|error| format!("{label}，{error}"))
+                    .map(|error| course2md::tr!("{}，{}", label, error))
                     .unwrap_or_else(|| label.to_owned()),
             )
             .when(error.is_some(), |input| input.border_color(color(DANGER)));
@@ -917,7 +919,7 @@ impl Desktop {
             self.settings_ui.pending_generation = Some(value.clone());
             self.set_settings_feedback(
                 PreferenceGroup::Generation,
-                "已恢复未保存的修改".into(),
+                course2md::tr!("已恢复未保存的修改").into(),
                 true,
                 cx,
             );
@@ -926,7 +928,7 @@ impl Desktop {
             self.settings_ui.pending_application = Some(intent);
             self.set_settings_feedback(
                 PreferenceGroup::Application,
-                "已恢复未保存的修改".into(),
+                course2md::tr!("已恢复未保存的修改").into(),
                 true,
                 cx,
             );
@@ -1117,7 +1119,7 @@ impl Desktop {
                     .px_0()
                     .flex_shrink_0()
                     .icon(icons::arrow_left())
-                    .accessibility_label("返回")
+                    .accessibility_label(course2md::tr!("返回"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         let destination = this.settings_origin.take().unwrap_or(Page::New);
                         let focus = this.settings_return_focus.take();
@@ -1127,7 +1129,7 @@ impl Desktop {
                         }
                     })),
             )
-            .child(text("settings-page-title", "设置").text_size(rems(22. / 14.)));
+            .child(text("settings-page-title", course2md::tr!("设置")).text_size(rems(22. / 14.)));
 
         let navigation = self.settings_navigation(window, cx);
         let mut panel = v_flex()
@@ -1193,7 +1195,7 @@ impl Desktop {
                             control(("open-failed-settings-group", target.index()))
                                 .settings_text()
                                 .icon(icons::settings())
-                                .label(format!("前往「{}」", target.label()))
+                                .label(course2md::tr!("前往「{}」", target.label()))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.select_settings_tab(target, window, cx);
                                 })),
@@ -1234,7 +1236,7 @@ impl Desktop {
                             .child(v_flex().w_full().min_w_0().gap(px(22.))
                                 .child(v_flex().gap_2()
                                     .child(theme::page_heading("settings-category-heading", self.settings_tab.label()))
-                                    .when(self.settings_tab == SettingsTab::Generation, |view| view.child(text("generation-default-explanation", "这里是长期默认值，主页的「处理选项」可以只对单次生效").text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))))
+                                    .when(self.settings_tab == SettingsTab::Generation, |view| view.child(text("generation-default-explanation", course2md::tr!("这里是长期默认值，主页的「处理选项」可以只对单次生效")).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))))
                                 .child(content)),
                     ),
             )
@@ -1292,7 +1294,7 @@ impl Desktop {
                 .into_any_element();
         }
         view = view.child(
-            group("account-settings-heading", "来源账号").child(
+            group("account-settings-heading", course2md::tr!("来源账号")).child(
                 setting_surface()
                     .gap_3()
                     .child(self.account_settings_page(cx)),
@@ -1303,14 +1305,14 @@ impl Desktop {
             (
                 ServicePurpose::Ai,
                 "ai-services-heading",
-                "AI 服务",
-                "添加其他 AI 服务",
+                course2md::tr!("AI 服务"),
+                course2md::tr!("添加其他 AI 服务"),
             ),
             (
                 ServicePurpose::Speech,
                 "speech-services-heading",
-                "语音服务",
-                "添加语音服务",
+                course2md::tr!("语音服务"),
+                course2md::tr!("添加语音服务"),
             ),
         ] {
             let mut section = group(heading_id, heading).resource_dividers();
@@ -1363,9 +1365,9 @@ impl Desktop {
                                         .child(text(
                                             "speech-service-empty-title",
                                             if empty {
-                                                "尚未添加语音服务"
+                                                course2md::tr!("尚未添加语音服务")
                                             } else {
-                                                "添加语音服务"
+                                                course2md::tr!("添加语音服务")
                                             },
                                         ))
                                         .child(
@@ -1374,9 +1376,9 @@ impl Desktop {
                                                 if self.preferences.generation().options.provider
                                                     == Some(course2md::config::AsrProvider::Api)
                                                 {
-                                                    "当前使用在线语音服务"
+                                                    course2md::tr!("当前使用在线语音服务")
                                                 } else {
-                                                    "当前使用本机识别"
+                                                    course2md::tr!("当前使用本机识别")
                                                 },
                                             )
                                             .text_size(TEXT_SETTINGS_AUX)
@@ -1423,7 +1425,7 @@ impl Desktop {
         let default_description = default_version
             .map(|default| {
                 if default.id == version.id {
-                    " · 默认服务".to_owned()
+                    course2md::tr!(" · 默认服务").to_owned()
                 } else {
                     String::new()
                 }
@@ -1446,7 +1448,7 @@ impl Desktop {
             .iter()
             .max_by_key(|(_, evidence)| evidence.tested_at)
             .map(|(kind, evidence)| {
-                format!(
+                course2md::tr!(
                     "最近测试：{} · {}",
                     kind.label(),
                     crate::reader_navigation::timestamp_local(
@@ -1461,16 +1463,18 @@ impl Desktop {
                     .text_size(TEXT_SETTINGS_AUX)
                     .child(text(
                         SharedString::from(format!("saved-service-badge-{id}")),
-                        "尚未测试",
+                        course2md::tr!("尚未测试"),
                     )),
             );
         }
         for (kind, evidence) in &tests {
             let (status_kind, outcome) = match evidence.outcome {
-                preferences::TestOutcome::Passed => (BadgeKind::Success, "通过"),
-                preferences::TestOutcome::OutcomeUnknown => (BadgeKind::Warning, "结果未确认"),
-                preferences::TestOutcome::NotSent => (BadgeKind::Neutral, "未完成"),
-                _ => (BadgeKind::Warning, "未通过"),
+                preferences::TestOutcome::Passed => (BadgeKind::Success, course2md::tr!("通过")),
+                preferences::TestOutcome::OutcomeUnknown => {
+                    (BadgeKind::Warning, course2md::tr!("结果未确认"))
+                }
+                preferences::TestOutcome::NotSent => (BadgeKind::Neutral, course2md::tr!("未完成")),
+                _ => (BadgeKind::Warning, course2md::tr!("未通过")),
             };
             status_badges.push(badge(status_kind).text_size(TEXT_SETTINGS_AUX).child(text(
                 SharedString::from(format!("saved-service-test-{id}-{}", kind.contract())),
@@ -1480,7 +1484,7 @@ impl Desktop {
         let failures: Vec<_> = tests
             .iter()
             .filter(|(_, evidence)| evidence.outcome != preferences::TestOutcome::Passed)
-            .map(|(kind, evidence)| format!("{}：{}", kind.label(), evidence.message))
+            .map(|(kind, evidence)| course2md::tr!("{}：{}", kind.label(), evidence.message))
             .collect();
         let host = version.config.host();
         let description = if host.is_empty() || version.config.name.trim() == host {
@@ -1521,7 +1525,7 @@ impl Desktop {
                         quiet(SharedString::from(format!("test-saved-service-{id}")))
                             .settings_text()
                             .icon(icons::science())
-                            .label("测试…")
+                            .label(course2md::tr!("测试…"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_settings_service_editor(
                                     purpose,
@@ -1535,7 +1539,7 @@ impl Desktop {
                         quiet(SharedString::from(format!("edit-saved-service-{id}")))
                             .settings_text()
                             .icon(icons::edit())
-                            .label("编辑")
+                            .label(course2md::tr!("编辑"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_settings_service_editor(
                                     purpose,
@@ -1551,7 +1555,7 @@ impl Desktop {
                         )))
                         .settings_text()
                         .icon(icons::delete())
-                        .label("删除…")
+                        .label(course2md::tr!("删除…"))
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
                                 this.confirm_delete_service(service_id.clone(), window, cx)
@@ -1578,7 +1582,7 @@ impl Desktop {
                         .child(
                             text(
                                 SharedString::from(format!("saved-service-old-default-{id}")),
-                                format!(
+                                course2md::tr!(
                                     "以后生成的笔记仍使用修改前的配置 · {}",
                                     default.config.model
                                 ),
@@ -1593,7 +1597,7 @@ impl Desktop {
                             quiet(SharedString::from(format!("update-default-service-{id}")))
                                 .settings_text()
                                 .icon(icons::check_circle())
-                                .label("用于以后生成…")
+                                .label(course2md::tr!("用于以后生成…"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.confirm_default_service(default_id.clone(), window, cx);
                                 })),
@@ -1705,7 +1709,7 @@ impl Desktop {
                 self.settings_ui.pending_generation = None;
                 self.set_settings_feedback(
                     PreferenceGroup::Generation,
-                    "尚未应用".into(),
+                    course2md::tr!("尚未应用").into(),
                     false,
                     cx,
                 );
@@ -1767,7 +1771,8 @@ impl Desktop {
             }
             Err(error) => {
                 if let Some(editor) = &mut self.settings_ui.editor {
-                    editor.status = Some(format!("这些修改尚未保存：{error:#}"));
+                    editor.status =
+                        Some(course2md::tr!("这些修改尚未保存：{}", format!("{error:#}")));
                     editor.save_failed = true;
                 }
                 cx.notify();
@@ -1789,7 +1794,7 @@ impl Desktop {
         {
             self.set_settings_feedback(
                 PreferenceGroup::Generation,
-                "语言代码只能包含字母、数字和连字符，请用逗号分隔各语言".into(),
+                course2md::tr!("语言代码只能包含字母、数字和连字符，请用逗号分隔各语言").into(),
                 true,
                 cx,
             );
@@ -1850,7 +1855,11 @@ impl Desktop {
         );
         self.settings_ui.feedback_details.insert(
             group,
-            format!("设置目录：{}\n{error:#}", self.preferences.root().display()),
+            course2md::tr!(
+                "设置目录：{}\n{}",
+                self.preferences.root().display(),
+                format!("{error:#}")
+            ),
         );
     }
     pub(crate) fn settings_group_notice(&self, group: PreferenceGroup) -> Option<(String, bool)> {
@@ -1924,7 +1933,7 @@ impl Desktop {
                 view = view.child(
                     retry
                         .icon(icons::refresh())
-                        .label("重试保存")
+                        .label(course2md::tr!("重试保存"))
                         .self_start()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.retry_ordinary_preferences(group, cx);
@@ -1953,9 +1962,9 @@ impl Desktop {
                         .ghost()
                         .self_start()
                         .label(if expanded {
-                            "收起技术详情"
+                            course2md::tr!("收起技术详情")
                         } else {
-                            "查看技术详情"
+                            course2md::tr!("查看技术详情")
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if !this.settings_ui.expanded_feedback.remove(&group) {
@@ -1990,7 +1999,7 @@ impl Desktop {
                 control(("reset-settings-group", group as usize))
                     .settings_text()
                     .icon(icons::refresh())
-                    .label("保留原文件并重置此组")
+                    .label(course2md::tr!("保留原文件并重置此组"))
                     .self_start()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.restore_settings_group(group, window, cx);
@@ -2008,7 +2017,7 @@ impl Desktop {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("添加存储位置".into()),
+            prompt: Some(course2md::tr!("添加存储位置").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
@@ -2019,7 +2028,7 @@ impl Desktop {
                             let name = path
                                 .file_name()
                                 .and_then(|v| v.to_str())
-                                .unwrap_or("笔记库")
+                                .unwrap_or(course2md::tr!("笔记库"))
                                 .to_owned();
                             let duplicate = this.workspace.as_ref().is_some_and(|w| {
                                 w.state
@@ -2036,7 +2045,7 @@ impl Desktop {
                                     .as_ref()
                                     .and_then(|workspace| workspace.state.library(identity.trim()))
                             {
-                                this.workspace_error = Some(format!(
+                                this.workspace_error = Some(course2md::tr!(
                                     "「{}」已登记，可在该笔记库中“重新定位…”",
                                     existing.name
                                 ));
@@ -2046,33 +2055,36 @@ impl Desktop {
                             match this
                                 .workspace
                                 .as_mut()
-                                .ok_or_else(|| anyhow!("笔记库记录暂时不可用"))
+                                .ok_or_else(|| anyhow!(course2md::tr!("笔记库记录暂时不可用")))
                                 .and_then(|w| w.register_library(path, name, false))
                             {
                                 Ok(_) => {
                                     this.message = Some(
                                         if duplicate {
-                                            "这个存储位置已经在笔记库中"
+                                            course2md::tr!("这个存储位置已经在笔记库中")
                                         } else {
-                                            "已添加存储位置"
+                                            course2md::tr!("已添加存储位置")
                                         }
                                         .into(),
                                     );
                                     this.refresh_library(cx);
                                 }
                                 Err(error) => {
-                                    this.workspace_error =
-                                        Some(format!("存储位置尚未添加：{error:#}"))
+                                    this.workspace_error = Some(course2md::tr!(
+                                        "存储位置尚未添加：{}",
+                                        format!("{error:#}")
+                                    ))
                                 }
                             }
                         }
                     }
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
-                        this.workspace_error = Some(format!("无法选择存储位置：{error:#}"))
+                        this.workspace_error =
+                            Some(course2md::tr!("无法选择存储位置：{}", format!("{error:#}")))
                     }
                     Err(error) => {
-                        this.workspace_error = Some(format!("无法打开文件选择器：{error}"))
+                        this.workspace_error = Some(course2md::tr!("无法打开文件选择器：{}", error))
                     }
                 }
                 cx.notify();
@@ -2082,12 +2094,43 @@ impl Desktop {
     }
     pub(crate) fn appearance_controls(&self, cx: &mut Context<Self>) -> Div {
         div().w_full().child(
-            group("appearance-motion", "界面偏好")
+            group("appearance-motion", course2md::tr!("界面偏好"))
+                .child(settings_stacked_row(
+                    "app-language-label",
+                    course2md::tr!("界面语言"),
+                    course2md::tr!("更改后立即应用"),
+                    self.setting_choices("app-language", course2md::tr!("界面语言"))
+                        .options(crate::preferences::InterfaceLanguage::ALL.into_iter().map(
+                            |language| {
+                                let label = match language {
+                                    crate::preferences::InterfaceLanguage::System => {
+                                        course2md::tr!("跟随系统")
+                                    }
+                                    other => other.resolve().native_name(),
+                                };
+                                (language.id(), label)
+                            },
+                        ))
+                        .selected(self.application_edit_base().language.id())
+                        .on_change(cx.listener(|this, selected: &SharedString, _, cx| {
+                            let Some(language) =
+                                crate::preferences::InterfaceLanguage::from_id(selected)
+                            else {
+                                return;
+                            };
+                            let mut next = this.application_edit_base();
+                            next.language = language;
+                            if this.commit_application(next, cx) {
+                                crate::i18n::apply(language);
+                                cx.notify();
+                            }
+                        })),
+                ))
                 .child(settings_stacked_row(
                     "app-font-scale-label",
-                    "界面文字大小",
+                    course2md::tr!("界面文字大小"),
                     "",
-                    self.setting_choices("app-font-scale", "应用文字大小")
+                    self.setting_choices("app-font-scale", course2md::tr!("应用文字大小"))
                         .options(crate::preferences::FONT_SCALES.into_iter().map(|scale| {
                             (
                                 (scale * 100.).round().to_string(),
@@ -2122,8 +2165,8 @@ impl Desktop {
                     setting_surface()
                         .py(rems(10. / 14.))
                         .child(settings_switch_row(
-                            "减少动态效果",
-                            "关闭过渡动画和进度条的流动效果",
+                            course2md::tr!("减少动态效果"),
+                            course2md::tr!("关闭过渡动画和进度条的流动效果"),
                             Switch::new("app-reduce-motion")
                                 .checked(self.preferences.application().desktop.reduce_motion)
                                 .on_click(cx.listener(|this, enabled, _, cx| {
@@ -2142,7 +2185,7 @@ impl Desktop {
             .gap_6()
             .child(self.environment_page(window, cx))
             .child(
-                group("about-heading", "关于")
+                group("about-heading", course2md::tr!("关于"))
                     .child(setting_surface().child(self.about_page()))
                     .child(
                         setting_surface().child(
@@ -2151,17 +2194,14 @@ impl Desktop {
                                 .min_w_0()
                                 .gap_4()
                                 .items_center()
-                                .child(
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .gap_1()
-                                        .child(text("restart-onboarding-label", "首次设置")),
-                                )
+                                .child(v_flex().flex_1().min_w_0().gap_1().child(text(
+                                    "restart-onboarding-label",
+                                    course2md::tr!("首次设置"),
+                                )))
                                 .child(
                                     outline_pill("restart-onboarding")
                                         .settings_text()
-                                        .label("重新运行首次设置")
+                                        .label(course2md::tr!("重新运行首次设置"))
                                         .icon(icons::restart())
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.start_onboarding(window, cx);
@@ -2184,7 +2224,7 @@ impl Desktop {
                 cx.set_reduce_motion(self.desktop_settings.reduce_motion);
                 self.set_settings_feedback(
                     PreferenceGroup::Application,
-                    "已保存".into(),
+                    course2md::tr!("已保存").into(),
                     false,
                     cx,
                 );
@@ -2201,7 +2241,7 @@ impl Desktop {
     }
     fn environment_page(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         // 全部可用时只给一个结论；有问题时每项能力一个分组条目
-        let mut checks = group("diagnostics-heading", "运行检查");
+        let mut checks = group("diagnostics-heading", course2md::tr!("运行检查"));
         let open = self.settings_ui.diagnostics_details_open;
         let mut toggle_details = Some(cx.listener(|this, _, _, cx| {
             this.settings_ui.diagnostics_details_open = !this.settings_ui.diagnostics_details_open;
@@ -2224,9 +2264,13 @@ impl Desktop {
                     course2md::config::AsrProvider::Api => false,
                 };
             let capabilities = [
-                ("视频处理与导出", e.engine && e.ffmpeg && e.ffprobe, false),
-                ("读取在线视频", e.ytdlp, false),
-                ("本机识别环境", local_ready, speech_service),
+                (
+                    course2md::tr!("视频处理与导出"),
+                    e.engine && e.ffmpeg && e.ffprobe,
+                    false,
+                ),
+                (course2md::tr!("读取在线视频"), e.ytdlp, false),
+                (course2md::tr!("本机识别环境"), local_ready, speech_service),
             ];
             let all_ready = capabilities
                 .iter()
@@ -2254,8 +2298,11 @@ impl Desktop {
                                             ))
                                             .child(
                                                 v_flex().flex_1().min_w_0().gap_1().child(
-                                                    text("diagnostic-summary", "一切正常")
-                                                        .font_weight(FontWeight::SEMIBOLD),
+                                                    text(
+                                                        "diagnostic-summary",
+                                                        course2md::tr!("一切正常"),
+                                                    )
+                                                    .font_weight(FontWeight::SEMIBOLD),
                                                 ),
                                             ),
                                     )
@@ -2263,7 +2310,7 @@ impl Desktop {
                                         quiet("refresh-environment")
                                             .settings_text()
                                             .icon(icons::refresh())
-                                            .label("重新检查")
+                                            .label(course2md::tr!("重新检查"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.refresh_environment(cx)
                                             })),
@@ -2296,7 +2343,7 @@ impl Desktop {
                             quiet("toggle-diagnostics-details")
                                 .settings_text()
                                 .w_full()
-                                .label("诊断详情")
+                                .label(course2md::tr!("诊断详情"))
                                 .child(div().flex_1())
                                 .child(if open {
                                     icons::chevron_up()
@@ -2323,11 +2370,11 @@ impl Desktop {
                         })
                         .text_size(TEXT_SETTINGS_AUX)
                         .child(if optional {
-                            "当前未使用"
+                            course2md::tr!("当前未使用")
                         } else if ready {
-                            "可用"
+                            course2md::tr!("可用")
                         } else {
-                            "待修复"
+                            course2md::tr!("待修复")
                         }),
                     )),
                 );
@@ -2337,13 +2384,13 @@ impl Desktop {
                     setting_surface()
                         .child(info_callout(
                             "repair-bundled-engine",
-                            "转换程序无法运行，重新安装应用后笔记仍会保留",
+                            course2md::tr!("转换程序无法运行，重新安装应用后笔记仍会保留"),
                         ))
                         .child(
                             control("download-repair-app")
                                 .settings_text()
                                 .icon(icons::download())
-                                .label("下载安装包")
+                                .label(course2md::tr!("下载安装包"))
                                 .self_start()
                                 .on_click(|_, _, cx| {
                                     cx.open_url("https://github.com/mizorewww/course2md/releases")
@@ -2358,7 +2405,10 @@ impl Desktop {
                         .gap_2()
                         .items_center()
                         .child(crate::motion::spinner("diagnostic-checking-spinner", cx))
-                        .child(settings_value("diagnostic-checking", "正在检查本机能力…")),
+                        .child(settings_value(
+                            "diagnostic-checking",
+                            course2md::tr!("正在检查本机能力…"),
+                        )),
                 ),
             );
         }
@@ -2374,7 +2424,7 @@ impl Desktop {
                             control("refresh-environment")
                                 .settings_text()
                                 .icon(icons::refresh())
-                                .label("重新检查环境")
+                                .label(course2md::tr!("重新检查环境"))
                                 .loading(self.environment.is_none())
                                 .disabled(self.environment.is_none())
                                 .on_click(
@@ -2386,9 +2436,9 @@ impl Desktop {
                                 .settings_text()
                                 .icon(icons::info())
                                 .label(if open {
-                                    "收起诊断详情"
+                                    course2md::tr!("收起诊断详情")
                                 } else {
-                                    "查看诊断详情"
+                                    course2md::tr!("查看诊断详情")
                                 })
                                 .on_click(toggle_details),
                         ),
@@ -2397,8 +2447,11 @@ impl Desktop {
         }
         let mut details = v_flex().w_full().min_w_0().gap_6().pt_3();
         if let Some(e) = &self.environment {
-            let mut programs =
-                settings_detail_group("diagnostic-programs-heading", icons::computer(), "所需程序");
+            let mut programs = settings_detail_group(
+                "diagnostic-programs-heading",
+                icons::computer(),
+                course2md::tr!("所需程序"),
+            );
             let needs_llama = matches!(
                 self.preferences
                     .generation()
@@ -2408,7 +2461,7 @@ impl Desktop {
                 course2md::config::AsrProvider::Cpu | course2md::config::AsrProvider::Gpu
             );
             for (index, (name, found)) in [
-                ("转换程序", e.engine),
+                (course2md::tr!("转换程序"), e.engine),
                 ("ffmpeg", e.ffmpeg),
                 ("ffprobe", e.ffprobe),
                 ("yt-dlp", e.ytdlp),
@@ -2423,24 +2476,31 @@ impl Desktop {
                     name,
                     settings_value(
                         ("diagnostic-tool", index),
-                        if found { "已安装" } else { "未安装" },
+                        if found {
+                            course2md::tr!("已安装")
+                        } else {
+                            course2md::tr!("未安装")
+                        },
                     ),
                 ));
             }
             if !e.ffmpeg || !e.ffprobe || !e.ytdlp {
                 let (help, command) = if cfg!(target_os = "macos") {
-                    ("在终端运行", "brew install ffmpeg yt-dlp")
+                    (course2md::tr!("在终端运行"), "brew install ffmpeg yt-dlp")
                 } else if cfg!(target_os = "windows") {
                     (
-                        "在 PowerShell 运行",
+                        course2md::tr!("在 PowerShell 运行"),
                         "winget install Gyan.FFmpeg; winget install yt-dlp.yt-dlp",
                     )
                 } else {
-                    ("用系统包管理器安装 ffmpeg，再运行", "pipx install yt-dlp")
+                    (
+                        course2md::tr!("用系统包管理器安装 ffmpeg，再运行"),
+                        "pipx install yt-dlp",
+                    )
                 };
                 programs = programs.child(settings_detail_row(
                     "media-tools-repair-label",
-                    "修复方式",
+                    course2md::tr!("修复方式"),
                     v_flex()
                         .w_full()
                         .min_w_0()
@@ -2451,7 +2511,7 @@ impl Desktop {
                             quiet("copy-media-install-command")
                                 .settings_text()
                                 .icon(icons::content_copy())
-                                .label("复制安装命令")
+                                .label(course2md::tr!("复制安装命令"))
                                 .self_start()
                                 .on_click(move |_, _, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(command.into()))
@@ -2490,7 +2550,7 @@ impl Desktop {
         if self.preferences.is_blocked(PreferenceGroup::Generation) {
             return Some(OrdinaryPreferenceIssue {
                 group,
-                message: "生成选项暂时无法读取，原文件与当前输入已保留".into(),
+                message: course2md::tr!("生成选项暂时无法读取，原文件与当前输入已保留").into(),
                 can_retry: false,
             });
         }
@@ -2503,7 +2563,9 @@ impl Desktop {
                     .settings_group_notice(group)
                     .filter(|(_, error)| *error)
                     .map(|(message, _)| message)
-                    .unwrap_or_else(|| "生成选项的修改尚未保存，当前输入已保留".into()),
+                    .unwrap_or_else(|| {
+                        course2md::tr!("生成选项的修改尚未保存，当前输入已保留").into()
+                    }),
                 can_retry: true,
             });
         }
@@ -2581,7 +2643,12 @@ impl Desktop {
                 self.settings_ui.initialized = false;
                 // 事件路径立刻重新水合，不等下一次进入设置（渲染不做这件事）
                 self.hydrate_settings_inputs(window, cx);
-                self.set_settings_feedback(group, "原文件已保留，此组设置已重置".into(), false, cx);
+                self.set_settings_feedback(
+                    group,
+                    course2md::tr!("原文件已保留，此组设置已重置").into(),
+                    false,
+                    cx,
+                );
                 if group == PreferenceGroup::Application {
                     self.desktop_settings = self.preferences.application().desktop.clone();
                     cx.set_reduce_motion(self.desktop_settings.reduce_motion);
@@ -2633,7 +2700,10 @@ impl Desktop {
         if let Err(error) = &result {
             self.set_settings_feedback(
                 PreferenceGroup::Generation,
-                format!("模型位置尚未更新，修改已保留，可重试保存：{error:#}"),
+                course2md::tr!(
+                    "模型位置尚未更新，修改已保留，可重试保存：{}",
+                    format!("{error:#}")
+                ),
                 true,
                 cx,
             );
@@ -2663,7 +2733,7 @@ impl Desktop {
             self.commit_application(next, cx);
         }
         if !self.preferences.unsaved_intents_are_preserved() {
-            self.message = Some("修改暂时无法保存，请重试".into());
+            self.message = Some(course2md::tr!("修改暂时无法保存，请重试").into());
             cx.notify();
             return false;
         }

@@ -299,8 +299,8 @@ fn exported_file_label(path: &std::path::Path) -> String {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "导出文件".into());
-    format!("已导出 · {name}")
+        .unwrap_or_else(|| course2md::tr!("导出文件").into());
+    course2md::tr!("已导出 · {}", name)
 }
 
 fn reader_export_items(
@@ -313,7 +313,7 @@ fn reader_export_items(
     if let Some(folder) = folder {
         menu = menu
             .item(
-                PopupMenuItem::new("打开导出文件夹")
+                PopupMenuItem::new(course2md::tr!("打开导出文件夹"))
                     .icon(icons::folder_open())
                     .on_click(move |_, _, cx| {
                         if let Ok(url) = url::Url::from_directory_path(&folder) {
@@ -324,8 +324,16 @@ fn reader_export_items(
             .separator();
     }
     for (markdown, label, icon) in [
-        (false, "复制整份笔记 · 纯文本", icons::content_copy()),
-        (true, "复制整份笔记 · Markdown 文本", icons::article()),
+        (
+            false,
+            course2md::tr!("复制整份笔记 · 纯文本"),
+            icons::content_copy(),
+        ),
+        (
+            true,
+            course2md::tr!("复制整份笔记 · Markdown 文本"),
+            icons::article(),
+        ),
     ] {
         let weak = desktop.clone();
         let version = course.dir.clone();
@@ -347,9 +355,9 @@ fn reader_export_items(
                             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                             this.message = Some(
                                 if markdown {
-                                    "已复制 Markdown 文本"
+                                    course2md::tr!("已复制 Markdown 文本")
                                 } else {
-                                    "已复制纯文本"
+                                    course2md::tr!("已复制纯文本")
                                 }
                                 .into(),
                             );
@@ -363,10 +371,16 @@ fn reader_export_items(
     for (format, label) in [
         (
             course2md::config::OutputFormat::Md,
-            "导出 Markdown（含截图，.zip）…",
+            course2md::tr!("导出 Markdown（含截图，.zip）…"),
         ),
-        (course2md::config::OutputFormat::Html, "导出网页文件…"),
-        (course2md::config::OutputFormat::Json, "导出 JSON 数据…"),
+        (
+            course2md::config::OutputFormat::Html,
+            course2md::tr!("导出网页文件…"),
+        ),
+        (
+            course2md::config::OutputFormat::Json,
+            course2md::tr!("导出 JSON 数据…"),
+        ),
     ] {
         let weak = desktop.clone();
         let source = course.clone();
@@ -455,8 +469,10 @@ struct NoteRefine {
 }
 impl State {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Desktop>) -> Self {
-        let find = cx.new(|cx| InputState::new(window, cx).placeholder("查找笔记内容"));
-        let gallery_find = cx.new(|cx| InputState::new(window, cx).placeholder("搜索截图对应文字"));
+        let find =
+            cx.new(|cx| InputState::new(window, cx).placeholder(course2md::tr!("查找笔记内容")));
+        let gallery_find = cx
+            .new(|cx| InputState::new(window, cx).placeholder(course2md::tr!("搜索截图对应文字")));
         let subscription = cx.subscribe(&find, |this, _, event, cx| match event {
             InputEvent::Change => {
                 this.reader_ui.find_open = !this.reader_ui.find.read(cx).value().trim().is_empty();
@@ -841,7 +857,7 @@ fn note_restore_target(
     Some((item_ix, offset))
 }
 fn frame_label(frame: &Frame) -> String {
-    format!("{} 的截图", course2md::render::fmt_ts(frame.seconds))
+    course2md::tr!("{} 的截图", course2md::render::fmt_ts(frame.seconds))
 }
 
 fn matching_frames(frames: &[Frame], query: &str) -> Vec<usize> {
@@ -888,7 +904,7 @@ fn frame_excerpt(frame: &Frame, query: &str) -> String {
         );
     }
     if text.trim().is_empty() {
-        "这张截图没有对应文字".into()
+        course2md::tr!("这张截图没有对应文字").into()
     } else {
         text.to_owned()
     }
@@ -1325,12 +1341,14 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize) -> AnyElement {
             .text_size(TEXT_DISPLAY)
             .font_weight(FontWeight::SEMIBOLD)
             .into_any_element(),
-        NoteItem::SummaryLabel(_) => theme::accessible_text("reader-summary-label", "摘要")
-            .role(Role::Heading)
-            .text_size(TEXT_AUX)
-            .text_color(color(GRAY))
-            .font_weight(FontWeight::SEMIBOLD)
-            .into_any_element(),
+        NoteItem::SummaryLabel(_) => {
+            theme::accessible_text("reader-summary-label", course2md::tr!("摘要"))
+                .role(Role::Heading)
+                .text_size(TEXT_AUX)
+                .text_color(color(GRAY))
+                .font_weight(FontWeight::SEMIBOLD)
+                .into_any_element()
+        }
         NoteItem::Block(index) => match &preview.blocks[index] {
             PreviewBlock::Heading {
                 text,
@@ -1424,7 +1442,7 @@ fn render_note_heading(
         .map(|&frame_index| {
             theme::accessible_text(
                 ("missing-body-image", frame_index),
-                format!("{}无法读取", frame_label(&flow.frames[frame_index])),
+                course2md::tr!("{}无法读取", frame_label(&flow.frames[frame_index])),
             )
             .text_sm()
             .text_color(color(WARNING))
@@ -1450,12 +1468,17 @@ fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> A
     let frame_index = flow.frame_by_path.get(path).copied();
     let frame = frame_index.map(|i| &flow.frames[i]);
     if frame.is_none() && !flow.data_loading {
-        return theme::accessible_text(("unreadable-inline-image", index), "截图无法读取")
-            .text_sm()
-            .text_color(color(WARNING))
-            .into_any_element();
+        return theme::accessible_text(
+            ("unreadable-inline-image", index),
+            course2md::tr!("截图无法读取"),
+        )
+        .text_sm()
+        .text_color(color(WARNING))
+        .into_any_element();
     }
-    let label = frame.map(frame_label).unwrap_or_else(|| "截图".into());
+    let label = frame
+        .map(frame_label)
+        .unwrap_or_else(|| course2md::tr!("截图").into());
     let desktop = flow.desktop.clone();
     let seek = frame.and_then(|frame| {
         let url = nav::seek_url(flow.source.as_ref()?, frame.seconds)?;
@@ -1466,7 +1489,7 @@ fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> A
                 .min_h(INLINE_ACTION_HEIGHT)
                 .self_start()
                 .ml(-QUIET_INSET)
-                .accessibility_label("在原视频打开这个位置")
+                .accessibility_label(course2md::tr!("在原视频打开这个位置"))
                 .on_click(move |_, _, cx| cx.open_url(&url)),
         )
     });
@@ -1487,7 +1510,7 @@ fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> A
                     .border_0()
                     .rounded(RADIUS_SMALL)
                     .aspect_ratio(frame.map_or(MISSING_FRAME_ASPECT, frame_aspect))
-                    .accessibility_label(format!("放大{label}"))
+                    .accessibility_label(course2md::tr!("放大{}", label))
                     .disabled(frame.is_none())
                     .child(
                         img(path.to_path_buf())
@@ -1497,7 +1520,7 @@ fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> A
                             .with_fallback(move || {
                                 theme::accessible_text(
                                     ("failed-reader-image", index),
-                                    "截图无法读取",
+                                    course2md::tr!("截图无法读取"),
                                 )
                                 .into_any_element()
                             }),
@@ -1620,7 +1643,8 @@ impl Desktop {
                 Ok(())
             })
         {
-            self.workspace_error = Some(format!("阅读位置尚未保存：{error:#}"));
+            self.workspace_error =
+                Some(course2md::tr!("阅读位置尚未保存：{}", format!("{error:#}")));
             cx.notify();
             return;
         }
@@ -2007,7 +2031,7 @@ impl Desktop {
                     if let OfflineVideo::Available(path) = &status {
                         cx.open_with_system(path);
                     } else {
-                        this.message = Some("保留的视频已不在".into());
+                        this.message = Some(course2md::tr!("保留的视频已不在").into());
                     }
                 }
                 this.reader_ui.offline_video = status;
@@ -2039,7 +2063,7 @@ impl Desktop {
             nav::SourceTarget::Web(url) => cx.open_url(&url),
             nav::SourceTarget::Local(path) if path.is_file() => cx.open_with_system(&path),
             nav::SourceTarget::Local(path) => {
-                self.message = Some(format!(
+                self.message = Some(course2md::tr!(
                     "原视频不在 {}，请用「找到原视频…」指定新位置",
                     path.display()
                 ));
@@ -2058,7 +2082,7 @@ impl Desktop {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("选择原视频".into()),
+            prompt: Some(course2md::tr!("选择原视频").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let path = match receiver.await {
@@ -2085,18 +2109,19 @@ impl Desktop {
             let checked = crate::spawn_blocking_io(move || {
                 let source::SourceProbe::Single(source) = source::probe(input, false, probing)?
                 else {
-                    anyhow::bail!("请选择可读取的视频文件");
+                    anyhow::bail!(course2md::tr!("请选择可读取的视频文件"));
                 };
                 anyhow::ensure!(
                     !identity.starts_with("local:sha256:") || identity == source.identity,
-                    "这个文件与生成笔记时的视频内容不同，请选择同一个原视频"
+                    course2md::tr!("这个文件与生成笔记时的视频内容不同，请选择同一个原视频")
                 );
                 Ok::<_, anyhow::Error>(())
             });
-            let checked = checked
-                .recv()
-                .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("检查视频时意外中断，请重试")));
+            let checked = checked.recv().await.unwrap_or_else(|_| {
+                Err(anyhow::anyhow!(course2md::tr!(
+                    "检查视频时意外中断，请重试"
+                )))
+            });
             let _ = this.update(cx, |this, cx| {
                 this.reader_ui.source_loading = false;
                 // 只清自己的标志：更晚开始的探测持有另一个 Arc
@@ -2111,7 +2136,9 @@ impl Desktop {
                 let result = checked.and_then(|_| {
                     this.workspace
                         .as_mut()
-                        .ok_or_else(|| anyhow::anyhow!("暂时无法保存原视频位置，请重试"))?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(course2md::tr!("暂时无法保存原视频位置，请重试"))
+                        })?
                         .transaction(|state| {
                             state.reader_sources.insert(key, path.clone());
                             Ok(())
@@ -2120,9 +2147,9 @@ impl Desktop {
                 this.message = Some(match result {
                     Ok(()) => {
                         this.refresh_reader_data(cx);
-                        format!("已定位原视频：{}", path.display())
+                        course2md::tr!("已定位原视频：{}", path.display())
                     }
-                    Err(error) => format!(
+                    Err(error) => course2md::tr!(
                         "原视频位置没有更改：{}",
                         notes::chinese_half(&error.to_string())
                     ),
@@ -2262,7 +2289,7 @@ impl Desktop {
             let result = crate::spawn_blocking_io(move || notes::read_preview(course))
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("打开时意外中断，请重试")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(course2md::tr!("打开时意外中断，请重试"))));
             let _ = this.update(cx, |this, cx| {
                 if this.read_generation != generation {
                     return;
@@ -2301,7 +2328,7 @@ impl Desktop {
                                     ..Default::default()
                                 });
                                 if !exact {
-                                    this.message = Some(format!(
+                                    this.message = Some(course2md::tr!(
                                         "这个版本没有 {} 处的内容，已跳到最近的 {}。",
                                         course2md::render::fmt_ts(seconds),
                                         course2md::render::fmt_ts(
@@ -2315,7 +2342,7 @@ impl Desktop {
                         }
                     }
                     Err(error) => {
-                        this.message = Some(format!(
+                        this.message = Some(course2md::tr!(
                             "这个版本暂时无法打开：{}",
                             notes::chinese_half(&error.to_string())
                         ))
@@ -2369,7 +2396,7 @@ impl Desktop {
                             ExportFeedback {
                                 title,
                                 format,
-                                result: Err("无法打开文件选择器，请重试。".into()),
+                                result: Err(course2md::tr!("无法打开文件选择器，请重试。").into()),
                             },
                         ) {
                             cx.notify();
@@ -2392,7 +2419,7 @@ impl Desktop {
                 let protected = source.canonicalize()?;
                 let parent = target
                     .parent()
-                    .ok_or_else(|| anyhow::anyhow!("导出位置无效"))?
+                    .ok_or_else(|| anyhow::anyhow!(course2md::tr!("导出位置无效")))?
                     .canonicalize()?;
                 anyhow::ensure!(
                     !parent.starts_with(&protected)
@@ -2402,7 +2429,7 @@ impl Desktop {
                             && ancestor.parent().is_some_and(|parent| parent
                                 .file_name()
                                 .is_some_and(|name| name == "versions"))),
-                    "不能保存在笔记自己的文件夹里，请换个位置"
+                    course2md::tr!("不能保存在笔记自己的文件夹里，请换个位置")
                 );
                 // The native save panel owns the explicit overwrite decision; the old file
                 // remains intact until a complete export is ready beside it.
@@ -2424,7 +2451,7 @@ impl Desktop {
             })
             .recv()
             .await
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("导出时意外中断，请重试")));
+            .unwrap_or_else(|_| Err(anyhow::anyhow!(course2md::tr!("导出时意外中断，请重试"))));
             let _ = this.update(cx, |this, cx| {
                 let result = exported
                     .map(|()| path.clone())
@@ -2467,7 +2494,7 @@ impl Desktop {
             .icon(icons::close())
             .w(CONTROL_HEIGHT)
             .px_0()
-            .accessibility_label("关闭这份笔记的导出提示")
+            .accessibility_label(course2md::tr!("关闭这份笔记的导出提示"))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.reader_ui.export_state.feedback.remove(&source);
                 cx.notify();
@@ -2488,7 +2515,7 @@ impl Desktop {
                     )
                     .child(
                         theme::accessible_text(SharedString::from(id.clone()), label.clone())
-                            .aria_label(format!("《{}》{label}", feedback.title))
+                            .aria_label(course2md::tr!("《{}》{}", feedback.title, label))
                             .flex_1()
                             .min_w_0()
                             .whitespace_nowrap()
@@ -2500,7 +2527,7 @@ impl Desktop {
                     .child(
                         quiet(SharedString::from(format!("{id}:reveal")))
                             .icon(icons::folder_open())
-                            .label("打开导出文件夹")
+                            .label(course2md::tr!("打开导出文件夹"))
                             .on_click(move |_, _, cx| cx.reveal_path(&path)),
                     )
                     .child(dismiss)
@@ -2512,9 +2539,12 @@ impl Desktop {
                     .min_w_0()
                     .gap_1()
                     .child(
-                        theme::accessible_text(SharedString::from(id.clone()), "导出未完成")
-                            .text_size(TEXT_AUX)
-                            .text_color(color(DANGER)),
+                        theme::accessible_text(
+                            SharedString::from(id.clone()),
+                            course2md::tr!("导出未完成"),
+                        )
+                        .text_size(TEXT_AUX)
+                        .text_color(color(DANGER)),
                     )
                     .child(
                         theme::accessible_text(SharedString::from(format!("{id}:detail")), error)
@@ -2530,7 +2560,7 @@ impl Desktop {
                             .child(
                                 outline_pill(SharedString::from(format!("{id}:retry")))
                                     .icon(icons::refresh())
-                                    .label("重试导出")
+                                    .label(course2md::tr!("重试导出"))
                                     .disabled(self.reader_exporting())
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.export_course(
@@ -2607,7 +2637,7 @@ impl Desktop {
                 .child(
                     quiet("reader-loading-back")
                         .icon(crate::icons::arrow_left())
-                        .label("返回")
+                        .label(course2md::tr!("返回"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.navigate(this.result_origin, cx);
                         })),
@@ -2617,7 +2647,10 @@ impl Desktop {
                         .items_center()
                         .gap_2()
                         .child(crate::motion::spinner("reader-opening-spinner", cx))
-                        .child(theme::accessible_text("opening-note", "正在打开笔记…")),
+                        .child(theme::accessible_text(
+                            "opening-note",
+                            course2md::tr!("正在打开笔记…"),
+                        )),
                 ),
         )
     }
@@ -2764,7 +2797,7 @@ impl Desktop {
                     .child(crate::motion::spinner("reader-version-spinner", cx))
                     .child(theme::accessible_text(
                         "reader-version-loading-label",
-                        "正在切换版本…",
+                        course2md::tr!("正在切换版本…"),
                     )),
             ));
         }
@@ -2961,9 +2994,9 @@ impl Desktop {
         quiet(id)
             .icon(crate::icons::folder_open())
             .label(if loading {
-                "正在核对视频…"
+                course2md::tr!("正在核对视频…")
             } else {
-                "找到原视频…"
+                course2md::tr!("找到原视频…")
             })
             .loading(loading)
             .disabled(loading)
@@ -2990,10 +3023,10 @@ impl Desktop {
             }
         };
         let return_label = match self.result_origin {
-            Page::New => "工作台",
-            Page::Task => "任务",
-            Page::Settings => "设置",
-            _ => "我的笔记",
+            Page::New => course2md::tr!("工作台"),
+            Page::Task => course2md::tr!("任务"),
+            Page::Settings => course2md::tr!("设置"),
+            _ => course2md::tr!("我的笔记"),
         };
         let title = theme::accessible_text("reader-title", preview.course.title.clone())
             .role(Role::Heading)
@@ -3010,8 +3043,8 @@ impl Desktop {
                 .icon(crate::icons::arrow_left())
                 .w(CONTROL_HEIGHT)
                 .px_0()
-                .accessibility_label(format!("返回{return_label}"))
-                .tooltip(format!("返回{return_label}"))
+                .accessibility_label(course2md::tr!("返回{}", return_label))
+                .tooltip(course2md::tr!("返回{}", return_label))
                 .on_click(cx.listener(|this, _, _, cx| this.navigate(this.result_origin, cx)))
                 .into_any_element(),
         );
@@ -3019,7 +3052,7 @@ impl Desktop {
         let mut facts = preview.facts.clone();
         let meta = &preview.document.meta;
         let platform = if meta.extractor == "local" {
-            Some("本地视频")
+            Some(course2md::tr!("本地视频"))
         } else {
             match course2md::config::known_video_site(&meta.webpage_url) {
                 Some("bilibili") => Some("Bilibili"),
@@ -3043,9 +3076,9 @@ impl Desktop {
                         "reveal-reader-source",
                         (quiet("reader-source")
                             .icon(icons::external_link())
-                            .label("打开原视频")
+                            .label(course2md::tr!("打开原视频"))
                             .min_h(INLINE_ACTION_HEIGHT)
-                            .accessibility_label(format!("打开原视频：{url}"))
+                            .accessibility_label(course2md::tr!("打开原视频：{}", url))
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.open_reader_source(None, cx)),
                             ))
@@ -3060,7 +3093,7 @@ impl Desktop {
                                 "reveal-reader-source",
                                 quiet("reader-source")
                                     .icon(icons::movie())
-                                    .label("打开原视频")
+                                    .label(course2md::tr!("打开原视频"))
                                     .tooltip(path.display().to_string())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_reader_source(None, cx)
@@ -3070,9 +3103,12 @@ impl Desktop {
                         })
                         .when(!exists, |row| {
                             row.child(
-                                theme::accessible_text("missing-original-video", "原视频不可用")
-                                    .text_size(TEXT_AUX)
-                                    .text_color(color(GRAY)),
+                                theme::accessible_text(
+                                    "missing-original-video",
+                                    course2md::tr!("原视频不可用"),
+                                )
+                                .text_size(TEXT_AUX)
+                                .text_color(color(GRAY)),
                             )
                             .child(reveal(
                                 "reveal-relocate-reader-source",
@@ -3089,7 +3125,7 @@ impl Desktop {
                     "reveal-reader-offline-video",
                     quiet("reader-offline-video")
                         .icon(icons::movie())
-                        .label("播放保留的视频")
+                        .label(course2md::tr!("播放保留的视频"))
                         .loading(self.reader_ui.offline_opening)
                         .disabled(self.reader_ui.offline_opening)
                         .on_click(cx.listener(|this, _, _, cx| this.play_reader_offline_video(cx)))
@@ -3099,15 +3135,18 @@ impl Desktop {
             OfflineVideo::Missing => {
                 meta_facts = meta_facts
                     .child(
-                        theme::accessible_text("reader-offline-video-missing", "保留的视频已不在")
-                            .text_size(TEXT_AUX)
-                            .text_color(color(GRAY)),
+                        theme::accessible_text(
+                            "reader-offline-video-missing",
+                            course2md::tr!("保留的视频已不在"),
+                        )
+                        .text_size(TEXT_AUX)
+                        .text_color(color(GRAY)),
                     )
                     .child(reveal(
                         "reveal-retry-reader-offline-video",
                         quiet("retry-reader-offline-video")
                             .icon(icons::refresh())
-                            .label("重试")
+                            .label(course2md::tr!("重试"))
                             .loading(self.reader_ui.offline_opening)
                             .disabled(self.reader_ui.offline_opening)
                             .on_click(
@@ -3130,7 +3169,7 @@ impl Desktop {
                     "reveal-choose-note-version",
                     (quiet("choose-note-version")
                         .icon(icons::history())
-                        .label(format!("第 {} 版", manifest.revision))
+                        .label(course2md::tr!("第 {} 版", manifest.revision))
                         .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                         .min_h(INLINE_ACTION_HEIGHT)
                         .disabled(self.reading)
@@ -3140,7 +3179,7 @@ impl Desktop {
                                 let weak = weak.clone();
                                 let course = version.course.clone();
                                 let label = if course.dir == current {
-                                    format!("{}（当前）", version.label)
+                                    course2md::tr!("{}（当前）", version.label)
                                 } else {
                                     version.label.clone()
                                 };
@@ -3196,9 +3235,12 @@ impl Desktop {
             .child(back)
             .when(!short_reader, |row| {
                 row.child(
-                    SingleChoiceGroup::new("reader-tabs", "阅读视图")
+                    SingleChoiceGroup::new("reader-tabs", course2md::tr!("阅读视图"))
                         .tabs()
-                        .options([("note", "笔记"), ("images", "截图")])
+                        .options([
+                            ("note", course2md::tr!("笔记")),
+                            ("images", course2md::tr!("截图")),
+                        ])
                         .icon("note", icons::article())
                         .icon("images", icons::image())
                         .focus_handles(self.reader_ui.view_focus.iter().cloned())
@@ -3225,8 +3267,8 @@ impl Desktop {
                         .icon(icons::search())
                         .w(CONTROL_HEIGHT)
                         .px_0()
-                        .accessibility_label("查找笔记内容")
-                        .tooltip("查找笔记内容 ⌘F")
+                        .accessibility_label(course2md::tr!("查找笔记内容"))
+                        .tooltip(course2md::tr!("查找笔记内容 ⌘F"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_reader_find(window, cx);
                         })),
@@ -3237,12 +3279,12 @@ impl Desktop {
             search_row = search_row.child(
                 quiet("note-contents")
                     .icon(icons::toc())
-                    .label("目录")
+                    .label(course2md::tr!("目录"))
                     .selected(toc_on)
                     .accessibility_label(if toc_on {
-                        "收起目录"
+                        course2md::tr!("收起目录")
                     } else {
-                        "打开目录"
+                        course2md::tr!("打开目录")
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.reader_ui.pending_restore = this.capture_reading_position();
@@ -3276,11 +3318,11 @@ impl Desktop {
                 outline_pill("export-note")
                     .icon(icons::download())
                     .label(if exporting_current {
-                        "正在导出…"
+                        course2md::tr!("正在导出…")
                     } else {
-                        "导出"
+                        course2md::tr!("导出")
                     })
-                    .accessibility_label("复制或导出整份笔记")
+                    .accessibility_label(course2md::tr!("复制或导出整份笔记"))
                     .child(crate::icons::chevron_down().size_4().flex_shrink_0())
                     .loading(exporting_current)
                     .disabled(exporting)
@@ -3328,9 +3370,9 @@ impl Desktop {
             .child(theme::search_field(
                 &input,
                 if reading_note {
-                    "查找笔记内容"
+                    course2md::tr!("查找笔记内容")
                 } else {
-                    "搜索截图对应文字"
+                    course2md::tr!("搜索截图对应文字")
                 },
                 CONTROL_HEIGHT,
                 window,
@@ -3350,9 +3392,9 @@ impl Desktop {
                         format!("{}/{count}", self.reader_ui.match_index + 1)
                     } else if count == 0 {
                         // 笔记与图片搜索的零结果用同一说法
-                        "无匹配".into()
+                        course2md::tr!("无匹配").into()
                     } else {
-                        format!("{count} 张")
+                        course2md::tr!("{} 张", count)
                     },
                 )
                 .flex_shrink_0()
@@ -3362,8 +3404,18 @@ impl Desktop {
             );
             if reading_note {
                 for (id, label, icon, delta) in [
-                    ("previous-match", "上一处", crate::icons::arrow_up(), -1),
-                    ("next-match", "下一处", crate::icons::arrow_down(), 1),
+                    (
+                        "previous-match",
+                        course2md::tr!("上一处"),
+                        crate::icons::arrow_up(),
+                        -1,
+                    ),
+                    (
+                        "next-match",
+                        course2md::tr!("下一处"),
+                        crate::icons::arrow_down(),
+                        1,
+                    ),
                 ] {
                     matches =
                         matches.child(
@@ -3420,17 +3472,21 @@ impl Desktop {
                 icons::ellipsis()
             })
             .label(if short_reader {
-                if reading_note { "笔记" } else { "截图" }
+                if reading_note {
+                    course2md::tr!("笔记")
+                } else {
+                    course2md::tr!("截图")
+                }
             } else {
-                "更多"
+                course2md::tr!("更多")
             })
             .when(short_reader, |button| {
                 button.child(crate::icons::chevron_down().size_4().flex_shrink_0())
             })
             .accessibility_label(if short_reader {
-                "阅读视图与笔记操作"
+                course2md::tr!("阅读视图与笔记操作")
             } else {
-                "更多笔记操作"
+                course2md::tr!("更多笔记操作")
             })
             .dropdown_menu(move |menu, window, cx| {
                 let details = more_weak.clone();
@@ -3438,9 +3494,10 @@ impl Desktop {
                 let files = more_weak.clone();
                 let mut menu = menu;
                 if short_reader {
-                    for (index, label, icon) in
-                        [(0, "笔记", icons::article()), (1, "截图", icons::image())]
-                    {
+                    for (index, label, icon) in [
+                        (0, course2md::tr!("笔记"), icons::article()),
+                        (1, course2md::tr!("截图"), icons::image()),
+                    ] {
                         let weak = more_weak.clone();
                         menu = menu.item(
                             PopupMenuItem::new(label)
@@ -3461,7 +3518,7 @@ impl Desktop {
                         .separator()
                         .submenu_with_icon(
                             Some(icons::download()),
-                            "复制与导出",
+                            course2md::tr!("复制与导出"),
                             window,
                             cx,
                             move |menu, _, _| {
@@ -3477,20 +3534,22 @@ impl Desktop {
                         .separator();
                 }
                 menu = menu
-                    .item(PopupMenuItem::new("笔记详情").icon(icons::info()).on_click(
-                        move |_, _, cx| {
-                            let _ = details.update(cx, |this, cx| {
-                                this.reader_ui.info_open = !this.reader_ui.info_open;
-                                cx.notify();
-                            });
-                        },
-                    ))
+                    .item(
+                        PopupMenuItem::new(course2md::tr!("笔记详情"))
+                            .icon(icons::info())
+                            .on_click(move |_, _, cx| {
+                                let _ = details.update(cx, |this, cx| {
+                                    this.reader_ui.info_open = !this.reader_ui.info_open;
+                                    cx.notify();
+                                });
+                            }),
+                    )
                     .when(has_source, |menu| {
                         menu.item(
                             PopupMenuItem::new(if missing_local {
-                                "找到原视频…"
+                                course2md::tr!("找到原视频…")
                             } else {
-                                "打开原视频"
+                                course2md::tr!("打开原视频")
                             })
                             .icon(icons::movie())
                             .on_click(move |_, window, cx| {
@@ -3506,7 +3565,7 @@ impl Desktop {
                     })
                     .separator()
                     .item(
-                        PopupMenuItem::new("显示笔记保存位置")
+                        PopupMenuItem::new(course2md::tr!("显示笔记保存位置"))
                             .icon(icons::folder_open())
                             .on_click(move |_, _, cx| {
                                 let _ = files.update(cx, |this, cx| {
@@ -3518,7 +3577,7 @@ impl Desktop {
                     );
                 if let Some(path) = exported.clone() {
                     menu = menu.item(
-                        PopupMenuItem::new("显示上次导出的文件")
+                        PopupMenuItem::new(course2md::tr!("显示上次导出的文件"))
                             .icon(icons::folder_open())
                             .on_click(move |_, _, cx| cx.reveal_path(&path)),
                     );
@@ -3546,14 +3605,14 @@ impl Desktop {
             let stamp = nav::timestamp_local(manifest.created_at_ms);
             let date = stamp.get(..10).unwrap_or(&stamp);
             details.push((
-                "版本",
+                course2md::tr!("版本"),
                 icons::history(),
-                format!("第 {} 版 · {date} 生成", manifest.revision),
+                course2md::tr!("第 {} 版 · {} 生成", manifest.revision, date),
             ));
         }
         if let Some(path) = &local_source {
             details.push((
-                "原视频",
+                course2md::tr!("原视频"),
                 icons::movie(),
                 path.file_name()
                     .unwrap_or_default()
@@ -3571,17 +3630,21 @@ impl Desktop {
             })
         {
             if let Some(subtitle) = &task.plan.source.selected_subtitle {
-                details.push(("所选字幕", icons::subtitles(), subtitle.label.clone()));
+                details.push((
+                    course2md::tr!("所选字幕"),
+                    icons::subtitles(),
+                    subtitle.label.clone(),
+                ));
             }
             if task.plan.config.defaults.transcript_source
                 == Some(course2md::config::TranscriptSource::Asr)
             {
                 if let Some(model) = &task.plan.config.defaults.asr_model {
-                    details.push(("语音识别模型", icons::mic(), model.clone()));
+                    details.push((course2md::tr!("语音识别模型"), icons::mic(), model.clone()));
                 }
                 if let Some(provider) = task.plan.config.defaults.provider {
                     details.push((
-                        "识别设备",
+                        course2md::tr!("识别设备"),
                         icons::computer(),
                         crate::provider_label(Some(provider)).to_owned(),
                     ));
@@ -3589,7 +3652,7 @@ impl Desktop {
             }
             if task.plan.options.llm || task.plan.options.summarize {
                 details.push((
-                    "AI 模型",
+                    course2md::tr!("AI 模型"),
                     icons::auto_fix(),
                     task.plan.config.llm.model.clone(),
                 ));
@@ -3668,15 +3731,15 @@ impl Desktop {
                                 .gap_2()
                                 .child(semantic_label(
                                     "reader-information-title",
-                                    "笔记详情",
+                                    course2md::tr!("笔记详情"),
                                     crate::icons::info(),
                                 ))
                                 .child(div().flex_1())
                                 .child(
                                     quiet("collapse-reader-information")
                                         .icon(crate::icons::chevron_up())
-                                        .label("收起")
-                                        .accessibility_label("收起笔记详情")
+                                        .label(course2md::tr!("收起"))
+                                        .accessibility_label(course2md::tr!("收起笔记详情"))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.reader_ui.info_open = false;
                                             this.reader_ui.focus.focus(window, cx);
@@ -3733,18 +3796,21 @@ impl Desktop {
         {
             notices.push(crate::motion::enter(
                 "reader-new-version-notice",
-                notice_banner("newer-note-version", NoticeKind::Info, "这份笔记已有新版。").child(
-                    reveal(
-                        "reveal-open-newer-version",
-                        (outline_pill("open-newer-version")
-                            .icon(icons::history())
-                            .label("查看新版")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_reader_version(newer.clone(), cx)
-                            })))
-                        .into_any_element(),
-                    ),
-                ),
+                notice_banner(
+                    "newer-note-version",
+                    NoticeKind::Info,
+                    course2md::tr!("这份笔记已有新版。"),
+                )
+                .child(reveal(
+                    "reveal-open-newer-version",
+                    (outline_pill("open-newer-version")
+                        .icon(icons::history())
+                        .label(course2md::tr!("查看新版"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_reader_version(newer.clone(), cx)
+                        })))
+                    .into_any_element(),
+                )),
             ));
         }
         if let Some(notice) = processing_notice(&preview.processing_issues) {
@@ -3760,7 +3826,7 @@ impl Desktop {
                         .gap_2()
                         .items_center()
                         .flex_wrap()
-                        .child(badge(BadgeKind::Warning).child("需要处理"))
+                        .child(badge(BadgeKind::Warning).child(course2md::tr!("需要处理")))
                         .child(
                             theme::accessible_text("reader-incomplete-processing", notice)
                                 .text_sm(),
@@ -3843,7 +3909,7 @@ impl Desktop {
                     actions = actions.child(
                         outline_pill("reader-repair-ai")
                             .icon(icons::settings())
-                            .label("检查 AI 服务后重试")
+                            .label(course2md::tr!("检查 AI 服务后重试"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.save_reading_position(cx);
                                 this.repair_task_service(repair.clone(), window, cx);
@@ -3854,7 +3920,7 @@ impl Desktop {
                     "reveal-reader-view-incomplete-task",
                     (quiet("reader-view-incomplete-task")
                         .icon(icons::task())
-                        .label("查看任务")
+                        .label(course2md::tr!("查看任务"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.save_reading_position(cx);
                             this.select_task(&id, cx);
@@ -3874,9 +3940,9 @@ impl Desktop {
                     (quiet("reader-processing-details")
                         .icon(crate::icons::info())
                         .label(if self.reader_ui.processing_details_open {
-                            "收起处理详情"
+                            course2md::tr!("收起处理详情")
                         } else {
-                            "查看处理详情"
+                            course2md::tr!("查看处理详情")
                         })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.reader_ui.processing_details_open =
@@ -3929,9 +3995,12 @@ impl Desktop {
                 .gap_2()
                 .when(issues.is_empty(), |view| {
                     view.child(
-                        theme::accessible_text("reader-unreadable-images", "部分截图无法读取")
-                            .text_sm()
-                            .text_color(color(WARNING)),
+                        theme::accessible_text(
+                            "reader-unreadable-images",
+                            course2md::tr!("部分截图无法读取"),
+                        )
+                        .text_sm()
+                        .text_color(color(WARNING)),
                     )
                 })
                 .children(issues.into_iter().enumerate().map(|(index, issue)| {
@@ -3961,7 +4030,7 @@ impl Desktop {
                         "reveal-reload-reader-files",
                         (outline_pill("reload-reader-files")
                             .icon(icons::refresh())
-                            .label("重新读取")
+                            .label(course2md::tr!("重新读取"))
                             .loading(self.reading)
                             .disabled(self.reading)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -4026,7 +4095,10 @@ impl Desktop {
                     .items_center()
                     .py_6()
                     .child(crate::motion::spinner("reader-images-spinner", cx))
-                    .child(theme::accessible_text("loading-images", "正在读取截图…")),
+                    .child(theme::accessible_text(
+                        "loading-images",
+                        course2md::tr!("正在读取截图…"),
+                    )),
             );
         } else if self.reader_ui.frames.is_empty() {
             article = article.child(crate::motion::enter(
@@ -4045,9 +4117,12 @@ impl Desktop {
                             .text_color(color(GRAY)),
                     )
                     .child(
-                        theme::accessible_text("no-note-images", "这份笔记没有截图")
-                            .text_size(TEXT_TITLE)
-                            .font_weight(FontWeight::SEMIBOLD),
+                        theme::accessible_text(
+                            "no-note-images",
+                            course2md::tr!("这份笔记没有截图"),
+                        )
+                        .text_size(TEXT_TITLE)
+                        .font_weight(FontWeight::SEMIBOLD),
                     )
                     .when(
                         preview.processing_issues.iter().any(|issue| {
@@ -4055,15 +4130,18 @@ impl Desktop {
                         }),
                         |view| {
                             view.child(
-                                theme::accessible_text("no-note-images-reason", "截图生成未完成")
-                                    .text_color(color(GRAY)),
+                                theme::accessible_text(
+                                    "no-note-images-reason",
+                                    course2md::tr!("截图生成未完成"),
+                                )
+                                .text_color(color(GRAY)),
                             )
                         },
                     )
                     .child(
                         outline_pill("empty-images-to-note")
                             .icon(icons::article())
-                            .label("阅读笔记")
+                            .label(course2md::tr!("阅读笔记"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.select_reader_view(0, window, cx)
                             })),
@@ -4079,13 +4157,13 @@ impl Desktop {
                     .items_center()
                     .child(semantic_label(
                         "gallery-no-matches",
-                        "没有对应的截图",
+                        course2md::tr!("没有对应的截图"),
                         icons::search(),
                     ))
                     .child(
                         quiet("clear-gallery-search")
                             .icon(icons::close())
-                            .label("清除搜索")
+                            .label(course2md::tr!("清除搜索"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.reader_ui
                                     .gallery_find
@@ -4165,7 +4243,7 @@ impl Desktop {
                         .rounded_t(RADIUS_CARD)
                         .rounded_b(px(0.))
                         .aspect_ratio(frame_aspect(frame))
-                        .accessibility_label(format!("放大{label}"))
+                        .accessibility_label(course2md::tr!("放大{}", label))
                         .child(
                             img(image.path.clone())
                                 .size_full()
@@ -4174,7 +4252,7 @@ impl Desktop {
                                 .with_fallback(move || {
                                     theme::accessible_text(
                                         ("failed-reader-image", index),
-                                        "截图无法读取",
+                                        course2md::tr!("截图无法读取"),
                                     )
                                     .into_any_element()
                                 }),
@@ -4193,9 +4271,12 @@ impl Desktop {
                         .p_4()
                         .bg(color(INSET))
                         .child(
-                            theme::accessible_text(("missing-frame", index), "截图无法读取")
-                                .text_size(TEXT_AUX)
-                                .text_color(color(WARNING)),
+                            theme::accessible_text(
+                                ("missing-frame", index),
+                                course2md::tr!("截图无法读取"),
+                            )
+                            .text_size(TEXT_AUX)
+                            .text_color(color(WARNING)),
                         ),
                 );
             }
@@ -4220,8 +4301,8 @@ impl Desktop {
                                 ("reveal-frame-to-body", index).into(),
                                 quiet(("frame-to-body", index))
                                     .icon(icons::article())
-                                    .label("正文")
-                                    .accessibility_label("在笔记中查看")
+                                    .label(course2md::tr!("正文"))
+                                    .accessibility_label(course2md::tr!("在笔记中查看"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.jump_reader_block(body_index, 0., cx)
                                     }))
@@ -4306,12 +4387,12 @@ impl Desktop {
                 .gap_2()
                 .flex_shrink_0()
                 .mb_2()
-                .child(semantic_label("toc-title", "目录", icons::toc()).flex_1())
+                .child(semantic_label("toc-title", course2md::tr!("目录"), icons::toc()).flex_1())
                 .when(!side, |row| {
                     row.child(
                         quiet("close-note-toc")
                             .icon(icons::close())
-                            .label("关闭")
+                            .label(course2md::tr!("关闭"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.reader_ui.toc_open = Some(false);
                                 cx.notify();
@@ -4342,9 +4423,9 @@ impl Desktop {
                             .rounded(RADIUS_PILL)
                             .tooltip(label.clone())
                             .accessibility_label(if on {
-                                format!("当前章节：{label}")
+                                course2md::tr!("当前章节：{}", label)
                             } else {
-                                format!("转到 {label}")
+                                course2md::tr!("转到 {}", label)
                             })
                             .child(
                                 h_flex()
@@ -4597,15 +4678,15 @@ impl Desktop {
             let weak = cx.weak_entity();
             return quiet("image-zoom-menu")
                 .icon(icons::zoom_in())
-                .label(percent.unwrap_or_else(|| "缩放".into()))
+                .label(percent.unwrap_or_else(|| course2md::tr!("缩放").into()))
                 .child(crate::icons::chevron_down().size_4().flex_shrink_0())
-                .accessibility_label("缩放图片")
+                .accessibility_label(course2md::tr!("缩放图片"))
                 .dropdown_menu(move |menu, _, _| {
                     let larger = weak.clone();
                     let smaller = weak.clone();
                     let fitted = weak.clone();
                     menu.item(
-                        PopupMenuItem::new("放大 · +")
+                        PopupMenuItem::new(course2md::tr!("放大 · +"))
                             .icon(icons::zoom_in())
                             .disabled(!can_zoom_in)
                             .on_click(move |_, window, cx| {
@@ -4615,7 +4696,7 @@ impl Desktop {
                             }),
                     )
                     .item(
-                        PopupMenuItem::new("缩小 · −")
+                        PopupMenuItem::new(course2md::tr!("缩小 · −"))
                             .icon(icons::zoom_out())
                             .disabled(!can_zoom_out)
                             .on_click(move |_, window, cx| {
@@ -4626,7 +4707,7 @@ impl Desktop {
                     )
                     .separator()
                     .item(
-                        PopupMenuItem::new("适合窗口 · 0")
+                        PopupMenuItem::new(course2md::tr!("适合窗口 · 0"))
                             .icon(icons::fit_screen())
                             .checked(fit)
                             .on_click(move |_, window, cx| {
@@ -4646,8 +4727,8 @@ impl Desktop {
                     .icon(icons::zoom_out())
                     .w(CONTROL_HEIGHT)
                     .px_0()
-                    .accessibility_label("缩小")
-                    .tooltip("缩小 · −")
+                    .accessibility_label(course2md::tr!("缩小"))
+                    .tooltip(course2md::tr!("缩小 · −"))
                     .disabled(!can_zoom_out)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.zoom_reader_image(Some(ZOOM_STEP_OUT), window, cx)
@@ -4663,8 +4744,8 @@ impl Desktop {
                     .icon(icons::zoom_in())
                     .w(CONTROL_HEIGHT)
                     .px_0()
-                    .accessibility_label("放大")
-                    .tooltip("放大 · +")
+                    .accessibility_label(course2md::tr!("放大"))
+                    .tooltip(course2md::tr!("放大 · +"))
                     .disabled(!can_zoom_in)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.zoom_reader_image(Some(ZOOM_STEP_IN), window, cx)
@@ -4675,8 +4756,8 @@ impl Desktop {
                     .icon(icons::fit_screen())
                     .w(CONTROL_HEIGHT)
                     .px_0()
-                    .accessibility_label("适合窗口")
-                    .tooltip("适合窗口 · 0")
+                    .accessibility_label(course2md::tr!("适合窗口"))
+                    .tooltip(course2md::tr!("适合窗口 · 0"))
                     .on_click(
                         cx.listener(|this, _, window, cx| this.zoom_reader_image(None, window, cx)),
                     ),
@@ -4698,11 +4779,11 @@ impl Desktop {
         let text_only = metrics.separate_modes && details_open;
         let time = course2md::render::fmt_ts(frame.seconds);
         let heading = if text_only {
-            format!("文字 · {time}")
+            course2md::tr!("文字 · {}", time)
         } else if compact {
             time
         } else {
-            format!("截图 · {time}")
+            course2md::tr!("截图 · {}", time)
         };
         let header = h_flex()
             .gap_2()
@@ -4723,8 +4804,8 @@ impl Desktop {
                     .icon(crate::icons::chevron_left())
                     .w(CONTROL_HEIGHT)
                     .px_0()
-                    .accessibility_label("上一张")
-                    .tooltip("上一张 · ←")
+                    .accessibility_label(course2md::tr!("上一张"))
+                    .tooltip(course2md::tr!("上一张 · ←"))
                     .disabled(index == 0)
                     .on_click(cx.listener(|this, _, _, cx| this.move_reader_image(-1, cx))),
             )
@@ -4732,7 +4813,7 @@ impl Desktop {
                 theme::accessible_text(
                     "image-number",
                     if viewer.filtered {
-                        format!("匹配截图 {} / {count}", index + 1)
+                        course2md::tr!("匹配截图 {} / {}", index + 1, count)
                     } else {
                         format!("{} / {count}", index + 1)
                     },
@@ -4745,8 +4826,8 @@ impl Desktop {
                     .icon(crate::icons::chevron_right())
                     .w(CONTROL_HEIGHT)
                     .px_0()
-                    .accessibility_label("下一张")
-                    .tooltip("下一张 · →")
+                    .accessibility_label(course2md::tr!("下一张"))
+                    .tooltip(course2md::tr!("下一张 · →"))
                     .disabled(index + 1 >= count)
                     .on_click(cx.listener(|this, _, _, cx| this.move_reader_image(1, cx))),
             )
@@ -4773,7 +4854,7 @@ impl Desktop {
                 .child(if has_text {
                     paragraph(
                         "image-transcript",
-                        format!("这段讲解：{}", frame.transcript).into(),
+                        course2md::tr!("这段讲解：{}", frame.transcript).into(),
                         0,
                         Vec::new(),
                         None,
@@ -4781,7 +4862,7 @@ impl Desktop {
                     .flex_shrink_0()
                     .into_any_element()
                 } else {
-                    theme::accessible_text("image-no-text", "这张截图没有对应文字")
+                    theme::accessible_text("image-no-text", course2md::tr!("这张截图没有对应文字"))
                         .text_size(TEXT_READER)
                         .whitespace_normal()
                         .into_any_element()
@@ -4795,9 +4876,9 @@ impl Desktop {
             .relative()
             .role(Role::Dialog)
             .aria_label(if text_only {
-                format!("阅读{label}对应文字")
+                course2md::tr!("阅读{}对应文字", label)
             } else {
-                format!("查看{label}")
+                course2md::tr!("查看{}", label)
             })
             .track_focus(&viewer.focus)
             .gap_2()
@@ -4817,7 +4898,8 @@ impl Desktop {
             return div().into_any_element();
         };
         let Some(image) = &viewer.frames[viewer.index].image else {
-            return theme::accessible_text("image-unreadable", "截图无法读取").into_any_element();
+            return theme::accessible_text("image-unreadable", course2md::tr!("截图无法读取"))
+                .into_any_element();
         };
         let viewport_scroll = viewer.viewport_scroll.clone();
         let owner = cx.weak_entity();
@@ -4879,7 +4961,7 @@ impl Desktop {
                                         // One viewer exists at a time, so the id is unique.
                                         theme::accessible_text(
                                             "failed-reader-image-enlarged",
-                                            "截图无法读取",
+                                            course2md::tr!("截图无法读取"),
                                         )
                                         .into_any_element()
                                     }),
@@ -4917,12 +4999,14 @@ impl Desktop {
                 control("image-to-body")
                     .icon(icons::article())
                     .label(if compact {
-                        "正文"
+                        course2md::tr!("正文")
                     } else {
-                        "在笔记中查看"
+                        course2md::tr!("在笔记中查看")
                     })
-                    .accessibility_label("在笔记中查看")
-                    .when(compact, |button| button.tooltip("在笔记中查看"))
+                    .accessibility_label(course2md::tr!("在笔记中查看"))
+                    .when(compact, |button| {
+                        button.tooltip(course2md::tr!("在笔记中查看"))
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         let current = this
                             .preview
@@ -4940,9 +5024,15 @@ impl Desktop {
                 control("image-to-source")
                     .icon(icons::play_arrow())
                     .ghost()
-                    .label(if compact { "观看" } else { "从此处观看" })
-                    .accessibility_label("从此处观看原视频")
-                    .when(compact, |button| button.tooltip("从此处观看原视频"))
+                    .label(if compact {
+                        course2md::tr!("观看")
+                    } else {
+                        course2md::tr!("从此处观看")
+                    })
+                    .accessibility_label(course2md::tr!("从此处观看原视频"))
+                    .when(compact, |button| {
+                        button.tooltip(course2md::tr!("从此处观看原视频"))
+                    })
                     .on_click(move |_, _, cx| cx.open_url(&url)),
             );
         } else if let Some(source) = original {
@@ -4951,12 +5041,14 @@ impl Desktop {
                     .icon(icons::movie())
                     .ghost()
                     .label(if compact {
-                        "原视频"
+                        course2md::tr!("原视频")
                     } else {
-                        "打开原视频"
+                        course2md::tr!("打开原视频")
                     })
-                    .accessibility_label("打开原视频")
-                    .when(compact, |button| button.tooltip("打开原视频"))
+                    .accessibility_label(course2md::tr!("打开原视频"))
+                    .when(compact, |button| {
+                        button.tooltip(course2md::tr!("打开原视频"))
+                    })
                     .on_click(move |_, _, cx| match &source {
                         nav::SourceTarget::Web(url) => cx.open_url(url),
                         nav::SourceTarget::Local(path) => cx.open_with_system(path),
@@ -4972,13 +5064,13 @@ impl Desktop {
                         icons::article()
                     })
                     .label(if text_only {
-                        "返回图片"
+                        course2md::tr!("返回图片")
                     } else if metrics.separate_modes {
-                        "查看文字"
+                        course2md::tr!("查看文字")
                     } else if details_open {
-                        "收起文字"
+                        course2md::tr!("收起文字")
                     } else {
-                        "显示文字"
+                        course2md::tr!("显示文字")
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(viewer) = &mut this.reader_ui.viewer {
@@ -4991,8 +5083,8 @@ impl Desktop {
         let actions = actions.child(div().flex_1()).child(
             control("image-close")
                 .icon(crate::icons::close())
-                .label("关闭")
-                .accessibility_label("关闭截图")
+                .label(course2md::tr!("关闭"))
+                .accessibility_label(course2md::tr!("关闭截图"))
                 .on_click(cx.listener(|this, _, window, cx| this.close_reader_image(window, cx))),
         );
         self.image_viewer_actions(actions, cx).into_any_element()
@@ -5071,12 +5163,12 @@ fn load_reader_data(preview: &notes::Preview) -> ReaderData {
                                 course.dir = path;
                                 course.title = other.title.clone();
                                 course.slides = other.frames.len();
-                                let label = format!(
+                                let label = course2md::tr!(
                                     "第 {} 版 · {}{}",
                                     other.revision,
                                     nav::timestamp_local(other.created_at_ms),
                                     if notes::has_incomplete_content(&other) {
-                                        " · 部分完成"
+                                        course2md::tr!(" · 部分完成")
                                     } else {
                                         ""
                                     }
@@ -5084,7 +5176,9 @@ fn load_reader_data(preview: &notes::Preview) -> ReaderData {
                                 course.manifest = Some(other);
                                 data.versions.push(Version { course, label });
                             }
-                            Err(_) => data.issues.push("有一个旧版本无法读取".into()),
+                            Err(_) => data
+                                .issues
+                                .push(course2md::tr!("有一个旧版本无法读取").into()),
                             _ => {}
                         }
                     }
@@ -5099,7 +5193,9 @@ fn load_reader_data(preview: &notes::Preview) -> ReaderData {
                         )
                     });
                 }
-                Err(error) => data.issues.push(format!("其他版本暂时无法读取：{error}")),
+                Err(error) => data
+                    .issues
+                    .push(course2md::tr!("其他版本暂时无法读取：{}", error)),
             }
         }
     }
@@ -5118,13 +5214,13 @@ fn processing_notice(issues: &[crate::notes::ProcessingIssue]) -> Option<String>
     if issues.is_empty() {
         return None;
     }
-    Some(format!(
+    Some(course2md::tr!(
         "{}未完成",
         issues
             .iter()
             .map(|issue| issue.stage.label())
             .collect::<Vec<_>>()
-            .join("、")
+            .join(course2md::tr!("、"))
     ))
 }
 fn files_need_reload(preview: &crate::notes::Preview, issues: &[String], frames: &[Frame]) -> bool {

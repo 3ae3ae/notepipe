@@ -17,6 +17,28 @@ pub(crate) fn resolve(language: InterfaceLanguage) -> Lang {
     language.resolve()
 }
 
+/// Short calendar date in the interface language: "Sep 27" or "9月27日".
+pub(crate) fn month_day(month: u32, day: u32) -> String {
+    month_day_for(i18n::lang(), month, day)
+}
+
+fn month_day_for(lang: Lang, month: u32, day: u32) -> String {
+    match lang {
+        Lang::En => {
+            const MONTHS: [&str; 12] = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+                "Dec",
+            ];
+            let name = MONTHS
+                .get(month.saturating_sub(1) as usize)
+                .copied()
+                .unwrap_or("Jan");
+            format!("{name} {day}")
+        }
+        _ => format!("{month}月{day}日"),
+    }
+}
+
 /// gpui-component ships English and Simplified Chinese; other locales fall back
 /// to English for its built-in controls, while our catalog covers the app.
 fn component_locale(lang: Lang) -> &'static str {
@@ -25,5 +47,42 @@ fn component_locale(lang: Lang) -> &'static str {
         Lang::ZhHans => "zh-CN",
         Lang::ZhHant => "zh-TW",
         Lang::Ja => "ja",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::preferences::{ApplicationPreferences, InterfaceLanguage};
+
+    #[test]
+    fn interface_language_ids_round_trip() {
+        for language in InterfaceLanguage::ALL {
+            assert_eq!(InterfaceLanguage::from_id(language.id()), Some(language));
+        }
+        assert_eq!(InterfaceLanguage::from_id("fr"), None);
+        assert_eq!(
+            serde_json::to_string(&InterfaceLanguage::ZhHant).unwrap(),
+            "\"zh-Hant\""
+        );
+        assert_eq!(
+            serde_json::to_string(&InterfaceLanguage::System).unwrap(),
+            "\"system\""
+        );
+    }
+
+    #[test]
+    fn missing_language_uses_the_system_default() {
+        let preferences: ApplicationPreferences =
+            serde_json::from_str(r#"{"font_scale":1.0}"#).unwrap();
+        assert_eq!(preferences.language, InterfaceLanguage::System);
+    }
+
+    #[test]
+    fn short_dates_follow_the_interface_language() {
+        assert_eq!(month_day_for(Lang::En, 9, 27), "Sep 27");
+        assert_eq!(month_day_for(Lang::ZhHans, 9, 27), "9月27日");
+        assert_eq!(month_day_for(Lang::ZhHant, 9, 27), "9月27日");
+        assert_eq!(month_day_for(Lang::Ja, 9, 27), "9月27日");
     }
 }

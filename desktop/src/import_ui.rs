@@ -150,9 +150,9 @@ pub(crate) enum ConversionAiOption {
 
 pub(crate) fn conversion_ai_option_label(option: ConversionAiOption) -> &'static str {
     match option {
-        ConversionAiOption::Proofread => "校对文字和标点",
-        ConversionAiOption::Vision => "校对时附带对应截图",
-        ConversionAiOption::Summary => "在开头生成摘要",
+        ConversionAiOption::Proofread => course2md::tr!("校对文字和标点"),
+        ConversionAiOption::Vision => course2md::tr!("校对时附带对应截图"),
+        ConversionAiOption::Summary => course2md::tr!("在开头生成摘要"),
     }
 }
 
@@ -179,11 +179,13 @@ pub(crate) fn apply_conversion_ai_option(
     }
 }
 
-const TEXT_SOURCE_CHOICES: [(TranscriptSource, &str); 3] = [
-    (TranscriptSource::Auto, "自动"),
-    (TranscriptSource::Subtitle, "仅字幕"),
-    (TranscriptSource::Asr, "语音识别"),
-];
+fn text_source_choices() -> [(TranscriptSource, &'static str); 3] {
+    [
+        (TranscriptSource::Auto, course2md::tr!("自动")),
+        (TranscriptSource::Subtitle, course2md::tr!("仅字幕")),
+        (TranscriptSource::Asr, course2md::tr!("语音识别")),
+    ]
+}
 
 fn text_source_id(mode: TranscriptSource) -> &'static str {
     match mode {
@@ -548,9 +550,9 @@ impl Desktop {
         }
         if input.is_empty() {
             self.source_validation = Some(if self.online {
-                "先粘贴视频链接".into()
+                course2md::tr!("先粘贴视频链接").into()
             } else {
-                "先选择一个视频".into()
+                course2md::tr!("先选择一个视频").into()
             });
             if self.online {
                 self.inputs[&Field::Source].update(cx, |input, cx| input.focus(window, cx));
@@ -626,9 +628,10 @@ impl Desktop {
 
     fn subtitle_issue(&self, kind: &str, message: &str, cx: &mut Context<Self>) -> Div {
         let summary = if source::is_login_failure(message) {
-            "字幕需要登录，或改用语音识别"
+            course2md::tr!("字幕需要登录，或改用语音识别")
         } else {
-            readable_first_line(message).unwrap_or("无法读取字幕，可重试或改用语音识别")
+            readable_first_line(message)
+                .unwrap_or(course2md::tr!("无法读取字幕，可重试或改用语音识别"))
         };
         let details = if summary != message { message } else { "" };
         let id = text_id(kind, message);
@@ -647,9 +650,9 @@ impl Desktop {
                         })
                         .self_start()
                         .label(if expanded {
-                            "收起技术详情"
+                            course2md::tr!("收起技术详情")
                         } else {
-                            "技术详情"
+                            course2md::tr!("技术详情")
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.expanded_subtitle_issue =
@@ -713,7 +716,7 @@ impl Desktop {
         cx.spawn(async move |this, cx| {
             let result = task.recv().await.unwrap_or_else(|_| {
                 Err(course2md::subtitle::SubtitleReadError::Failed {
-                    message: "字幕读取意外中断".into(),
+                    message: course2md::tr!("字幕读取意外中断").into(),
                 })
             });
             let _ = this.update(cx, |this, cx| {
@@ -780,7 +783,7 @@ impl Desktop {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("选择 SRT 或 VTT 字幕".into()),
+            prompt: Some(course2md::tr!("选择 SRT 或 VTT 字幕").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
@@ -797,7 +800,8 @@ impl Desktop {
                     Ok(Ok(Some(paths))) => {
                         if let Some(path) = paths.into_iter().next() {
                             if !course2md::subtitle::is_subtitle_file(&path) {
-                                this.subtitle_error = Some("请选择 SRT 或 VTT 字幕文件".into());
+                                this.subtitle_error =
+                                    Some(course2md::tr!("请选择 SRT 或 VTT 字幕文件").into());
                             } else {
                                 let track = course2md::subtitle::file_track(path, None);
                                 if let Some(source) = &mut this.source_preview {
@@ -824,7 +828,10 @@ impl Desktop {
                     }
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
-                        this.subtitle_error = Some(format!("无法打开字幕选择器：{error:#}"))
+                        this.subtitle_error = Some(course2md::tr!(
+                            "无法打开字幕选择器：{}",
+                            format!("{error:#}")
+                        ))
                     }
                     Err(error) => this.subtitle_error = Some(error.to_string()),
                 }
@@ -847,7 +854,7 @@ impl Desktop {
         self.subtitle_error = None;
         if let Some(source) = &mut self.source_preview {
             source.subtitle_read_error = Some(SubtitleReadError::Failed {
-                message: "字幕重新读取未完成".into(),
+                message: course2md::tr!("字幕重新读取未完成").into(),
             });
         }
         if !self.save_current_draft(cx) {
@@ -866,7 +873,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("字幕读取意外中断")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(course2md::tr!("字幕读取意外中断"))));
             let _ = this.update(cx, |this, cx| {
                 this.preview_workers = this.preview_workers.saturating_sub(1);
                 if this.subtitle_generation != generation
@@ -911,7 +918,7 @@ impl Desktop {
                         }
                         .cloned();
                         if old_id.is_some() && track.is_none() {
-                            this.subtitle_error = Some("原字幕无法重新读取".into());
+                            this.subtitle_error = Some(course2md::tr!("原字幕无法重新读取").into());
                         }
                         if let Some(source) = &mut this.source_preview {
                             source.subtitles = evidence;
@@ -1028,7 +1035,7 @@ impl Desktop {
             [] => {}
             _ => {
                 self.invalidate_source();
-                self.source_collection_title = Some("选择要处理的视频".into());
+                self.source_collection_title = Some(course2md::tr!("选择要处理的视频").into());
                 self.source_candidates = files
                     .iter()
                     .map(|path| source::SourceCandidate {
@@ -1051,8 +1058,11 @@ impl Desktop {
     /// Source navigation is separate from the editable surface.
     fn source_kind_tabs(&self, cx: &mut Context<Self>) -> Div {
         div().w_full().flex().justify_center().child(
-            SingleChoiceGroup::new("source-kind", "视频来源")
-                .options([("online", "视频链接"), ("local", "本地文件")])
+            SingleChoiceGroup::new("source-kind", course2md::tr!("视频来源"))
+                .options([
+                    ("online", course2md::tr!("视频链接")),
+                    ("local", course2md::tr!("本地文件")),
+                ])
                 .icon("online", icons::link())
                 .icon("local", icons::movie())
                 .selected(if self.online { "online" } else { "local" })
@@ -1128,7 +1138,7 @@ impl Desktop {
                                 div().flex_1().min_w_0().child(
                                     text_input(&self.inputs[&Field::Source])
                                         .appearance(false)
-                                        .aria_label("视频链接")
+                                        .aria_label(course2md::tr!("视频链接"))
                                         .w_full()
                                         .min_w_0()
                                         .px_0()
@@ -1151,8 +1161,8 @@ impl Desktop {
                                     .rounded(RADIUS_PILL)
                                     .w(HERO_CONTROL)
                                     .h(HERO_CONTROL)
-                                    .accessibility_label("处理选项")
-                                    .tooltip("处理选项")
+                                    .accessibility_label(course2md::tr!("处理选项"))
+                                    .tooltip(course2md::tr!("处理选项"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.generation_options_open =
                                             !this.generation_options_open;
@@ -1198,7 +1208,7 @@ impl Desktop {
                                     .child(
                                         accessible_text(
                                             "import-reading-state",
-                                            "正在读取视频信息…",
+                                            course2md::tr!("正在读取视频信息…"),
                                         )
                                         .text_size(TEXT_BODY)
                                         .text_color(color(GRAY)),
@@ -1221,8 +1231,8 @@ impl Desktop {
                             .child(
                                 quiet("cancel-source-read")
                                     .icon(crate::icons::close())
-                                    .accessibility_label("取消读取视频")
-                                    .tooltip("取消读取视频")
+                                    .accessibility_label(course2md::tr!("取消读取视频"))
+                                    .tooltip(course2md::tr!("取消读取视频"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.invalidate_source();
                                         cx.notify();
@@ -1252,14 +1262,14 @@ impl Desktop {
             .gap_3()
             .pt(rems(8. / 14.))
             .child(
-                accessible_text("import-drop-hint", "或把本地视频拖进窗口")
+                accessible_text("import-drop-hint", course2md::tr!("或把本地视频拖进窗口"))
                     .text_size(TEXT_BODY)
                     .text_color(color(GRAY)),
             )
             .child(
                 outline_pill("choose-local-video")
                     .icon(icons::file_upload())
-                    .label("选择文件")
+                    .label(course2md::tr!("选择文件"))
                     .text_color(color(ACCENT))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.switch_source_kind(false, window, cx);
@@ -1325,7 +1335,7 @@ impl Desktop {
             let untitled = candidate.title.trim().is_empty()
                 || candidate.title.trim() == candidate.input.trim();
             let title = if untitled {
-                format!("视频 {}", index + 1)
+                course2md::tr!("视频 {}", index + 1)
             } else {
                 candidate.title.clone()
             };
@@ -1356,7 +1366,7 @@ impl Desktop {
                 content = content.child(preview).child(text);
                 if batchable {
                     content = content.when(noted[index], |row| {
-                        row.child(badge(BadgeKind::Success).child("已有笔记"))
+                        row.child(badge(BadgeKind::Success).child(course2md::tr!("已有笔记")))
                     });
                 } else {
                     content = content.child(icons::arrow_forward().size(px(18.)).flex_shrink_0());
@@ -1377,7 +1387,7 @@ impl Desktop {
                     row = row.child(
                         Checkbox::new(("source-candidate-check", index))
                             .debug_selector(move || format!("source-candidate-checkbox-{index}"))
-                            .accessibility_label(format!("选择 {title}"))
+                            .accessibility_label(course2md::tr!("选择 {}", title))
                             .checked(selected)
                             .flex_shrink_0()
                             .on_click(cx.listener(move |this, value: &bool, _, cx| {
@@ -1395,7 +1405,7 @@ impl Desktop {
                         .rounded(RADIUS_SMALL)
                         .justify_start()
                         .tooltip(candidate.input.clone())
-                        .accessibility_label(format!("选择 {title}"))
+                        .accessibility_label(course2md::tr!("选择 {}", title))
                         .child(preview)
                         .child(text)
                         .child(icons::arrow_forward().size(px(18.)).flex_shrink_0())
@@ -1430,9 +1440,9 @@ impl Desktop {
                                     .child(
                                         quiet("toggle-all-candidates")
                                             .label(if all_selected {
-                                                "全不选"
+                                                course2md::tr!("全不选")
                                             } else {
-                                                "全选"
+                                                course2md::tr!("全选")
                                             })
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if all_selected {
@@ -1451,8 +1461,9 @@ impl Desktop {
                                                 .text_size(TEXT_AUX)
                                                 .text_color(color(WARNING))
                                                 .text_ellipsis()
-                                                .child(format!(
-                                                    "{noted_selected} 个已有笔记，将生成新版"
+                                                .child(course2md::tr!(
+                                                    "{} 个已有笔记，将生成新版",
+                                                    noted_selected
                                                 )),
                                         )
                                     }),
@@ -1461,9 +1472,9 @@ impl Desktop {
                                 primary_pill("start-batch-conversion")
                                     .icon(icons::arrow_forward())
                                     .label(if selected_count > 0 {
-                                        format!("整理选中的 {selected_count} 个视频")
+                                        course2md::tr!("整理选中的 {} 个视频", selected_count)
                                     } else {
-                                        "整理选中的视频".to_owned()
+                                        course2md::tr!("整理选中的视频").to_owned()
                                     })
                                     // 空选择即不可执行：与开始转换同一纪律
                                     .disabled(selected_count == 0)
@@ -1585,10 +1596,13 @@ impl Desktop {
                             )
                             .child(
                                 issue(if source::is_login_failure(error) {
-                                    "视频需要登录后读取，请登录后重试预览".to_owned()
+                                    course2md::tr!("视频需要登录后读取，请登录后重试预览")
+                                        .to_owned()
                                 } else {
                                     readable_first_line(error)
-                                        .unwrap_or("暂时无法读取这个视频，请检查链接或稍后重试")
+                                        .unwrap_or(course2md::tr!(
+                                            "暂时无法读取这个视频，请检查链接或稍后重试"
+                                        ))
                                         .to_owned()
                                 })
                                 .flex_1()
@@ -1602,7 +1616,7 @@ impl Desktop {
                             .child(
                                 outline_pill("retry-source")
                                     .icon(icons::refresh())
-                                    .label("重试预览")
+                                    .label(course2md::tr!("重试预览"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.inspect_source(window, cx)
                                     })),
@@ -1617,7 +1631,7 @@ impl Desktop {
                                     row.child(
                                         outline_pill("source-login-repair")
                                             .icon(icons::bilibili())
-                                            .label("登录 Bilibili")
+                                            .label(course2md::tr!("登录 Bilibili"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.open_account_dialog(window, cx)
                                             })),
@@ -1632,9 +1646,9 @@ impl Desktop {
                                         crate::icons::chevron_down()
                                     })
                                     .label(if self.show_preview_details {
-                                        "收起技术详情"
+                                        course2md::tr!("收起技术详情")
                                     } else {
-                                        "技术详情"
+                                        course2md::tr!("技术详情")
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.show_preview_details = !this.show_preview_details;
@@ -1669,14 +1683,14 @@ impl Desktop {
                             .text_color(color(ACCENT)),
                     )
                     .child(
-                        accessible_text("import-drop-instruction", "拖入本地视频")
+                        accessible_text("import-drop-instruction", course2md::tr!("拖入本地视频"))
                             .text_size(TEXT_BODY)
                             .font_weight(FontWeight::MEDIUM),
                     )
                     .child(
                         primary_pill("choose-video")
                             .icon(crate::icons::folder_open())
-                            .label("选择视频")
+                            .label(course2md::tr!("选择视频"))
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.pick_video(window, cx)),
                             ),
@@ -1726,7 +1740,7 @@ impl Desktop {
                             .child(
                                 outline_pill("choose-video")
                                     .icon(crate::icons::folder_open())
-                                    .label("更换视频")
+                                    .label(course2md::tr!("更换视频"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.pick_video(window, cx)
                                     })),
@@ -1787,18 +1801,18 @@ impl Desktop {
             && !self.import_uses_speech()
             && source.selected_subtitle.is_some();
         let subtitle_status = if self.subtitle_loading {
-            "正在读取字幕…"
+            course2md::tr!("正在读取字幕…")
         } else if pending {
-            "文字来源待确认"
+            course2md::tr!("文字来源待确认")
         } else if self.import_uses_speech() {
-            "将识别视频声音"
+            course2md::tr!("将识别视频声音")
         } else if confirmed_subtitle {
-            "有字幕，将直接使用"
+            course2md::tr!("有字幕，将直接使用")
         } else {
-            "文字来源待确认"
+            course2md::tr!("文字来源待确认")
         };
         let platform = if !source.online {
-            "本地视频".to_owned()
+            course2md::tr!("本地视频").to_owned()
         } else {
             match course2md::config::known_video_site(&source.input) {
                 Some("bilibili") => "Bilibili".to_owned(),
@@ -1867,8 +1881,8 @@ impl Desktop {
                     .child(
                         quiet("clear-source-preview")
                             .icon(icons::close())
-                            .tooltip("移除预览")
-                            .accessibility_label("移除预览")
+                            .tooltip(course2md::tr!("移除预览"))
+                            .accessibility_label(course2md::tr!("移除预览"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.invalidate_source();
                                 this.save_current_draft(cx);
@@ -1888,8 +1902,8 @@ impl Desktop {
                                     .w(ROW_CONTROL)
                                     .h(ROW_CONTROL)
                                     .px_0()
-                                    .accessibility_label("来源详情")
-                                    .tooltip("来源详情")
+                                    .accessibility_label(course2md::tr!("来源详情"))
+                                    .tooltip(course2md::tr!("来源详情"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.show_preview_details = !this.show_preview_details;
                                         cx.notify();
@@ -1902,8 +1916,8 @@ impl Desktop {
                                         .w(ROW_CONTROL)
                                         .h(ROW_CONTROL)
                                         .px_0()
-                                        .accessibility_label("重新读取")
-                                        .tooltip("重新读取")
+                                        .accessibility_label(course2md::tr!("重新读取"))
+                                        .tooltip(course2md::tr!("重新读取"))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.inspect_source(window, cx)
                                         })),
@@ -1961,27 +1975,27 @@ impl Desktop {
         let needs_text_choice =
             subtitle_needs_confirmation(source, self.task_options.source_mode) || failure.is_some();
         let description = if self.subtitle_loading {
-            "正在读取字幕…".to_owned()
+            course2md::tr!("正在读取字幕…").to_owned()
         } else if !speech
             && (source.subtitle_request.is_some() || source.subtitle_read_error.is_some())
         {
             match &source.selected_subtitle {
-                Some(_) => "字幕还没读取完成".into(),
-                None => "字幕还没读取完成".into(),
+                Some(_) => course2md::tr!("字幕还没读取完成").into(),
+                None => course2md::tr!("字幕还没读取完成").into(),
             }
         } else if speech {
-            "识别视频声音".into()
+            course2md::tr!("识别视频声音").into()
         } else if let Some(subtitle) = &source.selected_subtitle {
             // 自动选择的解析结果就是当前值，与显式选择同样只显示字幕名
             subtitle.label.clone()
         } else {
             match &source.subtitles {
-                SubtitleEvidence::Unchecked => "未检查字幕".into(),
-                SubtitleEvidence::Found { .. } => "请选择字幕".into(),
+                SubtitleEvidence::Unchecked => course2md::tr!("未检查字幕").into(),
+                SubtitleEvidence::Found { .. } => course2md::tr!("请选择字幕").into(),
                 SubtitleEvidence::NoneFound | SubtitleEvidence::Unsupported { .. } => {
-                    "尚未选择文字来源".into()
+                    course2md::tr!("尚未选择文字来源").into()
                 }
-                SubtitleEvidence::Failed { .. } => "字幕还没读取完成".into(),
+                SubtitleEvidence::Failed { .. } => course2md::tr!("字幕还没读取完成").into(),
             }
         };
         let mut view = v_flex().w_full().min_w_0().gap_3().child(
@@ -2016,9 +2030,9 @@ impl Desktop {
                                 crate::icons::chevron_down()
                             })
                             .label(if self.show_options {
-                                "收起"
+                                course2md::tr!("收起")
                             } else {
-                                "更换"
+                                course2md::tr!("更换")
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.show_options = !this.show_options;
@@ -2032,7 +2046,7 @@ impl Desktop {
                 quiet("cancel-subtitle-read")
                     .icon(crate::icons::close())
                     .self_start()
-                    .label("取消读取字幕")
+                    .label(course2md::tr!("取消读取字幕"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.pending_conversion = None;
                         this.abort_subtitle_read();
@@ -2061,9 +2075,12 @@ impl Desktop {
                                     .flex_shrink_0(),
                             )
                             .child(
-                                accessible_text("subtitle-failed", "字幕未读取成功")
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(color(WARNING)),
+                                accessible_text(
+                                    "subtitle-failed",
+                                    course2md::tr!("字幕未读取成功"),
+                                )
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(color(WARNING)),
                             ),
                     )
                     .child(failure_details),
@@ -2073,7 +2090,7 @@ impl Desktop {
                     outline_pill("use-previous-subtitle")
                         .self_start()
                         .icon(icons::subtitles())
-                        .label("继续使用之前的字幕")
+                        .label(course2md::tr!("继续使用之前的字幕"))
                         .tooltip(old.label.clone())
                         .on_click(cx.listener(|this, _, _, cx| this.use_confirmed_subtitle(cx))),
                 );
@@ -2082,7 +2099,9 @@ impl Desktop {
         let show_text_choices = self.show_options || needs_text_choice;
         if speech && !show_text_choices {
             match &source.subtitles {
-                SubtitleEvidence::NoneFound => view = view.child(help("未找到字幕")),
+                SubtitleEvidence::NoneFound => {
+                    view = view.child(help(course2md::tr!("未找到字幕")))
+                }
                 SubtitleEvidence::Unsupported { message } => {
                     view = view.child(help(message.clone()))
                 }
@@ -2109,7 +2128,7 @@ impl Desktop {
             {
                 choices.push((format!("track:{}", cached.track_id), cached.label.clone()));
             }
-            choices.push(("speech".into(), "识别视频声音".into()));
+            choices.push(("speech".into(), course2md::tr!("识别视频声音").into()));
             let selected = if speech {
                 Some("speech".to_owned())
             } else {
@@ -2122,7 +2141,7 @@ impl Desktop {
             };
             let mut options = v_flex().gap_2().child(
                 div().child(
-                    SingleChoiceGroup::new("import-text-source", "笔记的文字来源")
+                    SingleChoiceGroup::new("import-text-source", course2md::tr!("笔记的文字来源"))
                         .map(|group| {
                             choices.iter().fold(group, |group, (value, _)| {
                                 group.icon(
@@ -2160,7 +2179,7 @@ impl Desktop {
             {
                 options = options.child(self.subtitle_issue(
                     "subtitle-warning",
-                    &format!("部分字幕无法读取：{message}"),
+                    &course2md::tr!("部分字幕无法读取：{}", message),
                     cx,
                 ));
             }
@@ -2168,7 +2187,7 @@ impl Desktop {
                 options = options.child(help(message.clone()));
             }
             if matches!(source.subtitles, SubtitleEvidence::NoneFound) {
-                options = options.child(help("未找到字幕"));
+                options = options.child(help(course2md::tr!("未找到字幕")));
             }
             options = options.child(
                 h_flex()
@@ -2177,7 +2196,7 @@ impl Desktop {
                     .child(
                         outline_pill("retry-subtitles")
                             .icon(icons::refresh())
-                            .label("重新读取字幕")
+                            .label(course2md::tr!("重新读取字幕"))
                             .disabled(self.subtitle_loading)
                             .on_click(cx.listener(|this, _, _, cx| this.retry_subtitles(cx))),
                     )
@@ -2185,7 +2204,7 @@ impl Desktop {
                         view.child(
                             outline_pill("attach-subtitles")
                                 .icon(icons::file_upload())
-                                .label("选择字幕文件")
+                                .label(course2md::tr!("选择字幕文件"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.choose_attached_subtitle(window, cx)
                                 })),
@@ -2206,7 +2225,7 @@ impl Desktop {
                             view.child(
                                 outline_pill("login-for-subtitles")
                                     .icon(icons::bilibili())
-                                    .label("登录 Bilibili")
+                                    .label(course2md::tr!("登录 Bilibili"))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.open_account_dialog(window, cx)
                                     })),
@@ -2224,49 +2243,54 @@ impl Desktop {
     }
 
     fn import_text_mode_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let selector = SingleChoiceGroup::new("conversion-text-mode", "文字来源方式")
-            .segmented()
-            .options(TEXT_SOURCE_CHOICES.map(|(mode, label)| (text_source_id(mode), label)))
-            .icon(text_source_id(TranscriptSource::Auto), icons::auto_fix())
-            .icon(
-                text_source_id(TranscriptSource::Subtitle),
-                icons::subtitles(),
-            )
-            .icon(text_source_id(TranscriptSource::Asr), icons::mic())
-            .selected(text_source_id(self.task_options.source_mode))
-            .on_change(cx.listener(|this, value: &SharedString, _, cx| {
-                let Some(mode) = TEXT_SOURCE_CHOICES
-                    .iter()
-                    .map(|(mode, _)| *mode)
-                    .find(|mode| text_source_id(*mode) == value.as_ref())
-                else {
-                    return;
-                };
-                if mode == TranscriptSource::Asr {
-                    this.use_speech(cx);
-                } else {
-                    this.task_options.source_mode = mode;
-                    this.save_current_draft(cx);
-                    this.advance_conversion_when_ready(cx);
-                    cx.notify();
-                }
-            }));
+        let selector =
+            SingleChoiceGroup::new("conversion-text-mode", course2md::tr!("文字来源方式"))
+                .segmented()
+                .options(text_source_choices().map(|(mode, label)| (text_source_id(mode), label)))
+                .icon(text_source_id(TranscriptSource::Auto), icons::auto_fix())
+                .icon(
+                    text_source_id(TranscriptSource::Subtitle),
+                    icons::subtitles(),
+                )
+                .icon(text_source_id(TranscriptSource::Asr), icons::mic())
+                .selected(text_source_id(self.task_options.source_mode))
+                .on_change(cx.listener(|this, value: &SharedString, _, cx| {
+                    let Some(mode) = text_source_choices()
+                        .iter()
+                        .map(|(mode, _)| *mode)
+                        .find(|mode| text_source_id(*mode) == value.as_ref())
+                    else {
+                        return;
+                    };
+                    if mode == TranscriptSource::Asr {
+                        this.use_speech(cx);
+                    } else {
+                        this.task_options.source_mode = mode;
+                        this.save_current_draft(cx);
+                        this.advance_conversion_when_ready(cx);
+                        cx.notify();
+                    }
+                }));
         let mut view = v_flex()
             .w_full()
             .min_w_0()
             .gap(SECTION_GAP)
             .child(import_option_section(
                 "conversion-text-mode-label",
-                "文字来源",
+                course2md::tr!("文字来源"),
                 v_flex().w_full().gap_2().child(selector).when(
                     self.task_options.source_mode == TranscriptSource::Auto,
-                    |view| view.child(aux_text("有字幕时直接用字幕，没有字幕时识别视频声音")),
+                    |view| {
+                        view.child(aux_text(course2md::tr!(
+                            "有字幕时直接用字幕，没有字幕时识别视频声音"
+                        )))
+                    },
                 ),
             ));
         if self.task_options.source_mode != TranscriptSource::Subtitle {
             view = view.child(outlined_field_label(
                 "conversion-speech-label",
-                "语音识别",
+                course2md::tr!("语音识别"),
                 TEXT_AUX,
                 self.import_speech_options(window, cx),
             ));
@@ -2304,13 +2328,17 @@ impl Desktop {
                 .as_ref()
                 .is_some_and(|prompt| !prompt.trim().is_empty())
         {
-            choices = choices.child(help("使用自定义校对规则"));
+            choices = choices.child(help(course2md::tr!("使用自定义校对规则")));
         }
         let mut view = v_flex()
             .w_full()
             .min_w_0()
             .gap(SECTION_GAP)
-            .child(import_option_section("import-ai-label", "AI 处理", choices));
+            .child(import_option_section(
+                "import-ai-label",
+                course2md::tr!("AI 处理"),
+                choices,
+            ));
         if self.task_options.llm || self.task_options.summarize {
             let mut service = v_flex()
                 .w_full()
@@ -2318,21 +2346,30 @@ impl Desktop {
                 .gap_2()
                 .child(self.task_service_picker(ServicePurpose::Ai, cx));
             if let Some(selected) = self.selected_task_service(ServicePurpose::Ai) {
-                service = service.child(aux_text(format!(
+                service = service.child(aux_text(course2md::tr!(
                     "{}会发送到 {}",
                     if self.task_options.llm && self.task_options.vision {
-                        "文字及对应截图"
+                        course2md::tr!("文字及对应截图")
                     } else {
-                        "文字"
+                        course2md::tr!("文字")
                     },
                     selected.config.host()
                 )));
             }
             view = view.child(
                 if self.selected_task_service(ServicePurpose::Ai).is_some() {
-                    outlined_field_label("import-ai-service-label", "AI 服务", TEXT_AUX, service)
+                    outlined_field_label(
+                        "import-ai-service-label",
+                        course2md::tr!("AI 服务"),
+                        TEXT_AUX,
+                        service,
+                    )
                 } else {
-                    import_option_label("import-ai-service-label", "AI 服务", service)
+                    import_option_label(
+                        "import-ai-service-label",
+                        course2md::tr!("AI 服务"),
+                        service,
+                    )
                 },
             );
         }
@@ -2350,11 +2387,14 @@ impl Desktop {
         if let Err(error) = workspace.transaction(|state| {
             state
                 .draft_mut()
-                .context("当前视频输入暂时不可用")?
+                .context(course2md::tr!("当前视频输入暂时不可用"))?
                 .reset_ai_overrides(&defaults);
             Ok(())
         }) {
-            self.workspace_error = Some(format!("本次选项尚未恢复默认：{error:#}"));
+            self.workspace_error = Some(course2md::tr!(
+                "本次选项尚未恢复默认：{}",
+                format!("{error:#}")
+            ));
             cx.notify();
             return;
         }
@@ -2368,10 +2408,10 @@ impl Desktop {
     fn import_speech_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let cloud = self.task_options.uses_cloud_provider();
         let label = if cloud {
-            "识别服务".to_owned()
+            course2md::tr!("识别服务").to_owned()
         } else {
             let (_, model, _) = self.import_model_request();
-            format!("本机 · {}", course2md::config::model_label(&model))
+            course2md::tr!("本机 · {}", course2md::config::model_label(&model))
         };
         let engine = if cloud {
             String::new()
@@ -2380,7 +2420,7 @@ impl Desktop {
         };
         let current = self.task_options.provider;
         let entity = cx.entity().downgrade();
-        let providers: Vec<_> = PROVIDERS
+        let providers: Vec<_> = providers()
             .iter()
             .enumerate()
             .filter(|(index, _)| {
@@ -2402,7 +2442,7 @@ impl Desktop {
             .rounded(RADIUS_SMALL)
             .w_full()
             .min_w_0()
-            .accessibility_label("语音识别方式")
+            .accessibility_label(course2md::tr!("语音识别方式"))
             .child(div().flex_1().min_w_0().text_left().child(label))
             .child(
                 div()
@@ -2430,7 +2470,7 @@ impl Desktop {
         if cloud {
             view = view
                 .child(self.task_service_picker(ServicePurpose::Speech, cx))
-                .child(aux_text("音频会发送到所选识别服务"));
+                .child(aux_text(course2md::tr!("音频会发送到所选识别服务")));
         } else {
             let (provider, model, root) = self.import_model_request();
             let snapshot = self.setup_model_snapshot(provider, Some(&model), &root);
@@ -2446,7 +2486,7 @@ impl Desktop {
                     })
                 });
             if ready {
-                view = view.child(aux_text(format!(
+                view = view.child(aux_text(course2md::tr!(
                     "模型已下载 · {}",
                     course2md::config::model_label(&model)
                 )));
@@ -2482,7 +2522,7 @@ impl Desktop {
                                     .min_w_0()
                                     .text_size(TEXT_AUX)
                                     .text_color(color(GRAY))
-                                    .child(format!(
+                                    .child(course2md::tr!(
                                         "{} · 待下载",
                                         course2md::config::model_label(&model)
                                     )),
@@ -2490,7 +2530,7 @@ impl Desktop {
                             .child(
                                 outline_pill("import-prepare-model")
                                     .icon(icons::download())
-                                    .label("下载模型")
+                                    .label(course2md::tr!("下载模型"))
                                     .disabled(self.job.is_some())
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.prepare_setup_model(
@@ -2506,13 +2546,13 @@ impl Desktop {
                                     .icon(icons::ellipsis())
                                     .w(CONTROL_HEIGHT)
                                     .px_0()
-                                    .accessibility_label("模型检查与设置")
-                                    .tooltip("模型检查与设置")
+                                    .accessibility_label(course2md::tr!("模型检查与设置"))
+                                    .tooltip(course2md::tr!("模型检查与设置"))
                                     .dropdown_menu(move |menu, _, _| {
                                         let recheck = details.clone();
                                         let settings = details.clone();
                                         menu.item(
-                                            PopupMenuItem::new("重新检查模型")
+                                            PopupMenuItem::new(course2md::tr!("重新检查模型"))
                                                 .icon(icons::refresh())
                                                 .on_click(move |_, _, cx| {
                                                     let _ = recheck.update(cx, |this, cx| {
@@ -2521,7 +2561,7 @@ impl Desktop {
                                                 }),
                                         )
                                         .item(
-                                            PopupMenuItem::new("模型设置")
+                                            PopupMenuItem::new(course2md::tr!("模型设置"))
                                                 .icon(icons::settings())
                                                 .on_click(move |_, window, cx| {
                                                     let _ = settings.update(cx, |this, cx| {
@@ -2533,7 +2573,7 @@ impl Desktop {
                             ),
                     )
                     .when(self.job.is_some(), |view| {
-                        view.child(aux_text("当前任务完成后才能下载模型"))
+                        view.child(aux_text(course2md::tr!("当前任务完成后才能下载模型")))
                     });
             } else {
                 view = view.child(self.model_readiness_panel_with(
@@ -2626,13 +2666,13 @@ impl Desktop {
             let label = selected
                 .as_ref()
                 .map(|library| library.name.clone())
-                .unwrap_or_else(|| "选择保存位置".into());
+                .unwrap_or_else(|| course2md::tr!("选择保存位置").into());
             view = view.child(
                 control("import-library")
                     .icon(crate::icons::folder_open())
                     .w_full()
                     .min_w_0()
-                    .accessibility_label(format!("保存到：{label}"))
+                    .accessibility_label(course2md::tr!("保存到：{}", label))
                     .tooltip(label.clone())
                     .child(
                         div()
@@ -2672,8 +2712,10 @@ impl Desktop {
                                                     this.advance_conversion_when_ready(cx);
                                                 }
                                                 Err(error) => {
-                                                    this.workspace_error =
-                                                        Some(format!("保存位置尚未更新：{error:#}"))
+                                                    this.workspace_error = Some(course2md::tr!(
+                                                        "保存位置尚未更新：{}",
+                                                        format!("{error:#}")
+                                                    ))
                                                 }
                                             }
                                         }
@@ -2700,8 +2742,8 @@ impl Desktop {
                         .w(HERO_CONTROL)
                         .h(HERO_CONTROL)
                         .px_0()
-                        .accessibility_label("新建文件夹")
-                        .tooltip("新建文件夹")
+                        .accessibility_label(course2md::tr!("新建文件夹"))
+                        .tooltip(course2md::tr!("新建文件夹"))
                         .on_click(
                             cx.listener(|this, _, window, cx| this.begin_folder(None, window, cx)),
                         ),
@@ -2713,7 +2755,7 @@ impl Desktop {
             .when(self.source_preview.is_some(), |view| {
                 view.child(import_option_label(
                     "import-title-label",
-                    "笔记名称",
+                    course2md::tr!("笔记名称"),
                     crate::focus_scroll::RevealFocus::new(
                         ("import-title-focus", self.validation_attempt),
                         text_input(&self.inputs[&Field::Title]).w_full(),
@@ -2723,7 +2765,7 @@ impl Desktop {
             })
             .child(outlined_field_label(
                 "import-destination-label",
-                "保存到",
+                course2md::tr!("保存到"),
                 TEXT_AUX,
                 view,
             ))
@@ -2731,7 +2773,10 @@ impl Desktop {
 
     fn import_exports(&self, cx: &mut Context<Self>) -> Div {
         let mut choices = h_flex().w_full().min_w_0().gap_2().flex_wrap();
-        for (index, label) in ["Markdown", "网页", "JSON"].into_iter().enumerate() {
+        for (index, label) in ["Markdown", course2md::tr!("网页"), "JSON"]
+            .into_iter()
+            .enumerate()
+        {
             choices = choices.child(
                 filter_chip(
                     ("import-export", index),
@@ -2754,7 +2799,7 @@ impl Desktop {
             .min_w_0()
             .child(import_option_section(
                 "import-exports-label",
-                "同时导出",
+                course2md::tr!("同时导出"),
                 choices,
             ))
             .when(self.online, |view| {
@@ -2764,8 +2809,8 @@ impl Desktop {
                         .min_w_0()
                         .pt(SECTION_GAP)
                         .child(import_option_switch_row(
-                            "保留原视频",
-                            "供离线播放，会占用更多磁盘空间",
+                            course2md::tr!("保留原视频"),
+                            course2md::tr!("供离线播放，会占用更多磁盘空间"),
                             processing_switch(Switch::new("import-keep-video"))
                                 .checked(self.task_options.keep_video)
                                 .on_click(cx.listener(|this, value, _, cx| {
@@ -2824,9 +2869,9 @@ impl Desktop {
             || self.value(Field::Source, cx).is_empty()
             || (start && self.pending_conversion.is_some());
         let label = if start {
-            "开始转换"
+            course2md::tr!("开始转换")
         } else {
-            "预览视频"
+            course2md::tr!("预览视频")
         };
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("preview-source"), disabled, cx)
@@ -2856,7 +2901,7 @@ impl Desktop {
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("start-conversion"), disabled, cx)
                 .icon(icons::arrow_forward())
-                .label("开始转换")
+                .label(course2md::tr!("开始转换"))
                 .disabled(disabled)
                 .on_click(cx.listener(|this, _, window, cx| this.start_conversion(window, cx))),
         )
@@ -2936,7 +2981,10 @@ impl Desktop {
                 true
             }
             Err(error) => {
-                self.workspace_error = Some(format!("新的视频输入尚未建立：{error:#}"));
+                self.workspace_error = Some(course2md::tr!(
+                    "新的视频输入尚未建立：{}",
+                    format!("{error:#}")
+                ));
                 cx.notify();
                 false
             }
@@ -2958,7 +3006,7 @@ impl Desktop {
         let cancelled_notice = self
             .current_input_task(cx)
             .filter(|task| task.state == workspace::TaskState::Cancelled)
-            .map(|task| (task.id.clone(), "任务已取消".to_owned()));
+            .map(|task| (task.id.clone(), course2md::tr!("任务已取消").to_owned()));
         let compact = is_compact(window);
         let input = v_flex()
             .w_full()
@@ -2978,7 +3026,7 @@ impl Desktop {
                     .items_center()
                     .gap(rems(8. / 14.))
                     .child(
-                        accessible_text("workbench-title", "把视频整理成笔记")
+                        accessible_text("workbench-title", course2md::tr!("把视频整理成笔记"))
                             .role(Role::Heading)
                             .text_size(rems(if compact { 28. / 14. } else { 36. / 14. }))
                             .line_height(rems(if compact { 36. / 14. } else { 44. / 14. }))
@@ -2990,7 +3038,9 @@ impl Desktop {
                             .text_size(if compact { TEXT_BODY } else { TEXT_LEAD })
                             .line_height(rems(24. / 14.))
                             .text_color(color(GRAY))
-                            .child("粘贴链接或拖入本地视频，自动生成带截图的笔记"),
+                            .child(course2md::tr!(
+                                "粘贴链接或拖入本地视频，自动生成带截图的笔记"
+                            )),
                     ),
             )
             .child(input);
@@ -3038,7 +3088,7 @@ impl Desktop {
                 let mut source = v_flex().w_full().min_w_0().gap_4();
                 if text_required {
                     source = source.child(
-                        box_section(icons::subtitles(), "文字来源")
+                        box_section(icons::subtitles(), course2md::tr!("文字来源"))
                             .child(self.text_source_view(cx)),
                     );
                 }
@@ -3046,7 +3096,8 @@ impl Desktop {
                 view = view.child(source);
             } else if text_required {
                 view = view.child(
-                    box_section(icons::subtitles(), "文字来源").child(self.text_source_view(cx)),
+                    box_section(icons::subtitles(), course2md::tr!("文字来源"))
+                        .child(self.text_source_view(cx)),
                 );
             }
         }
@@ -3084,21 +3135,21 @@ impl Desktop {
                                             .text_size(rems(24. / 14.))
                                             .line_height(rems(32. / 14.))
                                             .font_weight(FontWeight::MEDIUM)
-                                            .child("处理选项"),
+                                            .child(course2md::tr!("处理选项")),
                                     )
                                     .child(
                                         quiet("close-generation-options")
                                             .icon(crate::icons::close())
                                             .w(CONTROL_HEIGHT)
                                             .px_0()
-                                            .accessibility_label("收起处理选项")
+                                            .accessibility_label(course2md::tr!("收起处理选项"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.generation_options_open = false;
                                                 cx.notify();
                                             })),
                                     ),
                             )
-                            .child(aux_text("仅对本次生效")),
+                            .child(aux_text(course2md::tr!("仅对本次生效"))),
                     )
                     .child(self.import_text_mode_options(window, cx))
                     .child(div().h(px(1.)).bg(color(HAIRLINE)))
@@ -3110,7 +3161,7 @@ impl Desktop {
                         h_flex().w_full().justify_end().pt(rems(8. / 14.)).child(
                             quiet("reset-task-overrides")
                                 .icon(icons::refresh())
-                                .label("恢复 AI 默认")
+                                .label(course2md::tr!("恢复 AI 默认"))
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.reset_task_ai_overrides(cx)),
                                 ),
@@ -3215,7 +3266,7 @@ impl Desktop {
                         div()
                             .text_size(rems(28. / 14.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("松开以添加视频"),
+                            .child(course2md::tr!("松开以添加视频")),
                     ),
             )
             .on_drop(
@@ -3276,7 +3327,7 @@ impl Desktop {
             actions = actions.child(
                 outline_pill("repair-conversion-components")
                     .icon(icons::settings())
-                    .label("检查所需组件")
+                    .label(course2md::tr!("检查所需组件"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_settings(window, cx);
                         this.select_settings_tab(
@@ -3292,9 +3343,9 @@ impl Desktop {
                 outline_pill("repair-generation-preferences")
                     .icon(icons::refresh())
                     .label(if issue.can_retry {
-                        "重试保存生成选项"
+                        course2md::tr!("重试保存生成选项")
                     } else {
-                        "重置处理选项"
+                        course2md::tr!("重置处理选项")
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if !this.save_current_draft(cx) {
@@ -3324,9 +3375,9 @@ impl Desktop {
             cx,
         ));
         if let Some((id, title, location)) = matching_task.clone() {
-            let location = location.unwrap_or_else(|| "原保存位置".into());
+            let location = location.unwrap_or_else(|| course2md::tr!("原保存位置").into());
             inset = inset.child(conversion_fact(
-                format!("已有相同处理任务：《{title}》（{location}）"),
+                course2md::tr!("已有相同处理任务：《{}》（{}）", title, location),
                 true,
             ));
             actions = actions.child(
@@ -3334,7 +3385,7 @@ impl Desktop {
                     .track_focus(&self.import_submit_focus)
                     .self_start()
                     .icon(icons::task())
-                    .label("查看任务")
+                    .label(course2md::tr!("查看任务"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.save_current_draft(cx);
                         this.select_task(&id, cx);
@@ -3346,10 +3397,10 @@ impl Desktop {
             let location = self
                 .course_location(&course)
                 .map(|library| library.name.clone())
-                .unwrap_or_else(|| "笔记库".into());
+                .unwrap_or_else(|| course2md::tr!("笔记库").into());
             inset = inset.child(info_callout(
                 "existing-note-notice",
-                format!("已有笔记，保存在「{location}」"),
+                course2md::tr!("已有笔记，保存在「{}」", location),
             ));
             actions = actions.child(
                 h_flex()
@@ -3358,7 +3409,7 @@ impl Desktop {
                     .child(
                         primary_pill("open-existing-note")
                             .icon(crate::icons::book_open())
-                            .label("打开已有笔记")
+                            .label(course2md::tr!("打开已有笔记"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.save_current_draft(cx);
                                 this.open_course(course.clone(), cx);
@@ -3368,7 +3419,7 @@ impl Desktop {
                         outline_pill("generate-new-version")
                             .icon(icons::refresh())
                             .track_focus(&self.import_submit_focus)
-                            .label("生成新版笔记")
+                            .label(course2md::tr!("生成新版笔记"))
                             .disabled(reading || self.workspace.is_none() || preferences_blocked)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.following_conversion =
@@ -3378,15 +3429,15 @@ impl Desktop {
                     ),
             );
             if busy {
-                inset = inset.child(conversion_fact("将排在当前任务之后", false));
+                inset = inset.child(conversion_fact(course2md::tr!("将排在当前任务之后"), false));
             }
         } else if let Some(purpose) = self.missing_import_service() {
             actions = actions.child(
                 primary_pill("configure-conversion-service")
                     .icon(icons::settings())
                     .label(match purpose {
-                        ServicePurpose::Speech => "设置语音服务",
-                        ServicePurpose::Ai => "设置 AI 服务",
+                        ServicePurpose::Speech => course2md::tr!("设置语音服务"),
+                        ServicePurpose::Ai => course2md::tr!("设置 AI 服务"),
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_task_service_editor(purpose, window, cx);
@@ -3403,7 +3454,7 @@ impl Desktop {
             actions = actions.child(
                 outline_pill("retry-conversion-validation")
                     .icon(icons::refresh())
-                    .label("重试转换")
+                    .label(course2md::tr!("重试转换"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.start_conversion(window, cx);
                     })),
@@ -3413,7 +3464,7 @@ impl Desktop {
             actions = actions.child(
                 quiet("cancel-pending-conversion")
                     .icon(icons::close())
-                    .label("取消转换")
+                    .label(course2md::tr!("取消转换"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.pending_conversion = None;
                         this.following_conversion = None;

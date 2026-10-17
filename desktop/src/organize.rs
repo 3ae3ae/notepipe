@@ -29,10 +29,12 @@ pub fn relative_key(root: &Path, course: &Path) -> Result<PathBuf> {
     {
         return Ok(key.to_path_buf());
     }
-    let root = std::fs::canonicalize(root).context("笔记库文件夹暂时无法访问")?;
-    let course = std::fs::canonicalize(course).context("笔记位置暂时无法访问")?;
-    let key = course.strip_prefix(root).context("笔记不在这个笔记库中")?;
-    ensure!(valid(key), "笔记位置无效");
+    let root = std::fs::canonicalize(root).context(course2md::tr!("笔记库文件夹暂时无法访问"))?;
+    let course = std::fs::canonicalize(course).context(course2md::tr!("笔记位置暂时无法访问"))?;
+    let key = course
+        .strip_prefix(root)
+        .context(course2md::tr!("笔记不在这个笔记库中"))?;
+    ensure!(valid(key), course2md::tr!("笔记位置无效"));
     Ok(key.to_path_buf())
 }
 
@@ -44,7 +46,7 @@ fn save_with_backup(path: &Path, bytes: &[u8]) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             course2md::checkpoint::atomic_write(&backup, bytes)?
         }
-        Err(error) => return Err(error).context("无法保留原记录"),
+        Err(error) => return Err(error).context(course2md::tr!("无法保留原记录")),
     }
     course2md::checkpoint::atomic_write(path, bytes)
 }
@@ -62,7 +64,11 @@ fn metadata_recovery<T: serde::de::DeserializeOwned>(
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("无法读取文件夹信息，请检查保存位置的访问权限"),
+        Err(error) => {
+            return Err(error).context(course2md::tr!(
+                "无法读取文件夹信息，请检查保存位置的访问权限"
+            ));
+        }
     };
     if serde_json::from_slice::<T>(&bytes).is_ok() {
         return Ok(None);
@@ -87,23 +93,24 @@ fn recover_metadata<T: serde::de::DeserializeOwned + Serialize + Default>(
 ) -> Result<(T, PathBuf)> {
     ensure!(
         root.is_dir(),
-        "笔记库文件夹暂时无法访问，请重新连接磁盘后再试"
+        course2md::tr!("笔记库文件夹暂时无法访问，请重新连接磁盘后再试")
     );
     let path = root.join(filename);
     let _lock = course2md::runtime::lock_file(&path.with_extension("lock"))?;
-    let original = std::fs::read(&path).context("无法读取并保留原记录，尚未恢复")?;
+    let original =
+        std::fs::read(&path).context(course2md::tr!("无法读取并保留原记录，尚未恢复"))?;
     ensure!(
         serde_json::from_slice::<T>(&original).is_err(),
-        "记录已恢复，请重新扫描笔记库"
+        course2md::tr!("记录已恢复，请重新扫描笔记库")
     );
     let library = if rebuild {
         T::default()
     } else {
         serde_json::from_slice::<T>(
             &std::fs::read(path.with_extension("json.bak"))
-                .context("最近备份无法读取，原记录已保留")?,
+                .context(course2md::tr!("最近备份无法读取，原记录已保留"))?,
         )
-        .context("最近备份也无法读取，原记录已保留")?
+        .context(course2md::tr!("最近备份也无法读取，原记录已保留"))?
     };
     let preserved = root.join(format!(
         "{}-damaged-{}.json",
@@ -124,10 +131,10 @@ struct Titles {
 pub fn title_aliases(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
     match std::fs::read(root.join(TITLES)) {
         Ok(bytes) => Ok(serde_json::from_slice::<Titles>(&bytes)
-            .context("笔记名称记录无法读取，原文件已保留")?
+            .context(course2md::tr!("笔记名称记录无法读取，原文件已保留"))?
             .names),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-        Err(error) => Err(error).context("笔记名称记录暂时无法读取"),
+        Err(error) => Err(error).context(course2md::tr!("笔记名称记录暂时无法读取")),
     }
 }
 
@@ -148,11 +155,14 @@ pub fn title_alias(root: &Path, course: &Path) -> Result<Option<String>> {
 
 pub fn rename_course(root: &Path, course: &Path, name: &str) -> Result<()> {
     let name = name.trim();
-    ensure!(!name.is_empty(), "请输入笔记名称");
-    ensure!(name.chars().count() <= 240, "笔记名称最多 240 个字符");
+    ensure!(!name.is_empty(), course2md::tr!("请输入笔记名称"));
+    ensure!(
+        name.chars().count() <= 240,
+        course2md::tr!("笔记名称最多 240 个字符")
+    );
     ensure!(
         root.is_dir() && course.is_dir(),
-        "这份笔记的位置暂时无法访问"
+        course2md::tr!("这份笔记的位置暂时无法访问")
     );
     let key = relative_key(root, course)?;
     let _lock = course2md::runtime::lock_file(&root.join(".course2md-titles.lock"))?;
@@ -175,12 +185,11 @@ impl Library {
     pub fn load(root: &Path) -> Result<Self> {
         ensure!(
             root.is_dir(),
-            "笔记库文件夹暂时无法访问，请重新连接磁盘后再试"
+            course2md::tr!("笔记库文件夹暂时无法访问，请重新连接磁盘后再试")
         );
         match std::fs::read(root.join(FILE)) {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).context("文件夹信息损坏；原文件已保留，请修复后重试")
-            }
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .context(course2md::tr!("文件夹信息损坏；原文件已保留，请修复后重试")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e.into()),
         }
@@ -188,7 +197,7 @@ impl Library {
     pub fn edit(root: &Path, change: impl FnOnce(&mut Self) -> Result<()>) -> Result<Self> {
         ensure!(
             root.is_dir(),
-            "笔记库文件夹暂时无法访问，请重新连接磁盘后再试"
+            course2md::tr!("笔记库文件夹暂时无法访问，请重新连接磁盘后再试")
         );
         let _lock = course2md::runtime::lock_file(&root.join(".course2md-library.lock"))?;
         let mut library = Self::load(root)?;
@@ -198,15 +207,21 @@ impl Library {
     }
     pub fn rename(&mut self, id: Option<u64>, name: &str) -> Result<u64> {
         let name = name.trim();
-        ensure!(!name.is_empty(), "请输入文件夹名称");
-        ensure!(name.chars().count() <= 60, "文件夹名称最多 60 个字符");
-        ensure!(name != "未分类", "「未分类」已被使用，请换一个文件夹名称");
-        ensure!(!self.folders.iter().any(|(key, value)| Some(*key) != id && value.to_lowercase() == name.to_lowercase()), "已有同名文件夹");
+        ensure!(!name.is_empty(), course2md::tr!("请输入文件夹名称"));
+        ensure!(
+            name.chars().count() <= 60,
+            course2md::tr!("文件夹名称最多 60 个字符")
+        );
+        ensure!(
+            name != course2md::tr!("未分类"),
+            course2md::tr!("「未分类」已被使用，请换一个文件夹名称")
+        );
+        ensure!(!self.folders.iter().any(|(key, value)| Some(*key) != id && value.to_lowercase() == name.to_lowercase()), course2md::tr!("已有同名文件夹"));
         let id = match id {
             Some(id) => {
                 ensure!(
                     self.folders.contains_key(&id),
-                    "文件夹已不存在，请重新扫描笔记库"
+                    course2md::tr!("文件夹已不存在，请重新扫描笔记库")
                 );
                 id
             }
@@ -215,7 +230,7 @@ impl Library {
                     .next_id
                     .max(self.folders.keys().copied().max().unwrap_or(0))
                     .checked_add(1)
-                    .context("文件夹编号已耗尽")?;
+                    .context(course2md::tr!("文件夹编号已耗尽"))?;
                 self.next_id
             }
         };
@@ -242,7 +257,7 @@ impl Library {
         if let Some(id) = folder {
             ensure!(
                 self.folders.contains_key(&id),
-                "文件夹已不存在，请选择其他文件夹"
+                course2md::tr!("文件夹已不存在，请选择其他文件夹")
             );
             self.courses.insert(key, id);
         } else {

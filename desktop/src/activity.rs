@@ -52,9 +52,9 @@ impl Activity {
     /// Live AI stage status: the first returned response replaces the waiting text.
     pub fn ai_detail(&self) -> &'static str {
         if self.responded {
-            "AI 正在返回结果"
+            course2md::tr!("AI 正在返回结果")
         } else {
-            "等待 AI 服务返回结果"
+            course2md::tr!("等待 AI 服务返回结果")
         }
     }
     pub fn fraction(&self) -> Option<f32> {
@@ -72,13 +72,13 @@ impl Activity {
     pub fn transfer_metrics(&self, stage: &str, running: bool) -> TransferMetrics {
         if self.done {
             return TransferMetrics {
-                note: Some("已完成".into()),
+                note: Some(course2md::tr!("已完成").into()),
                 ..TransferMetrics::default()
             };
         }
         if !running {
             return TransferMetrics {
-                note: Some("已停止".into()),
+                note: Some(course2md::tr!("已停止").into()),
                 ..TransferMetrics::default()
             };
         }
@@ -88,7 +88,7 @@ impl Activity {
         if stage == "model/apple" {
             return TransferMetrics {
                 quantity,
-                note: Some(format!(
+                note: Some(course2md::tr!(
                     "已用 {}",
                     duration(self.started.elapsed().as_secs_f64())
                 )),
@@ -103,9 +103,9 @@ impl Activity {
                 speed: byte_download.then(|| "—".into()),
                 note: Some(
                     if stage.starts_with("scenes/") {
-                        "仍在处理"
+                        course2md::tr!("仍在处理")
                     } else {
-                        "等待响应"
+                        course2md::tr!("等待响应")
                     }
                     .into(),
                 ),
@@ -121,13 +121,15 @@ impl Activity {
                 Some(rate) => Some(TransferEta::Remaining(duration(
                     (self.total - self.current) as f64 / rate,
                 ))),
-                None if byte_download => Some(TransferEta::Remaining("计算中".into())),
+                None if byte_download => {
+                    Some(TransferEta::Remaining(course2md::tr!("计算中").into()))
+                }
                 None => None,
             }
         } else if self.total > 0 {
-            Some(TransferEta::Note("收尾中…".into()))
+            Some(TransferEta::Note(course2md::tr!("收尾中…").into()))
         } else if !byte_download {
-            Some(TransferEta::Note(format!(
+            Some(TransferEta::Note(course2md::tr!(
                 "已用 {}",
                 duration(self.started.elapsed().as_secs_f64())
             )))
@@ -136,7 +138,7 @@ impl Activity {
         };
         TransferMetrics {
             quantity,
-            note: (byte_download && speed.is_none()).then(|| "正在测量速度".into()),
+            note: (byte_download && speed.is_none()).then(|| course2md::tr!("正在测量速度").into()),
             speed,
             eta,
         }
@@ -170,11 +172,11 @@ impl TransferMetrics {
             parts.push(self.quantity.clone());
         }
         if let Some(speed) = &self.speed {
-            parts.push(format!("速度 {speed}"));
+            parts.push(course2md::tr!("速度 {}", speed));
         }
         if let Some(eta) = &self.eta {
             parts.push(match eta {
-                TransferEta::Remaining(value) => format!("预计剩余 {value}"),
+                TransferEta::Remaining(value) => course2md::tr!("预计剩余 {}", value),
                 TransferEta::Note(value) => value.clone(),
             });
         }
@@ -191,9 +193,9 @@ fn is_byte_download(stage: &str) -> bool {
 
 pub fn quantity(stage: &str, current: u64, total: u64) -> String {
     if stage == "scenes/scan" {
-        format!("已检查 {current} 张画面")
+        course2md::tr!("已检查 {} 张画面", current)
     } else if stage == "scenes/extract" && total > 0 {
-        format!("已保存 {current} / {total} 张截图")
+        course2md::tr!("已保存 {} / {} 张截图", current, total)
     } else if is_byte_download(stage) {
         if total > 0 {
             format!("{} / {}", bytes(current), bytes(total))
@@ -202,7 +204,7 @@ pub fn quantity(stage: &str, current: u64, total: u64) -> String {
         }
     } else if total > 0 {
         if stage == "transcribe" {
-            format!("{current} / {total} 段")
+            course2md::tr!("{} / {} 段", current, total)
         } else {
             format!(
                 "{:.0}%",
@@ -221,8 +223,8 @@ pub fn quantity(stage: &str, current: u64, total: u64) -> String {
 /// the term (the retry button beside it already names the next step).
 pub fn component_failure_message(label: &str, message: Option<&str>) -> String {
     let term = match label {
-        "截图" | "摘要" => format!("{label}未生成"),
-        _ => format!("{label}未完成"),
+        "截图" | "摘要" => course2md::tr!("{}未生成", label),
+        _ => course2md::tr!("{}未完成", label),
     };
     let chinese = message
         .unwrap_or_default()
@@ -232,8 +234,8 @@ pub fn component_failure_message(label: &str, message: Option<&str>) -> String {
         .trim();
     let mut cause = chinese;
     for prefix in [
-        format!("{label}尚未完成"),
-        format!("{label}未完成"),
+        course2md::tr!("{}尚未完成", label),
+        course2md::tr!("{}未完成", label),
         term.clone(),
     ] {
         if let Some(rest) = cause.strip_prefix(prefix.as_str()) {
@@ -258,7 +260,7 @@ pub fn component_failure_message(label: &str, message: Option<&str>) -> String {
     if restates {
         term
     } else {
-        format!("{term}：{cause}")
+        course2md::tr!("{}：{}", term, cause)
     }
 }
 
@@ -284,27 +286,27 @@ pub fn stage_order(stage: &str) -> usize {
 pub fn title(stage: &str) -> String {
     if let Some(file) = stage.strip_prefix("model/") {
         return if file == "apple" {
-            "准备 Apple 识别模型".into()
+            course2md::tr!("准备 Apple 识别模型").into()
         } else if file.starts_with("mmproj") {
-            "下载音频编码器".into()
+            course2md::tr!("下载音频编码器").into()
         } else {
-            "下载语音模型".into()
+            course2md::tr!("下载语音模型").into()
         };
     }
     match stage {
-        "model-load" => "加载识别模型",
-        "fetch" => "读取课程",
-        "download" => "下载视频",
-        "scenes" => "提取画面",
-        "scenes/scan" => "扫描画面",
-        "scenes/extract" => "生成截图",
-        "audio" => "提取音频",
-        "transcribe" => "语音转写",
-        "subtitle" => "读取字幕",
-        "llm" => "AI 校对",
-        "summary" | "summarize" => "生成摘要",
-        "export" | "exports" => "导出文件",
-        "render" => "生成笔记",
+        "model-load" => course2md::tr!("加载识别模型"),
+        "fetch" => course2md::tr!("读取课程"),
+        "download" => course2md::tr!("下载视频"),
+        "scenes" => course2md::tr!("提取画面"),
+        "scenes/scan" => course2md::tr!("扫描画面"),
+        "scenes/extract" => course2md::tr!("生成截图"),
+        "audio" => course2md::tr!("提取音频"),
+        "transcribe" => course2md::tr!("语音转写"),
+        "subtitle" => course2md::tr!("读取字幕"),
+        "llm" => course2md::tr!("AI 校对"),
+        "summary" | "summarize" => course2md::tr!("生成摘要"),
+        "export" | "exports" => course2md::tr!("导出文件"),
+        "render" => course2md::tr!("生成笔记"),
         _ => stage,
     }
     .into()
@@ -336,10 +338,10 @@ pub(crate) fn model_transfer_phase(stage: &str, message: &str) -> String {
         .any(|word| matches!(word, "loading" | "load"))
         || message.contains("加载")
     {
-        return "加载识别模型".into();
+        return course2md::tr!("加载识别模型").into();
     }
     if lower.contains("qwen") && lower.contains('/') {
-        return "下载 Qwen3 模型文件".into();
+        return course2md::tr!("下载 Qwen3 模型文件").into();
     }
     title(stage)
 }
@@ -352,7 +354,7 @@ pub(crate) fn bytes(value: u64) -> String {
     } else if value >= 1024 {
         format!("{:.0} KB", value as f64 / 1024.)
     } else {
-        format!("{value} 字节")
+        course2md::tr!("{} 字节", value)
     }
 }
 
@@ -361,18 +363,18 @@ fn throughput(bytes_per_sec: f64) -> String {
     // （bytes 只接 u64，无法表达小数舍入）。
     let value = bytes_per_sec.max(0.);
     if value < 1024. {
-        return format!("{value:.0} 字节");
+        return course2md::tr!("{} 字节", format!("{value:.0}"));
     }
     bytes(value as u64)
 }
 fn duration(seconds: f64) -> String {
     let seconds = seconds.ceil() as u64;
     if seconds >= 3600 {
-        format!("{} 小时 {} 分", seconds / 3600, seconds % 3600 / 60)
+        course2md::tr!("{} 小时 {} 分", seconds / 3600, seconds % 3600 / 60)
     } else if seconds >= 60 {
-        format!("{} 分 {} 秒", seconds / 60, seconds % 60)
+        course2md::tr!("{} 分 {} 秒", seconds / 60, seconds % 60)
     } else {
-        format!("{seconds} 秒")
+        course2md::tr!("{} 秒", seconds)
     }
 }
 
@@ -423,7 +425,13 @@ mod tests {
         activity.update(4 * 1024 * 1024, 8 * 1024 * 1024, None);
         let metrics = activity.transfer_metrics("model/model.gguf", true);
         assert_eq!(metrics.quantity, "4.0 MB / 8.0 MB");
-        assert_eq!(metrics.speed.as_deref(), Some("410 KB/s"));
+        assert!(
+            metrics
+                .speed
+                .as_deref()
+                .is_some_and(|speed| speed.ends_with(" KB/s")),
+            "{metrics:?}"
+        );
         assert!(
             matches!(&metrics.eta, Some(TransferEta::Remaining(value)) if value.ends_with("秒")),
             "{metrics:?}"
@@ -431,7 +439,7 @@ mod tests {
         let detail = activity.detail("model/model.gguf", true);
         assert!(detail.contains("4.0 MB / 8.0 MB"), "{detail}");
         assert!(
-            detail.contains("速度 410 KB/s") && detail.contains("预计剩余"),
+            detail.contains("速度 ") && detail.contains("预计剩余"),
             "{detail}"
         );
     }

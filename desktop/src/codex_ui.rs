@@ -106,7 +106,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(crate::INTERRUPTED.into()));
+                .unwrap_or_else(|_| Err(crate::interrupted().into()));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, CodexWork::Checking) {
                     return;
@@ -116,7 +116,7 @@ impl Desktop {
                     Ok(status) => this.codex.status = Some(status),
                     Err(error) => this
                         .codex
-                        .fail(format!("暂时无法读取 Codex 登录状态：{error}")),
+                        .fail(course2md::tr!("暂时无法读取 Codex 登录状态：{}", error)),
                 }
                 // 已连接的 Codex 界面没有目录时，顺接拉取账号目录（空模型输入自动填首个候选）
                 let needs_catalog = matches!(this.codex.status, Some(LoginStatus::Connected(_)))
@@ -166,7 +166,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, work) {
                     return;
@@ -176,7 +176,7 @@ impl Desktop {
                     Ok(catalog) => {
                         this.codex.status = Some(LoginStatus::Connected("Codex".into()));
                         if catalog.catalog_is_fallback {
-                            this.codex.inform("模型目录暂不可用，已使用默认模型".into());
+                            this.codex.inform(course2md::tr!("模型目录暂不可用，已使用默认模型").into());
                         } else {
                             this.codex.notice = None;
                         }
@@ -189,15 +189,15 @@ impl Desktop {
                             // 登录缺失/失效：引导使用界面内的连接动作，而非 CLI 命令
                             match work {
                                 CodexWork::Importing => {
-                                    "命令行 Codex 的登录已失效，请先在 Codex 中重新登录再导入，或改用浏览器授权"
+                                    course2md::tr!("命令行 Codex 的登录已失效，请先在 Codex 中重新登录再导入，或改用浏览器授权")
                                         .into()
                                 }
-                                _ => "Codex 登录已失效，请重新连接".into(),
+                                _ => course2md::tr!("Codex 登录已失效，请重新连接").into(),
                             }
                         } else {
                             match work {
-                                CodexWork::Importing => format!("导入 Codex 登录未完成：{error:#}"),
-                                _ => format!("浏览器授权未完成：{error:#}"),
+                                CodexWork::Importing => course2md::tr!("导入 Codex 登录未完成：{}", format!("{error:#}")),
+                                _ => course2md::tr!("浏览器授权未完成：{}", format!("{error:#}")),
                             }
                         };
                         this.codex.fail(message);
@@ -218,7 +218,7 @@ impl Desktop {
             return;
         }
         if self.codex.busy() {
-            let message = "上一个 Codex 请求尚未完成".to_string();
+            let message = course2md::tr!("上一个 Codex 请求尚未完成").to_string();
             self.codex_form_models_failed(surface, message);
             cx.notify();
             return;
@@ -229,7 +229,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, CodexWork::Models) {
                     return;
@@ -242,9 +242,9 @@ impl Desktop {
                     }
                     Err(error) => {
                         let message = if login_required(&error) {
-                            "Codex 登录已失效，请先连接 Codex 账号".to_string()
+                            course2md::tr!("Codex 登录已失效，请先连接 Codex 账号").to_string()
                         } else {
-                            format!("暂时无法获取 Codex 模型目录：{error:#}")
+                            course2md::tr!("暂时无法获取 Codex 模型目录：{}", format!("{error:#}"))
                         };
                         this.codex_form_models_failed(surface, message);
                     }
@@ -267,7 +267,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, CodexWork::LoggingOut) {
                     return;
@@ -277,13 +277,15 @@ impl Desktop {
                     Ok(_) => {
                         this.codex.status = Some(LoginStatus::Disconnected);
                         if this.codex_detach_default_service() {
-                            this.codex
-                                .inform("已退出 Codex 登录；默认 AI 服务已解除绑定".into());
+                            this.codex.inform(
+                                course2md::tr!("已退出 Codex 登录；默认 AI 服务已解除绑定").into(),
+                            );
                         }
                         this.codex_forms_logged_out();
                     }
                     Err(error) => {
-                        this.codex.fail(format!("退出登录尚未完成：{error:#}"));
+                        this.codex
+                            .fail(course2md::tr!("退出登录尚未完成：{}", format!("{error:#}")));
                     }
                 }
                 cx.notify();
@@ -311,8 +313,9 @@ impl Desktop {
         {
             Ok(_) => true,
             Err(error) => {
-                self.codex.fail(format!(
-                    "已退出 Codex 登录，默认 AI 服务尚未解除绑定：{error:#}"
+                self.codex.fail(course2md::tr!(
+                    "已退出 Codex 登录，默认 AI 服务尚未解除绑定：{}",
+                    format!("{error:#}")
                 ));
                 false
             }
@@ -346,12 +349,12 @@ impl Desktop {
         let working = self.codex.working;
         let busy = working.is_some();
         let (kind, label) = match (working, &self.codex.status) {
-            (Some(CodexWork::Checking), _) => (BadgeKind::Progress, "正在检查"),
-            (Some(CodexWork::LoggingOut), _) => (BadgeKind::Progress, "正在退出"),
-            (Some(_), _) => (BadgeKind::Progress, "正在连接"),
-            (_, Some(LoginStatus::Connected(_))) => (BadgeKind::Success, "已连接"),
-            (_, Some(LoginStatus::Expired)) => (BadgeKind::Warning, "登录已失效"),
-            _ => (BadgeKind::Neutral, "未连接"),
+            (Some(CodexWork::Checking), _) => (BadgeKind::Progress, course2md::tr!("正在检查")),
+            (Some(CodexWork::LoggingOut), _) => (BadgeKind::Progress, course2md::tr!("正在退出")),
+            (Some(_), _) => (BadgeKind::Progress, course2md::tr!("正在连接")),
+            (_, Some(LoginStatus::Connected(_))) => (BadgeKind::Success, course2md::tr!("已连接")),
+            (_, Some(LoginStatus::Expired)) => (BadgeKind::Warning, course2md::tr!("登录已失效")),
+            _ => (BadgeKind::Neutral, course2md::tr!("未连接")),
         };
         let detail = match &self.codex.status {
             Some(LoginStatus::Connected(detail)) if !detail.trim().is_empty() => {
@@ -363,11 +366,15 @@ impl Desktop {
             && !matches!(working, Some(CodexWork::LoggingOut));
         let notice = self.codex.notice.clone();
         let authorizing = working == Some(CodexWork::Authorizing);
-        let mut lines = vec![("policy", "使用你的 ChatGPT 订阅".to_owned(), false)];
+        let mut lines = vec![(
+            "policy",
+            course2md::tr!("使用你的 ChatGPT 订阅").to_owned(),
+            false,
+        )];
         if authorizing {
             lines.push((
                 "authorizing",
-                "请在浏览器中完成授权（约 3 分钟内）".into(),
+                course2md::tr!("请在浏览器中完成授权（约 3 分钟内）").into(),
                 false,
             ));
         }
@@ -375,7 +382,7 @@ impl Desktop {
         crate::settings_ui::AccountCard {
             id,
             icon: icons::sparkles(),
-            title: "Codex 账号",
+            title: course2md::tr!("Codex 账号"),
             status: (kind, label),
             detail,
             busy,
@@ -388,7 +395,7 @@ impl Desktop {
                             SettingsText::settings_text,
                         )
                         .icon(icons::external_link())
-                        .label("浏览器授权")
+                        .label(course2md::tr!("浏览器授权"))
                         .disabled(disabled || busy)
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.codex_authorize(surface, cx)),
@@ -401,9 +408,9 @@ impl Desktop {
                         )
                         .icon(icons::login())
                         .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
-                            "重新导入 Codex 登录"
+                            course2md::tr!("重新导入 Codex 登录")
                         } else {
-                            "导入 Codex 登录"
+                            course2md::tr!("导入 Codex 登录")
                         })
                         .disabled(disabled || busy)
                         .on_click(cx.listener(move |this, _, _, cx| this.codex_import(surface, cx)))
@@ -418,7 +425,7 @@ impl Desktop {
                             SettingsText::settings_text,
                         )
                         .icon(icons::refresh())
-                        .label("重新检查")
+                        .label(course2md::tr!("重新检查"))
                         .disabled(disabled || busy)
                         .on_click(
                             cx.listener(move |this, _, _, cx| {
@@ -432,7 +439,7 @@ impl Desktop {
                             SettingsText::settings_text,
                         )
                         .icon(icons::logout())
-                        .label("退出登录")
+                        .label(course2md::tr!("退出登录"))
                         .disabled(disabled || busy)
                         .on_click(cx.listener(move |this, _, _, cx| this.codex_logout(surface, cx)))
                         .into_any_element(),

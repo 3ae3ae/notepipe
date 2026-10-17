@@ -22,7 +22,7 @@ pub(crate) fn library_filter_options(
 ) -> Vec<LibraryFilterOption> {
     let mut options = vec![LibraryFilterOption {
         value: "all".into(),
-        label: "全部笔记".into(),
+        label: course2md::tr!("全部笔记").into(),
         root: current_root.to_path_buf(),
         folder: None,
     }];
@@ -30,9 +30,9 @@ pub(crate) fn library_filter_options(
         let unfiled = LibraryFilterOption {
             value: format!("f-{index}-0"),
             label: if multi {
-                format!("{library_name} · 未分类")
+                course2md::tr!("{} · 未分类", library_name)
             } else {
-                "未分类".into()
+                course2md::tr!("未分类").into()
             },
             root: root.clone(),
             folder: Some(0),
@@ -101,7 +101,7 @@ fn inset_divider() -> Div {
 }
 
 fn incomplete_badge() -> Div {
-    h_flex().child(badge(BadgeKind::Warning).child("部分内容待补全"))
+    h_flex().child(badge(BadgeKind::Warning).child(course2md::tr!("部分内容待补全")))
 }
 
 /// Geometry shared by list and card layouts; rem-based spacing scales with text.
@@ -238,7 +238,11 @@ impl RenderOnce for IssueDetails {
                 } else {
                     crate::icons::info()
                 })
-                .label(if open { "收起详情" } else { "查看详情" })
+                .label(if open {
+                    course2md::tr!("收起详情")
+                } else {
+                    course2md::tr!("查看详情")
+                })
                 .on_click(move |_, _, cx| {
                     state.update(cx, |open, cx| {
                         *open = !*open;
@@ -326,7 +330,9 @@ impl CourseMeta {
     /// The recent-notes row shows the duration on the cover and a short date.
     fn short_line(&self) -> String {
         use chrono::Datelike;
-        self.parts(false, |date| format!("{}月{}日", date.month(), date.day()))
+        self.parts(false, |date| {
+            crate::i18n::month_day(date.month(), date.day())
+        })
     }
 
     fn parts(&self, duration: bool, date: impl Fn(&chrono::NaiveDate) -> String) -> String {
@@ -339,7 +345,7 @@ impl CourseMeta {
                 parts.push(course2md::render::fmt_ts(seconds));
             }
             if source.local {
-                parts.push("本地视频".into());
+                parts.push(course2md::tr!("本地视频").into());
             }
         }
         parts.extend(self.date.as_ref().map(date));
@@ -380,7 +386,11 @@ impl LibraryViewCache {
             Err(error) => cache.alias_issues.push(LibraryIssue {
                 root: location.root.clone(),
                 kind: LibraryIssueKind::Titles,
-                message: format!("{}的显示名称尚未读取：{error:#}", location.name),
+                message: course2md::tr!(
+                    "{}的显示名称尚未读取：{}",
+                    location.name,
+                    format!("{error:#}")
+                ),
             }),
         }
         if let Some(scan) = scan {
@@ -451,7 +461,7 @@ impl CourseRenameDialog {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update_in(cx, |this, window, cx| {
                 this.saving = false;
                 match result {
@@ -477,10 +487,13 @@ impl Render for CourseRenameDialog {
         v_flex()
             .id("rename-note-dialog")
             .role(Role::Dialog)
-            .aria_label("重命名笔记")
+            .aria_label(course2md::tr!("重命名笔记"))
             .gap_3()
-            .child(accessible_text("rename-note-label", "笔记名称"))
-            .child(text_input(&self.input).aria_label("笔记名称"))
+            .child(accessible_text(
+                "rename-note-label",
+                course2md::tr!("笔记名称"),
+            ))
+            .child(text_input(&self.input).aria_label(course2md::tr!("笔记名称")))
             .when_some(self.error.clone(), |view, error| {
                 view.child(
                     accessible_text("rename-note-error", error)
@@ -495,14 +508,14 @@ impl Render for CourseRenameDialog {
                     .child(
                         control("cancel-note-rename")
                             .icon(crate::icons::close())
-                            .label("取消")
+                            .label(course2md::tr!("取消"))
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
                         control("save-note-rename")
                             .icon(icons::edit())
                             .primary()
-                            .label("保存名称")
+                            .label(course2md::tr!("保存名称"))
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),
             )
@@ -627,8 +640,9 @@ impl Desktop {
             .course_location(&course)
             .map(|library| library.root.clone())
         else {
-            self.message =
-                Some("这份笔记的保存位置暂时无法确认，请在笔记库菜单中重新扫描。".into());
+            self.message = Some(
+                course2md::tr!("这份笔记的保存位置暂时无法确认，请在笔记库菜单中重新扫描。").into(),
+            );
             cx.notify();
             return;
         };
@@ -663,7 +677,7 @@ impl Desktop {
         });
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
-                .title("重命名笔记")
+                .title(course2md::tr!("重命名笔记"))
                 .w(px(480.))
                 .overlay_closable(false)
                 .child(content.clone())
@@ -679,15 +693,15 @@ impl Desktop {
             .ghost()
             .icon(crate::icons::ellipsis())
             .min_h(rems(2.))
-            .tooltip("笔记操作")
-            .accessibility_label(format!("《{}》的笔记操作", course.title))
+            .tooltip(course2md::tr!("笔记操作"))
+            .accessibility_label(course2md::tr!("《{}》的笔记操作", course.title))
             .dropdown_menu(move |menu, window, cx| {
                 let rename = entity.clone();
                 let selected = course.clone();
                 let path = course.storage_dir();
                 let mut menu = menu
                     .item(
-                        PopupMenuItem::new("重命名笔记…")
+                        PopupMenuItem::new(course2md::tr!("重命名笔记…"))
                             .icon(icons::edit())
                             .on_click(move |_, window, cx| {
                                 let _ = rename.update(cx, |this, cx| {
@@ -696,15 +710,24 @@ impl Desktop {
                             }),
                     )
                     .item(
-                        PopupMenuItem::new("打开笔记保存位置")
+                        PopupMenuItem::new(course2md::tr!("打开笔记保存位置"))
                             .icon(crate::icons::folder_open())
                             .on_click(move |_, _, cx| cx.open_with_system(&path)),
                     )
                     .separator();
                 for (format, label) in [
-                    (course2md::config::OutputFormat::Md, "导出 Markdown 包…"),
-                    (course2md::config::OutputFormat::Html, "导出网页文件…"),
-                    (course2md::config::OutputFormat::Json, "导出结构化数据…"),
+                    (
+                        course2md::config::OutputFormat::Md,
+                        course2md::tr!("导出 Markdown 包…"),
+                    ),
+                    (
+                        course2md::config::OutputFormat::Html,
+                        course2md::tr!("导出网页文件…"),
+                    ),
+                    (
+                        course2md::config::OutputFormat::Json,
+                        course2md::tr!("导出结构化数据…"),
+                    ),
                 ] {
                     let entity = entity.clone();
                     let course = course.clone();
@@ -741,19 +764,22 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok((library, _)) => {
                         this.store_folders(&root, library);
                         this.message = Some(if rebuild {
-                            "已重新开始整理文件夹，原损坏文件已另存".into()
+                            course2md::tr!("已重新开始整理文件夹，原损坏文件已另存").into()
                         } else {
-                            "文件夹已恢复，原损坏文件已另存".into()
+                            course2md::tr!("文件夹已恢复，原损坏文件已另存").into()
                         });
                         this.refresh_library(cx);
                     }
-                    Err(error) => this.message = Some(format!("文件夹尚未恢复：{error:#}")),
+                    Err(error) => {
+                        this.message =
+                            Some(course2md::tr!("文件夹尚未恢复：{}", format!("{error:#}")))
+                    }
                 }
                 cx.notify();
             });
@@ -767,14 +793,18 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(_) => {
-                        this.message = Some("笔记名称已恢复，原损坏文件已另存".into());
+                        this.message =
+                            Some(course2md::tr!("笔记名称已恢复，原损坏文件已另存").into());
                         this.refresh_library(cx);
                     }
-                    Err(error) => this.message = Some(format!("名称尚未恢复：{error:#}")),
+                    Err(error) => {
+                        this.message =
+                            Some(course2md::tr!("名称尚未恢复：{}", format!("{error:#}")))
+                    }
                 }
                 cx.notify();
             });
@@ -819,12 +849,12 @@ impl Desktop {
                         .rounded(RADIUS_CARD)
                         .child(accessible_text(
                             ("library-unavailable", index),
-                            format!("{name} 暂时无法访问"),
+                            course2md::tr!("{} 暂时无法访问", name),
                         ))
                         .child(
                             control(("retry-library-location", index))
                                 .icon(icons::refresh())
-                                .label("重新检查保存位置")
+                                .label(course2md::tr!("重新检查保存位置"))
                                 .tooltip(root.display().to_string())
                                 .self_start()
                                 .loading(self.loading)
@@ -846,7 +876,7 @@ impl Desktop {
                         control(("restore-classification", index))
                             .primary()
                             .icon(icons::history())
-                            .label("恢复最近备份")
+                            .label(course2md::tr!("恢复最近备份"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.recover_library_folders(restore.clone(), false, cx)
                             })),
@@ -857,7 +887,7 @@ impl Desktop {
                         control(("rebuild-classification", index))
                             .when(!recovery.has_backup, |button| button.primary())
                             .icon(icons::refresh())
-                            .label("重新开始整理（保留损坏文件）")
+                            .label(course2md::tr!("重新开始整理（保留损坏文件）"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.recover_library_folders(rebuild.clone(), true, cx)
                             })),
@@ -866,7 +896,7 @@ impl Desktop {
                         control(("show-classification-files", index))
                             .ghost()
                             .icon(crate::icons::folder_open())
-                            .label("打开保存位置")
+                            .label(course2md::tr!("打开保存位置"))
                             .on_click(move |_, _, cx| cx.open_with_system(&folder)),
                     );
                 view = view.child(
@@ -875,10 +905,12 @@ impl Desktop {
                         .p_4()
                         .bg(color(WARNING_BG))
                         .rounded(RADIUS_CARD)
-                        .child(badge(BadgeKind::Warning).child("文件夹信息需要恢复"))
+                        .child(
+                            badge(BadgeKind::Warning).child(course2md::tr!("文件夹信息需要恢复")),
+                        )
                         .child(accessible_text(
                             ("classification-recovery", index),
-                            format!("{} 的文件夹信息已损坏", location.name),
+                            course2md::tr!("{} 的文件夹信息已损坏", location.name),
                         ))
                         .child(row)
                         .when(!diagnostics.is_empty(), |view| {
@@ -914,9 +946,9 @@ impl Desktop {
                             icons::history()
                         })
                         .label(if reset {
-                            "恢复为原始标题"
+                            course2md::tr!("恢复为原始标题")
                         } else {
-                            "恢复最近名称备份"
+                            course2md::tr!("恢复最近名称备份")
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.recover_note_titles(root.clone(), reset, cx)
@@ -929,10 +961,10 @@ impl Desktop {
                         .p_4()
                         .bg(color(WARNING_BG))
                         .rounded(RADIUS_CARD)
-                        .child(badge(BadgeKind::Warning).child("笔记名称需要恢复"))
+                        .child(badge(BadgeKind::Warning).child(course2md::tr!("笔记名称需要恢复")))
                         .child(accessible_text(
                             ("title-recovery", index),
-                            format!("{} 的笔记名称记录无法读取", location.name),
+                            course2md::tr!("{} 的笔记名称记录无法读取", location.name),
                         ))
                         .child(row)
                         .when(!diagnostics.is_empty(), |view| {
@@ -1011,15 +1043,16 @@ impl Desktop {
         }
         let coverage_message = match coverage {
             crate::storage::LibraryCoverage::Unavailable if query.is_empty() => {
-                Some("保存位置暂时无法访问".to_owned())
+                Some(course2md::tr!("保存位置暂时无法访问").to_owned())
             }
             crate::storage::LibraryCoverage::Unavailable => {
-                Some("保存位置暂时无法访问，未能搜索".to_owned())
+                Some(course2md::tr!("保存位置暂时无法访问，未能搜索").to_owned())
             }
             // 未连接的位置各有恢复卡片；仅搜索时提示结果不完整
-            crate::storage::LibraryCoverage::Partial if !query.is_empty() => {
-                Some(format!("另有 {} 个位置未纳入搜索", scope.unavailable.len()))
-            }
+            crate::storage::LibraryCoverage::Partial if !query.is_empty() => Some(course2md::tr!(
+                "另有 {} 个位置未纳入搜索",
+                scope.unavailable.len()
+            )),
             _ => None,
         };
         if let Some(message) = coverage_message {
@@ -1071,7 +1104,7 @@ impl Desktop {
             return self.library_list_page(items, layout, rem, cx);
         }
         if !query.is_empty() {
-            let scoped = format!("找到 {} 篇笔记", courses.len());
+            let scoped = course2md::tr!("找到 {} 篇笔记", courses.len());
             items.push(LibraryItem::SearchScope(scoped));
         }
         if self.desktop_settings.library_group_folders
@@ -1113,9 +1146,9 @@ impl Desktop {
                     .cloned()
                     .unwrap_or_else(|| {
                         if self.library_indexes.contains_key(&root) {
-                            "未分类"
+                            course2md::tr!("未分类")
                         } else {
-                            "文件夹暂不可用"
+                            course2md::tr!("文件夹暂不可用")
                         }
                         .into()
                     });
@@ -1126,7 +1159,9 @@ impl Desktop {
                 {
                     format!(
                         "{} · {folder_name}",
-                        location.map(|lib| lib.name.as_str()).unwrap_or("笔记库")
+                        location
+                            .map(|lib| lib.name.as_str())
+                            .unwrap_or(course2md::tr!("笔记库"))
                     )
                 } else {
                     folder_name
@@ -1245,7 +1280,7 @@ impl Desktop {
                 .child(crate::motion::spinner("library-location-check-spinner", cx))
                 .child(accessible_text(
                     "library-location-checking-label",
-                    "正在检查保存位置…",
+                    course2md::tr!("正在检查保存位置…"),
                 ))
                 .into_any_element(),
             LibraryItem::Recovery(access) => self
@@ -1263,12 +1298,12 @@ impl Desktop {
                 .p_3()
                 .bg(color(WARNING_BG))
                 .rounded(RADIUS_CARD)
-                .child(badge(BadgeKind::Warning).child("部分内容暂未读取"))
+                .child(badge(BadgeKind::Warning).child(course2md::tr!("部分内容暂未读取")))
                 .child(
                     control("retry-unread-library-content")
                         .self_start()
                         .icon(icons::refresh())
-                        .label("重新检查")
+                        .label(course2md::tr!("重新检查"))
                         .loading(self.loading)
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
                 )
@@ -1279,7 +1314,10 @@ impl Desktop {
                 .items_center()
                 .py_6()
                 .child(crate::motion::spinner("library-scan-spinner", cx))
-                .child(accessible_text("library-loading", "正在读取笔记…"))
+                .child(accessible_text(
+                    "library-loading",
+                    course2md::tr!("正在读取笔记…"),
+                ))
                 .into_any_element(),
             LibraryItem::Empty => {
                 let query = self.value(Field::Search, cx).to_lowercase();
@@ -1298,11 +1336,11 @@ impl Desktop {
                         accessible_text(
                             "library-empty-heading",
                             if !query.is_empty() {
-                                "没有匹配的笔记"
+                                course2md::tr!("没有匹配的笔记")
                             } else if self.folder_filter.is_some() {
-                                "这个文件夹还没有笔记"
+                                course2md::tr!("这个文件夹还没有笔记")
                             } else {
-                                "还没有笔记"
+                                course2md::tr!("还没有笔记")
                             },
                         )
                         .text_lg()
@@ -1312,7 +1350,7 @@ impl Desktop {
                         empty.child(
                             outline_pill("clear-search")
                                 .icon(crate::icons::close())
-                                .label("清除搜索")
+                                .label(course2md::tr!("清除搜索"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.inputs[&Field::Search]
                                         .update(cx, |state, cx| state.set_value("", window, cx));
@@ -1324,7 +1362,7 @@ impl Desktop {
                         empty.child(
                             primary_pill("empty-library-add")
                                 .icon(crate::icons::plus())
-                                .label("导入视频")
+                                .label(course2md::tr!("导入视频"))
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.begin_add(window, cx)),
                                 ),
@@ -1334,7 +1372,7 @@ impl Desktop {
                         empty.child(
                             outline_pill("empty-folder-all-notes")
                                 .icon(crate::icons::book_open())
-                                .label("浏览全部笔记")
+                                .label(course2md::tr!("浏览全部笔记"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.folder_filter = None;
                                     this.library_list.scroll_to(ListOffset {
@@ -1363,7 +1401,7 @@ impl Desktop {
                 .child(
                     quiet("clear-search-scope")
                         .icon(crate::icons::close())
-                        .label("清空搜索")
+                        .label(course2md::tr!("清空搜索"))
                         .min_h(rems(1.6))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.inputs[&Field::Search]
@@ -1389,9 +1427,14 @@ impl Desktop {
                     .justify_start()
                     .min_h(rems(1.6))
                     .p_0()
-                    .accessibility_label(format!(
-                        "{} {name}，{} 篇笔记",
-                        if collapsed { "展开" } else { "收起" },
+                    .accessibility_label(course2md::tr!(
+                        "{} {}，{} 篇笔记",
+                        if collapsed {
+                            course2md::tr!("展开")
+                        } else {
+                            course2md::tr!("收起")
+                        },
+                        name,
                         count
                     ))
                     .child(
@@ -1439,8 +1482,10 @@ impl Desktop {
                                 }
                                 Ok(false) => {}
                                 Err(error) => {
-                                    this.workspace_error =
-                                        Some(format!("分组展开状态尚未保存：{error:#}"));
+                                    this.workspace_error = Some(course2md::tr!(
+                                        "分组展开状态尚未保存：{}",
+                                        format!("{error:#}")
+                                    ));
                                 }
                             }
                         }
@@ -1522,7 +1567,7 @@ impl Desktop {
         if sections.is_empty() {
             sections.push((
                 self.library_root.clone(),
-                "笔记库".to_owned(),
+                course2md::tr!("笔记库").to_owned(),
                 self.library
                     .folders
                     .iter()
@@ -1536,7 +1581,7 @@ impl Desktop {
         h_flex()
             .id("folder-filter")
             .role(Role::RadioGroup)
-            .aria_label("文件夹筛选")
+            .aria_label(course2md::tr!("文件夹筛选"))
             .gap_2()
             .flex_wrap()
             .items_center()
@@ -1575,7 +1620,7 @@ impl Desktop {
     pub fn library_search(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         theme::search_field(
             &self.inputs[&Field::Search],
-            "搜索笔记标题",
+            course2md::tr!("搜索笔记标题"),
             rems(48. / 14.),
             window,
             cx,
@@ -1600,7 +1645,7 @@ impl Desktop {
             } else {
                 icons::task()
             })
-            .label("显示")
+            .label(course2md::tr!("显示"))
             .mr(-crate::theme::QUIET_INSET)
             .text_color(color(GRAY))
             .dropdown_menu(move |menu, _, _| {
@@ -1624,24 +1669,24 @@ impl Desktop {
                 };
                 let menu = menu
                     .item(
-                        PopupMenuItem::new("卡片")
+                        PopupMenuItem::new(course2md::tr!("卡片"))
                             .checked(cards_on)
                             .on_click(set_cards(true)),
                     )
                     .item(
-                        PopupMenuItem::new("列表")
+                        PopupMenuItem::new(course2md::tr!("列表"))
                             .checked(!cards_on)
                             .on_click(set_cards(false)),
                     );
                 let menu = if can_group {
                     menu.separator()
                         .item(
-                            PopupMenuItem::new("平铺")
+                            PopupMenuItem::new(course2md::tr!("平铺"))
                                 .checked(!group_on)
                                 .on_click(set_group(false)),
                         )
                         .item(
-                            PopupMenuItem::new("按文件夹分组")
+                            PopupMenuItem::new(course2md::tr!("按文件夹分组"))
                                 .checked(group_on)
                                 .on_click(set_group(true)),
                         )
@@ -1651,7 +1696,7 @@ impl Desktop {
                 // The library refreshes itself; a manual rescan is a rare menu command.
                 let refresh = entity.clone();
                 menu.separator().item(
-                    PopupMenuItem::new("重新扫描笔记库")
+                    PopupMenuItem::new(course2md::tr!("重新扫描笔记库"))
                         .icon(icons::refresh())
                         .disabled(loading)
                         .on_click(move |_, _, cx| {
@@ -1676,20 +1721,22 @@ impl Desktop {
                     control("manage-folder")
                         .ghost()
                         .icon(icons::edit())
-                        .label("管理文件夹")
+                        .label(course2md::tr!("管理文件夹"))
                         .text_color(color(GRAY))
                         .dropdown_menu(move |menu, _, _| {
                             let rename = entity.clone();
                             let remove = entity.clone();
-                            menu.item(PopupMenuItem::new("重命名").icon(icons::edit()).on_click(
-                                move |_, window, cx| {
-                                    let _ = rename.update(cx, |this, cx| {
-                                        this.begin_folder(Some(id), window, cx)
-                                    });
-                                },
-                            ))
+                            menu.item(
+                                PopupMenuItem::new(course2md::tr!("重命名"))
+                                    .icon(icons::edit())
+                                    .on_click(move |_, window, cx| {
+                                        let _ = rename.update(cx, |this, cx| {
+                                            this.begin_folder(Some(id), window, cx)
+                                        });
+                                    }),
+                            )
                             .item(
-                                PopupMenuItem::new("删除文件夹…")
+                                PopupMenuItem::new(course2md::tr!("删除文件夹…"))
                                     .icon(icons::delete())
                                     .on_click(move |_, window, cx| {
                                         let _ = remove.update(cx, |this, cx| {
@@ -1800,7 +1847,7 @@ impl Desktop {
                         .child(
                             quiet(("retry-course-read", index))
                                 .icon(icons::refresh())
-                                .label("重试打开")
+                                .label(course2md::tr!("重试打开"))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.open_course(retry.clone(), cx)
                                 })),
@@ -1808,7 +1855,7 @@ impl Desktop {
                         .child(
                             quiet(("reveal-unread-course", index))
                                 .icon(icons::folder_open())
-                                .label("检查保存位置")
+                                .label(course2md::tr!("检查保存位置"))
                                 .on_click(move |_, _, cx| cx.reveal_path(&path)),
                         ),
                 ),
@@ -1891,7 +1938,7 @@ impl Desktop {
             .rounded(RADIUS_CARD)
             .aspect_ratio(16. / 9.)
             .tab_stop(false)
-            .accessibility_label(format!("阅读 {}", course.title))
+            .accessibility_label(course2md::tr!("阅读 {}", course.title))
             .bg(color(SECONDARY_CONTAINER))
             .map(|cover| match &course.thumbnail {
                 Some(thumbnail) => cover.child(
@@ -1912,7 +1959,7 @@ impl Desktop {
             .p_0()
             .justify_start()
             .rounded(px(4.))
-            .accessibility_label(format!("阅读 {}", course.title))
+            .accessibility_label(course2md::tr!("阅读 {}", course.title))
             .child(
                 div()
                     .w_full()
@@ -2043,7 +2090,7 @@ impl Desktop {
             .p_0()
             .justify_start()
             .when(layout.stacked, |button| button.w_full().flex_none())
-            .accessibility_label(format!("阅读 {}", course.title))
+            .accessibility_label(course2md::tr!("阅读 {}", course.title))
             .child(read)
             .on_click({
                 let course = course.clone();
@@ -2060,16 +2107,16 @@ impl Desktop {
                     .icon(crate::icons::book_open())
                     .when(!layout.compact || layout.stacked, |button| {
                         button.label(if self.course_has_reading_position(course) {
-                            "继续阅读"
+                            course2md::tr!("继续阅读")
                         } else {
-                            "阅读笔记"
+                            course2md::tr!("阅读笔记")
                         })
                     })
                     .loading(self.opening_course.as_ref() == Some(&course.dir))
                     .disabled(self.opening_course.as_ref() == Some(&course.dir))
-                    .accessibility_label(format!("阅读 {}", course.title))
+                    .accessibility_label(course2md::tr!("阅读 {}", course.title))
                     .when(layout.compact && !layout.stacked, |button| {
-                        button.tooltip("阅读笔记")
+                        button.tooltip(course2md::tr!("阅读笔记"))
                     })
                     .on_click({
                         let course = course.clone();
@@ -2137,16 +2184,16 @@ impl Desktop {
             let cancelling = task.intent == Intent::Cancel;
             let progress = self.compact_task_progress(task);
             let status = if cancelling {
-                "正在取消…".to_owned()
+                course2md::tr!("正在取消…").to_owned()
             } else if task.state == TaskState::Pausing {
-                "正在保存进度…".to_owned()
+                course2md::tr!("正在保存进度…").to_owned()
             } else if queued {
-                "排队中".to_owned()
+                course2md::tr!("排队中").to_owned()
             } else {
                 progress
                     .as_ref()
                     .map(|(label, _)| label.clone())
-                    .unwrap_or_else(|| "正在准备…".into())
+                    .unwrap_or_else(|| course2md::tr!("正在准备…").into())
             };
             if index > 0 {
                 list = list.child(inset_divider());
@@ -2240,7 +2287,7 @@ impl Desktop {
                     .child(
                         quiet(SharedString::from(format!("workbench-task-cancel-{id}")))
                             .icon(icons::close())
-                            .tooltip("取消任务")
+                            .tooltip(course2md::tr!("取消任务"))
                             .disabled(cancelling)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_task_intent(id.clone(), Intent::Cancel, cx);
@@ -2254,7 +2301,7 @@ impl Desktop {
                 .min_w_0()
                 .gap_3()
                 .child(
-                    theme::accessible_text("workbench-active-title", "正在处理")
+                    theme::accessible_text("workbench-active-title", course2md::tr!("正在处理"))
                         .role(Role::Heading)
                         .text_size(SECTION_TITLE)
                         .line_height(SECTION_TITLE_LINE)
@@ -2308,18 +2355,18 @@ impl Desktop {
                     .as_ref()
                     .is_some_and(|access| !access.unavailable.is_empty());
             let title = if checking {
-                "正在读取笔记库"
+                course2md::tr!("正在读取笔记库")
             } else if unavailable {
-                "暂时无法读取笔记库"
+                course2md::tr!("暂时无法读取笔记库")
             } else {
-                "还没有笔记"
+                course2md::tr!("还没有笔记")
             };
             let description = if checking {
                 None
             } else if unavailable {
-                Some("检查保存位置后，即可继续查看已有笔记")
+                Some(course2md::tr!("检查保存位置后，即可继续查看已有笔记"))
             } else {
-                Some("整理好的笔记会出现在这里")
+                Some(course2md::tr!("整理好的笔记会出现在这里"))
             };
             let mut empty = v_flex()
                 .w_full()
@@ -2365,16 +2412,16 @@ impl Desktop {
             if unavailable && !checking {
                 empty = empty.child(
                     quiet("recent-unavailable-library")
-                        .label("查看笔记库")
+                        .label(course2md::tr!("查看笔记库"))
                         .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Library, cx))),
                 );
             } else if !checking {
                 empty = empty.child(
                     h_flex().justify_center().flex_wrap().gap_3().children(
                         [
-                            "粘贴链接或拖入视频",
-                            "读取字幕或识别语音",
-                            "AI 校对并生成笔记",
+                            course2md::tr!("粘贴链接或拖入视频"),
+                            course2md::tr!("读取字幕或识别语音"),
+                            course2md::tr!("AI 校对并生成笔记"),
                         ]
                         .into_iter()
                         .enumerate()
@@ -2412,7 +2459,7 @@ impl Desktop {
                 .items_center()
                 .gap_2()
                 .child(
-                    theme::accessible_text("recent-title", "最近的笔记")
+                    theme::accessible_text("recent-title", course2md::tr!("最近的笔记"))
                         .role(Role::Heading)
                         .text_size(SECTION_TITLE)
                         .line_height(SECTION_TITLE_LINE)
@@ -2422,7 +2469,7 @@ impl Desktop {
                 .child(
                     quiet("recent-all")
                         .mr(-crate::theme::QUIET_INSET)
-                        .label("查看全部")
+                        .label(course2md::tr!("查看全部"))
                         .child(crate::icons::chevron_right().size_4())
                         .text_color(color(ACCENT))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -2469,9 +2516,9 @@ impl Desktop {
                     outline_pill(SharedString::from(format!("recent-attention-read-{id}")))
                         .icon(icons::book_open())
                         .label(if self.course_has_reading_position(&course) {
-                            "继续阅读"
+                            course2md::tr!("继续阅读")
                         } else {
-                            "阅读笔记"
+                            course2md::tr!("阅读笔记")
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.open_course(course.clone(), cx);
@@ -2483,7 +2530,7 @@ impl Desktop {
                 actions = actions.child(
                     quiet(SharedString::from(format!("recent-repair-{id}")))
                         .icon(icons::settings())
-                        .label("修复 AI 服务并补做")
+                        .label(course2md::tr!("修复 AI 服务并补做"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.repair_task_service(repair_id.clone(), window, cx);
                         })),
@@ -2509,7 +2556,7 @@ impl Desktop {
                 actions = actions.child(
                     outline_pill(SharedString::from(format!("recent-resume-{id}")))
                         .icon(icons::play_arrow())
-                        .label("继续处理")
+                        .label(course2md::tr!("继续处理"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.set_task_intent(
                                 resume_id.clone(),
@@ -2522,7 +2569,7 @@ impl Desktop {
                 actions = actions.child(
                     outline_pill(SharedString::from(format!("recent-task-{id}")))
                         .icon(icons::task())
-                        .label("查看任务")
+                        .label(course2md::tr!("查看任务"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             // 统一走 navigate()：保存 New 草稿、阅读位置、跟随清理
                             this.select_task(&id, cx);
@@ -2586,7 +2633,7 @@ impl Desktop {
                 .h_auto()
                 .p_4()
                 .rounded(RADIUS_CARD)
-                .accessibility_label(format!("阅读 {}", course.title))
+                .accessibility_label(course2md::tr!("阅读 {}", course.title))
                 .child(
                     h_flex()
                         .w_full()

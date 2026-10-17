@@ -9,7 +9,9 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-const FOLDERS_UNAVAILABLE: &str = "文件夹暂不可用，请重新扫描笔记库。";
+fn folders_unavailable() -> &'static str {
+    course2md::tr!("文件夹暂不可用，请重新扫描笔记库。")
+}
 
 #[derive(Clone)]
 pub struct FolderOrigin {
@@ -82,6 +84,7 @@ impl Desktop {
         self.subtitle_error = None;
         self.preview_error = None;
         self.source_validation = None;
+        self.title_required = false;
         self.show_preview_details = false;
         self.expanded_subtitle_issue = None;
     }
@@ -100,9 +103,9 @@ impl Desktop {
         if input.is_empty() {
             self.source_validation = Some(
                 if self.online {
-                    "先粘贴视频链接"
+                    course2md::tr!("先粘贴视频链接")
                 } else {
-                    "先选择一个视频"
+                    course2md::tr!("先选择一个视频")
                 }
                 .into(),
             );
@@ -126,7 +129,8 @@ impl Desktop {
                         candidate
                     })
                     .collect();
-                self.source_collection_title = Some("分享内容中有多个链接，请选择一个视频".into());
+                self.source_collection_title =
+                    Some(course2md::tr!("分享内容中有多个链接，请选择一个视频").into());
                 self.save_current_draft(cx);
                 cx.notify();
                 return;
@@ -167,7 +171,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             // worker 计数无论窗口存亡都必须归还（request_close 等待它归零）
             let _ = this.update(cx, |this, _| {
                 this.preview_workers = this.preview_workers.saturating_sub(1);
@@ -200,7 +204,7 @@ impl Desktop {
                             };
                             if let Some(previous) = previous_source { source.selected_subtitle = previous.selected_subtitle.clone(); }
                             if wanted.is_some() && default_track.is_none() {
-                                let message = "原来选择的字幕无法读取，请重新选择文字来源".to_owned();
+                                let message = course2md::tr!("原来选择的字幕无法读取，请重新选择文字来源").to_owned();
                                 this.subtitle_error = Some(message.clone());
                                 source.subtitle_read_error = Some(course2md::subtitle::SubtitleReadError::Failed { message });
                             }
@@ -212,7 +216,7 @@ impl Desktop {
                         }
                         Ok(source::SourceProbe::Collection { title, candidates, unavailable_entries }) => {
                             this.source_collection_name = (!title.is_empty()).then(|| title.clone());
-                            this.source_collection_title = Some(if title.is_empty() { "请选择本次处理的视频".into() } else { title });
+                            this.source_collection_title = Some(if title.is_empty() { course2md::tr!("请选择本次处理的视频").into() } else { title });
                             this.start_source_cover_fetch(&candidates, generation, window, cx);
                             this.source_candidates = candidates
                                 .into_iter()
@@ -222,9 +226,9 @@ impl Desktop {
                                 })
                                 .collect();
                             if this.source_candidates.is_empty() {
-                                this.preview_error = Some("还无法确定要处理哪个视频。请复制具体视频的链接。".into());
+                                this.preview_error = Some(course2md::tr!("还无法确定要处理哪个视频。请复制具体视频的链接。").into());
                             } else if unavailable_entries > 0 {
-                                this.preview_error = Some(format!("另有 {unavailable_entries} 个条目无法确认"));
+                                this.preview_error = Some(course2md::tr!("另有 {} 个条目无法确认", unavailable_entries));
                             }
                         }
                         Ok(source::SourceProbe::Unresolved { message }) => this.preview_error = Some(message),
@@ -322,13 +326,13 @@ impl Desktop {
     }
     fn folder_name(&self, id: Option<u64>) -> String {
         match id.filter(|id| *id != 0) {
-            None => "未分类".into(),
+            None => course2md::tr!("未分类").into(),
             Some(id) => self
                 .library
                 .folders
                 .get(&id)
                 .cloned()
-                .unwrap_or_else(|| "已删除的文件夹".into()),
+                .unwrap_or_else(|| course2md::tr!("已删除的文件夹").into()),
         }
     }
 
@@ -357,7 +361,7 @@ impl Desktop {
         }
         let origin = self.current_folder_origin();
         let Some(library) = self.library_indexes.get(&origin.root) else {
-            self.message = Some(FOLDERS_UNAVAILABLE.into());
+            self.message = Some(folders_unavailable().into());
             cx.notify();
             return;
         };
@@ -373,9 +377,9 @@ impl Desktop {
         });
         let desktop = cx.entity();
         let title = if id.is_some() {
-            "重命名文件夹"
+            course2md::tr!("重命名文件夹")
         } else {
-            "新建文件夹"
+            course2md::tr!("新建文件夹")
         };
         let content = cx.new(|cx| FolderDialog {
             _observation: cx.observe(&desktop, |_, _, cx| cx.notify()),
@@ -425,14 +429,14 @@ impl Desktop {
             })?;
             Ok((
                 library,
-                anyhow::Context::context(value, "文件夹记录未更新")?,
+                anyhow::Context::context(value, course2md::tr!("文件夹记录未更新"))?,
             ))
         });
         cx.spawn(async move |this, cx| {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
                 let result = result.map(|(library, value)| {
                     this.store_folders(&root, library);
@@ -496,7 +500,10 @@ impl Desktop {
                     }
                     Ok(())
                 }) {
-                    self.folder_error = Some(format!("文件夹已创建，保存位置尚未更新：{error:#}"));
+                    self.folder_error = Some(course2md::tr!(
+                        "文件夹已创建，保存位置尚未更新：{}",
+                        format!("{error:#}")
+                    ));
                     self.folder_editor = Some(Some(saved));
                     return;
                 }
@@ -525,12 +532,12 @@ impl Desktop {
         if let Some(id) = self.folder_editor {
             view = view
                 .child(
-                    accessible_text("folder-name-label", "文件夹名称")
+                    accessible_text("folder-name-label", course2md::tr!("文件夹名称"))
                         .font_weight(FontWeight::MEDIUM),
                 )
                 .child(
                     text_input(&self.inputs[&Field::FolderName])
-                        .aria_label("文件夹名称")
+                        .aria_label(course2md::tr!("文件夹名称"))
                         .when(self.folder_error.is_some(), |v| {
                             v.border_color(color(DANGER))
                         }),
@@ -552,7 +559,7 @@ impl Desktop {
                                 .h_auto()
                                 .min_h(rems(2.6))
                                 .ghost()
-                                .label("取消")
+                                .label(course2md::tr!("取消"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.folder_editor = None;
                                     this.folder_origin = None;
@@ -572,9 +579,9 @@ impl Desktop {
                                 .min_h(rems(2.6))
                                 .primary()
                                 .label(if id.is_some() {
-                                    "保存名称"
+                                    course2md::tr!("保存名称")
                                 } else {
-                                    "创建文件夹"
+                                    course2md::tr!("创建文件夹")
                                 })
                                 .on_click(cx.listener(|this, _, _, cx| this.save_folder(cx))),
                         ),
@@ -593,9 +600,9 @@ impl Desktop {
             .unwrap_or_else(|| self.folder_name(Some(id)));
         let answer = window.prompt(
             PromptLevel::Warning,
-            &format!("删除「{name}」文件夹？"),
-            Some("其中的笔记会移到未分类"),
-            &["删除文件夹", "保留文件夹"],
+            &course2md::tr!("删除「{}」文件夹？", name),
+            Some(course2md::tr!("其中的笔记会移到未分类")),
+            &[course2md::tr!("删除文件夹"), course2md::tr!("保留文件夹")],
             cx,
         );
         cx.spawn_in(window, async move |this, cx| {
@@ -617,7 +624,10 @@ impl Desktop {
                                 this.folder_filter = Some(0);
                             }
                         }
-                        Err(error) => this.message = Some(format!("无法删除文件夹：{error:#}")),
+                        Err(error) => {
+                            this.message =
+                                Some(course2md::tr!("无法删除文件夹：{}", format!("{error:#}")))
+                        }
                     },
                     cx,
                 );
@@ -651,7 +661,7 @@ impl Desktop {
         };
         let loaded = self.library_indexes.get(&origin.root);
         let checking = loaded.is_none() && self.loading;
-        let load_error = (loaded.is_none() && !checking).then(|| FOLDERS_UNAVAILABLE.to_owned());
+        let load_error = (loaded.is_none() && !checking).then(|| folders_unavailable().to_owned());
         let folder = storage
             .as_ref()
             .and_then(|path| self.library_view_cache.locations.get(path))
@@ -665,16 +675,16 @@ impl Desktop {
                 }
             });
         let label = if checking {
-            "正在读取文件夹…".to_owned()
+            course2md::tr!("正在读取文件夹…").to_owned()
         } else if load_error.is_some() {
-            "文件夹暂不可用".to_owned()
+            course2md::tr!("文件夹暂不可用").to_owned()
         } else if let Some(id) = folder {
             loaded
                 .and_then(|organization| organization.folders.get(&id))
                 .cloned()
-                .unwrap_or_else(|| "文件夹已删除，请重新选择".into())
+                .unwrap_or_else(|| course2md::tr!("文件夹已删除，请重新选择").into())
         } else {
-            "未分类".into()
+            course2md::tr!("未分类").into()
         };
         FolderContext {
             storage,
@@ -696,7 +706,7 @@ impl Desktop {
         current: Option<u64>,
     ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
         move |menu, _, _| {
-            let mut entries = vec![(None, "未分类".to_owned())];
+            let mut entries = vec![(None, course2md::tr!("未分类").to_owned())];
             entries.extend(folders.iter().map(|(id, name)| (Some(*id), name.clone())));
             entries.into_iter().fold(menu, |menu, (id, name)| {
                 let entity = entity.clone();
@@ -715,8 +725,10 @@ impl Desktop {
                                         move |library| library.assign(&root, &path, id),
                                         |this, result, _| {
                                             if let Err(error) = result {
-                                                this.message =
-                                                    Some(format!("无法移动笔记：{error:#}"))
+                                                this.message = Some(course2md::tr!(
+                                                    "无法移动笔记：{}",
+                                                    format!("{error:#}")
+                                                ))
                                             }
                                         },
                                         cx,
@@ -762,7 +774,7 @@ impl Desktop {
             .py_2()
             .disabled(self.loading || load_error.is_some())
             .icon(crate::icons::folder())
-            .accessibility_label(format!("保存到文件夹：{label}"))
+            .accessibility_label(course2md::tr!("保存到文件夹：{}", label))
             .tooltip(label.clone())
             .child(
                 div()

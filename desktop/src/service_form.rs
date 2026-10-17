@@ -355,7 +355,7 @@ impl Desktop {
             .service_form(owner)
             .is_some_and(|form| form.draft.authentication == Authentication::ApiKey);
         group
-            .options([("api_key", "API Key"), ("none", "无需认证")])
+            .options([("api_key", "API Key"), ("none", course2md::tr!("无需认证"))])
             .icon("api_key", icons::shield())
             .icon("none", icons::web())
             .selected(if api_key { "api_key" } else { "none" })
@@ -390,11 +390,15 @@ impl Desktop {
             } else {
                 icons::eye()
             })
-            .label(if shown { "隐藏" } else { "显示" })
-            .tooltip(if shown {
-                "隐藏密钥"
+            .label(if shown {
+                course2md::tr!("隐藏")
             } else {
-                "显示密钥"
+                course2md::tr!("显示")
+            })
+            .tooltip(if shown {
+                course2md::tr!("隐藏密钥")
+            } else {
+                course2md::tr!("显示密钥")
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 if let Some(form) = this.service_form_mut(owner) {

@@ -1,5 +1,19 @@
 //! The current input form and task execution. Navigation never supplies retry inputs.
 use super::*;
+
+/// A stable validation identity for the missing-title case. Rendering compares
+/// the typed error instead of the displayed sentence, which changes with the
+/// interface language.
+#[derive(Debug)]
+pub(crate) struct TitleRequired;
+
+impl std::fmt::Display for TitleRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(course2md::tr!("请填写笔记名称"))
+    }
+}
+
+impl std::error::Error for TitleRequired {}
 use crate::import_ui::cover_slot;
 use crate::{
     notes::default_output,
@@ -58,10 +72,10 @@ enum TaskGroup {
 impl TaskGroup {
     fn label(self) -> &'static str {
         match self {
-            Self::Attention => "需要处理",
-            Self::Processing => "进行中",
-            Self::Finished => "已结束",
-            Self::History => "此前处理记录",
+            Self::Attention => course2md::tr!("需要处理"),
+            Self::Processing => course2md::tr!("进行中"),
+            Self::Finished => course2md::tr!("已结束"),
+            Self::History => course2md::tr!("此前处理记录"),
         }
     }
 }
@@ -140,9 +154,9 @@ enum WorkerWait {
 impl WorkerWait {
     fn label(self) -> &'static str {
         match self {
-            Self::Starting => "正在启动任务…",
-            Self::BetweenStages => "正在继续处理…",
-            Self::Finishing => "正在完成笔记…",
+            Self::Starting => course2md::tr!("正在启动任务…"),
+            Self::BetweenStages => course2md::tr!("正在继续处理…"),
+            Self::Finishing => course2md::tr!("正在完成笔记…"),
         }
     }
 }
@@ -195,15 +209,15 @@ enum StageStatus {
 impl StageStatus {
     fn label(self) -> &'static str {
         match self {
-            Self::Running => "处理中",
-            Self::Complete => "已完成",
-            Self::Pausing => "暂停中",
-            Self::Stopping => "停止中",
-            Self::Paused => "已暂停",
-            Self::Waiting => "等待继续",
-            Self::Failed => "未完成",
-            Self::Uncertain => "待确认",
-            Self::Cancelled => "已取消",
+            Self::Running => course2md::tr!("处理中"),
+            Self::Complete => course2md::tr!("已完成"),
+            Self::Pausing => course2md::tr!("暂停中"),
+            Self::Stopping => course2md::tr!("停止中"),
+            Self::Paused => course2md::tr!("已暂停"),
+            Self::Waiting => course2md::tr!("等待继续"),
+            Self::Failed => course2md::tr!("未完成"),
+            Self::Uncertain => course2md::tr!("待确认"),
+            Self::Cancelled => course2md::tr!("已取消"),
         }
     }
 
@@ -339,7 +353,7 @@ fn task_failure_summary(state: TaskState, error: Option<&str>) -> Option<String>
         if localized && summary.chars().count() <= 140 {
             summary.into()
         } else {
-            "转换未完成".into()
+            course2md::tr!("转换未完成").into()
         }
     })
 }
@@ -369,23 +383,28 @@ fn service_configuration_issue(message: &str) -> Option<&'static str> {
     ]
     .iter()
     .any(|hint| lower.contains(hint))
-        || ["凭据", "鉴权失败", "认证失败", "认证被拒绝"]
-            .iter()
-            .any(|hint| message.contains(hint))
+        || [
+            course2md::tr!("凭据"),
+            course2md::tr!("鉴权失败"),
+            course2md::tr!("认证失败"),
+            course2md::tr!("认证被拒绝"),
+        ]
+        .iter()
+        .any(|hint| message.contains(hint))
     {
-        Some("AI 服务拒绝了 API Key，请检查密钥或权限")
+        Some(course2md::tr!("AI 服务拒绝了 API Key，请检查密钥或权限"))
     } else if ["http 404", "model not found", "unknown model"]
         .iter()
         .any(|hint| lower.contains(hint))
         || message.contains("服务未找到此任务指定的接口或模型")
     {
-        Some("AI 服务地址或模型名称有误")
+        Some(course2md::tr!("AI 服务地址或模型名称有误"))
     } else if ["http 400", "http 422"]
         .iter()
         .any(|hint| lower.contains(hint))
         || message.contains("服务拒绝了请求参数")
     {
-        Some("AI 服务不支持当前的模型设置")
+        Some(course2md::tr!("AI 服务不支持当前的模型设置"))
     } else {
         None
     }
@@ -426,11 +445,11 @@ pub(crate) fn task_requires_service_repair(task: &TaskRecord) -> bool {
 /// 组件 key → 补做按钮文案的唯一来源（任务卡/笔记库/阅读页共用，防止多处漂移）。
 pub(crate) fn retry_component_label(component: &str) -> &'static str {
     match Component::parse(component) {
-        Some(Component::Screenshots) => "补生成截图",
-        Some(Component::Proofreading) => "重试 AI 校对",
-        Some(Component::Summary) => "补生成摘要",
-        Some(Component::Exports) => "仅补导出",
-        None => "补全未完成部分",
+        Some(Component::Screenshots) => course2md::tr!("补生成截图"),
+        Some(Component::Proofreading) => course2md::tr!("重试 AI 校对"),
+        Some(Component::Summary) => course2md::tr!("补生成摘要"),
+        Some(Component::Exports) => course2md::tr!("仅补导出"),
+        None => course2md::tr!("补全未完成部分"),
     }
 }
 
@@ -439,7 +458,7 @@ pub(crate) fn retry_components_label(components: &[String]) -> &'static str {
     if components.len() == 1 {
         retry_component_label(&components[0])
     } else {
-        "补全未完成部分"
+        course2md::tr!("补全未完成部分")
     }
 }
 
@@ -588,10 +607,10 @@ impl TaskPanel {
 
     fn label(self, open: bool) -> &'static str {
         match (self, open) {
-            (Self::Stages, true) => "收起已完成的处理",
-            (Self::Stages, false) => "查看已完成的处理",
-            (Self::RawLog, true) => "收起技术详情",
-            (Self::RawLog, false) => "技术详情",
+            (Self::Stages, true) => course2md::tr!("收起已完成的处理"),
+            (Self::Stages, false) => course2md::tr!("查看已完成的处理"),
+            (Self::RawLog, true) => course2md::tr!("收起技术详情"),
+            (Self::RawLog, false) => course2md::tr!("技术详情"),
         }
     }
 
@@ -678,18 +697,21 @@ fn validate_plan_storage(
 ) -> Result<()> {
     let folder_exists = match validation {
         PlanValidation::Preview => {
-            let check = cached.context("正在检查保存位置，请稍候")?;
+            let check = cached.context(course2md::tr!("正在检查保存位置，请稍候"))?;
             ensure!(
                 check.available,
-                "保存位置不可访问，请连接磁盘或选择其他位置"
+                course2md::tr!("保存位置不可访问，请连接磁盘或选择其他位置")
             );
-            ensure!(!check.needs_reassociation, "保存位置需要重新关联");
+            ensure!(
+                !check.needs_reassociation,
+                course2md::tr!("保存位置需要重新关联")
+            );
             if let Some(problem) = &check.problem {
                 anyhow::bail!("{problem}");
             }
             match folder {
                 Some(folder) => index
-                    .context("正在读取文件夹信息，请稍候")?
+                    .context(course2md::tr!("正在读取文件夹信息，请稍候"))?
                     .folders
                     .contains_key(&folder),
                 None => true,
@@ -698,7 +720,7 @@ fn validate_plan_storage(
         PlanValidation::Submission => {
             ensure!(
                 library.root.is_dir(),
-                "保存位置不可访问，请连接磁盘或选择其他位置"
+                course2md::tr!("保存位置不可访问，请连接磁盘或选择其他位置")
             );
             workspace::check_library(library)?;
             match folder {
@@ -711,7 +733,7 @@ fn validate_plan_storage(
     };
     ensure!(
         folder_exists,
-        "文件夹已删除。请选择其他文件夹，或保存到未分类。"
+        course2md::tr!("文件夹已删除。请选择其他文件夹，或保存到未分类。")
     );
     Ok(())
 }
@@ -803,7 +825,10 @@ impl Desktop {
         if let Some(workspace) = &self.workspace {
             match workspace.save() {
                 Ok(()) => self.workspace_error = None,
-                Err(error) => self.workspace_error = Some(format!("记录仍未保存：{error:#}")),
+                Err(error) => {
+                    self.workspace_error =
+                        Some(course2md::tr!("记录仍未保存：{}", format!("{error:#}")))
+                }
             }
         } else {
             let root = self
@@ -824,7 +849,10 @@ impl Desktop {
                     self.refresh_library(cx);
                 }
                 Err(error) => {
-                    self.workspace_error = Some(format!("记录仍无法读取，原件已保留：{error:#}"))
+                    self.workspace_error = Some(course2md::tr!(
+                        "记录仍无法读取，原件已保留：{}",
+                        format!("{error:#}")
+                    ))
                 }
             }
         }
@@ -840,8 +868,9 @@ impl Desktop {
     /// Called only by the explicit global recovery action; rebuilding never starts the queue.
     pub fn rebuild_workspace_records(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.job.is_some() || self.storage_ui.busy {
-            self.workspace_error =
-                Some("当前还有处理或文件移动在进行，请等候停止后再重建记录。".into());
+            self.workspace_error = Some(
+                course2md::tr!("当前还有处理或文件移动在进行，请等候停止后再重建记录。").into(),
+            );
             cx.notify();
             return;
         }
@@ -866,7 +895,10 @@ impl Desktop {
                 self.refresh_library(cx);
             }
             Err(error) => {
-                self.workspace_error = Some(format!("记录尚未重建，原件仍保留：{error:#}"))
+                self.workspace_error = Some(course2md::tr!(
+                    "记录尚未重建，原件仍保留：{}",
+                    format!("{error:#}")
+                ))
             }
         }
         cx.notify();
@@ -925,7 +957,7 @@ impl Desktop {
             return false;
         };
         let Some(mut next) = workspace.state.draft().cloned() else {
-            self.workspace_error = Some("当前输入记录暂时不可用".into());
+            self.workspace_error = Some(course2md::tr!("当前输入记录暂时不可用").into());
             return false;
         };
         self.draft_deadline = None;
@@ -933,11 +965,14 @@ impl Desktop {
             return true;
         }
         let result = workspace.transaction(|state| {
-            *state.draft_mut().context("没有可保存的输入")? = next;
+            *state
+                .draft_mut()
+                .context(course2md::tr!("没有可保存的输入"))? = next;
             Ok(())
         });
         if let Err(error) = result {
-            self.workspace_error = Some(format!("当前输入尚未保存：{error:#}"));
+            self.workspace_error =
+                Some(course2md::tr!("当前输入尚未保存：{}", format!("{error:#}")));
             cx.notify();
             return false;
         }
@@ -962,6 +997,7 @@ impl Desktop {
         self.target_folder = draft.folder;
         self.preview_error = None;
         self.source_validation = None;
+        self.title_required = false;
         self.source_candidates.clear();
         self.source_collection_title = None;
         self.source_collection_name = None;
@@ -972,10 +1008,10 @@ impl Desktop {
                 .as_ref()
                 .map(ToString::to_string)
                 .or_else(|| {
-                    source
-                        .subtitle_request
-                        .as_ref()
-                        .map(|_| "所选字幕还未读取完成，请继续读取或选择其他文字来源。".into())
+                    source.subtitle_request.as_ref().map(|_| {
+                        course2md::tr!("所选字幕还未读取完成，请继续读取或选择其他文字来源。")
+                            .into()
+                    })
                 })
         });
         self.subtitle_loading = false;
@@ -1012,30 +1048,42 @@ impl Desktop {
                     self.message = None;
                     self.restore_draft(window, cx);
                 }
-                Err(error) => self.workspace_error = Some(format!("无法切换来源：{error:#}")),
+                Err(error) => {
+                    self.workspace_error =
+                        Some(course2md::tr!("无法切换来源：{}", format!("{error:#}")))
+                }
             }
         }
     }
 
     /// 计划构造函数共享的输入序言：工作区与草稿快照的同一组前置条件。
     fn plan_draft(&self) -> Result<(&workspace::Workspace, &workspace::Draft)> {
-        let workspace = self.workspace.as_ref().context("输入与任务记录尚未恢复")?;
-        let draft = workspace.state.draft().context("当前输入尚未准备好")?;
+        let workspace = self
+            .workspace
+            .as_ref()
+            .context(course2md::tr!("输入与任务记录尚未恢复"))?;
+        let draft = workspace
+            .state
+            .draft()
+            .context(course2md::tr!("当前输入尚未准备好"))?;
         Ok((workspace, draft))
     }
 
     /// 计划构造共享的组件检查：引擎与 FFmpeg 必备；`online` 来源另需 yt-dlp
     /// （批量计划恒为在线来源，单条计划按已确认来源的 online 标记）。
     fn ensure_plan_environment(&self, online: bool) -> Result<&crate::backend::Environment> {
-        let environment = self.environment.as_ref().context("正在检查所需组件…")?;
-        ensure!(environment.engine, "生成引擎无法启动");
+        let environment = self
+            .environment
+            .as_ref()
+            .context(course2md::tr!("正在检查所需组件…"))?;
+        ensure!(environment.engine, course2md::tr!("生成引擎无法启动"));
         ensure!(
             environment.ffmpeg && environment.ffprobe,
-            "缺少视频处理组件，请在设置中查看"
+            course2md::tr!("缺少视频处理组件，请在设置中查看")
         );
         ensure!(
             !online || environment.ytdlp,
-            "缺少在线视频下载组件，请在设置中查看"
+            course2md::tr!("缺少在线视频下载组件，请在设置中查看")
         );
         Ok(environment)
     }
@@ -1050,7 +1098,7 @@ impl Desktop {
         let library = workspace
             .state
             .library(&draft.library_id)
-            .context("保存位置已不在笔记库中，请选择保存位置")?;
+            .context(course2md::tr!("保存位置已不在笔记库中，请选择保存位置"))?;
         validate_plan_storage(
             validation,
             library,
@@ -1087,38 +1135,46 @@ impl Desktop {
         self.ordinary_preferences_ready_for_submit()?;
         ensure!(
             !self.preference_defaults_pending,
-            "默认设置已保存，当前视频的选项尚未同步。请重试保存输入记录。"
+            course2md::tr!("默认设置已保存，当前视频的选项尚未同步。请重试保存输入记录。")
         );
         let (workspace, draft) = self.plan_draft()?;
         ensure!(
             !draft.input.is_empty(),
             if draft.online {
-                "先粘贴视频链接"
+                course2md::tr!("先粘贴视频链接")
             } else {
-                "先选择一个视频"
+                course2md::tr!("先选择一个视频")
             }
         );
         ensure!(
             !self.subtitle_loading && self.preview_cancel.is_none(),
-            "正在确认来源，请等待读取完成"
+            course2md::tr!("正在确认来源，请等待读取完成")
         );
         ensure!(
             self.source_preview.is_some(),
-            "还没读取到视频信息，请重新预览"
+            course2md::tr!("还没读取到视频信息，请重新预览")
         );
         ensure!(
             self.subtitle_error.is_none(),
-            "字幕还没读取完成，请重新读取，或改用语音识别"
+            course2md::tr!("字幕还没读取完成，请重新读取，或改用语音识别")
         );
-        let source = draft.source.clone().context("请先读取并确认视频")?;
+        let source = draft
+            .source
+            .clone()
+            .context(course2md::tr!("请先读取并确认视频"))?;
         let environment = self.ensure_plan_environment(source.online)?;
         ensure!(
             draft.options.source_mode == TranscriptSource::Asr
                 || (source.subtitle_request.is_none() && source.subtitle_read_error.is_none()),
-            "所选字幕还未确认，请继续读取或明确选择其他文字来源。"
+            course2md::tr!("所选字幕还未确认，请继续读取或明确选择其他文字来源。")
         );
-        ensure!(!source.identity.is_empty(), "无法识别这个视频，请重新预览");
-        ensure!(!draft.title.trim().is_empty(), "请填写笔记名称");
+        ensure!(
+            !source.identity.is_empty(),
+            course2md::tr!("无法识别这个视频，请重新预览")
+        );
+        if draft.title.trim().is_empty() {
+            return Err(TitleRequired.into());
+        }
         self.ensure_plan_storage(workspace, draft, validation)?;
         let mut config = self.plan_config(draft);
         let using_subtitle = draft.options.source_mode != TranscriptSource::Asr
@@ -1127,7 +1183,7 @@ impl Desktop {
             if let Some(subtitle) = &source.selected_subtitle {
                 ensure!(
                     subtitle.source_identity == source.identity,
-                    "所选字幕与当前视频不匹配，请重新读取字幕"
+                    course2md::tr!("所选字幕与当前视频不匹配，请重新读取字幕")
                 );
             }
             config.defaults.transcript_source = Some(course2md::config::TranscriptSource::Subtitle);
@@ -1142,7 +1198,7 @@ impl Desktop {
                                 | SubtitleEvidence::Unsupported { .. }
                                 | SubtitleEvidence::Failed { .. }
                         )),
-                "字幕还未确认。请读取字幕，或明确选择识别视频声音。"
+                course2md::tr!("字幕还未确认。请读取字幕，或明确选择识别视频声音。")
             );
             config.defaults.transcript_source = Some(course2md::config::TranscriptSource::Asr);
             let provider = config
@@ -1167,7 +1223,7 @@ impl Desktop {
         if validation == PlanValidation::Submission && !source.online {
             ensure!(
                 std::path::Path::new(&source.input).is_file(),
-                "原视频已移动或无法读取，请重新选择视频"
+                course2md::tr!("原视频已移动或无法读取，请重新选择视频")
             );
         }
         Ok(TaskPlan {
@@ -1196,11 +1252,11 @@ impl Desktop {
         self.ordinary_preferences_ready_for_submit()?;
         ensure!(
             !self.preference_defaults_pending,
-            "默认设置已保存，当前选项尚未同步。请重试。"
+            course2md::tr!("默认设置已保存，当前选项尚未同步。请重试。")
         );
         let (workspace, draft) = self.plan_draft()?;
         let identity = course2md::fetch::candidate_identity(candidate)
-            .context("还无法确认这个视频的身份，请单独打开后转换")?;
+            .context(course2md::tr!("还无法确认这个视频的身份，请单独打开后转换"))?;
         let environment = self.ensure_plan_environment(true)?;
         self.ensure_plan_storage(workspace, draft, PlanValidation::Submission)?;
         let mut config = self.plan_config(draft);
@@ -1213,7 +1269,9 @@ impl Desktop {
                 .unwrap_or_else(|| self.recommended_local_provider());
             let capability = ensure_asr_capability(environment, provider);
             if draft.options.source_mode == TranscriptSource::Auto {
-                capability.context("部分视频可能没有字幕，需要语音识别能力作为后备")?;
+                capability.context(course2md::tr!(
+                    "部分视频可能没有字幕，需要语音识别能力作为后备"
+                ))?;
             } else {
                 capability?;
             }
@@ -1280,7 +1338,10 @@ impl Desktop {
             match self.build_batch_plan(&candidate, title) {
                 Ok(plan) => plans.push(plan),
                 Err(error) => {
-                    self.message = Some(format!("选中的视频尚未加入队列：{error:#}"));
+                    self.message = Some(course2md::tr!(
+                        "选中的视频尚未加入队列：{}",
+                        format!("{error:#}")
+                    ));
                     cx.notify();
                     return;
                 }
@@ -1288,9 +1349,9 @@ impl Desktop {
         }
         if plans.is_empty() {
             self.message = Some(if skipped > 0 {
-                "选中的视频无法识别，请单独打开后转换".into()
+                course2md::tr!("选中的视频无法识别，请单独打开后转换").into()
             } else {
-                "选中的视频尚未加入队列，请重试".into()
+                course2md::tr!("选中的视频尚未加入队列，请重试").into()
             });
             cx.notify();
             return;
@@ -1317,21 +1378,27 @@ impl Desktop {
                 let created = total - duplicates;
                 let mut parts = Vec::new();
                 if created > 0 {
-                    parts.push(format!("已把 {created} 个视频加入队列"));
+                    parts.push(course2md::tr!("已把 {} 个视频加入队列", created));
                 }
                 if duplicates > 0 {
-                    parts.push(format!("{duplicates} 个与进行中的任务相同，未重复加入"));
+                    parts.push(course2md::tr!(
+                        "{} 个与进行中的任务相同，未重复加入",
+                        duplicates
+                    ));
                 }
                 if skipped > 0 {
-                    parts.push(format!("{skipped} 个无法识别，已跳过"));
+                    parts.push(course2md::tr!("{} 个无法识别，已跳过", skipped));
                 }
-                self.message = Some(parts.join("；"));
+                self.message = Some(parts.join(course2md::tr!("；")));
                 if let Some(id) = first_id {
                     self.select_task(&id, cx);
                 }
                 self.start_next_task(cx);
             }
-            Err(error) => self.workspace_error = Some(format!("任务尚未加入队列：{error:#}")),
+            Err(error) => {
+                self.workspace_error =
+                    Some(course2md::tr!("任务尚未加入队列：{}", format!("{error:#}")))
+            }
         }
         cx.notify();
     }
@@ -1358,6 +1425,7 @@ impl Desktop {
         let plan = match self.build_plan(PlanValidation::Submission) {
             Ok(plan) => plan,
             Err(error) => {
+                self.title_required = error.downcast_ref::<TitleRequired>().is_some();
                 self.source_validation = Some(format!("{error:#}"));
                 self.validation_attempt = self.validation_attempt.wrapping_add(1);
                 let subtitle_attention = self.subtitle_attention_required();
@@ -1421,7 +1489,9 @@ impl Desktop {
             Ok((id, created)) => {
                 self.pending_conversion = None;
                 self.source_validation = None;
-                self.message = (!created).then(|| "已有相同任务，未重复加入".into());
+                self.title_required = false;
+                self.message =
+                    (!created).then(|| course2md::tr!("已有相同任务，未重复加入").into());
                 if created {
                     self.following_conversion = self
                         .following_conversion
@@ -1436,7 +1506,10 @@ impl Desktop {
                 // Preparation may finish after navigation; keep the user's current page.
                 self.start_next_task(cx);
             }
-            Err(error) => self.workspace_error = Some(format!("任务尚未加入队列：{error:#}")),
+            Err(error) => {
+                self.workspace_error =
+                    Some(course2md::tr!("任务尚未加入队列：{}", format!("{error:#}")))
+            }
         }
         cx.notify();
     }
@@ -1446,11 +1519,13 @@ impl Desktop {
         task: &TaskRecord,
         secrets: &HashMap<String, String>,
     ) -> Result<course2md::execution::Request> {
-        let location = self.task_library(task).context("任务保存位置暂时不可用")?;
+        let location = self
+            .task_library(task)
+            .context(course2md::tr!("任务保存位置暂时不可用"))?;
         workspace::check_library(location)?;
         ensure!(
             task.work_dir == location.root.join(".course2md/work").join(&task.id),
-            "任务位置与笔记库记录不匹配，请先恢复存储位置"
+            course2md::tr!("任务位置与笔记库记录不匹配，请先恢复存储位置")
         );
         let refs = ServiceRefs {
             asr: task.plan.asr_service.clone(),
@@ -1516,11 +1591,13 @@ impl Desktop {
     }
 
     fn write_task_control(&self, task: &TaskRecord, resend: Vec<String>) -> Result<()> {
-        let library = self.task_library(task).context("任务保存位置尚未恢复")?;
+        let library = self
+            .task_library(task)
+            .context(course2md::tr!("任务保存位置尚未恢复"))?;
         workspace::check_library(library)?;
         ensure!(
             task.work_dir == library.root.join(".course2md/work").join(&task.id),
-            "任务工作目录与保存位置不匹配"
+            course2md::tr!("任务工作目录与保存位置不匹配")
         );
         let mut authorizations = task.resend.clone();
         for id in resend {
@@ -1555,7 +1632,10 @@ impl Desktop {
             .cloned()
             && let Err(error) = self.write_task_control(&task, Vec::new())
         {
-            self.workspace_error = Some(format!("停止新请求的指令尚未保存：{error:#}"));
+            self.workspace_error = Some(course2md::tr!(
+                "停止新请求的指令尚未保存：{}",
+                format!("{error:#}")
+            ));
             if let Some(job) = &self.job {
                 job.cancel();
             }
@@ -1612,7 +1692,7 @@ impl Desktop {
             let secrets = secrets_rx
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("凭据读取意外中断")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(course2md::tr!("凭据读取意外中断"))));
             let _ = this.update(cx, |this, cx| {
                 this.start_pending = false;
                 match secrets {
@@ -1658,9 +1738,11 @@ impl Desktop {
             // The durable running state must exist before the subprocess can do work.
             self.workspace
                 .as_mut()
-                .context("任务记录不可用")?
+                .context(course2md::tr!("任务记录不可用"))?
                 .transaction(|state| {
-                    let record = state.task_mut(&task.id).context("任务不存在")?;
+                    let record = state
+                        .task_mut(&task.id)
+                        .context(course2md::tr!("任务不存在"))?;
                     record.state = TaskState::Running;
                     record.error = None;
                     record.updated = workspace::now();
@@ -1678,7 +1760,7 @@ impl Desktop {
                 self.logs.clear();
                 self.pending_done = None;
                 self.task_error = None;
-                self.task_status = format!("正在生成《{}》", task.plan.title);
+                self.task_status = course2md::tr!("正在生成《{}》", task.plan.title);
             }
             Err(error) => {
                 self.fail_task_before_start(&task.id, format!("{error:#}"));
@@ -1690,7 +1772,9 @@ impl Desktop {
     fn fail_task_before_start(&mut self, task_id: &str, message: String) {
         if let Some(workspace) = &mut self.workspace {
             let compensated = workspace.transaction(|state| {
-                let record = state.task_mut(task_id).context("任务不存在")?;
+                let record = state
+                    .task_mut(task_id)
+                    .context(course2md::tr!("任务不存在"))?;
                 record.state = TaskState::NeedsAttention;
                 record.error = Some(message.clone());
                 record.unread = true;
@@ -1704,7 +1788,8 @@ impl Desktop {
                     record.error = Some(message);
                     record.unread = true;
                 }
-                self.workspace_error = Some(format!("任务状态尚未保存：{error:#}"));
+                self.workspace_error =
+                    Some(course2md::tr!("任务状态尚未保存：{}", format!("{error:#}")));
             }
         }
     }
@@ -1712,7 +1797,7 @@ impl Desktop {
     pub fn set_task_intent(&mut self, id: String, intent: Intent, cx: &mut Context<Self>) {
         let active = self.is_running_task(&id);
         if active && intent == Intent::Run {
-            self.message = Some("当前任务还在处理，请等候当前操作结束。".into());
+            self.message = Some(course2md::tr!("当前任务还在处理，请等候当前操作结束。").into());
             cx.notify();
             return;
         }
@@ -1722,7 +1807,10 @@ impl Desktop {
         match workspace.transaction(|state| {
             state.set_intent(&id, intent)?;
             if active && intent != Intent::Run {
-                state.task_mut(&id).context("任务记录不存在")?.state = TaskState::Pausing;
+                state
+                    .task_mut(&id)
+                    .context(course2md::tr!("任务记录不存在"))?
+                    .state = TaskState::Pausing;
             }
             Ok(())
         }) {
@@ -1739,7 +1827,8 @@ impl Desktop {
                     .cloned()
                     && let Err(error) = self.write_task_control(&task, Vec::new())
                 {
-                    self.workspace_error = Some(format!("任务指令尚未保存：{error:#}"));
+                    self.workspace_error =
+                        Some(course2md::tr!("任务指令尚未保存：{}", format!("{error:#}")));
                     if self.active_task.as_ref() == Some(&id)
                         && let Some(job) = &self.job
                     {
@@ -1748,7 +1837,10 @@ impl Desktop {
                 }
                 self.start_next_task(cx);
             }
-            Err(error) => self.workspace_error = Some(format!("任务状态尚未保存：{error:#}")),
+            Err(error) => {
+                self.workspace_error =
+                    Some(course2md::tr!("任务状态尚未保存：{}", format!("{error:#}")))
+            }
         }
         cx.notify();
     }
@@ -1772,7 +1864,8 @@ impl Desktop {
                 Ok(())
             })
         {
-            self.workspace_error = Some(format!("任务选择尚未保存：{error:#}"));
+            self.workspace_error =
+                Some(course2md::tr!("任务选择尚未保存：{}", format!("{error:#}")));
         }
         cx.notify();
     }
@@ -1805,7 +1898,9 @@ impl Desktop {
 
     pub fn resend_uncertain(&mut self, id: String, cx: &mut Context<Self>) {
         if self.is_running_task(&id) {
-            self.message = Some("正在保存当前结果，请等候当前任务停止后再选择重新发送。".into());
+            self.message = Some(
+                course2md::tr!("正在保存当前结果，请等候当前任务停止后再选择重新发送。").into(),
+            );
             cx.notify();
             return;
         }
@@ -1849,7 +1944,10 @@ impl Desktop {
         if let Some(workspace) = &mut self.workspace {
             let result = workspace.transaction(|state| state.authorize_uncertain(&id, &requests));
             if let Err(error) = result {
-                self.workspace_error = Some(format!("重新发送的选择尚未保存：{error:#}"));
+                self.workspace_error = Some(course2md::tr!(
+                    "重新发送的选择尚未保存：{}",
+                    format!("{error:#}")
+                ));
                 return;
             }
         }
@@ -1866,7 +1964,8 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) {
         if self.is_running_task(&id) {
-            self.message = Some("正在保存当前结果，请等候当前任务停止后再补做。".into());
+            self.message =
+                Some(course2md::tr!("正在保存当前结果，请等候当前任务停止后再补做。").into());
             cx.notify();
             return;
         }
@@ -1882,7 +1981,10 @@ impl Desktop {
                 self.follow_resumed_input_task(&id, cx);
                 self.start_next_task(cx);
             }
-            Err(error) => self.workspace_error = Some(format!("补做任务尚未建立：{error:#}")),
+            Err(error) => {
+                self.workspace_error =
+                    Some(course2md::tr!("补做任务尚未建立：{}", format!("{error:#}")))
+            }
         }
         cx.notify();
     }
@@ -1923,7 +2025,7 @@ impl Desktop {
             })
             .unwrap_or_default();
         if components.is_empty() {
-            self.message = Some("这份笔记没有需要修复的校对或摘要".into());
+            self.message = Some(course2md::tr!("这份笔记没有需要修复的校对或摘要").into());
             cx.notify();
             return;
         }
@@ -1940,13 +2042,13 @@ impl Desktop {
         let result = (|| -> Result<String> {
             ensure!(
                 !self.is_running_task(&id),
-                "正在保存当前结果，请等待任务停止后再补做"
+                course2md::tr!("正在保存当前结果，请等待任务停止后再补做")
             );
             let task = self
                 .workspace
                 .as_ref()
                 .and_then(|workspace| workspace.state.task(&id))
-                .context("原任务记录暂时不可用")?;
+                .context(course2md::tr!("原任务记录暂时不可用"))?;
             let mut base = task.plan.config.clone();
             base.defaults.transcript_source = Some(course2md::config::TranscriptSource::Subtitle);
             base.llm.enabled = components
@@ -1964,7 +2066,7 @@ impl Desktop {
             )?;
             self.workspace
                 .as_mut()
-                .context("任务记录暂时不可用")?
+                .context(course2md::tr!("任务记录暂时不可用"))?
                 .transaction(|state| {
                     state.reprocess_with_service(
                         &id,
@@ -1984,7 +2086,10 @@ impl Desktop {
                 true
             }
             Err(error) => {
-                self.workspace_error = Some(format!("服务已保存，补做任务尚未建立：{error:#}"));
+                self.workspace_error = Some(course2md::tr!(
+                    "服务已保存，补做任务尚未建立：{}",
+                    format!("{error:#}")
+                ));
                 cx.notify();
                 false
             }
@@ -1993,7 +2098,8 @@ impl Desktop {
 
     pub fn adjust_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_running_task(&id) {
-            self.message = Some("当前任务还在处理，请先暂停并等候当前步骤结束。".into());
+            self.message =
+                Some(course2md::tr!("当前任务还在处理，请先暂停并等候当前步骤结束。").into());
             cx.notify();
             return;
         }
@@ -2024,7 +2130,10 @@ impl Desktop {
                         this.page = Page::New;
                     }
                     Err(error) => {
-                        this.workspace_error = Some(format!("尚未打开任务调整选项：{error:#}"))
+                        this.workspace_error = Some(course2md::tr!(
+                            "尚未打开任务调整选项：{}",
+                            format!("{error:#}")
+                        ))
                     }
                 }
                 cx.notify();
@@ -2125,7 +2234,9 @@ impl Desktop {
         let visible =
             self.page == Page::Task && workspace.state.selected_task.as_deref() == Some(id);
         let result = workspace.transaction(|state| {
-            let task = state.task_mut(id).context("任务记录不存在")?;
+            let task = state
+                .task_mut(id)
+                .context(course2md::tr!("任务记录不存在"))?;
             task.updated = workspace::now();
             task.unread = !visible;
             task.outcomes = done
@@ -2161,9 +2272,9 @@ impl Desktop {
                 if task.error.is_none() && !cancelled && task.intent == Intent::Run {
                     task.error = Some(
                         if success {
-                            "未生成可读笔记"
+                            course2md::tr!("未生成可读笔记")
                         } else {
-                            "生成中断"
+                            course2md::tr!("生成中断")
                         }
                         .into(),
                     );
@@ -2226,12 +2337,16 @@ impl Desktop {
                         let mut issues = Vec::new();
                         if let Some(root) = &root {
                             if let Err(error) = source::save_cover(&source, &out_dir) {
-                                issues.push(format!("封面暂未保存：{error:#}"));
+                                issues
+                                    .push(course2md::tr!("封面暂未保存：{}", format!("{error:#}")));
                             }
                             if let Err(error) = organize::Library::edit(root, |library| {
                                 library.assign(root, &storage_dir, folder)
                             }) {
-                                issues.push(format!("文件夹归属暂未更新：{error:#}"));
+                                issues.push(course2md::tr!(
+                                    "文件夹归属暂未更新：{}",
+                                    format!("{error:#}")
+                                ));
                             }
                         }
                         let cover = out_dir.join("cover.jpg");
@@ -2248,7 +2363,10 @@ impl Desktop {
                         };
                         let _ = this.update(cx, |this, cx| {
                             if !issues.is_empty() {
-                                this.message = Some(format!("笔记已保存，{}", issues.join("；")));
+                                this.message = Some(course2md::tr!(
+                                    "笔记已保存，{}",
+                                    issues.join(course2md::tr!("；"))
+                                ));
                             }
                             if let Some(manifest) = &manifest {
                                 update_published_course(
@@ -2271,8 +2389,10 @@ impl Desktop {
                 self.transient_task_result = Some((id.to_owned(), std::time::Instant::now()));
             }
             Err(error) => {
-                self.workspace_error =
-                    Some(format!("完成状态尚未保存：{error:#}。已发布的笔记仍保留。"))
+                self.workspace_error = Some(course2md::tr!(
+                    "完成状态尚未保存：{}。已发布的笔记仍保留。",
+                    format!("{error:#}")
+                ))
             }
         }
         cx.notify();
@@ -2280,16 +2400,22 @@ impl Desktop {
 
     pub(crate) fn open_task_export_location(&mut self, id: String, cx: &mut Context<Self>) {
         let destination = (|| {
-            let state = &self.workspace.as_ref().context("任务记录暂时不可用")?.state;
-            let task = state.task(&id).context("任务记录不存在")?;
+            let state = &self
+                .workspace
+                .as_ref()
+                .context(course2md::tr!("任务记录暂时不可用"))?
+                .state;
+            let task = state.task(&id).context(course2md::tr!("任务记录不存在"))?;
             let location = state
                 .library(&task.plan.library_id)
-                .context("任务保存位置暂时不可用")?;
+                .context(course2md::tr!("任务保存位置暂时不可用"))?;
             workspace::available_task_export(task, location)
         })();
         match destination {
             Ok(path) => cx.reveal_path(&path),
-            Err(error) => self.message = Some(format!("无法打开导出位置：{error:#}")),
+            Err(error) => {
+                self.message = Some(course2md::tr!("无法打开导出位置：{}", format!("{error:#}")))
+            }
         }
         cx.notify();
     }
@@ -2389,7 +2515,10 @@ impl Desktop {
             .w_full()
             .min_w_0()
             .items_center()
-            .child(theme::page_heading("tasks-page-title", "任务"))
+            .child(theme::page_heading(
+                "tasks-page-title",
+                course2md::tr!("任务"),
+            ))
     }
 
     /// One row of the virtualized queue: every row keeps the spacing the old
@@ -2408,11 +2537,11 @@ impl Desktop {
             QueueItem::Unavailable => v_flex()
                 .gap_3()
                 .child(icons::warning().size_8().text_color(color(WARNING)))
-                .child("任务记录暂时无法读取")
+                .child(course2md::tr!("任务记录暂时无法读取"))
                 .child(
                     outline_pill("task-records-open-library")
                         .icon(icons::book_open())
-                        .label("前往笔记库")
+                        .label(course2md::tr!("前往笔记库"))
                         .self_start()
                         .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Library, cx))),
                 )
@@ -2423,7 +2552,7 @@ impl Desktop {
                 .items_center()
                 .child(icons::task().size_8().text_color(color(GRAY)))
                 .child(
-                    accessible_text("task-empty-title", "还没有生成任务")
+                    accessible_text("task-empty-title", course2md::tr!("还没有生成任务"))
                         .role(Role::Heading)
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD),
@@ -2431,7 +2560,7 @@ impl Desktop {
                 .child(
                     primary_pill("task-new")
                         .icon(icons::plus())
-                        .label("导入视频")
+                        .label(course2md::tr!("导入视频"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             if this.prepare_workbench_input(window, cx) {
                                 this.navigate(Page::New, cx);
@@ -2454,7 +2583,7 @@ impl Desktop {
                     } else {
                         icons::chevron_down()
                     })
-                    .label(format!("此前处理记录 · {count}"))
+                    .label(course2md::tr!("此前处理记录 · {}", count))
                     .on_click(move |_, _, cx| {
                         toggle.update(cx, |open, cx| {
                             *open = !*open;
@@ -2509,9 +2638,9 @@ impl Desktop {
                     actions.child(
                         primary(SharedString::from(format!("{id_prefix}pause-{id}")))
                             .label(if task.state == TaskState::Pausing {
-                                "正在暂停…"
+                                course2md::tr!("正在暂停…")
                             } else {
-                                "暂停"
+                                course2md::tr!("暂停")
                             })
                             .icon(icons::pause())
                             .loading(task.state == TaskState::Pausing)
@@ -2531,9 +2660,9 @@ impl Desktop {
                     )))
                     .icon(icons::close())
                     .label(if cancelling {
-                        "正在取消…"
+                        course2md::tr!("正在取消…")
                     } else {
-                        "取消任务"
+                        course2md::tr!("取消任务")
                     })
                     .loading(cancelling)
                     .disabled(cancelling)
@@ -2565,14 +2694,14 @@ impl Desktop {
         let has_cover = cover.is_some();
         let heading = control(SharedString::from(format!("select-{id}")))
             .ghost()
-            .accessibility_label(format!(
+            .accessibility_label(course2md::tr!(
                 "{}，{}，{}",
                 task.plan.title,
                 task_status_label(task),
                 if is_selected {
-                    "收起"
+                    course2md::tr!("收起")
                 } else {
-                    "查看详情"
+                    course2md::tr!("查看详情")
                 }
             ))
             .w_full()
@@ -2637,7 +2766,8 @@ impl Desktop {
                                 Ok(())
                             })
                         {
-                            this.workspace_error = Some(format!("任务选择尚未保存：{error:#}"));
+                            this.workspace_error =
+                                Some(course2md::tr!("任务选择尚未保存：{}", format!("{error:#}")));
                         }
                         cx.notify();
                     } else {
@@ -2662,7 +2792,7 @@ impl Desktop {
                 // One filled action per screen: rows open their note tonally.
                 tonal_pill(SharedString::from(format!("task-read-direct-{id}")), cx)
                     .icon(icons::book_open())
-                    .label("阅读笔记")
+                    .label(course2md::tr!("阅读笔记"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_course(
                             Course::from_completed(&Completed {
@@ -2680,7 +2810,7 @@ impl Desktop {
             row = row.child(
                 control(SharedString::from(format!("task-open-exports-{id}")))
                     .icon(icons::folder_open())
-                    .label("打开导出位置")
+                    .label(course2md::tr!("打开导出位置"))
                     .when(task.exports_only(), |button| button.primary())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_task_export_location(task_id.clone(), cx)
@@ -2705,14 +2835,14 @@ impl Desktop {
             let destination = self
                 .task_library(task)
                 .map(|lib| lib.name.clone())
-                .unwrap_or_else(|| "保存位置暂时不可用".into());
+                .unwrap_or_else(|| course2md::tr!("保存位置暂时不可用").into());
             let facts = v_flex()
                 .w_full()
                 .min_w_0()
                 .gap_1()
                 .child(detail_row(
                     SharedString::from(format!("task-destination-{id}")),
-                    "保存到",
+                    course2md::tr!("保存到"),
                     icons::folder_open()
                         .size(rems(20. / 14.))
                         .text_color(color(GRAY)),
@@ -2763,7 +2893,7 @@ impl Desktop {
                 actions = actions.child(
                     control(SharedString::from(format!("followup-{id}")))
                         .icon(icons::arrow_forward())
-                        .label("查看后续处理任务")
+                        .label(course2md::tr!("查看后续处理任务"))
                         .on_click(cx.listener(move |this, _, _, cx| this.select_task(&next, cx))),
                 );
             }
@@ -2885,7 +3015,7 @@ impl Desktop {
                                 crate::activity::component_failure_message(label, None)
                             })
                             .collect::<Vec<_>>()
-                            .join("、"),
+                            .join(course2md::tr!("、")),
                     )
                     .text_size(TEXT_BODY)
                     .text_color(color(GRAY)),
@@ -2910,7 +3040,7 @@ impl Desktop {
         Some(
             button
                 .icon(icons::storage())
-                .label("重新关联此保存位置")
+                .label(course2md::tr!("重新关联此保存位置"))
                 .disabled(self.storage_ui.busy)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.begin_library_reassociation(library_id.clone(), window, cx)
@@ -2929,9 +3059,9 @@ impl Desktop {
             .button("resume", &task.id, Emphasis::Primary)
             .icon(icons::play_arrow())
             .label(if task.state == TaskState::Paused {
-                "继续生成"
+                course2md::tr!("继续生成")
             } else {
-                "继续任务"
+                course2md::tr!("继续任务")
             })
             .on_click(
                 cx.listener(move |this, _, _, cx| {
@@ -2950,7 +3080,7 @@ impl Desktop {
         style
             .button("repair-ai", &task.id, Emphasis::Secondary)
             .icon(icons::settings())
-            .label("修复 AI 服务并补做")
+            .label(course2md::tr!("修复 AI 服务并补做"))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.repair_task_service(id.clone(), window, cx);
             }))
@@ -2969,7 +3099,7 @@ impl Desktop {
         style
             .button(&format!("retry-{component}"), &task.id, Emphasis::Quiet)
             .icon(icons::refresh())
-            .label(format!("仅补{label}"))
+            .label(course2md::tr!("仅补{}", label))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.reprocess_task(id.clone(), vec![component.clone()], Vec::new(), cx)
             }))
@@ -2986,11 +3116,11 @@ impl Desktop {
             .button("adjust", &task.id, Emphasis::Secondary)
             .icon(icons::tune())
             .label(if task.artifact.is_some() {
-                "调整并生成新版"
+                course2md::tr!("调整并生成新版")
             } else if task.state == TaskState::Paused {
-                "调整选项"
+                course2md::tr!("调整选项")
             } else {
-                "调整后重试"
+                course2md::tr!("调整后重试")
             })
             .on_click(
                 cx.listener(move |this, _, window, cx| this.adjust_task(id.clone(), window, cx)),
@@ -3256,19 +3386,19 @@ impl Desktop {
                 }))
                 .child(accessible_text(
                     SharedString::from(format!("unknown-effect-{id}")),
-                    "服务可能已处理这些内容，重新发送可能产生额外费用",
+                    course2md::tr!("服务可能已处理这些内容，重新发送可能产生额外费用"),
                 ))
                 .when(active, |view| {
                     view.child(accessible_text(
                         SharedString::from(format!("unknown-saving-{id}")),
-                        "正在保存当前结果…",
+                        course2md::tr!("正在保存当前结果…"),
                     ))
                 })
                 .child(
                     primary_pill(SharedString::from(format!("resend-{id}")))
                         .self_start()
                         .icon(icons::refresh())
-                        .label("重新发送以上内容")
+                        .label(course2md::tr!("重新发送以上内容"))
                         .disabled(active)
                         .on_click(cx.listener({
                             let id = id.clone();
@@ -3328,15 +3458,15 @@ impl Desktop {
         let source = if task.plan.options.source_mode != TranscriptSource::Asr
             && task.plan.source.selected_subtitle.is_some()
         {
-            "视频字幕"
+            course2md::tr!("视频字幕")
         } else if task.plan.options.uses_cloud_provider() {
-            "识别服务"
+            course2md::tr!("识别服务")
         } else {
-            "本机识别"
+            course2md::tr!("本机识别")
         };
         let mut facts = v_flex().w_full().min_w_0().gap_1().child(detail_row(
             SharedString::from(format!("task-text-source-{}", task.id)),
-            "文字来源",
+            course2md::tr!("文字来源"),
             icons::subtitles()
                 .size(rems(20. / 14.))
                 .text_color(color(GRAY)),
@@ -3351,19 +3481,19 @@ impl Desktop {
         {
             facts = facts.child(detail_row(
                 SharedString::from(format!("task-ai-destination-{}", task.id)),
-                "AI 处理",
+                course2md::tr!("AI 处理"),
                 icons::auto_fix()
                     .size(rems(20. / 14.))
                     .text_color(color(GRAY)),
                 div()
                     .text_size(TEXT_BODY)
                     .whitespace_normal()
-                    .child(format!(
+                    .child(course2md::tr!(
                         "{}发送到「{}」",
                         if task.plan.options.vision {
-                            "文字与截图"
+                            course2md::tr!("文字与截图")
                         } else {
-                            "文字"
+                            course2md::tr!("文字")
                         },
                         version.config.name,
                     )),
@@ -3382,7 +3512,7 @@ impl Desktop {
                 SharedString::from(format!("task-opening-result-{}", task.id)),
                 semantic_label(
                     SharedString::from(format!("task-opening-result-label-{}", task.id)),
-                    "正在打开…",
+                    course2md::tr!("正在打开…"),
                     crate::motion::spinner(
                         SharedString::from(format!("task-opening-result-spinner-{}", task.id)),
                         cx,
@@ -3436,12 +3566,12 @@ impl Desktop {
             .filter(|(component, _, _)| ai_component(component).is_some())
             .map(|(_, label, _)| label.as_str())
             .collect::<Vec<_>>()
-            .join("、");
+            .join(course2md::tr!("、"));
         if let Some(reason) = task_service_repair_reason(task).filter(|_| !missing.is_empty()) {
             card = card.child(
                 accessible_text(
                     SharedString::from(format!("box-service-repair-reason-{id}")),
-                    format!("{missing}尚未完成。{reason}"),
+                    course2md::tr!("{}尚未完成。{}", missing, reason),
                 )
                 .text_sm(),
             );
@@ -3474,7 +3604,7 @@ impl Desktop {
                 actions = actions.child(
                     primary_pill(SharedString::from(format!("box-read-{id}")))
                         .icon(icons::book_open())
-                        .label("阅读笔记")
+                        .label(course2md::tr!("阅读笔记"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.open_course(
                                 Course::from_completed(&Completed {
@@ -3504,7 +3634,7 @@ impl Desktop {
             actions = actions.child(
                 quiet(SharedString::from(format!("box-task-details-{id}")))
                     .icon(icons::task())
-                    .label("查看任务详情")
+                    .label(course2md::tr!("查看任务详情"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_task(&details_id, cx);
                         this.navigate(Page::Task, cx);
@@ -3524,7 +3654,7 @@ impl Desktop {
                 .child(
                     quiet(SharedString::from(format!("box-cancel-{id}")))
                         .icon(icons::close())
-                        .label("取消任务")
+                        .label(course2md::tr!("取消任务"))
                         .on_click(cx.listener({
                             let id = id.clone();
                             move |this, _, _, cx| {
@@ -3590,14 +3720,14 @@ fn batch_note_title(
         return title.to_owned();
     }
     match collection.map(str::trim).filter(|title| !title.is_empty()) {
-        Some(collection) => format!("{collection} 视频 {}", index + 1),
-        None => format!("视频 {}", index + 1),
+        Some(collection) => course2md::tr!("{} 视频 {}", collection, index + 1),
+        None => course2md::tr!("视频 {}", index + 1),
     }
 }
 
 fn task_status_label(task: &TaskRecord) -> String {
     if task.handled_by.is_some() {
-        return "已有后续处理任务".into();
+        return course2md::tr!("已有后续处理任务").into();
     }
     if task.has_uncertain() {
         let purpose: std::collections::BTreeSet<_> = task
@@ -3614,18 +3744,18 @@ fn task_status_label(task: &TaskRecord) -> String {
                     .all(|purpose| ai_component(purpose) == Some(component))
         };
         return if all(Component::Proofreading) {
-            "AI 校对结果未确认"
+            course2md::tr!("AI 校对结果未确认")
         } else if all(Component::Summary) {
-            "摘要结果未确认"
+            course2md::tr!("摘要结果未确认")
         } else if purpose.contains(TRANSCRIPTION_PURPOSE) {
-            "语音识别结果未确认"
+            course2md::tr!("语音识别结果未确认")
         } else {
-            "部分处理结果未确认"
+            course2md::tr!("部分处理结果未确认")
         }
         .into();
     }
     if task.exports_only() && task.state == TaskState::Complete {
-        "文件已导出".into()
+        course2md::tr!("文件已导出").into()
     } else {
         task.status_label().into()
     }
@@ -3637,12 +3767,12 @@ fn request_scope(request: &workspace::BlockedRequest) -> String {
     } else {
         let purpose = request.purpose.as_deref().unwrap_or_default();
         let name = match ai_component(purpose) {
-            Some(Component::Proofreading) => "AI 校对",
-            Some(Component::Summary) => "生成摘要",
-            _ if purpose == TRANSCRIPTION_PURPOSE => "语音识别",
-            _ => "外部处理",
+            Some(Component::Proofreading) => course2md::tr!("AI 校对"),
+            Some(Component::Summary) => course2md::tr!("生成摘要"),
+            _ if purpose == TRANSCRIPTION_PURPOSE => course2md::tr!("语音识别"),
+            _ => course2md::tr!("外部处理"),
         };
-        format!("{name}（具体内容未记录）")
+        course2md::tr!("{}（具体内容未记录）", name)
     }
 }
 
@@ -3655,19 +3785,19 @@ fn ensure_asr_capability(
     match provider {
         AsrProvider::Coreml => ensure!(
             environment.apple,
-            "Apple 识别组件不可用，请选择其他识别方式"
+            course2md::tr!("Apple 识别组件不可用，请选择其他识别方式")
         ),
         AsrProvider::Gpu => ensure!(
             environment.llama && environment.gpu.is_some(),
-            "没有检测到可用的 GPU 识别引擎。请选择 CPU 或其他本机识别方式。"
+            course2md::tr!("没有检测到可用的 GPU 识别引擎。请选择 CPU 或其他本机识别方式。")
         ),
         AsrProvider::Cpu => ensure!(
             environment.llama,
-            "CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。"
+            course2md::tr!("CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。")
         ),
         AsrProvider::Npu => ensure!(
             environment.npu,
-            "没有检测到可用的 Intel NPU 识别环境。请选择其他本机识别方式。"
+            course2md::tr!("没有检测到可用的 Intel NPU 识别环境。请选择其他本机识别方式。")
         ),
         AsrProvider::Api => (),
     }
@@ -3713,9 +3843,9 @@ pub(crate) fn task_component_failures(
     let value = &task.outcomes;
     let mut results = Vec::new();
     for (component, label) in [
-        (Component::Screenshots, "截图"),
-        (Component::Proofreading, "校对"),
-        (Component::Summary, "摘要"),
+        (Component::Screenshots, course2md::tr!("截图")),
+        (Component::Proofreading, course2md::tr!("校对")),
+        (Component::Summary, course2md::tr!("摘要")),
     ] {
         let key = component.as_str();
         if let Some(outcome) = value
@@ -3748,13 +3878,13 @@ pub(crate) fn task_component_failures(
         if !failures.is_empty() {
             results.push((
                 Component::Exports.as_str().into(),
-                "导出".into(),
+                course2md::tr!("导出").into(),
                 course2md::artifact::Outcome::failed(
                     failures
                         .iter()
                         .filter_map(|o| o.message.clone())
                         .collect::<Vec<_>>()
-                        .join("；"),
+                        .join(course2md::tr!("；")),
                 ),
             ));
         }

@@ -267,7 +267,7 @@ fn timestamp_in_timezone<Tz: chrono::TimeZone>(milliseconds: u64, timezone: &Tz)
         }
         Some(local.format("%Y-%m-%d %H:%M").to_string())
     };
-    display().unwrap_or_else(|| "时间未知".into())
+    display().unwrap_or_else(|| course2md::tr!("时间未知").into())
 }
 
 #[cfg(test)]

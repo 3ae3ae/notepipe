@@ -35,19 +35,23 @@ pub enum Error {
 impl Error {
     pub fn message(&self) -> String {
         match self {
-            Self::InvalidAddress => "请先填写有效的服务地址，再获取模型".into(),
-            Self::MissingKey => "请先填写 API Key，再获取模型".into(),
-            Self::InvalidKey => "API Key 含无效字符，请检查后重试".into(),
-            Self::CredentialUnavailable => "暂时无法读取已保存的 API Key，可重新填写后重试".into(),
-            Self::TimedOut => "获取模型超时，可重试".into(),
-            Self::Network => "暂时无法获取模型，请检查地址或网络".into(),
-            Self::AuthenticationRefused => "服务拒绝访问模型列表，请检查认证设置".into(),
-            Self::Unsupported => "服务未提供可读取的模型列表".into(),
-            Self::Refused(status) => format!("暂时无法获取模型（HTTP {status}），可重试"),
-            Self::InvalidResponse => "未能识别服务返回的模型列表".into(),
-            Self::TooLarge => "服务返回的模型列表过大".into(),
+            Self::InvalidAddress => course2md::tr!("请先填写有效的服务地址，再获取模型").into(),
+            Self::MissingKey => course2md::tr!("请先填写 API Key，再获取模型").into(),
+            Self::InvalidKey => course2md::tr!("API Key 含无效字符，请检查后重试").into(),
+            Self::CredentialUnavailable => {
+                course2md::tr!("暂时无法读取已保存的 API Key，可重新填写后重试").into()
+            }
+            Self::TimedOut => course2md::tr!("获取模型超时，可重试").into(),
+            Self::Network => course2md::tr!("暂时无法获取模型，请检查地址或网络").into(),
+            Self::AuthenticationRefused => {
+                course2md::tr!("服务拒绝访问模型列表，请检查认证设置").into()
+            }
+            Self::Unsupported => course2md::tr!("服务未提供可读取的模型列表").into(),
+            Self::Refused(status) => course2md::tr!("暂时无法获取模型（HTTP {}），可重试", status),
+            Self::InvalidResponse => course2md::tr!("未能识别服务返回的模型列表").into(),
+            Self::TooLarge => course2md::tr!("服务返回的模型列表过大").into(),
             Self::Custom(message) => message.clone(),
-            Self::Cancelled => "已取消获取模型".into(),
+            Self::Cancelled => course2md::tr!("已取消获取模型").into(),
         }
     }
 }
@@ -423,9 +427,9 @@ pub fn model_field(
     let status = match state.status() {
         // 空闲时不加说明：输入框与右侧获取按钮已说明可做的事
         Status::Idle => None,
-        Status::Loading => Some("正在获取模型列表…".into()),
-        Status::Ready(models) if models.is_empty() => Some("服务未返回模型".into()),
-        Status::Ready(models) => Some(format!("找到 {} 个模型", models.len())),
+        Status::Loading => Some(course2md::tr!("正在获取模型列表…").into()),
+        Status::Ready(models) if models.is_empty() => Some(course2md::tr!("服务未返回模型").into()),
+        Status::Ready(models) => Some(course2md::tr!("找到 {} 个模型", models.len())),
         Status::Failed(error) => Some(error.message()),
     };
     let failed = matches!(state.status(), Status::Failed(_));
@@ -437,14 +441,14 @@ pub fn model_field(
             input_action(SharedString::from(format!("{id}-fetch")))
                 .icon(icons::refresh())
                 .tooltip(if matches!(state.status(), Status::Ready(_)) {
-                    "刷新模型列表"
+                    course2md::tr!("刷新模型列表")
                 } else {
-                    "获取模型列表"
+                    course2md::tr!("获取模型列表")
                 })
                 .accessibility_label(if matches!(state.status(), Status::Ready(_)) {
-                    "刷新模型列表"
+                    course2md::tr!("刷新模型列表")
                 } else {
-                    "获取模型列表"
+                    course2md::tr!("获取模型列表")
                 })
                 .loading(state.loading())
                 .disabled(disabled || state.loading())
@@ -454,8 +458,8 @@ pub fn model_field(
             row.child(
                 input_action(SharedString::from(format!("{id}-choose")))
                     .icon(icons::chevron_down())
-                    .tooltip("选择模型")
-                    .accessibility_label("从服务返回的候选中选择模型")
+                    .tooltip(course2md::tr!("选择模型"))
+                    .accessibility_label(course2md::tr!("从服务返回的候选中选择模型"))
                     .disabled(disabled)
                     .dropdown_menu(move |menu, _, _| {
                         // 候选可能很多：弹层按共享约定限高并滚动（窗口半高，上限 450px）
@@ -495,8 +499,8 @@ pub fn model_field(
                 .suffix(suffix)
                 .aria_label(
                     error
-                        .map(|error| format!("模型 ID，{error}"))
-                        .unwrap_or_else(|| "模型 ID".into()),
+                        .map(|error| course2md::tr!("模型 ID，{}", error))
+                        .unwrap_or_else(|| course2md::tr!("模型 ID").into()),
                 )
                 .when(error.is_some(), |input| input.border_color(color(DANGER))),
         )

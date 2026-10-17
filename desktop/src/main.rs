@@ -68,17 +68,21 @@ enum Field {
     FolderName,
     Search,
 }
-const PROVIDERS: [(&str, &str); 6] = [
-    ("", "自动"),
-    ("coreml", "Apple 芯片"),
-    ("gpu", "GPU"),
-    ("cpu", "CPU"),
-    ("npu", "Intel NPU"),
-    ("api", "云端服务"),
-];
+fn providers() -> [(&'static str, &'static str); 6] {
+    [
+        ("", course2md::tr!("自动")),
+        ("coreml", course2md::tr!("Apple 芯片")),
+        ("gpu", "GPU"),
+        ("cpu", "CPU"),
+        ("npu", "Intel NPU"),
+        ("api", course2md::tr!("云端服务")),
+    ]
+}
 
 /// Shown when a blocking worker ends without a result.
-pub(crate) const INTERRUPTED: &str = "操作意外中断，请重试";
+pub(crate) fn interrupted() -> &'static str {
+    course2md::tr!("操作意外中断，请重试")
+}
 
 /// Runs blocking IO on a dedicated OS thread and delivers the result through a channel.
 ///
@@ -100,17 +104,17 @@ pub(crate) fn spawn_blocking_io<T: Send + 'static>(
 /// 与 PROVIDERS 表的 id 一一对应；None 表示「自动」。
 pub(crate) fn provider_label(provider: Option<course2md::config::AsrProvider>) -> &'static str {
     let id = provider.map(|provider| provider.as_str()).unwrap_or("");
-    PROVIDERS
+    providers()
         .iter()
         .find(|(provider_id, _)| *provider_id == id)
         .map(|(_, label)| *label)
-        .unwrap_or("自动")
+        .unwrap_or(course2md::tr!("自动"))
 }
 
 /// PROVIDERS 下标 → AsrProvider：索引与枚举映射的唯一实现（与 PROVIDERS 顺序同源）。
 pub(crate) fn asr_provider_from_index(index: usize) -> Option<course2md::config::AsrProvider> {
     use course2md::config::AsrProvider;
-    match PROVIDERS.get(index)?.0 {
+    match providers().get(index)?.0 {
         "coreml" => Some(AsrProvider::Coreml),
         "gpu" => Some(AsrProvider::Gpu),
         "cpu" => Some(AsrProvider::Cpu),
@@ -150,7 +154,7 @@ impl ConversionOptions {
             .defaults
             .provider
             .map(|p| {
-                PROVIDERS
+                providers()
                     .iter()
                     .position(|(id, _)| *id == p.as_str())
                     .unwrap_or(0)
@@ -233,6 +237,8 @@ struct Desktop {
     preview_workers: usize,
     preview_error: Option<String>,
     source_validation: Option<String>,
+    /// The current validation error is the missing-title case (typed, not text-matched).
+    title_required: bool,
     import_submit_focus: FocusHandle,
     root_focus: FocusHandle,
     show_preview_details: bool,
@@ -386,7 +392,10 @@ impl Desktop {
                 Ok(())
             })
         {
-            self.workspace_error = Some(format!("无法保存退出前的状态，窗口暂不关闭：{error:#}"));
+            self.workspace_error = Some(course2md::tr!(
+                "无法保存退出前的状态，窗口暂不关闭：{}",
+                format!("{error:#}")
+            ));
             cx.notify();
             return false;
         }
@@ -399,7 +408,7 @@ impl Desktop {
         {
             job.cancel();
         }
-        self.message = Some("正在保存进度并退出…".into());
+        self.message = Some(course2md::tr!("正在保存进度并退出…").into());
         cx.notify();
         self.job.is_none() && self.preview_workers == 0
     }
@@ -421,12 +430,16 @@ impl Desktop {
         let fields = [
             (
                 Field::Source,
-                "粘贴 YouTube 或 Bilibili 视频链接",
+                course2md::tr!("粘贴 YouTube 或 Bilibili 视频链接"),
                 String::new(),
             ),
             (Field::Title, "", String::new()),
-            (Field::Search, "搜索笔记标题", String::new()),
-            (Field::FolderName, "文件夹名称", String::new()),
+            (Field::Search, course2md::tr!("搜索笔记标题"), String::new()),
+            (
+                Field::FolderName,
+                course2md::tr!("文件夹名称"),
+                String::new(),
+            ),
         ];
         let inputs: BTreeMap<_, _> = fields
             .into_iter()
@@ -469,9 +482,10 @@ impl Desktop {
                     }
                     if field == Field::Title
                         && !this.value(Field::Title, cx).is_empty()
-                        && this.source_validation.as_deref() == Some("请填写笔记名称")
+                        && this.title_required
                     {
                         this.source_validation = None;
+                        this.title_required = false;
                     }
                     if field == Field::Search {
                         this.library_list.scroll_to(ListOffset {
@@ -524,7 +538,10 @@ impl Desktop {
         let (workspace, workspace_error) =
             match workspace::Workspace::open(output.clone(), options.clone()) {
                 Ok(workspace) => (Some(workspace), None),
-                Err(error) => (None, Some(format!("任务记录读取失败：{error:#}"))),
+                Err(error) => (
+                    None,
+                    Some(course2md::tr!("任务记录读取失败：{}", format!("{error:#}"))),
+                ),
             };
         let settings_ui = settings_ui::State::new(window, cx);
         let onboarding = onboarding::State::new(window, cx);
@@ -565,6 +582,7 @@ impl Desktop {
             preview_workers: 0,
             preview_error: None,
             source_validation: None,
+            title_required: false,
             import_submit_focus: cx.focus_handle(),
             root_focus: Self::install_root_focus(window, cx),
             show_preview_details: false,
@@ -734,7 +752,8 @@ impl Desktop {
                 true
             }
             Err(error) => {
-                self.workspace_error = Some(format!("新链接未能保存：{error:#}"));
+                self.workspace_error =
+                    Some(course2md::tr!("新链接未能保存：{}", format!("{error:#}")));
                 cx.notify();
                 false
             }
@@ -820,7 +839,7 @@ impl Desktop {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("选择课程视频".into()),
+            prompt: Some(course2md::tr!("选择课程视频").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
@@ -835,7 +854,9 @@ impl Desktop {
                         }
                     }
                     Ok(Ok(None)) => {}
-                    Ok(Err(_)) | Err(_) => this.message = Some("无法打开文件选择器".into()),
+                    Ok(Err(_)) | Err(_) => {
+                        this.message = Some(course2md::tr!("无法打开文件选择器").into())
+                    }
                 }
                 cx.notify();
             });
@@ -853,7 +874,7 @@ impl Desktop {
                 self.progress.clear();
                 self.pending_done = None;
                 self.task_error = None;
-                self.task_status = "正在准备识别模型".into();
+                self.task_status = course2md::tr!("正在准备识别模型").into();
             }
             Err(error) => {
                 self.task_error = Some(format!("{error:#}"));
@@ -959,11 +980,11 @@ impl Desktop {
                         self.refresh_model_diagnostics(cx);
                     } else {
                         self.task_status = if success {
-                            "已完成"
+                            course2md::tr!("已完成")
                         } else if cancelled {
-                            "已停止"
+                            course2md::tr!("已停止")
                         } else {
-                            "未完成"
+                            course2md::tr!("未完成")
                         }
                         .into();
                         self.model_preparation_finished(success, cancelled, cx);
@@ -981,7 +1002,8 @@ impl Desktop {
                 workspace.save_progress().map(|_| ())
             };
             if let Err(error) = result {
-                self.workspace_error = Some(format!("任务进度尚未保存：{error:#}"));
+                self.workspace_error =
+                    Some(course2md::tr!("任务进度尚未保存：{}", format!("{error:#}")));
             }
         }
         if self.closing {
@@ -1070,7 +1092,11 @@ impl Desktop {
                         Err(error) => this.library_issues.push(course_library::LibraryIssue {
                             root: location.root.clone(),
                             kind: course_library::LibraryIssueKind::Scan,
-                            message: format!("{}读取失败：{error:#}", location.name),
+                            message: course2md::tr!(
+                                "{}读取失败：{}",
+                                location.name,
+                                format!("{error:#}")
+                            ),
                         }),
                     }
                     match organization {
@@ -1080,7 +1106,11 @@ impl Desktop {
                         Err(error) => this.library_issues.push(course_library::LibraryIssue {
                             root: location.root.clone(),
                             kind: course_library::LibraryIssueKind::Folders,
-                            message: format!("{}的文件夹信息已损坏：{error:#}", location.name),
+                            message: course2md::tr!(
+                                "{}的文件夹信息已损坏：{}",
+                                location.name,
+                                format!("{error:#}")
+                            ),
                         }),
                     }
                 }
@@ -1105,7 +1135,7 @@ impl Desktop {
                     this.library = library;
                     this.library_error = None;
                 } else {
-                    this.library_error = Some("文件夹信息读取失败".into());
+                    this.library_error = Some(course2md::tr!("文件夹信息读取失败").into());
                 }
                 this.advance_conversion_when_ready(cx);
                 cx.notify();
@@ -1181,7 +1211,7 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("读取笔记时出错，请重试")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(course2md::tr!("读取笔记时出错，请重试"))));
             let _ = this.update(cx, |this, cx| {
                 if this.read_generation != generation || this.page != origin {
                     return;
@@ -1245,7 +1275,10 @@ impl Desktop {
                                 }
                                 Ok(())
                             }) {
-                                this.workspace_error = Some(format!("阅读进度未能保存：{error:#}"));
+                                this.workspace_error = Some(course2md::tr!(
+                                    "阅读进度未能保存：{}",
+                                    format!("{error:#}")
+                                ));
                             }
                         }
                         settle_reader_notice(&mut this.message, &mut this.reader_failure_notice);
@@ -1270,12 +1303,12 @@ impl Desktop {
                         });
                         let message = match io_kind {
                             Some(std::io::ErrorKind::NotFound) => {
-                                "笔记文件不存在，请重新连接保存位置后重试"
+                                course2md::tr!("笔记文件不存在，请重新连接保存位置后重试")
                             }
                             Some(std::io::ErrorKind::PermissionDenied) => {
-                                "无权读取这份笔记，请检查保存位置的访问权限"
+                                course2md::tr!("无权读取这份笔记，请检查保存位置的访问权限")
                             }
-                            _ => "这份笔记无法读取，请检查保存位置中的文件",
+                            _ => course2md::tr!("这份笔记无法读取，请检查保存位置中的文件"),
                         }
                         .to_owned();
                         this.reader_course_error = Some((reading_path, message.clone()));
@@ -1509,7 +1542,7 @@ fn main() {
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
-        .expect("无法创建 course2md 窗口");
+        .expect(course2md::tr!("无法创建 course2md 窗口"));
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -1528,12 +1561,18 @@ fn main() {
         ]);
         cx.set_menus([
             gpui::Menu::new("course2md").items([
-                gpui::MenuItem::action("关于 course2md", OpenAbout),
-                gpui::MenuItem::action("设置…", OpenSettings),
-                gpui::MenuItem::action("退出 course2md", Quit),
+                gpui::MenuItem::action(course2md::tr!("关于 course2md"), OpenAbout),
+                gpui::MenuItem::action(course2md::tr!("设置…"), OpenSettings),
+                gpui::MenuItem::action(course2md::tr!("退出 course2md"), Quit),
             ]),
-            gpui::Menu::new("文件").items([gpui::MenuItem::action("导入视频", ImportVideo)]),
-            gpui::Menu::new("查找").items([gpui::MenuItem::action("搜索笔记", SearchContent)]),
+            gpui::Menu::new(course2md::tr!("文件")).items([gpui::MenuItem::action(
+                course2md::tr!("导入视频"),
+                ImportVideo,
+            )]),
+            gpui::Menu::new(course2md::tr!("查找")).items([gpui::MenuItem::action(
+                course2md::tr!("搜索笔记"),
+                SearchContent,
+            )]),
         ]);
         cx.activate(true);
     });

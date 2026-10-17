@@ -63,9 +63,15 @@ struct LocationChecks {
     results: BTreeMap<String, (PathBuf, LocationCheck)>,
 }
 
-const BACKUP_LIST_STALE: &str = "备份已删除，但列表尚未更新，请重启应用后检查";
-const LIBRARY_REMOVED: &str = "这个笔记库已被移除";
-const REGISTRY_UNAVAILABLE: &str = "笔记库列表暂时无法读取，请重启应用后重试";
+fn backup_list_stale() -> &'static str {
+    course2md::tr!("备份已删除，但列表尚未更新，请重启应用后检查")
+}
+fn library_removed() -> &'static str {
+    course2md::tr!("这个笔记库已被移除")
+}
+fn registry_unavailable() -> &'static str {
+    course2md::tr!("笔记库列表暂时无法读取，请重启应用后重试")
+}
 
 fn location_paths(locations: &[workspace::LibraryLocation]) -> BTreeMap<String, PathBuf> {
     locations
@@ -150,13 +156,20 @@ fn inspect_location(location: &workspace::LibraryLocation) -> LocationCheck {
     match std::fs::read_to_string(location.root.join(storage::LIBRARY_ID_FILE)) {
         Ok(identity) if identity.trim() == location.id => {}
         Ok(_) => {
-            check.problem =
-                Some("这个文件夹属于另一个笔记库，请用“重新定位…”选择正确的文件夹".into())
+            check.problem = Some(
+                course2md::tr!("这个文件夹属于另一个笔记库，请用“重新定位…”选择正确的文件夹")
+                    .into(),
+            )
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             check.needs_reassociation = true
         }
-        Err(error) => check.problem = Some(format!("无法确认这个文件夹是否属于本笔记库：{error}")),
+        Err(error) => {
+            check.problem = Some(course2md::tr!(
+                "无法确认这个文件夹是否属于本笔记库：{}",
+                error
+            ))
+        }
     }
     check
 }
@@ -210,19 +223,19 @@ impl State {
 
     fn title(&self) -> &'static str {
         match self.op {
-            StorageOp::Move => "移动笔记库",
-            StorageOp::Relocate(_) => "重新定位笔记库",
-            StorageOp::Reassociate => "重新关联笔记库",
-            StorageOp::Cleanup => "清理旧位置备份",
+            StorageOp::Move => course2md::tr!("移动笔记库"),
+            StorageOp::Relocate(_) => course2md::tr!("重新定位笔记库"),
+            StorageOp::Reassociate => course2md::tr!("重新关联笔记库"),
+            StorageOp::Cleanup => course2md::tr!("清理旧位置备份"),
         }
     }
 
     fn cancel_label(&self) -> &'static str {
         match self.op {
-            StorageOp::Move => "取消移动",
-            StorageOp::Relocate(_) => "取消重新定位",
-            StorageOp::Reassociate => "取消重新关联",
-            StorageOp::Cleanup => "取消清理",
+            StorageOp::Move => course2md::tr!("取消移动"),
+            StorageOp::Relocate(_) => course2md::tr!("取消重新定位"),
+            StorageOp::Reassociate => course2md::tr!("取消重新关联"),
+            StorageOp::Cleanup => course2md::tr!("取消清理"),
         }
     }
 
@@ -268,7 +281,7 @@ impl Desktop {
                 // empty id skips the marker identity check for this placeholder.
                 vec![workspace::LibraryLocation {
                     id: String::new(),
-                    name: "笔记库".into(),
+                    name: course2md::tr!("笔记库").into(),
                     root: self.library_root.clone(),
                     previous_roots: Vec::new(),
                 }]
@@ -346,7 +359,8 @@ fn validate_registered_destination(
     library_id: &str,
     destination: &Path,
 ) -> Result<()> {
-    let destination = std::fs::canonicalize(destination).context("目标位置暂时无法访问")?;
+    let destination =
+        std::fs::canonicalize(destination).context(course2md::tr!("目标位置暂时无法访问"))?;
     ensure!(
         !state
             .libraries
@@ -357,7 +371,7 @@ fn validate_registered_destination(
                     std::fs::canonicalize(&library.root).unwrap_or_else(|_| library.root.clone());
                 root.starts_with(&destination) || destination.starts_with(root)
             }),
-        "目标与另一个笔记库重叠，请选择单独的文件夹"
+        course2md::tr!("目标与另一个笔记库重叠，请选择单独的文件夹")
     );
     Ok(())
 }
@@ -371,16 +385,16 @@ fn publish_location(
 ) -> Result<()> {
     ensure!(
         journal.phase == Phase::Verified,
-        "目标副本尚未核验，不能切换保存位置"
+        course2md::tr!("目标副本尚未核验，不能切换保存位置")
     );
     let location = state
         .libraries
         .iter()
         .find(|library| library.id == journal.library_id)
-        .context(LIBRARY_REMOVED)?;
+        .context(library_removed())?;
     ensure!(
         std::fs::canonicalize(&location.root)? == journal.source,
-        "笔记库的位置在移动期间已经变化，尚未切换"
+        course2md::tr!("笔记库的位置在移动期间已经变化，尚未切换")
     );
     validate_registered_destination(state, &journal.library_id, &journal.destination)?;
     let roots = [journal.source.clone(), location.root.clone()];
@@ -405,7 +419,7 @@ fn rebind_location(
     roots: &[PathBuf],
     destination: &Path,
 ) -> Result<()> {
-    ensure!(state.library(library_id).is_some(), LIBRARY_REMOVED);
+    ensure!(state.library(library_id).is_some(), library_removed());
     for old in roots {
         for path in state.reader_sources.values_mut() {
             storage::relocate_path(path, old, destination);
@@ -484,29 +498,30 @@ fn inspect_relocation(
     library_id: &str,
     destination: &Path,
 ) -> Result<LocatedLibrary> {
-    let location = state.library(library_id).context(LIBRARY_REMOVED)?;
+    let location = state.library(library_id).context(library_removed())?;
     let destination = destination
         .canonicalize()
-        .context("所选文件夹暂时无法访问")?;
+        .context(course2md::tr!("所选文件夹暂时无法访问"))?;
     ensure!(
         destination
             != location
                 .root
                 .canonicalize()
                 .unwrap_or_else(|_| location.root.clone()),
-        "所选仍是当前位置，请选择移动后的笔记库文件夹"
+        course2md::tr!("所选仍是当前位置，请选择移动后的笔记库文件夹")
     );
     validate_registered_destination(state, library_id, &destination)?;
     let stamp = storage::directory_stamp(&destination)?;
-    let identity = std::fs::read_to_string(destination.join(storage::LIBRARY_ID_FILE))
-        .context("无法确认所选文件夹是这个笔记库，请选择移动后的完整笔记库文件夹")?;
+    let identity = std::fs::read_to_string(destination.join(storage::LIBRARY_ID_FILE)).context(
+        course2md::tr!("无法确认所选文件夹是这个笔记库，请选择移动后的完整笔记库文件夹"),
+    )?;
     ensure!(
         identity.trim() == library_id,
-        "所选文件夹属于另一个笔记库，请选择这个笔记库移动后的文件夹"
+        course2md::tr!("所选文件夹属于另一个笔记库，请选择这个笔记库移动后的文件夹")
     );
     ensure!(
         storage::directory_stamp(&destination)? == stamp,
-        "所选文件夹已变化，请重新选择"
+        course2md::tr!("所选文件夹已变化，请重新选择")
     );
     Ok(LocatedLibrary {
         library_id: library_id.to_owned(),
@@ -521,13 +536,13 @@ fn publish_relocation(state: &mut workspace::State, located: &LocatedLibrary) ->
         state
             .library(&located.library_id)
             .is_some_and(|location| location.root == located.previous_root),
-        "这个笔记库的位置已变化，请重新选择"
+        course2md::tr!("这个笔记库的位置已变化，请重新选择")
     );
     // Recheck the actual directory and identity immediately before publication.
     let current = inspect_relocation(state, &located.library_id, &located.destination)?;
     ensure!(
         current.stamp == located.stamp,
-        "所选文件夹已被替换，请重新选择"
+        course2md::tr!("所选文件夹已被替换，请重新选择")
     );
     rebind_location(
         state,
@@ -550,7 +565,8 @@ impl Desktop {
         self.storage_ui
             .begin(StorageOp::Relocate(library_id.clone()));
         if self.job.is_some() || self.preview_workers > 0 {
-            self.storage_ui.error = Some("正在处理内容，结束或停止后再重新定位".into());
+            self.storage_ui.error =
+                Some(course2md::tr!("正在处理内容，结束或停止后再重新定位").into());
             self.open_storage_dialog(window, cx);
             return;
         }
@@ -571,7 +587,7 @@ impl Desktop {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("选择这个笔记库移动后的文件夹".into()),
+            prompt: Some(course2md::tr!("选择这个笔记库移动后的文件夹").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let answer = prompt.await;
@@ -580,8 +596,8 @@ impl Desktop {
                 Ok(Ok(None)) => None,
                 error => {
                     let message = match error {
-                        Ok(Err(error)) => format!("无法选择文件夹：{error:#}"),
-                        Err(error) => format!("无法打开文件选择器：{error}"),
+                        Ok(Err(error)) => course2md::tr!("无法选择文件夹：{}", format!("{error:#}")),
+                        Err(error) => course2md::tr!("无法打开文件选择器：{}", error),
                         _ => unreachable!(),
                     };
                     let _ = this.update_in(cx, |this, window, cx| {
@@ -604,7 +620,7 @@ impl Desktop {
             let cancel = Arc::new(AtomicBool::new(false));
             let _ = this.update_in(cx, |this, window, cx| {
                 this.storage_ui.cancel = Some(cancel.clone());
-                this.storage_ui.progress.message = "正在核对所选文件夹…".into();
+                this.storage_ui.progress.message = course2md::tr!("正在核对所选文件夹…").into();
                 this.open_storage_dialog(window, cx);
                 cx.notify();
             });
@@ -614,15 +630,15 @@ impl Desktop {
             let result = work
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.storage_ui.generation != generation {
                     return;
                 }
                 let result = result.and_then(|located| {
-                    ensure!(!this.closing && !cancel.load(Ordering::Relaxed), "已取消重新定位");
-                    ensure!(this.job.is_none() && this.preview_workers == 0, "内容仍在处理中，请停止后重新定位");
-                    this.workspace.as_mut().context(REGISTRY_UNAVAILABLE)?
+                    ensure!(!this.closing && !cancel.load(Ordering::Relaxed), course2md::tr!("已取消重新定位"));
+                    ensure!(this.job.is_none() && this.preview_workers == 0, course2md::tr!("内容仍在处理中，请停止后重新定位"));
+                    this.workspace.as_mut().context(registry_unavailable())?
                         .transaction(|state| publish_relocation(state, &located))?;
                     Ok(located)
                 });
@@ -648,9 +664,9 @@ impl Desktop {
                             }
                         }
                         let settings = this.relocate_settings_paths(&located.previous_root, &located.destination, cx);
-                        this.storage_ui.error = settings.err().map(|error| format!("笔记库已重新定位，模型位置尚未保存。请在生成笔记设置中重试保存：{error:#}"));
+                        this.storage_ui.error = settings.err().map(|error| course2md::tr!("笔记库已重新定位，模型位置尚未保存。请在生成笔记设置中重试保存：{}", format!("{error:#}")));
                         this.storage_ui.progress = Progress {
-                            message: format!("已重新定位到 {}", located.destination.display()),
+                            message: course2md::tr!("已重新定位到 {}", located.destination.display()),
                             completed: 1,
                             total: 1,
                         };
@@ -662,7 +678,7 @@ impl Desktop {
                         }
                     }
                     Err(error) => {
-                        this.storage_ui.error = Some(format!("尚未重新定位：{error:#}"));
+                        this.storage_ui.error = Some(course2md::tr!("尚未重新定位：{}", format!("{error:#}")));
                     }
                 }
                 this.start_next_task(cx);
@@ -701,7 +717,7 @@ impl Desktop {
         self.storage_ui.begin(StorageOp::Reassociate);
         self.storage_ui.busy = true;
         self.storage_ui.progress = Progress {
-            message: "正在重新读取这个位置中的笔记…".into(),
+            message: course2md::tr!("正在重新读取这个位置中的笔记…").into(),
             ..Default::default()
         };
         let cancel = Arc::new(AtomicBool::new(false));
@@ -715,7 +731,10 @@ impl Desktop {
             let mut names = Vec::new();
             let mut unreadable = 0;
             for course in courses {
-                ensure!(!worker_cancel.load(Ordering::Relaxed), "已取消重新关联");
+                ensure!(
+                    !worker_cancel.load(Ordering::Relaxed),
+                    course2md::tr!("已取消重新关联")
+                );
                 let title = course.title.clone();
                 if crate::notes::read_preview(course).is_ok() {
                     names.push(title);
@@ -725,16 +744,19 @@ impl Desktop {
             }
             ensure!(
                 storage::directory_stamp(&root)? == stamp,
-                "保存位置在读取期间已经变化，请重新检查"
+                course2md::tr!("保存位置在读取期间已经变化，请重新检查")
             );
-            ensure!(!worker_cancel.load(Ordering::Relaxed), "已取消重新关联");
+            ensure!(
+                !worker_cancel.load(Ordering::Relaxed),
+                course2md::tr!("已取消重新关联")
+            );
             Ok::<_, anyhow::Error>((stamp, names, unreadable))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = worker
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let Ok((stamp, names, unreadable)) = result else {
                 let message = result.unwrap_err().to_string();
                 let _ = this.update_in(cx, |this, _, cx| {
@@ -747,11 +769,11 @@ impl Desktop {
                 });
                 return;
             };
-            let mut detail = format!("保存位置：{}\n\n", location.root.display());
+            let mut detail = course2md::tr!("保存位置：{}\n\n", location.root.display());
             if names.is_empty() {
-                detail.push_str("未读到笔记。\n");
+                detail.push_str(course2md::tr!("未读到笔记。\n"));
             } else {
-                detail.push_str(&format!(
+                detail.push_str(&course2md::tr!(
                     "目前可读取 {} 份笔记：\n{}",
                     names.len(),
                     names
@@ -762,12 +784,12 @@ impl Desktop {
                         .join("\n")
                 ));
                 if names.len() > 5 {
-                    detail.push_str(&format!("\n以及另外 {} 份笔记。", names.len() - 5));
+                    detail.push_str(&course2md::tr!("\n以及另外 {} 份笔记。", names.len() - 5));
                 }
                 detail.push('\n');
             }
             if unreadable > 0 {
-                detail.push_str(&format!("另有 {unreadable} 份笔记无法读取。\n"));
+                detail.push_str(&course2md::tr!("另有 {} 份笔记无法读取。\n", unreadable));
             }
             let detail = detail.trim_end().to_owned();
             let answer = this.update_in(cx, |this, window, cx| {
@@ -775,9 +797,9 @@ impl Desktop {
                 window.close_dialog(cx);
                 window.prompt(
                     PromptLevel::Info,
-                    "重新关联此保存位置？",
+                    course2md::tr!("重新关联此保存位置？"),
                     Some(&detail),
-                    &["重新关联", "取消"],
+                    &[course2md::tr!("重新关联"), course2md::tr!("取消")],
                     cx,
                 )
             });
@@ -795,25 +817,28 @@ impl Desktop {
                     return;
                 }
                 let result = (|| -> Result<()> {
-                    let workspace = this.workspace.as_mut().context(REGISTRY_UNAVAILABLE)?;
+                    let workspace = this.workspace.as_mut().context(registry_unavailable())?;
                     let current = workspace
                         .state
                         .library(&library_id)
-                        .context(LIBRARY_REMOVED)?;
+                        .context(library_removed())?;
                     ensure!(
                         current.root == location.root
                             && storage::directory_stamp(&current.root)? == stamp,
-                        "保存位置在确认期间已经变化，尚未重新关联。请重新检查这个位置。"
+                        course2md::tr!(
+                            "保存位置在确认期间已经变化，尚未重新关联。请重新检查这个位置。"
+                        )
                     );
                     workspace.reassociate_library(&library_id)
                 })();
                 match result {
                     Ok(()) => {
                         this.storage_ui.error = None;
-                        this.message = Some(format!("已重新关联「{}」", location.name));
+                        this.message = Some(course2md::tr!("已重新关联「{}」", location.name));
                     }
                     Err(error) => {
-                        this.storage_ui.error = Some(format!("尚未重新关联：{error:#}"));
+                        this.storage_ui.error =
+                            Some(course2md::tr!("尚未重新关联：{}", format!("{error:#}")));
                         this.open_storage_dialog(window, cx);
                     }
                 }
@@ -873,8 +898,9 @@ impl Desktop {
                     relocated.push((path, journal));
                 }
                 Err(error) => {
-                    self.storage_ui.error = Some(format!(
-                        "笔记库已移动，模型位置尚未保存。旧位置备份已保留：{error:#}"
+                    self.storage_ui.error = Some(course2md::tr!(
+                        "笔记库已移动，模型位置尚未保存。旧位置备份已保留：{}",
+                        format!("{error:#}")
                     ))
                 }
             }
@@ -899,7 +925,7 @@ impl Desktop {
                 })
                 .is_err()
         {
-            self.storage_ui.error = Some(BACKUP_LIST_STALE.into());
+            self.storage_ui.error = Some(backup_list_stale().into());
         }
         cx.notify();
     }
@@ -910,10 +936,11 @@ impl Desktop {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
                 if let Err(error) = result {
-                    this.storage_ui.error = Some(format!("尚未放弃这次移动：{error:#}"));
+                    this.storage_ui.error =
+                        Some(course2md::tr!("尚未放弃这次移动：{}", format!("{error:#}")));
                 }
                 this.restore_storage_state(cx);
             });
@@ -928,7 +955,7 @@ impl Desktop {
             .and_then(|workspace| workspace.state.library(&id))
             .map(|library| library.root.clone())
         else {
-            self.workspace_error = Some(LIBRARY_REMOVED.into());
+            self.workspace_error = Some(library_removed().into());
             cx.notify();
             return;
         };
@@ -946,14 +973,15 @@ impl Desktop {
                         Ok(())
                     })
                 } else {
-                    Err(anyhow::anyhow!(
+                    Err(anyhow::anyhow!(course2md::tr!(
                         "这个文件夹暂时不能写入，请重新连接磁盘或检查访问权限"
-                    ))
+                    )))
                 };
                 match result {
-                    Ok(()) => this.message = Some("已设为默认保存位置".into()),
+                    Ok(()) => this.message = Some(course2md::tr!("已设为默认保存位置").into()),
                     Err(error) => {
-                        this.workspace_error = Some(format!("默认位置尚未更改：{error:#}"))
+                        this.workspace_error =
+                            Some(course2md::tr!("默认位置尚未更改：{}", format!("{error:#}")))
                     }
                 }
                 cx.notify();
@@ -1006,14 +1034,15 @@ impl Desktop {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("选择空文件夹作为笔记库的新位置".into()),
+            prompt: Some(course2md::tr!("选择空文件夹作为笔记库的新位置").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let destination = match prompt.await {
                 Ok(Ok(paths)) => paths.and_then(|paths| paths.into_iter().next()),
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |this, cx| {
-                        this.storage_ui.error = Some(format!("无法选择保存位置：{error:#}"));
+                        this.storage_ui.error =
+                            Some(course2md::tr!("无法选择保存位置：{}", format!("{error:#}")));
                         cx.notify();
                     });
                     return;
@@ -1036,7 +1065,7 @@ impl Desktop {
             })
             .recv()
             .await
-            .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+            .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update_in(cx, |this, window, cx| {
                 match checked {
                     Ok((source, destination)) => this.start_library_move(
@@ -1077,13 +1106,13 @@ impl Desktop {
             .as_ref()
             .map(|workspace| workspace.state.clone())
         else {
-            self.storage_ui.error = Some(REGISTRY_UNAVAILABLE.into());
+            self.storage_ui.error = Some(registry_unavailable().into());
             self.open_storage_dialog(window, cx);
             return;
         };
         // Only a conversion task can pause and resume around a move.
         if self.job.is_some() && self.active_task.is_none() {
-            self.storage_ui.error = Some("模型下载完成或停止后再移动笔记库".into());
+            self.storage_ui.error = Some(course2md::tr!("模型下载完成或停止后再移动笔记库").into());
             self.open_storage_dialog(window, cx);
             return;
         }
@@ -1095,7 +1124,7 @@ impl Desktop {
         let job_exit = self.job.is_some().then(|| {
             let (exit, exited) = smol::channel::bounded(1);
             self.storage_ui.job_exit = Some(exit);
-            self.storage_ui.progress.message = "正在暂停当前任务…".into();
+            self.storage_ui.progress.message = course2md::tr!("正在暂停当前任务…").into();
             exited
         });
         if let Some(id) = self.active_task.clone() {
@@ -1118,9 +1147,9 @@ impl Desktop {
                 .await;
                 if !stopped {
                     let message = if cancel.load(Ordering::Relaxed) {
-                        "已取消移动"
+                        course2md::tr!("已取消移动")
                     } else {
-                        "当前任务仍在保存进度，停止后再移动笔记库"
+                        course2md::tr!("当前任务仍在保存进度，停止后再移动笔记库")
                     };
                     let _ =
                         this.update(cx, |this, cx| this.finish_storage_error(message.into(), cx));
@@ -1169,7 +1198,7 @@ impl Desktop {
             let result = worker
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update_in(cx, |this, window, cx| {
                 if this.storage_ui.generation != generation {
                     return;
@@ -1177,13 +1206,16 @@ impl Desktop {
                 match result {
                     Ok(mut prepared) => {
                         if this.closing || cancel.load(Ordering::Relaxed) {
-                            this.finish_storage_error("副本已核验，保存位置尚未切换".into(), cx);
+                            this.finish_storage_error(
+                                course2md::tr!("副本已核验，保存位置尚未切换").into(),
+                                cx,
+                            );
                             return;
                         }
                         let committed = this
                             .workspace
                             .as_mut()
-                            .context(REGISTRY_UNAVAILABLE)
+                            .context(registry_unavailable())
                             .and_then(|workspace| {
                                 workspace.transaction(|state| {
                                     publish_location(state, &prepared.journal, &prepared.path)
@@ -1191,7 +1223,10 @@ impl Desktop {
                             });
                         if let Err(error) = committed {
                             this.finish_storage_error(
-                                format!("副本已核验，保存位置尚未切换：{error:#}"),
+                                course2md::tr!(
+                                    "副本已核验，保存位置尚未切换：{}",
+                                    format!("{error:#}")
+                                ),
                                 cx,
                             );
                             return;
@@ -1208,8 +1243,9 @@ impl Desktop {
                         ) {
                             Ok(()) => prepared.journal.settings_relocated = true,
                             Err(error) => {
-                                this.storage_ui.error = Some(format!(
-                                    "笔记库已移动，模型位置尚未保存。旧位置备份已保留：{error:#}"
+                                this.storage_ui.error = Some(course2md::tr!(
+                                    "笔记库已移动，模型位置尚未保存。旧位置备份已保留：{}",
+                                    format!("{error:#}")
                                 ))
                             }
                         }
@@ -1218,7 +1254,7 @@ impl Desktop {
                         this.storage_ui.busy = false;
                         this.storage_ui.cancel = None;
                         this.storage_ui.progress = Progress {
-                            message: format!(
+                            message: course2md::tr!(
                                 "笔记库已移动到 {}。旧位置保留为已核验备份。",
                                 prepared.journal.destination.display()
                             ),
@@ -1232,7 +1268,10 @@ impl Desktop {
                         this.start_next_task(cx);
                     }
                     Err(error) => this.finish_storage_error(
-                        format!("{error:#}。保存位置尚未切换，已复制的内容保留在目标位置。"),
+                        course2md::tr!(
+                            "{}。保存位置尚未切换，已复制的内容保留在目标位置。",
+                            format!("{error:#}")
+                        ),
                         cx,
                     ),
                 }
@@ -1306,13 +1345,13 @@ impl Desktop {
                     accessible_text(
                         "storage-operation-heading",
                         if cancelling {
-                            "正在结束操作…"
+                            course2md::tr!("正在结束操作…")
                         } else if self.storage_ui.busy {
-                            "正在处理文件…"
+                            course2md::tr!("正在处理文件…")
                         } else if self.storage_ui.error.is_some() {
-                            "操作未完成"
+                            course2md::tr!("操作未完成")
                         } else {
-                            "操作已完成"
+                            course2md::tr!("操作已完成")
                         },
                     )
                     .font_weight(FontWeight::SEMIBOLD),
@@ -1345,7 +1384,7 @@ impl Desktop {
                     .disabled(cancelling)
                     .loading(cancelling)
                     .label(if cancelling {
-                        "正在结束…"
+                        course2md::tr!("正在结束…")
                     } else {
                         self.storage_ui.cancel_label()
                     })
@@ -1362,7 +1401,7 @@ impl Desktop {
                 let id = id.clone();
                 view = view.child(
                     primary_pill("retry-library-relocation")
-                        .label("重新选择文件夹…")
+                        .label(course2md::tr!("重新选择文件夹…"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             window.close_dialog(cx);
                             this.begin_library_relocation(id.clone(), window, cx);
@@ -1372,7 +1411,7 @@ impl Desktop {
             view = view.child(
                 control("close-storage-operation")
                     .icon(icons::close())
-                    .label("关闭")
+                    .label(course2md::tr!("关闭"))
                     .on_click(|_, window, cx| window.close_dialog(cx)),
             );
         }
@@ -1415,9 +1454,12 @@ impl Desktop {
             if access.coverage() == storage::LibraryCoverage::Unavailable {
                 has_content = true;
                 view = view.child(
-                    accessible_text("storage-access-coverage", "所有保存位置都暂时无法访问")
-                        .text_sm()
-                        .text_color(color(GRAY)),
+                    accessible_text(
+                        "storage-access-coverage",
+                        course2md::tr!("所有保存位置都暂时无法访问"),
+                    )
+                    .text_sm()
+                    .text_color(color(GRAY)),
                 );
             }
         } else {
@@ -1427,8 +1469,11 @@ impl Desktop {
                     .gap_2()
                     .child(crate::motion::spinner("storage-locations-checking", cx))
                     .child(
-                        accessible_text("storage-locations-checking-label", "正在检查保存位置…")
-                            .text_sm(),
+                        accessible_text(
+                            "storage-locations-checking-label",
+                            course2md::tr!("正在检查保存位置…"),
+                        )
+                        .text_sm(),
                     ),
             );
         }
@@ -1448,7 +1493,7 @@ impl Desktop {
                     .child(
                         accessible_text(
                             "storage-corrupt-records",
-                            format!(
+                            course2md::tr!(
                                 "有 {} 次未完成的移动记录已损坏，相关文件均已保留",
                                 self.storage_ui.corrupt_records.len()
                             ),
@@ -1469,7 +1514,7 @@ impl Desktop {
         if !self.storage_ui.pending.is_empty() {
             view = view.child(semantic_label(
                 "storage-pending-heading",
-                "未完成的移动",
+                course2md::tr!("未完成的移动"),
                 icons::storage(),
             ));
         }
@@ -1494,7 +1539,7 @@ impl Desktop {
                     .child(
                         control(("resume-library-move", index))
                             .icon(icons::play_arrow())
-                            .label("继续移动")
+                            .label(course2md::tr!("继续移动"))
                             .disabled(self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.start_library_move(
@@ -1511,14 +1556,14 @@ impl Desktop {
                         control(("open-move-copy", index))
                             .ghost()
                             .icon(icons::folder_open())
-                            .label("打开目标副本")
+                            .label(course2md::tr!("打开目标副本"))
                             .on_click(move |_, _, cx| cx.open_with_system(&destination)),
                     )
                     .child(
                         control(("abandon-library-move", index))
                             .ghost()
                             .icon(icons::close())
-                            .label("放弃移动，保留副本")
+                            .label(course2md::tr!("放弃移动，保留副本"))
                             .disabled(self.storage_ui.busy)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.abandon_library_move(abandoned_path.clone(), cx)
@@ -1530,7 +1575,7 @@ impl Desktop {
             if !workspace.state.storage_backups.is_empty() {
                 view = view.child(semantic_label(
                     "storage-backups-heading",
-                    "旧位置备份",
+                    course2md::tr!("旧位置备份"),
                     icons::folder_open(),
                 ));
             }
@@ -1553,13 +1598,13 @@ impl Desktop {
                                 .child(
                                     control(("open-library-backup", index))
                                         .icon(icons::folder_open())
-                                        .label("打开备份位置")
+                                        .label(course2md::tr!("打开备份位置"))
                                         .on_click(move |_, _, cx| cx.open_with_system(&path)),
                                 )
                                 .child(
                                     quiet(("cleanup-library-backup", index))
                                         .icon(icons::delete())
-                                        .label("清理旧位置备份…")
+                                        .label(course2md::tr!("清理旧位置备份…"))
                                         .disabled(self.storage_ui.busy)
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.begin_backup_cleanup(id.clone(), window, cx)
@@ -1583,8 +1628,10 @@ impl Desktop {
             .flex_shrink_0()
             .gap_6()
             .child(self.storage_status_panel(cx));
-        let mut locations =
-            crate::settings_ui::SettingsGroup::new("storage-locations-heading", "笔记库位置");
+        let mut locations = crate::settings_ui::SettingsGroup::new(
+            "storage-locations-heading",
+            course2md::tr!("笔记库位置"),
+        );
 
         // The default is only a choice once there is more than one location.
         let several = self
@@ -1614,7 +1661,7 @@ impl Desktop {
                         quiet(("open-storage-location", index))
                             .settings_text()
                             .icon(icons::folder_open())
-                            .label("打开位置")
+                            .label(course2md::tr!("打开位置"))
                             .disabled(offline)
                             .on_click({
                                 let root = root.clone();
@@ -1625,14 +1672,14 @@ impl Desktop {
                         row.child(
                             badge(BadgeKind::Neutral)
                                 .text_size(TEXT_SETTINGS_AUX)
-                                .child("默认保存位置"),
+                                .child(course2md::tr!("默认保存位置")),
                         )
                     })
                     .when(offline, |row| {
                         row.child(
                             badge(BadgeKind::Warning)
                                 .text_size(TEXT_SETTINGS_AUX)
-                                .child("暂时不可访问"),
+                                .child(course2md::tr!("暂时不可访问")),
                         )
                     })
                     .when(!default, |row| {
@@ -1640,7 +1687,7 @@ impl Desktop {
                             outline_pill(("default-storage-location", index))
                                 .settings_text()
                                 .icon(icons::check_circle())
-                                .label("设为默认")
+                                .label(course2md::tr!("设为默认"))
                                 .disabled(
                                     needs_relocation || needs_reassociation || self.storage_ui.busy,
                                 )
@@ -1653,7 +1700,7 @@ impl Desktop {
                         row.child(
                             outline_pill(("move-storage-location", index))
                                 .settings_text()
-                                .label("移动笔记库…")
+                                .label(course2md::tr!("移动笔记库…"))
                                 .disabled(self.storage_ui.busy)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.begin_library_move(move_id.clone(), window, cx)
@@ -1665,7 +1712,7 @@ impl Desktop {
                             outline_pill(("reassociate-storage-location", index))
                                 .settings_text()
                                 .icon(icons::storage())
-                                .label("重新关联…")
+                                .label(course2md::tr!("重新关联…"))
                                 .disabled(self.storage_ui.busy)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.begin_library_reassociation(
@@ -1681,7 +1728,7 @@ impl Desktop {
                             outline_pill(("relocate-storage-location", index))
                                 .settings_text()
                                 .icon(icons::folder_open())
-                                .label("重新定位…")
+                                .label(course2md::tr!("重新定位…"))
                                 .disabled(self.storage_ui.busy)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.begin_library_relocation(relocate_id.clone(), window, cx)
@@ -1746,7 +1793,7 @@ impl Desktop {
                             .when(needs_reassociation, |card| {
                                 card.child(theme::item_detail(
                                     ("storage-association-needed", index),
-                                    "无法确认这是原来的笔记库，请检查后重新关联",
+                                    course2md::tr!("无法确认这是原来的笔记库，请检查后重新关联"),
                                     WARNING,
                                 ))
                             }),
@@ -1767,7 +1814,7 @@ impl Desktop {
                             row.child(div().flex_1().min_w(rems(12.)).map(|lead| {
                                 lead.child(theme::supporting_info(
                                     "storage-policy",
-                                    "更改默认位置只影响后续生成的笔记",
+                                    course2md::tr!("更改默认位置只影响后续生成的笔记"),
                                 ))
                             }))
                         })
@@ -1775,7 +1822,7 @@ impl Desktop {
                             quiet("register-storage-location")
                                 .settings_text()
                                 .icon(icons::plus())
-                                .label("添加笔记库位置")
+                                .label(course2md::tr!("添加笔记库位置"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.register_storage_location(window, cx)
                                 })),
@@ -1805,20 +1852,22 @@ impl Desktop {
         };
         if self.preferences.references_storage_path(&backup.path) {
             self.storage_ui.begin(StorageOp::Cleanup);
-            self.storage_ui.error =
-                Some("模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份".into());
+            self.storage_ui.error = Some(
+                course2md::tr!("模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份")
+                    .into(),
+            );
             self.open_storage_dialog(window, cx);
             return;
         }
         let answer = window.prompt(
             PromptLevel::Warning,
-            "清理旧位置备份？",
-            Some(&format!(
+            course2md::tr!("清理旧位置备份？"),
+            Some(&course2md::tr!(
                 "将删除 {} 中的旧位置备份。当前笔记库仍保留在 {}。",
                 backup.path.display(),
                 backup.current_root.display()
             )),
-            &["清理备份", "保留备份"],
+            &[course2md::tr!("清理备份"), course2md::tr!("保留备份")],
             cx,
         );
         cx.spawn_in(window, async move |this, cx| {
@@ -1833,7 +1882,7 @@ impl Desktop {
                     this.storage_ui.busy = true;
                     this.storage_ui.cancel = Some(cancel.clone());
                     this.storage_ui.progress = Progress {
-                        message: "正在清理备份…".into(),
+                        message: course2md::tr!("正在清理备份…").into(),
                         completed: 0,
                         total: 0,
                     };
@@ -1859,7 +1908,7 @@ impl Desktop {
             let result = worker
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update_in(cx, |this, _, cx| {
                 this.storage_ui.busy = false;
                 this.storage_ui.cancel = None;
@@ -1872,14 +1921,15 @@ impl Desktop {
                                 Ok(())
                             }) {
                                 Ok(()) => {
-                                    this.storage_ui.progress.message = "旧位置备份已清理".into();
+                                    this.storage_ui.progress.message =
+                                        course2md::tr!("旧位置备份已清理").into();
                                 }
-                                Err(_) => this.storage_ui.error = Some(BACKUP_LIST_STALE.into()),
+                                Err(_) => this.storage_ui.error = Some(backup_list_stale().into()),
                             }
                         }
                     }
                     Err(_) if cancel.load(Ordering::Relaxed) => {
-                        this.storage_ui.error = Some("已取消清理".into())
+                        this.storage_ui.error = Some(course2md::tr!("已取消清理").into())
                     }
                     Err(error) => this.storage_ui.error = Some(format!("{error:#}")),
                 }

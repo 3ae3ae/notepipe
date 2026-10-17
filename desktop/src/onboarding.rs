@@ -7,8 +7,8 @@ use crate::preferences::{
 };
 use crate::service_test::{self, TestKind};
 use crate::settings_ui::model_diagnostics::{
-    JOB_BUSY, LOCAL_ENGINES, Request as ModelRequest, UNSUPPORTED_MODEL, engine_icon,
-    engine_offered, model_supported,
+    LOCAL_ENGINES, Request as ModelRequest, engine_icon, engine_offered, job_busy, model_supported,
+    unsupported_model,
 };
 use crate::settings_ui::service_form::{FormField, FormOwner, ServiceForm};
 use crate::settings_ui::{field_label, settings_detail_row, settings_value};
@@ -174,11 +174,11 @@ enum ServiceAction {
 impl ServiceAction {
     fn label(self) -> &'static str {
         match self {
-            Self::Check => "检查配置",
-            Self::Recheck => "重新检查",
-            Self::Save => "保存并继续",
-            Self::Keep => "保留并继续",
-            Self::RetrySave => "重试保存",
+            Self::Check => course2md::tr!("检查配置"),
+            Self::Recheck => course2md::tr!("重新检查"),
+            Self::Save => course2md::tr!("保存并继续"),
+            Self::Keep => course2md::tr!("保留并继续"),
+            Self::RetrySave => course2md::tr!("重试保存"),
         }
     }
     fn sends_sample(self) -> bool {
@@ -230,7 +230,7 @@ fn apply_provider_choice(
         return None;
     }
     let previous = std::mem::replace(model, course2md::config::DEFAULT_ASR_MODEL.into());
-    Some(format!(
+    Some(course2md::tr!(
         "{} 不支持“{}”，已改用 {}。",
         crate::provider_label(Some(resolved)),
         previous,
@@ -253,8 +253,8 @@ fn local_model_choices(provider: AsrProvider, current: &str) -> Vec<ModelChoice>
             id: model.id.into(),
             label: model.label.into(),
             description: match model.id {
-                course2md::config::DEFAULT_ASR_MODEL => "默认 · 更准确，占内存较多",
-                "qwen3-0.6b" => "更快，占内存较少",
+                course2md::config::DEFAULT_ASR_MODEL => course2md::tr!("默认 · 更准确，占内存较多"),
+                "qwen3-0.6b" => course2md::tr!("更快，占内存较少"),
                 _ => "",
             },
         })
@@ -264,9 +264,9 @@ fn local_model_choices(provider: AsrProvider, current: &str) -> Vec<ModelChoice>
             id: current.into(),
             label: current.into(),
             description: if model_supported(provider, current) {
-                "当前配置"
+                course2md::tr!("当前配置")
             } else {
-                UNSUPPORTED_MODEL
+                unsupported_model()
             },
         });
     }
@@ -429,7 +429,7 @@ impl Desktop {
             self.onboarding.model = model.to_owned();
             self.onboarding.notice = None;
         } else {
-            self.onboarding.notice = Some((UNSUPPORTED_MODEL.into(), true));
+            self.onboarding.notice = Some((unsupported_model().into(), true));
         }
         cx.notify();
     }
@@ -633,11 +633,14 @@ impl Desktop {
                 if unchanged {
                     service.evidence = results;
                     if !persisted {
-                        this.onboarding.notice = Some(("检查结果尚未保存".into(), true));
+                        this.onboarding.notice =
+                            Some((course2md::tr!("检查结果尚未保存").into(), true));
                     }
                 } else {
-                    this.onboarding.notice =
-                        Some(("配置已改变，请检查当前填写的配置。".into(), false));
+                    this.onboarding.notice = Some((
+                        course2md::tr!("配置已改变，请检查当前填写的配置。").into(),
+                        false,
+                    ));
                 }
                 // Keep newly arrived feedback above the fixed action row.
                 if this.onboarding.active
@@ -674,7 +677,10 @@ impl Desktop {
                 return false;
             };
             if let Err(error) = self.preferences.check_dispatch(&version.id) {
-                self.onboarding.notice = Some((format!("当前服务暂不可用：{error:#}"), true));
+                self.onboarding.notice = Some((
+                    course2md::tr!("当前服务暂不可用：{}", format!("{error:#}")),
+                    true,
+                ));
                 cx.notify();
                 return false;
             }
@@ -711,7 +717,8 @@ impl Desktop {
             }
         }
         if !self.commit_generation(next, cx) {
-            self.onboarding.notice = Some(("默认选项尚未保存，可重试".into(), true));
+            self.onboarding.notice =
+                Some((course2md::tr!("默认选项尚未保存，可重试").into(), true));
             return false;
         }
         self.refresh_dispatch_controls(cx);
@@ -737,7 +744,7 @@ impl Desktop {
             .provider
             .unwrap_or_else(|| self.recommended_local_provider());
         if !model_supported(provider, &self.onboarding.model) {
-            self.onboarding.notice = Some((UNSUPPORTED_MODEL.into(), true));
+            self.onboarding.notice = Some((unsupported_model().into(), true));
             cx.notify();
             return false;
         }
@@ -747,7 +754,7 @@ impl Desktop {
             &self.onboarding.model,
         );
         if !self.commit_generation(next, cx) {
-            self.onboarding.notice = Some(("选择未保存，请重试".into(), true));
+            self.onboarding.notice = Some((course2md::tr!("选择未保存，请重试").into(), true));
             return false;
         }
         self.setup_step(Step::Ai, cx);
@@ -850,16 +857,16 @@ impl Desktop {
         let (number, title, description, icon) = match step {
             Step::Engine => (
                 1,
-                "默认识别方式",
-                Some("仅用于没有字幕的视频"),
+                course2md::tr!("默认识别方式"),
+                Some(course2md::tr!("仅用于没有字幕的视频")),
                 icons::mic(),
             ),
-            Step::Ai => (2, "连接 AI 服务", None, icons::auto_fix()),
-            Step::Account => (3, "连接 Bilibili", None, icons::bilibili()),
+            Step::Ai => (2, course2md::tr!("连接 AI 服务"), None, icons::auto_fix()),
+            Step::Account => (3, course2md::tr!("连接 Bilibili"), None, icons::bilibili()),
             Step::Model if self.onboarding.provider == Some(AsrProvider::Api) => {
-                (4, "准备就绪", None, icons::check_circle())
+                (4, course2md::tr!("准备就绪"), None, icons::check_circle())
             }
-            Step::Model => (4, "准备识别模型", None, icons::download()),
+            Step::Model => (4, course2md::tr!("准备识别模型"), None, icons::download()),
         };
         let content = match step {
             Step::Engine => self.setup_engine_content(window, cx),
@@ -873,7 +880,12 @@ impl Desktop {
             (f32::from(window.viewport_size().height) - f32::from(title_bar_height(window)) - 48.)
                 .max(160.);
         let compact = available_height < 540. * scale;
-        let steps = ["识别方式", "AI 服务", "Bilibili", "模型准备"];
+        let steps = [
+            course2md::tr!("识别方式"),
+            course2md::tr!("AI 服务"),
+            "Bilibili",
+            course2md::tr!("模型准备"),
+        ];
         let heading = v_flex()
             .w_full()
             .min_w_0()
@@ -1063,8 +1075,8 @@ impl Desktop {
                     "setup-local-route-reveal",
                     described_choice(
                         "setup-local-route",
-                        "本机识别",
-                        "推荐 · 音频不离开本机",
+                        course2md::tr!("本机识别"),
+                        course2md::tr!("推荐 · 音频不离开本机"),
                         icons::computer(),
                         local,
                         window,
@@ -1080,8 +1092,8 @@ impl Desktop {
                     "setup-cloud-route-reveal",
                     described_choice(
                         "setup-cloud-route",
-                        "在线语音服务",
-                        "音频会发送到所选服务",
+                        course2md::tr!("在线语音服务"),
+                        course2md::tr!("音频会发送到所选服务"),
                         icons::cloud(),
                         !local,
                         window,
@@ -1104,7 +1116,7 @@ impl Desktop {
             let provider = Some(engine);
             // A ready engine needs no badge; only checking or unavailable is status.
             let status = match &self.environment {
-                None => Some("正在检测"),
+                None => Some(course2md::tr!("正在检测")),
                 Some(_) => self.engine_issue(engine).map(|issue| issue.short()),
             };
             choices = choices.child(
@@ -1141,8 +1153,8 @@ impl Desktop {
                 .child(
                     described_choice(
                         "setup-engine-auto",
-                        "自动选择引擎",
-                        format!("目前使用 {}", crate::provider_label(Some(recommended))),
+                        course2md::tr!("自动选择引擎"),
+                        course2md::tr!("目前使用 {}", crate::provider_label(Some(recommended))),
                         engine_icon(None),
                         selected.is_none(),
                         window,
@@ -1152,7 +1164,10 @@ impl Desktop {
                         this.select_setup_provider(None, cx);
                     })),
                 )
-                .child(field_label("setup-fixed-engine-label", "指定运行方式"))
+                .child(field_label(
+                    "setup-fixed-engine-label",
+                    course2md::tr!("指定运行方式"),
+                ))
                 .child(choices),
         );
         let provider = selected.unwrap_or(recommended);
@@ -1177,9 +1192,9 @@ impl Desktop {
                 Some(CacheState::Loaded | CacheState::Cached)
             );
         let model_status = if snapshot.checking {
-            "正在检查模型".to_owned()
+            course2md::tr!("正在检查模型").to_owned()
         } else if snapshot.device_issue.is_some() {
-            "缺少识别组件".to_owned()
+            course2md::tr!("缺少识别组件").to_owned()
         } else {
             match snapshot
                 .result
@@ -1187,12 +1202,12 @@ impl Desktop {
                 .and_then(|result| result.as_ref().ok())
                 .map(|status| &status.state)
             {
-                Some(CacheState::Loaded) => "已就绪".into(),
-                Some(CacheState::Cached) => "已下载".into(),
-                Some(CacheState::Partial) => "未下载完整".into(),
-                Some(CacheState::Missing) => "未下载".into(),
-                Some(CacheState::Unsupported) => UNSUPPORTED_MODEL.into(),
-                None => "检查未完成".into(),
+                Some(CacheState::Loaded) => course2md::tr!("已就绪").into(),
+                Some(CacheState::Cached) => course2md::tr!("已下载").into(),
+                Some(CacheState::Partial) => course2md::tr!("未下载完整").into(),
+                Some(CacheState::Missing) => course2md::tr!("未下载").into(),
+                Some(CacheState::Unsupported) => unsupported_model().into(),
+                None => course2md::tr!("检查未完成").into(),
             }
         };
         let mut model_grid = div()
@@ -1242,7 +1257,7 @@ impl Desktop {
                         .flex_wrap()
                         .child(semantic_label(
                             "setup-model-label",
-                            "识别模型",
+                            course2md::tr!("识别模型"),
                             icons::mic(),
                         ))
                         .child(settings_value("setup-current-model", current_model).w_auto())
@@ -1266,9 +1281,9 @@ impl Desktop {
                                     icons::tune()
                                 })
                                 .label(if self.onboarding.model_choices_open {
-                                    "收起模型"
+                                    course2md::tr!("收起模型")
                                 } else {
-                                    "更换模型"
+                                    course2md::tr!("更换模型")
                                 })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.onboarding.model_choices_open =
@@ -1345,7 +1360,7 @@ impl Desktop {
                         column.child(
                             supporting_info(
                                 format!("setup-kept-key-{}", purpose as usize),
-                                "已保存密钥，留空则保留",
+                                course2md::tr!("已保存密钥，留空则保留"),
                             )
                             .text_size(TEXT_AUX),
                         )
@@ -1379,9 +1394,9 @@ impl Desktop {
         let draft = &service.form.draft;
         let busy = service.running.is_some() || service.pending_version.is_some();
         let (label, choice_label) = if purpose == ServicePurpose::Speech {
-            ("接口类型", "语音接口类型")
+            (course2md::tr!("接口类型"), course2md::tr!("语音接口类型"))
         } else {
-            ("服务类型", "AI 服务类型")
+            (course2md::tr!("服务类型"), course2md::tr!("AI 服务类型"))
         };
         let mut body = v_flex().w_full().min_w_0().gap_4().child(
             self.setup_reveal(
@@ -1405,7 +1420,12 @@ impl Desktop {
         );
         let codex = draft.protocol == preferences::ServiceProtocol::CodexResponses;
         if !codex {
-            body = body.child(self.setup_input_row(purpose, FormField::Address, "服务地址", cx));
+            body = body.child(self.setup_input_row(
+                purpose,
+                FormField::Address,
+                course2md::tr!("服务地址"),
+                cx,
+            ));
         }
         if !draft.protocol.keyless() {
             body = body.child(
@@ -1413,13 +1433,13 @@ impl Desktop {
                     format!("setup-auth-reveal-{}", purpose as usize),
                     stacked_field(
                         format!("setup-auth-label-{}", purpose as usize),
-                        "认证方式",
+                        course2md::tr!("认证方式"),
                         icons::shield(),
                         self.service_auth_choices(
                             owner,
                             SingleChoiceGroup::new(
                                 format!("setup-auth-{}", purpose as usize),
-                                "服务认证",
+                                course2md::tr!("服务认证"),
                             )
                             .full_width(),
                             cx,
@@ -1439,19 +1459,20 @@ impl Desktop {
                 cx,
             ));
         }
-        body = body.child(self.setup_input_row(purpose, FormField::Model, "模型", cx));
+        body =
+            body.child(self.setup_input_row(purpose, FormField::Model, course2md::tr!("模型"), cx));
         if purpose == ServicePurpose::Ai {
             let mut uses = h_flex().w_full().min_w_0().flex_wrap().gap_4();
             for (id, label, checked, icon) in [
                 (
                     "proofread",
-                    "自动校对文字",
+                    course2md::tr!("自动校对文字"),
                     self.onboarding.ai_proofread,
                     icons::auto_fix(),
                 ),
                 (
                     "summary",
-                    "生成课程摘要",
+                    course2md::tr!("生成课程摘要"),
                     self.onboarding.ai_summary,
                     icons::summarize(),
                 ),
@@ -1487,8 +1508,11 @@ impl Desktop {
             body = body
                 .child(self.setup_reveal("setup-ai-uses-reveal", uses))
                 .child(
-                    supporting_info("setup-ai-use-scope", "开启后转录文字会发送到所选 AI 服务")
-                        .text_size(TEXT_AUX),
+                    supporting_info(
+                        "setup-ai-use-scope",
+                        course2md::tr!("开启后转录文字会发送到所选 AI 服务"),
+                    )
+                    .text_size(TEXT_AUX),
                 );
         }
         if let Some(cancel) = &service.running {
@@ -1511,9 +1535,9 @@ impl Desktop {
                         settings_value(
                             format!("setup-service-check-label-{}", purpose as usize),
                             if stopping {
-                                "正在停止检查"
+                                course2md::tr!("正在停止检查")
                             } else {
-                                "正在检查配置"
+                                course2md::tr!("正在检查配置")
                             },
                         )
                         .flex_1()
@@ -1523,7 +1547,7 @@ impl Desktop {
                     .child(
                         quiet(format!("setup-cancel-check-{}", purpose as usize))
                             .icon(icons::close())
-                            .label("停止检查")
+                            .label(course2md::tr!("停止检查"))
                             .disabled(stopping)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.onboarding.service(purpose).cancel();
@@ -1564,7 +1588,7 @@ impl Desktop {
                                 settings_value(
                                     format!("setup-test-message-{}-{index}", purpose as usize),
                                     if passed {
-                                        format!("{}测试通过", kind.label())
+                                        course2md::tr!("{}测试通过", kind.label())
                                     } else {
                                         evidence.message.clone()
                                     },
@@ -1592,7 +1616,7 @@ impl Desktop {
                             row.child(
                                 quiet(format!("setup-recheck-service-{}", purpose as usize))
                                     .icon(icons::refresh())
-                                    .label("重新检查")
+                                    .label(course2md::tr!("重新检查"))
                                     .disabled(busy)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.start_setup_test(purpose, window, cx)
@@ -1604,9 +1628,9 @@ impl Desktop {
                                 .self_start()
                                 .icon(icons::info())
                                 .label(if service.details_open {
-                                    "收起检查详情"
+                                    course2md::tr!("收起检查详情")
                                 } else {
-                                    "检查详情"
+                                    course2md::tr!("检查详情")
                                 })
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     let service = this.onboarding.service_mut(purpose);
@@ -1648,12 +1672,15 @@ impl Desktop {
                 "setup-cloud-model-description",
                 version
                     .map(|version| {
-                        format!(
+                        course2md::tr!(
                             "识别时使用 {} · {}",
-                            version.config.name, version.config.model
+                            version.config.name,
+                            version.config.model
                         )
                     })
-                    .unwrap_or_else(|| "当前没有默认语音服务，请返回第一步完成配置。".into()),
+                    .unwrap_or_else(|| {
+                        course2md::tr!("当前没有默认语音服务，请返回第一步完成配置。").into()
+                    }),
             ));
         }
         let preparation_result = self
@@ -1688,21 +1715,26 @@ impl Desktop {
             .items_center()
             .flex_wrap();
         let (label, hint) = if snapshot.preparing {
-            ("正在准备模型", "")
+            (course2md::tr!("正在准备模型"), "")
         } else if cancelled {
-            ("模型准备已暂停", "")
+            (course2md::tr!("模型准备已暂停"), "")
         } else if snapshot.checking {
-            ("正在检查模型", "")
+            (course2md::tr!("正在检查模型"), "")
         } else if snapshot.device_issue.is_some() {
-            ("缺少识别组件", "可返回第一步更换引擎")
+            (
+                course2md::tr!("缺少识别组件"),
+                course2md::tr!("可返回第一步更换引擎"),
+            )
         } else {
             match status.map(|status| &status.state) {
-                Some(CacheState::Loaded) => ("模型已就绪", ""),
-                Some(CacheState::Cached) => ("模型文件已下载", ""),
-                Some(CacheState::Missing) => ("模型尚未下载", ""),
-                Some(CacheState::Partial) => ("未下载完整", ""),
-                Some(CacheState::Unsupported) => (UNSUPPORTED_MODEL, "可返回第一步更换模型"),
-                None => ("模型检查未完成", ""),
+                Some(CacheState::Loaded) => (course2md::tr!("模型已就绪"), ""),
+                Some(CacheState::Cached) => (course2md::tr!("模型文件已下载"), ""),
+                Some(CacheState::Missing) => (course2md::tr!("模型尚未下载"), ""),
+                Some(CacheState::Partial) => (course2md::tr!("未下载完整"), ""),
+                Some(CacheState::Unsupported) => {
+                    (unsupported_model(), course2md::tr!("可返回第一步更换模型"))
+                }
+                None => (course2md::tr!("模型检查未完成"), ""),
             }
         };
         let model_title = course2md::config::model_label(&model);
@@ -1794,9 +1826,9 @@ impl Desktop {
                     .self_start()
                     .icon(icons::pause())
                     .label(if self.cancelling {
-                        "正在暂停…"
+                        course2md::tr!("正在暂停…")
                     } else {
-                        "暂停准备"
+                        course2md::tr!("暂停准备")
                     })
                     .disabled(self.cancelling)
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1834,7 +1866,7 @@ impl Desktop {
                             },
                         )
                         .label(if cancelled {
-                            "继续准备"
+                            course2md::tr!("继续准备")
                         } else {
                             crate::settings_ui::model_diagnostics::model_action_label(
                                 provider,
@@ -1861,21 +1893,24 @@ impl Desktop {
                 quiet("setup-recheck-model")
                     .self_start()
                     .icon(icons::refresh())
-                    .label("重新检查")
+                    .label(course2md::tr!("重新检查"))
                     .disabled(snapshot.checking || self.job.is_some())
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_environment(cx))),
             );
             if self.job.is_some() {
-                body = body.child(supporting_info("setup-model-job-busy", JOB_BUSY));
+                body = body.child(supporting_info("setup-model-job-busy", job_busy()));
             }
         }
         let mut details = v_flex().w_full().min_w_0().gap_3();
         if let Some((message, error)) = snapshot.notice.or(preparation_result) {
             if error && !cancelled && !snapshot.preparing {
                 body = body.child(
-                    settings_value("setup-model-result", "准备未完成，原因见模型详情")
-                        .text_color(color(DANGER))
-                        .role(Role::Status),
+                    settings_value(
+                        "setup-model-result",
+                        course2md::tr!("准备未完成，原因见模型详情"),
+                    )
+                    .text_color(color(DANGER))
+                    .role(Role::Status),
                 );
             }
             details = details.child(supporting_info("setup-model-preparation-detail", message));
@@ -1890,7 +1925,7 @@ impl Desktop {
             if status.bytes > 0 {
                 details = details.child(settings_detail_row(
                     "setup-model-size-label",
-                    "已下载",
+                    course2md::tr!("已下载"),
                     settings_value("setup-model-size", crate::activity::bytes(status.bytes)),
                 ));
             }
@@ -1908,7 +1943,7 @@ impl Desktop {
             if let Some(error) = &status.last_error {
                 details = details.child(supporting_info(
                     "setup-model-last-error",
-                    format!("上次准备记录：{error}"),
+                    course2md::tr!("上次准备记录：{}", error),
                 ));
             }
         }
@@ -1916,9 +1951,9 @@ impl Desktop {
             quiet("setup-model-details")
                 .icon(icons::info())
                 .label(if self.onboarding.model_details_open {
-                    "收起详情"
+                    course2md::tr!("收起详情")
                 } else {
-                    "模型详情"
+                    course2md::tr!("模型详情")
                 })
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.onboarding.model_details_open = !this.onboarding.model_details_open;
@@ -1968,7 +2003,7 @@ impl Desktop {
         if !has_phase {
             view = view.child(semantic_label(
                 "setup-model-awaiting-progress",
-                "等待准备进度",
+                course2md::tr!("等待准备进度"),
                 icons::download(),
             ));
         }
@@ -2020,7 +2055,7 @@ impl Desktop {
                         .gap_2()
                         .child(
                             quiet("setup-enter-temporarily")
-                                .label("暂时进入应用")
+                                .label(course2md::tr!("暂时进入应用"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.leave_onboarding(window, cx)
                                 })),
@@ -2028,15 +2063,18 @@ impl Desktop {
                         .child(div().flex_1())
                         .child(
                             primary_pill("setup-retry-finish")
-                                .label("重试保存")
+                                .label(course2md::tr!("重试保存"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.finish_onboarding(window, cx)
                                 })),
                         ),
                 )
                 .child(
-                    supporting_info("setup-finish-failure-hint", "暂时进入不会保存未完成的选择")
-                        .text_size(TEXT_AUX),
+                    supporting_info(
+                        "setup-finish-failure-hint",
+                        course2md::tr!("暂时进入不会保存未完成的选择"),
+                    )
+                    .text_size(TEXT_AUX),
                 );
         }
         let step = self.onboarding.step;
@@ -2071,16 +2109,16 @@ impl Desktop {
             None => match step {
                 Step::Account => {
                     if self.account_connected() {
-                        "继续"
+                        course2md::tr!("继续")
                     } else {
-                        "跳过登录"
+                        course2md::tr!("跳过登录")
                     }
                 }
-                Step::Model if model_review => "返回应用",
-                Step::Model if model_running => "继续使用",
-                Step::Model if emphasize_model_preparation => "稍后准备",
-                Step::Model => "开始使用",
-                _ => "保存并继续",
+                Step::Model if model_review => course2md::tr!("返回应用"),
+                Step::Model if model_running => course2md::tr!("继续使用"),
+                Step::Model if emphasize_model_preparation => course2md::tr!("稍后准备"),
+                Step::Model => course2md::tr!("开始使用"),
+                _ => course2md::tr!("保存并继续"),
             },
         };
         let mut row = h_flex()
@@ -2094,7 +2132,7 @@ impl Desktop {
                 quiet("setup-later")
                     .ml(-crate::theme::QUIET_INSET)
                     .icon(icons::arrow_forward())
-                    .label("直接开始使用")
+                    .label(course2md::tr!("直接开始使用"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if this.save_setup_engine(window, cx) {
                             this.finish_onboarding(window, cx);
@@ -2107,7 +2145,7 @@ impl Desktop {
                 quiet("setup-back")
                     .ml(-crate::theme::QUIET_INSET)
                     .icon(icons::arrow_left())
-                    .label("上一步")
+                    .label(course2md::tr!("上一步"))
                     .disabled(step == Step::Model && model_running)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.setup_step(
@@ -2125,7 +2163,7 @@ impl Desktop {
         if step == Step::Ai {
             row = row.child(
                 outline_pill("setup-skip-ai")
-                    .label("稍后配置 AI")
+                    .label(course2md::tr!("稍后配置 AI"))
                     .on_click(cx.listener(|this, _, _, cx| this.skip_setup_ai(cx))),
             );
         }
@@ -2159,7 +2197,7 @@ impl Desktop {
                 service_action.is_some_and(ServiceAction::sends_sample),
                 |v| {
                     v.child(
-                        supporting_info("setup-test-notice", service_test::TEST_NOTICE)
+                        supporting_info("setup-test-notice", service_test::test_notice())
                             .text_size(TEXT_AUX),
                     )
                 },
@@ -2168,9 +2206,12 @@ impl Desktop {
             .when(model_running, |v| {
                 v.child(
                     h_flex().w_full().justify_end().child(
-                        supporting_info("setup-return-hint", "模型会继续在后台准备")
-                            .text_size(TEXT_AUX)
-                            .text_right(),
+                        supporting_info(
+                            "setup-return-hint",
+                            course2md::tr!("模型会继续在后台准备"),
+                        )
+                        .text_size(TEXT_AUX)
+                        .text_right(),
                     ),
                 )
             })
@@ -2185,7 +2226,7 @@ impl Desktop {
         let result_error = preparation.result.as_ref().is_some_and(|(_, error)| *error);
         let label = if running {
             if self.cancelling {
-                "正在暂停".to_owned()
+                course2md::tr!("正在暂停").to_owned()
             } else {
                 self.progress
                     .iter()
@@ -2203,14 +2244,14 @@ impl Desktop {
                             })
                             .unwrap_or(phase)
                     })
-                    .unwrap_or_else(|| "正在准备".into())
+                    .unwrap_or_else(|| course2md::tr!("正在准备").into())
             }
         } else if preparation.cancelled {
-            "准备已暂停".into()
+            course2md::tr!("准备已暂停").into()
         } else if result_error {
-            "准备未完成".into()
+            course2md::tr!("准备未完成").into()
         } else {
-            "准备已结束".into()
+            course2md::tr!("准备已结束").into()
         };
         Some(
             v_flex()
@@ -2262,9 +2303,9 @@ impl Desktop {
                         .child(
                             quiet("setup-background-model-open")
                                 .label(if running {
-                                    "查看进度"
+                                    course2md::tr!("查看进度")
                                 } else {
-                                    "查看结果"
+                                    course2md::tr!("查看结果")
                                 })
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.open_setup_model_status(window, cx)
@@ -2273,7 +2314,7 @@ impl Desktop {
                         .when(!running, |row| {
                             row.child(
                                 quiet("setup-background-model-dismiss")
-                                    .label("关闭提示")
+                                    .label(course2md::tr!("关闭提示"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if this.setup_model_job_running() {
                                             return;

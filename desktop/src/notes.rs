@@ -9,8 +9,12 @@ use std::{
     time::SystemTime,
 };
 
-const VERSION_DAMAGED: &str = "笔记版本信息已损坏";
-const BODY_UNREADABLE: &str = "笔记正文无法读取，原文件已保留";
+fn version_damaged() -> &'static str {
+    course2md::tr!("笔记版本信息已损坏")
+}
+fn body_unreadable() -> &'static str {
+    course2md::tr!("笔记正文无法读取，原文件已保留")
+}
 
 #[derive(Clone)]
 pub struct Course {
@@ -38,9 +42,9 @@ impl Course {
     }
     pub fn content_description(&self) -> String {
         if self.slides > 0 {
-            format!("含 {} 张截图", self.slides)
+            course2md::tr!("含 {} 张截图", self.slides)
         } else {
-            "文字笔记".to_owned()
+            course2md::tr!("文字笔记").to_owned()
         }
     }
     pub fn incomplete(&self) -> bool {
@@ -84,7 +88,7 @@ fn version_course(dir: &Path) -> Result<Course> {
     let manifest = artifact::read_manifest(&dir.join("manifest.json"))?;
     anyhow::ensure!(
         artifact::safe_asset_path(dir, &manifest.document).is_ok_and(|path| path.is_file()),
-        BODY_UNREADABLE
+        body_unreadable()
     );
     let images = manifest
         .frames
@@ -108,15 +112,15 @@ fn current_course(dir: &Path) -> Result<Course> {
             serde_json::from_slice(&std::fs::read(dir.join("current.json"))?)?;
         anyhow::ensure!(
             pointer.schema == 1,
-            "这份笔记由更新版本的应用生成，请更新应用"
+            course2md::tr!("这份笔记由更新版本的应用生成，请更新应用")
         );
         let manifest_path = artifact::safe_asset_path(dir, &pointer.manifest)?;
-        let course = version_course(manifest_path.parent().context(VERSION_DAMAGED)?)?;
+        let course = version_course(manifest_path.parent().context(version_damaged())?)?;
         anyhow::ensure!(
             course.manifest.as_ref().is_some_and(|manifest| {
                 manifest.course_id == pointer.course_id && manifest.version_id == pointer.version_id
             }),
-            VERSION_DAMAGED
+            version_damaged()
         );
         Ok(course)
     };
@@ -136,7 +140,8 @@ fn current_course(dir: &Path) -> Result<Course> {
             .collect::<Vec<_>>();
         intact.sort_by_key(|course| course.manifest.as_ref().map(|m| m.revision));
         let mut course = intact.pop().ok_or(error)?;
-        course.warning = Some("最新版本无法读取，正在显示上一个完好的版本。".into());
+        course.warning =
+            Some(course2md::tr!("最新版本无法读取，正在显示上一个完好的版本。").into());
         Ok(course)
     })
 }
@@ -154,7 +159,11 @@ pub fn scan_library(root: &Path) -> Result<LibraryScan> {
         if dir.join("current.json").is_file() {
             match current_course(&dir) {
                 Ok(course) => scan.courses.push(course),
-                Err(error) => scan.issues.push(format!("{}：{error:#}", dir.display())),
+                Err(error) => scan.issues.push(course2md::tr!(
+                    "{}：{}",
+                    dir.display(),
+                    format!("{error:#}")
+                )),
             }
             continue;
         }
@@ -174,16 +183,23 @@ pub fn scan_library(root: &Path) -> Result<LibraryScan> {
                                         queue.push_back((entry.path(), depth + 1))
                                     }
                                     Ok(_) => {}
-                                    Err(error) => scan
-                                        .issues
-                                        .push(format!("{}：{error}", entry.path().display())),
+                                    Err(error) => scan.issues.push(course2md::tr!(
+                                        "{}：{}",
+                                        entry.path().display(),
+                                        error
+                                    )),
                                 }
                             }
-                            Err(error) => scan.issues.push(format!("{}：{error}", dir.display())),
+                            Err(error) => {
+                                scan.issues
+                                    .push(course2md::tr!("{}：{}", dir.display(), error))
+                            }
                         }
                     }
                 }
-                Err(error) => scan.issues.push(format!("{}：{error}", dir.display())),
+                Err(error) => scan
+                    .issues
+                    .push(course2md::tr!("{}：{}", dir.display(), error)),
             }
         }
     }
@@ -220,10 +236,10 @@ pub enum ProcessingStage {
 impl ProcessingStage {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Transcript => "文字转写",
-            Self::Screenshots => "截图",
-            Self::Proofreading => "AI 校对",
-            Self::Summary => "摘要",
+            Self::Transcript => course2md::tr!("文字转写"),
+            Self::Screenshots => course2md::tr!("截图"),
+            Self::Proofreading => course2md::tr!("AI 校对"),
+            Self::Summary => course2md::tr!("摘要"),
         }
     }
 }
@@ -288,7 +304,7 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
     let manifest = match course.manifest.take() {
         Some(manifest) => manifest,
         None => {
-            artifact::read_manifest(&course.dir.join("manifest.json")).context(BODY_UNREADABLE)?
+            artifact::read_manifest(&course.dir.join("manifest.json")).context(body_unreadable())?
         }
     };
     let document: artifact::Document = serde_json::from_slice(&std::fs::read(
@@ -296,7 +312,7 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
     )?)?;
     anyhow::ensure!(
         document.schema == 1 && artifact::has_readable_body(&document.sections),
-        BODY_UNREADABLE
+        body_unreadable()
     );
     let markdown = artifact::safe_asset_path(&course.dir, &manifest.markdown)
         .and_then(|path| Ok(std::fs::read_to_string(path)?))
@@ -305,7 +321,7 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
     let mut blocks = Vec::new();
     if let Some(summary) = &document.summary {
         blocks.push(PreviewBlock::Heading {
-            text: "摘要".into(),
+            text: course2md::tr!("摘要").into(),
             anchor: "summary".into(),
             seconds: None,
         });
@@ -326,11 +342,11 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
     }
     let mut issues = course.warning.clone().into_iter().collect::<Vec<_>>();
     if artifact::validate_version(&course.dir, &manifest).is_err() {
-        issues.push("部分笔记文件缺失或已改动，先显示能读到的内容。".into());
+        issues.push(course2md::tr!("部分笔记文件缺失或已改动，先显示能读到的内容。").into());
     }
     for frame in &manifest.frames {
         if artifact::safe_asset_path(&course.dir, &frame.image).is_err() {
-            issues.push(format!(
+            issues.push(course2md::tr!(
                 "{} 的截图无法读取",
                 course2md::render::fmt_ts(frame.t)
             ));

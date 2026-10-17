@@ -317,15 +317,15 @@ impl TaskState {
     }
     pub fn label(self) -> &'static str {
         match self {
-            Self::Queued => "等待处理",
-            Self::Running => "正在生成笔记",
-            Self::Pausing => "正在保存进度",
-            Self::Paused => "已暂停",
-            Self::NeedsAttention => "需要处理",
-            Self::Uncertain => "结果尚未确认",
-            Self::Complete => "笔记已生成",
-            Self::Partial => "部分未完成",
-            Self::Cancelled => "已取消",
+            Self::Queued => course2md::tr!("等待处理"),
+            Self::Running => course2md::tr!("正在生成笔记"),
+            Self::Pausing => course2md::tr!("正在保存进度"),
+            Self::Paused => course2md::tr!("已暂停"),
+            Self::NeedsAttention => course2md::tr!("需要处理"),
+            Self::Uncertain => course2md::tr!("结果尚未确认"),
+            Self::Complete => course2md::tr!("笔记已生成"),
+            Self::Partial => course2md::tr!("部分未完成"),
+            Self::Cancelled => course2md::tr!("已取消"),
         }
     }
 }
@@ -380,7 +380,7 @@ impl TaskRecord {
     /// The state label, telling a cancel apart from a pause while the worker stops.
     pub fn status_label(&self) -> &'static str {
         if self.state == TaskState::Pausing && self.intent == Intent::Cancel {
-            "正在取消"
+            course2md::tr!("正在取消")
         } else {
             self.state.label()
         }
@@ -471,7 +471,9 @@ pub(crate) fn available_task_export(
     task_export_files(task, location)
         .into_iter()
         .find(|path| path.is_file())
-        .context("导出文件已移动或无法读取，可打开笔记后从“导出”菜单重新保存。")
+        .context(course2md::tr!(
+            "导出文件已移动或无法读取，可打开笔记后从“导出”菜单重新保存。"
+        ))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -521,7 +523,7 @@ impl State {
     fn initial(root: PathBuf, options: ConversionOptions) -> Self {
         let library = LibraryLocation {
             id: new_id("library"),
-            name: "笔记库".into(),
+            name: course2md::tr!("笔记库").into(),
             root,
             previous_roots: Vec::new(),
         };
@@ -656,17 +658,17 @@ impl State {
         id: &str,
         subtitle_events: Option<Vec<course2md::timeline::TranscriptEvent>>,
     ) -> Result<()> {
-        let task = self.task(id).context("任务不存在")?.clone();
+        let task = self.task(id).context(course2md::tr!("任务不存在"))?.clone();
         ensure!(
             task.handled_by.is_none(),
-            "此任务已有后续处理，请打开对应任务继续"
+            course2md::tr!("此任务已有后续处理，请打开对应任务继续")
         );
         ensure!(
             !matches!(
                 task.state,
                 TaskState::Running | TaskState::Pausing | TaskState::Queued
             ),
-            "当前任务还在处理，请先暂停并等候当前步骤结束"
+            course2md::tr!("当前任务还在处理，请先暂停并等候当前步骤结束")
         );
         let mut draft = Draft::new(
             task.plan.source.online,
@@ -710,14 +712,14 @@ impl State {
     pub fn enqueue(&mut self, plan: TaskPlan, parent: Option<String>) -> Result<(String, bool)> {
         ensure!(
             !plan.source_id.is_empty() && !plan.title.trim().is_empty(),
-            "请先确认视频和笔记名称"
+            course2md::tr!("请先确认视频和笔记名称")
         );
         if let Some(id) = parent.as_deref() {
-            let original = self.task(id).context("原任务记录不存在")?;
+            let original = self.task(id).context(course2md::tr!("原任务记录不存在"))?;
             if let Some(followup) = &original.handled_by {
                 ensure!(
                     self.task(followup).is_some(),
-                    "后续任务记录缺失，请先恢复任务记录"
+                    course2md::tr!("后续任务记录缺失，请先恢复任务记录")
                 );
                 return Ok((followup.clone(), false));
             }
@@ -726,12 +728,12 @@ impl State {
                     original.state,
                     TaskState::Running | TaskState::Pausing | TaskState::Queued
                 ),
-                "原任务仍在处理，请先暂停并等候当前步骤结束"
+                course2md::tr!("原任务仍在处理，请先暂停并等候当前步骤结束")
             );
         }
         let location = self
             .library(&plan.library_id)
-            .context("所选保存位置未登记")?;
+            .context(course2md::tr!("所选保存位置未登记"))?;
         if let Some(existing) = self
             .tasks
             .iter()
@@ -816,22 +818,24 @@ impl State {
     }
 
     pub fn set_intent(&mut self, id: &str, intent: Intent) -> Result<()> {
-        let task = self.task_mut(id).context("任务记录不存在")?;
+        let task = self
+            .task_mut(id)
+            .context(course2md::tr!("任务记录不存在"))?;
         ensure!(
             !task.state.finished(),
-            "这项任务已结束，可在任务卡中补做或生成新版"
+            course2md::tr!("这项任务已结束，可在任务卡中补做或生成新版")
         );
         ensure!(
             task.handled_by.is_none(),
-            "这项任务已有后续处理，请打开对应任务继续。"
+            course2md::tr!("这项任务已有后续处理，请打开对应任务继续。")
         );
         ensure!(
             intent != Intent::Run || !matches!(task.state, TaskState::Running | TaskState::Pausing),
-            "这项任务正在处理当前操作"
+            course2md::tr!("这项任务正在处理当前操作")
         );
         ensure!(
             intent != Intent::Run || !task.has_uncertain(),
-            "仍有请求结果尚未确认，请查看请求范围后选择是否重新发送"
+            course2md::tr!("仍有请求结果尚未确认，请查看请求范围后选择是否重新发送")
         );
         task.intent = intent;
         task.updated = now();
@@ -855,17 +859,19 @@ impl State {
     }
 
     pub fn authorize_uncertain(&mut self, id: &str, requests: &[String]) -> Result<()> {
-        let task = self.task_mut(id).context("任务记录不存在")?;
+        let task = self
+            .task_mut(id)
+            .context(course2md::tr!("任务记录不存在"))?;
         ensure!(
             task.handled_by.is_none(),
-            "这项任务已有后续处理，请打开对应任务继续"
+            course2md::tr!("这项任务已有后续处理，请打开对应任务继续")
         );
         ensure!(
             !matches!(
                 task.state,
                 TaskState::Running | TaskState::Pausing | TaskState::Queued
             ) && !task.state.finished(),
-            "这项任务的状态已变化，请查看最新状态"
+            course2md::tr!("这项任务的状态已变化，请查看最新状态")
         );
         reconcile_receipts(task)?;
         let current: BTreeSet<_> = task
@@ -877,11 +883,11 @@ impl State {
         let selected: BTreeSet<_> = requests.iter().collect();
         ensure!(
             !selected.is_empty() && current == selected,
-            "待确认的请求已变化，请查看最新范围后再选择是否重新发送"
+            course2md::tr!("待确认的请求已变化，请查看最新范围后再选择是否重新发送")
         );
         ensure!(
             selected.iter().all(|id| !task.resend.contains(id)),
-            "这些请求已获得重新发送授权，请等待对应任务处理"
+            course2md::tr!("这些请求已获得重新发送授权，请等待对应任务处理")
         );
         task.resend.extend(requests.iter().cloned());
         task.intent = Intent::Run;
@@ -909,11 +915,11 @@ impl State {
         resend: Vec<String>,
         ai_service: Option<(String, ConfigFile)>,
     ) -> Result<String> {
-        let mut original = self.task(id).context("任务不存在")?.clone();
+        let mut original = self.task(id).context(course2md::tr!("任务不存在"))?.clone();
         if let Some(next) = &original.handled_by {
             ensure!(
                 self.task(next).is_some(),
-                "后续任务记录缺失，请先恢复任务记录"
+                course2md::tr!("后续任务记录缺失，请先恢复任务记录")
             );
             return Ok(next.clone());
         }
@@ -922,21 +928,24 @@ impl State {
                 original.state,
                 TaskState::Running | TaskState::Pausing | TaskState::Queued
             ),
-            "当前任务仍在处理，请先等候当前步骤结束"
+            course2md::tr!("当前任务仍在处理，请先等候当前步骤结束")
         );
         let base = original
             .artifact
             .clone()
-            .context("此任务尚无可补做的笔记正文")?;
+            .context(course2md::tr!("此任务尚无可补做的笔记正文"))?;
         let manifest = course2md::artifact::read_manifest(&base.join("manifest.json"))?;
         ensure!(
             manifest.source_id == original.plan.source_id,
-            "笔记来源与任务不匹配"
+            course2md::tr!("笔记来源与任务不匹配")
         );
         let value = original.outcomes.clone();
         components.sort();
         components.dedup();
-        ensure!(!components.is_empty(), "请选择需要补做的内容");
+        ensure!(
+            !components.is_empty(),
+            course2md::tr!("请选择需要补做的内容")
+        );
         let mut parsed = Component::parse_all(&components)?;
         for component in &parsed {
             let failed = match component {
@@ -946,7 +955,7 @@ impl State {
                     .is_some_and(|exports| exports.values().any(failed_outcome)),
                 component => value.get(component.as_str()).is_some_and(failed_outcome),
             };
-            ensure!(failed, "这部分无需补做");
+            ensure!(failed, course2md::tr!("这部分无需补做"));
         }
         if !resend.is_empty() {
             reconcile_receipts(&mut original)?;
@@ -958,7 +967,7 @@ impl State {
                 .collect();
             ensure!(
                 !unknown.is_empty() && unknown == resend.iter().collect(),
-                "待确认请求已变化，请查看最新范围后再选择是否重新发送"
+                course2md::tr!("待确认请求已变化，请查看最新范围后再选择是否重新发送")
             );
             // The user is continuing the original task, including a requested
             // summary that the uncertain proofreading prevented from starting.
@@ -984,7 +993,7 @@ impl State {
         } else {
             ensure!(
                 !original.has_uncertain(),
-                "仍有请求结果尚未确认，请先查看请求范围"
+                course2md::tr!("仍有请求结果尚未确认，请先查看请求范围")
             );
         }
         let mut plan = original.plan;
@@ -993,7 +1002,7 @@ impl State {
                 parsed
                     .iter()
                     .all(|part| matches!(part, Component::Proofreading | Component::Summary)),
-                "服务修复只能用于未完成的校对或摘要"
+                course2md::tr!("服务修复只能用于未完成的校对或摘要")
             );
             plan.ai_service = Some(service);
             plan.config.llm = config.llm;
@@ -1020,7 +1029,7 @@ impl State {
                 .collect();
             ensure!(
                 !formats.is_empty(),
-                "需要补做的导出格式记录不完整，请从笔记中重新选择导出格式"
+                course2md::tr!("需要补做的导出格式记录不完整，请从笔记中重新选择导出格式")
             );
             plan.options.formats = [OutputFormat::Md, OutputFormat::Html, OutputFormat::Json]
                 .map(|format| formats.contains(&format));
@@ -1080,39 +1089,42 @@ fn read_record_bytes(path: &Path) -> Result<Vec<u8>> {
     use std::io::Read;
     ensure!(
         !std::fs::symlink_metadata(path)?.file_type().is_symlink(),
-        "任务记录被链接替代，原文件已保留"
+        course2md::tr!("任务记录被链接替代，原文件已保留")
     );
     let mut file = std::fs::File::open(path)?;
     let metadata = file.metadata()?;
-    ensure!(metadata.is_file(), "任务记录不是普通文件");
+    ensure!(metadata.is_file(), course2md::tr!("任务记录不是普通文件"));
     const LIMIT: u64 = 32 * 1024 * 1024;
     ensure!(
         metadata.len() <= LIMIT,
-        "任务记录超过可读取范围，原文件已保留"
+        course2md::tr!("任务记录超过可读取范围，原文件已保留")
     );
     let mut bytes = Vec::new();
     file.by_ref().take(LIMIT + 1).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() as u64 <= LIMIT,
-        "任务记录超过可读取范围，原文件已保留"
+        course2md::tr!("任务记录超过可读取范围，原文件已保留")
     );
     Ok(bytes)
 }
 
 fn validate_record_location(task: &TaskRecord, libraries: &[LibraryLocation]) -> Result<()> {
-    ensure!(course2md::execution::valid_id(&task.id), "任务身份无效");
+    ensure!(
+        course2md::execution::valid_id(&task.id),
+        course2md::tr!("任务身份无效")
+    );
     let library = libraries
         .iter()
         .find(|library| library.id == task.plan.library_id)
-        .context("任务保存位置记录缺失")?;
+        .context(course2md::tr!("任务保存位置记录缺失"))?;
     ensure!(
         library.root.is_absolute()
             && task.work_dir == library.root.join(".course2md/work").join(&task.id),
-        "任务工作目录与记录的笔记库不匹配"
+        course2md::tr!("任务工作目录与记录的笔记库不匹配")
     );
     ensure!(
         !task.plan.source_id.trim().is_empty() && !task.plan.title.trim().is_empty(),
-        "任务来源身份或名称记录缺失"
+        course2md::tr!("任务来源身份或名称记录缺失")
     );
     Ok(())
 }
@@ -1125,7 +1137,7 @@ fn ensure_work_directory(task: &TaskRecord, library: &LibraryLocation) -> Result
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) => ensure!(
                 metadata.is_dir() && !metadata.file_type().is_symlink(),
-                "任务工作目录被其他文件或链接占用，原内容已保留"
+                course2md::tr!("任务工作目录被其他文件或链接占用，原内容已保留")
             ),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 std::fs::create_dir(&current)?
@@ -1169,19 +1181,25 @@ fn failed_outcome(value: &serde_json::Value) -> bool {
 }
 
 pub fn check_library(location: &LibraryLocation) -> Result<()> {
-    ensure!(location.root.is_dir(), "保存位置不可访问，请连接对应磁盘");
+    ensure!(
+        location.root.is_dir(),
+        course2md::tr!("保存位置不可访问，请连接对应磁盘")
+    );
     let identity = std::fs::read_to_string(location.root.join(".course2md-library-id"))
-        .context("保存位置需要重新关联")?;
+        .context(course2md::tr!("保存位置需要重新关联"))?;
     ensure!(
         identity.trim() == location.id,
-        "保存位置对应其他笔记库，请恢复原位置或在存储设置中重新登记"
+        course2md::tr!("保存位置对应其他笔记库，请恢复原位置或在存储设置中重新登记")
     );
     Ok(())
 }
 
 fn create_library_marker(location: &LibraryLocation) -> Result<()> {
     use std::io::Write;
-    ensure!(location.root.is_dir(), "保存位置暂时不可访问");
+    ensure!(
+        location.root.is_dir(),
+        course2md::tr!("保存位置暂时不可访问")
+    );
     let target = location.root.join(".course2md-library-id");
     if target.exists() {
         return check_library(location);
@@ -1209,7 +1227,7 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
         let manifest = course2md::artifact::read_manifest(&version.join("manifest.json"))?;
         ensure!(
             manifest.task_id == task.id && manifest.source_id == task.plan.source_id,
-            "已发布笔记与任务身份不匹配，原文件已保留"
+            course2md::tr!("已发布笔记与任务身份不匹配，原文件已保留")
         );
         course2md::artifact::validate_version(&version, &manifest)?;
         task.artifact = Some(version);
@@ -1238,11 +1256,11 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
         let outcomes = value
             .get("outcomes")
             .and_then(|v| v.as_object())
-            .context("导出结果记录不完整")?;
-        ensure!(!outcomes.is_empty(), "导出结果记录为空");
+            .context(course2md::tr!("导出结果记录不完整"))?;
+        ensure!(!outcomes.is_empty(), course2md::tr!("导出结果记录为空"));
         let mut outcomes = outcomes.clone();
-        let export_directory =
-            task_export_directory(task, location).context("导出位置与任务记录不匹配")?;
+        let export_directory = task_export_directory(task, location)
+            .context(course2md::tr!("导出位置与任务记录不匹配"))?;
         for (format, outcome) in &mut outcomes {
             if outcome.get("status").and_then(|v| v.as_str()) == Some("succeeded") {
                 let format = match format.as_str() {
@@ -1254,7 +1272,7 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
                 let expected = export_directory.join(course2md::portable::file_name(format));
                 if !expected.is_file() {
                     *outcome = serde_json::to_value(course2md::artifact::Outcome::failed(
-                        "导出文件已移动或无法读取，可以重新导出",
+                        course2md::tr!("导出文件已移动或无法读取，可以重新导出"),
                     ))?;
                 }
             }
@@ -1292,14 +1310,14 @@ pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
             message: if receipt.description.trim().is_empty() {
                 receipt
                     .message
-                    .unwrap_or_else(|| "请求已发送，结果未确认".into())
+                    .unwrap_or_else(|| course2md::tr!("请求已发送，结果未确认").into())
             } else {
-                format!(
+                course2md::tr!(
                     "{}：{}",
                     receipt.description,
                     receipt
                         .message
-                        .unwrap_or_else(|| { "请求结果未确认".into() })
+                        .unwrap_or_else(|| { course2md::tr!("请求结果未确认").into() })
                 )
             },
         });
@@ -1412,7 +1430,7 @@ pub fn task_subtitle_events(
             task.plan.operation,
             course2md::execution::Operation::Reprocess { .. }
         ),
-        "所选字幕的内容已丢失，请重新读取字幕后再试"
+        course2md::tr!("所选字幕的内容已丢失，请重新读取字幕后再试")
     );
     Ok(None)
 }
@@ -1454,10 +1472,14 @@ fn hydrate_draft_subtitles(state: &mut State, record: &Path) {
 impl Workspace {
     /// The UI explains the registered path and obtains an explicit association choice.
     pub fn reassociate_library(&mut self, id: &str) -> Result<()> {
-        let library = self.state.library(id).context("保存位置未登记")?.clone();
+        let library = self
+            .state
+            .library(id)
+            .context(course2md::tr!("保存位置未登记"))?
+            .clone();
         ensure!(
             library.root.is_dir(),
-            "保存位置暂时不可访问，请先连接对应磁盘"
+            course2md::tr!("保存位置暂时不可访问，请先连接对应磁盘")
         );
         create_library_marker(&library)?;
         self.mirror_snapshots
@@ -1476,7 +1498,9 @@ impl Workspace {
     }
 
     pub fn rebuild_at(path: PathBuf, root: PathBuf, options: ConversionOptions) -> Result<Self> {
-        let parent = path.parent().context("任务记录缺少保存目录")?;
+        let parent = path
+            .parent()
+            .context(course2md::tr!("任务记录缺少保存目录"))?;
         std::fs::create_dir_all(parent)?;
         let _lock = course2md::runtime::lock_file(&path.with_extension("lock"))?;
         let backup = path.with_extension("json.bak");
@@ -1487,7 +1511,7 @@ impl Workspace {
             .collect::<Result<_>>()?;
         ensure!(
             !originals.is_empty(),
-            "原任务记录不存在，请重新打开应用建立新记录"
+            course2md::tr!("原任务记录不存在，请重新打开应用建立新记录")
         );
         let values: Vec<serde_json::Value> = originals
             .iter()
@@ -1498,14 +1522,16 @@ impl Workspace {
                 .get("schema")
                 .and_then(|v| v.as_u64())
                 .is_some_and(|schema| schema > SCHEMA as u64)),
-            "这些任务由较新版本创建，请使用对应版本恢复，原文件已保留"
+            course2md::tr!("这些任务由较新版本创建，请使用对应版本恢复，原文件已保留")
         );
         let archive = parent.join(new_id("workspace-recovery"));
-        std::fs::create_dir(&archive).context("无法建立原始记录备份，尚未重建")?;
+        std::fs::create_dir(&archive).context(course2md::tr!("无法建立原始记录备份，尚未重建"))?;
         for (original, bytes) in &originals {
-            let name = original.file_name().context("原记录缺少文件名")?;
+            let name = original
+                .file_name()
+                .context(course2md::tr!("原记录缺少文件名"))?;
             course2md::checkpoint::atomic_write(&archive.join(name), bytes)
-                .context("原始记录备份未完成，尚未重建")?;
+                .context(course2md::tr!("原始记录备份未完成，尚未重建"))?;
         }
         let mut state = State::initial(root.clone(), options);
         if let Ok(marker) = std::fs::read_to_string(root.join(".course2md-library-id"))
@@ -1583,7 +1609,7 @@ impl Workspace {
             let root_path = library.root.canonicalize()?;
             ensure!(
                 work_root.canonicalize()?.starts_with(&root_path),
-                "任务材料位置越出笔记库，原记录已保留"
+                course2md::tr!("任务材料位置越出笔记库，原记录已保留")
             );
             for entry in std::fs::read_dir(&work_root)? {
                 let entry = entry?;
@@ -1598,7 +1624,7 @@ impl Workspace {
                     let mirror: TaskMirror = serde_json::from_slice(&bytes)?;
                     ensure!(
                         mirror.schema == SCHEMA && mirror.task.work_dir == entry.path(),
-                        "任务镜像身份不匹配"
+                        course2md::tr!("任务镜像身份不匹配")
                     );
                     validate_record_location(&mirror.task, &state.libraries)?;
                     Ok(mirror.task)
@@ -1607,7 +1633,7 @@ impl Workspace {
                     Ok(task) => {
                         records.entry(task.id.clone()).or_insert(task);
                     }
-                    Err(_) => issues.push(format!(
+                    Err(_) => issues.push(course2md::tr!(
                         "{} 的任务参数仍无法读取，材料已保留",
                         entry.file_name().to_string_lossy()
                     )),
@@ -1616,7 +1642,7 @@ impl Workspace {
         }
         for (_, mut task) in records {
             if validate_record_location(&task, &state.libraries).is_err() {
-                issues.push(format!(
+                issues.push(course2md::tr!(
                     "《{}》的位置或身份记录不完整，原记录已保留",
                     task.plan.title
                 ));
@@ -1627,7 +1653,7 @@ impl Workspace {
             if !task.state.finished() {
                 task.intent = Intent::Pause;
                 task.state = TaskState::Paused;
-                task.error = Some("任务记录已重建".into());
+                task.error = Some(course2md::tr!("任务记录已重建").into());
                 task.unread = true;
             }
             if let Some(library) = state.library(&task.plan.library_id)
@@ -1637,10 +1663,14 @@ impl Workspace {
                     .and_then(|_| reconcile_receipts(&mut task))
                 {
                     task.state = TaskState::NeedsAttention;
-                    task.error = Some(format!("已保留材料，结果记录尚未确认：{error:#}"));
+                    task.error = Some(course2md::tr!(
+                        "已保留材料，结果记录尚未确认：{}",
+                        format!("{error:#}")
+                    ));
                 }
-                pause_recovered_control(&task)
-                    .context("无法保存恢复后的暂停指令，尚未替换原任务记录")?;
+                pause_recovered_control(&task).context(course2md::tr!(
+                    "无法保存恢复后的暂停指令，尚未替换原任务记录"
+                ))?;
             }
             state.tasks.push(task);
         }
@@ -1681,14 +1711,14 @@ impl Workspace {
         hydrate_draft_subtitles(&mut state, &path);
         store_task_subtitles(&mut state);
         course2md::checkpoint::atomic_write(&path, &serde_json::to_vec(&state)?)?;
-        let recovery = format!(
+        let recovery = course2md::tr!(
             "已重建 {} 项任务记录，未启动处理。原始记录保存在 {}。{}",
             state.tasks.len(),
             archive.display(),
             if issues.is_empty() {
                 String::new()
             } else {
-                issues.join("；")
+                issues.join(course2md::tr!("；"))
             }
         );
         Ok(Self {
@@ -1719,7 +1749,9 @@ impl Workspace {
                 .and_then(|v| v.as_u64())
                 .is_some_and(|schema| schema > SCHEMA as u64)
         {
-            bail!("任务记录由较新版本创建，请使用对应版本打开。原记录和备份均保留，尚未启动任务。");
+            bail!(course2md::tr!(
+                "任务记录由较新版本创建，请使用对应版本打开。原记录和备份均保留，尚未启动任务。"
+            ));
         }
         let mut state = if path.exists() {
             match Self::read(&path) {
@@ -1730,9 +1762,10 @@ impl Workspace {
                         Ok(state) => {
                             let saved =
                                 path.with_extension(format!("{}.damaged", new_id("backup")));
-                            std::fs::copy(&path, &saved).context("无法保留损坏的任务记录")?;
+                            std::fs::copy(&path, &saved)
+                                .context(course2md::tr!("无法保留损坏的任务记录"))?;
                             recovery = Some(
-                                "已从备份恢复输入和任务。无法确认最后一次操作，未完成任务已暂停。"
+                                course2md::tr!("已从备份恢复输入和任务。无法确认最后一次操作，未完成任务已暂停。")
                                     .into(),
                             );
                             let mut state = state;
@@ -1746,7 +1779,8 @@ impl Workspace {
                             state
                         }
                         Err(_) => {
-                            return Err(error).context("输入和任务记录无法读取，原文件已保留");
+                            return Err(error)
+                                .context(course2md::tr!("输入和任务记录无法读取，原文件已保留"));
                         }
                     }
                 }
@@ -1767,15 +1801,17 @@ impl Workspace {
                         &marker,
                         initial.default_library.as_bytes(),
                     ) {
-                        recovery = Some(format!(
-                            "保存位置尚未准备好：{error:#}。可以在设置的存储中选择其他位置。"
+                        recovery = Some(course2md::tr!(
+                            "保存位置尚未准备好：{}。可以在设置的存储中选择其他位置。",
+                            format!("{error:#}")
                         ));
                     }
                 }
                 Err(error) => {
-                    recovery = Some(format!(
-                        "无法创建默认保存位置 {}：{error}。可以在设置的存储中选择其他位置。",
-                        root.display()
+                    recovery = Some(course2md::tr!(
+                        "无法创建默认保存位置 {}：{}。可以在设置的存储中选择其他位置。",
+                        root.display(),
+                        error
                     ))
                 }
             }
@@ -1794,7 +1830,10 @@ impl Workspace {
                 .and_then(|_| reconcile_receipts(task));
             if let Err(error) = result {
                 task.state = TaskState::NeedsAttention;
-                task.error = Some(format!("请求记录暂时无法读取，尚未发送新请求：{error:#}"));
+                task.error = Some(course2md::tr!(
+                    "请求记录暂时无法读取，尚未发送新请求：{}",
+                    format!("{error:#}")
+                ));
             }
         }
         Ok(Self {
@@ -1810,19 +1849,22 @@ impl Workspace {
 
     fn read(path: &Path) -> Result<State> {
         let state: State = serde_json::from_slice(
-            &read_record_bytes(path).with_context(|| format!("读取 {}", path.display()))?,
+            &read_record_bytes(path).with_context(|| course2md::tr!("读取 {}", path.display()))?,
         )?;
         ensure!(
             state.schema == SCHEMA,
-            "任务记录版本不受支持，请使用创建这些任务的应用版本"
+            course2md::tr!("任务记录版本不受支持，请使用创建这些任务的应用版本")
         );
         ensure!(
             state.library(&state.default_library).is_some(),
-            "默认保存位置记录缺失"
+            course2md::tr!("默认保存位置记录缺失")
         );
-        ensure!(state.draft().is_some(), "当前输入记录缺失");
+        ensure!(state.draft().is_some(), course2md::tr!("当前输入记录缺失"));
         let ids: BTreeSet<_> = state.tasks.iter().map(|t| &t.id).collect();
-        ensure!(ids.len() == state.tasks.len(), "任务记录包含重复身份");
+        ensure!(
+            ids.len() == state.tasks.len(),
+            course2md::tr!("任务记录包含重复身份")
+        );
         for task in &state.tasks {
             validate_record_location(task, &state.libraries)?;
         }
@@ -1855,7 +1897,10 @@ impl Workspace {
         Ok(true)
     }
     fn write(&self, state: &State) -> Result<()> {
-        let parent = self.path.parent().context("任务记录缺少保存目录")?;
+        let parent = self
+            .path
+            .parent()
+            .context(course2md::tr!("任务记录缺少保存目录"))?;
         std::fs::create_dir_all(parent)?;
         let _lock = course2md::runtime::lock_file(&self.path.with_extension("lock"))?;
         // A mirror is recovery evidence, never authority to resume. The main record
@@ -1889,7 +1934,7 @@ impl Workspace {
             })?;
             if std::fs::read(&mirror).ok().as_deref() != Some(&bytes) {
                 course2md::checkpoint::atomic_write(&mirror, &bytes)
-                    .context("任务恢复副本未能保存，原任务记录仍保留")?;
+                    .context(course2md::tr!("任务恢复副本未能保存，原任务记录仍保留"))?;
             }
             self.mirror_snapshots
                 .borrow_mut()
@@ -1934,7 +1979,10 @@ impl Workspace {
         name: String,
         make_default: bool,
     ) -> Result<String> {
-        ensure!(root.is_dir(), "请选择已有文件夹；新建笔记库请使用新建操作");
+        ensure!(
+            root.is_dir(),
+            course2md::tr!("请选择已有文件夹；新建笔记库请使用新建操作")
+        );
         let canonical = root.canonicalize()?;
         if let Some(existing) = self
             .state
@@ -1951,16 +1999,19 @@ impl Workspace {
             }
             return Ok(id);
         }
-        let probe = tempfile::NamedTempFile::new_in(&canonical).context("所选位置不能写入")?;
+        let probe = tempfile::NamedTempFile::new_in(&canonical)
+            .context(course2md::tr!("所选位置不能写入"))?;
         drop(probe);
         let identity = canonical.join(".course2md-library-id");
         let id = if identity.is_file() {
             let id = std::fs::read_to_string(&identity)?.trim().to_owned();
             if id.is_empty() {
-                bail!("笔记库身份记录为空，请检查所选位置");
+                bail!(course2md::tr!("笔记库身份记录为空，请检查所选位置"));
             }
             if self.state.libraries.iter().any(|l| l.id == id) {
-                bail!("这个库已经登记在另一个位置，请使用移动笔记库操作");
+                bail!(course2md::tr!(
+                    "这个库已经登记在另一个位置，请使用移动笔记库操作"
+                ));
             }
             id
         } else {

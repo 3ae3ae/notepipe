@@ -153,15 +153,19 @@ fn palette_choice(palette: PaletteId, selected: bool, amount: f32) -> gpui_base:
         .w_full()
         .p(px(0.))
         .overflow_hidden()
-        .accessibility_label(format!(
+        .accessibility_label(course2md::tr!(
             "{}，{}{}",
             palette.name(),
             if palette.is_dark() {
-                "深色主题"
+                course2md::tr!("深色主题")
             } else {
-                "浅色主题"
+                course2md::tr!("浅色主题")
             },
-            if selected { "，已选择" } else { "" }
+            if selected {
+                course2md::tr!("，已选择")
+            } else {
+                ""
+            }
         ))
         .when(cfg!(test), |card| {
             card.debug_selector(move || format!("palette-card-{}", palette as usize))
@@ -299,11 +303,11 @@ impl Desktop {
             outline_pill("finish-palette-picker")
                 .settings_text()
                 .icon(icons::close())
-                .label("关闭")
+                .label(course2md::tr!("关闭"))
         } else {
             primary_pill("finish-palette-picker")
                 .icon(icons::check_circle())
-                .label("完成")
+                .label(course2md::tr!("完成"))
         };
         v_flex()
             .w_full()
@@ -348,7 +352,11 @@ impl Desktop {
                 .title(
                     crate::settings_ui::settings_value(
                         "palette-dialog-title",
-                        if dark { "深色主题" } else { "浅色主题" },
+                        if dark {
+                            course2md::tr!("深色主题")
+                        } else {
+                            course2md::tr!("浅色主题")
+                        },
                     )
                     .text_size(TEXT_TITLE)
                     .font_weight(FontWeight::SEMIBOLD),
@@ -361,7 +369,11 @@ impl Desktop {
     }
 
     fn palette_preset(&self, dark: bool, palette: PaletteId, cx: &mut Context<Self>) -> Div {
-        let label = if dark { "深色主题" } else { "浅色主题" };
+        let label = if dark {
+            course2md::tr!("深色主题")
+        } else {
+            course2md::tr!("浅色主题")
+        };
         v_flex()
             .w_full()
             .min_w_0()
@@ -388,7 +400,7 @@ impl Desktop {
             )
             .child(outlined_field_label(
                 ("palette-preset-field", usize::from(dark)),
-                "主题",
+                course2md::tr!("主题"),
                 TEXT_SETTINGS_AUX,
                 control(("palette-preset", usize::from(dark)))
                     .settings_text()
@@ -397,7 +409,7 @@ impl Desktop {
                     .rounded(RADIUS_SMALL)
                     .text_size(rems(16. / 14.))
                     .font_weight(FontWeight::NORMAL)
-                    .accessibility_label(format!("{label}：{}", palette.name()))
+                    .accessibility_label(course2md::tr!("{}：{}", label, palette.name()))
                     .label(palette.name())
                     .child(div().flex_1())
                     .child(icons::chevron_down().size(px(18.)))
@@ -414,10 +426,14 @@ impl Desktop {
     ) -> AnyElement {
         let preference = self.preferences.application().appearance.clone();
         let width = crate::views::settings_content_width(window);
-        let modes = SingleChoiceGroup::new("appearance-mode", "外观模式")
+        let modes = SingleChoiceGroup::new("appearance-mode", course2md::tr!("外观模式"))
             .segmented()
             .settings_text()
-            .options([("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")])
+            .options([
+                ("system", course2md::tr!("跟随系统")),
+                ("light", course2md::tr!("浅色")),
+                ("dark", course2md::tr!("深色")),
+            ])
             .icon("system", icons::computer())
             .icon("light", icons::sun())
             .icon("dark", icons::moon())
@@ -456,10 +472,10 @@ impl Desktop {
             .min_w_0()
             .gap(px(23.))
             .child(
-                crate::settings_ui::SettingsGroup::new("appearance-theme", "主题")
+                crate::settings_ui::SettingsGroup::new("appearance-theme", course2md::tr!("主题"))
                     .child(settings_stacked_row(
                         "appearance-mode-row",
-                        "外观模式",
+                        course2md::tr!("外观模式"),
                         "",
                         modes,
                     ))

@@ -30,14 +30,15 @@ impl Desktop {
         let generation = self.ollama.generation;
         // The engine error names `ollama serve`; the page offers its own action.
         let task = crate::spawn_blocking_io(|| {
-            course2md::login::ollama::discover_for_desktop()
-                .map_err(|_| "未检测到 Ollama，请安装并打开 Ollama 后重新检查".to_owned())
+            course2md::login::ollama::discover_for_desktop().map_err(|_| {
+                course2md::tr!("未检测到 Ollama，请安装并打开 Ollama 后重新检查").to_owned()
+            })
         });
         cx.spawn(async move |this, cx| {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(crate::INTERRUPTED.to_owned()));
+                .unwrap_or_else(|_| Err(crate::interrupted().to_owned()));
             let _ = this.update(cx, |this, cx| {
                 if this.ollama.generation != generation {
                     return;
@@ -86,7 +87,7 @@ impl Desktop {
         let mut draft = ServiceDraft::new(ServicePurpose::Ai);
         draft.protocol = ServiceProtocol::OllamaChat;
         draft.authentication = Authentication::None;
-        draft.name = "Ollama 本地服务".into();
+        draft.name = course2md::tr!("Ollama 本地服务").into();
         if let Some(Ok((host, models))) = &self.ollama.status {
             draft.address = host.clone();
             draft.model = models.first().cloned().unwrap_or_default();
@@ -101,13 +102,15 @@ impl Desktop {
         let added_version = self.ollama_added_service();
         // 状态只占标题行的一个徽章位：已检测到且已有对应服务时显示「已添加」
         let (kind, label) = if working {
-            (BadgeKind::Progress, "正在检查")
+            (BadgeKind::Progress, course2md::tr!("正在检查"))
         } else {
             match &self.ollama.status {
-                Some(Ok(_)) if added_version.is_some() => (BadgeKind::Success, "已添加"),
-                Some(Ok(_)) => (BadgeKind::Success, "已检测到"),
-                Some(Err(_)) => (BadgeKind::Neutral, "未检测到"),
-                None => (BadgeKind::Neutral, "尚未检查"),
+                Some(Ok(_)) if added_version.is_some() => {
+                    (BadgeKind::Success, course2md::tr!("已添加"))
+                }
+                Some(Ok(_)) => (BadgeKind::Success, course2md::tr!("已检测到")),
+                Some(Err(_)) => (BadgeKind::Neutral, course2md::tr!("未检测到")),
+                None => (BadgeKind::Neutral, course2md::tr!("尚未检查")),
             }
         };
         let detail = match &self.ollama.status {
@@ -115,15 +118,16 @@ impl Desktop {
                 let preview: Vec<&str> =
                     models.iter().take(3).map(|model| model.as_str()).collect();
                 Some(if models.len() > preview.len() {
-                    format!(
-                        "{host} · {} 个模型：{} 等",
+                    course2md::tr!(
+                        "{} · {} 个模型：{} 等",
+                        host,
                         models.len(),
                         preview.join("、")
                     )
                 } else if preview.is_empty() {
-                    format!("{host} · 还没有已下载的模型")
+                    course2md::tr!("{} · 还没有已下载的模型", host)
                 } else {
-                    format!("{host} · {} 个模型：{}", models.len(), preview.join("、"))
+                    course2md::tr!("{} · {} 个模型：{}", host, models.len(), preview.join("、"))
                 })
             }
             _ => None,
@@ -139,7 +143,7 @@ impl Desktop {
                 quiet(SharedString::from(format!("{id}-open-added")))
                     .when(self.page == Page::Settings, SettingsText::settings_text)
                     .icon(icons::edit())
-                    .label("查看服务")
+                    .label(course2md::tr!("查看服务"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_settings_service_editor(
                             ServicePurpose::Ai,
@@ -154,7 +158,7 @@ impl Desktop {
                 outline_pill(SharedString::from(format!("{id}-add")))
                     .when(self.page == Page::Settings, SettingsText::settings_text)
                     .icon(icons::plus())
-                    .label("添加 Ollama 服务")
+                    .label(course2md::tr!("添加 Ollama 服务"))
                     .disabled(working)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.ollama_add_service(window, cx);
@@ -171,8 +175,8 @@ impl Desktop {
                 .px_0()
                 .flex_shrink_0()
                 .icon(icons::refresh())
-                .accessibility_label("重新检查 Ollama")
-                .tooltip("重新检查")
+                .accessibility_label(course2md::tr!("重新检查 Ollama"))
+                .tooltip(course2md::tr!("重新检查"))
                 .disabled(working)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.ollama_refresh(cx);
@@ -182,7 +186,7 @@ impl Desktop {
         crate::settings_ui::AccountCard {
             id,
             icon: icons::server(),
-            title: "Ollama 本地服务",
+            title: course2md::tr!("Ollama 本地服务"),
             status: (kind, label),
             detail,
             busy: working,

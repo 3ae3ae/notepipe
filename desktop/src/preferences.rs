@@ -107,18 +107,20 @@ pub fn save_failure_message(group: PreferenceGroup, error: &anyhow::Error) -> St
         .chain()
         .find_map(|cause| cause.downcast_ref::<std::io::Error>())
         .map(|cause| match cause.kind() {
-            ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => "设置目录暂时无法写入",
-            ErrorKind::StorageFull => "设置所在磁盘空间不足",
-            ErrorKind::NotFound => "设置位置暂时不可访问",
-            _ => "设置文件暂时无法写入",
+            ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => {
+                course2md::tr!("设置目录暂时无法写入")
+            }
+            ErrorKind::StorageFull => course2md::tr!("设置所在磁盘空间不足"),
+            ErrorKind::NotFound => course2md::tr!("设置位置暂时不可访问"),
+            _ => course2md::tr!("设置文件暂时无法写入"),
         })
-        .unwrap_or("设置变更暂时无法保存");
+        .unwrap_or(course2md::tr!("设置变更暂时无法保存"));
     let name = match group {
-        PreferenceGroup::Application => "应用偏好",
-        PreferenceGroup::Generation => "生成笔记偏好",
-        PreferenceGroup::Services => "服务配置",
+        PreferenceGroup::Application => course2md::tr!("应用偏好"),
+        PreferenceGroup::Generation => course2md::tr!("生成笔记偏好"),
+        PreferenceGroup::Services => course2md::tr!("服务配置"),
     };
-    format!("{name}未保存：{reason}")
+    course2md::tr!("{}未保存：{}", name, reason)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -227,13 +229,7 @@ pub enum InterfaceLanguage {
 }
 
 impl InterfaceLanguage {
-    pub const ALL: [Self; 5] = [
-        Self::System,
-        Self::En,
-        Self::ZhHans,
-        Self::ZhHant,
-        Self::Ja,
-    ];
+    pub const ALL: [Self; 5] = [Self::System, Self::En, Self::ZhHans, Self::ZhHant, Self::Ja];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -356,11 +352,11 @@ impl ServiceProtocol {
     /// The service type's choice label, shared by the editor and setup.
     pub fn choice_label(self) -> &'static str {
         match self {
-            Self::SpeechTranscriptions => "专用转写（如 Whisper）",
-            Self::SpeechChat => "多模态对话（如 GPT-4o 音频）",
-            Self::AiChat => "OpenAI 兼容服务",
-            Self::OllamaChat => "Ollama 本地服务",
-            Self::CodexResponses => "OpenAI Codex 订阅",
+            Self::SpeechTranscriptions => course2md::tr!("专用转写（如 Whisper）"),
+            Self::SpeechChat => course2md::tr!("多模态对话（如 GPT-4o 音频）"),
+            Self::AiChat => course2md::tr!("OpenAI 兼容服务"),
+            Self::OllamaChat => course2md::tr!("Ollama 本地服务"),
+            Self::CodexResponses => course2md::tr!("OpenAI Codex 订阅"),
         }
     }
 
@@ -374,7 +370,9 @@ impl ServiceProtocol {
     }
 }
 
-const URL_CREDENTIALS: &str = "地址里不能带密钥或 ? # 等附加内容，请把密钥填到 API Key";
+fn url_credentials() -> &'static str {
+    course2md::tr!("地址里不能带密钥或 ? # 等附加内容，请把密钥填到 API Key")
+}
 
 /// Codex 订阅登录的固定服务地址（CLI 方言端点固定，见 course2md::provider）。
 pub const CODEX_ADDRESS: &str = course2md::provider::CODEX_BASE_URL;
@@ -461,12 +459,12 @@ impl ServiceDraft {
         if self.model.trim().is_empty() {
             errors.push(FieldError {
                 field: "model",
-                message: "请输入服务提供的模型 ID".into(),
+                message: course2md::tr!("请输入服务提供的模型 ID").into(),
             });
         } else if self.model.chars().any(char::is_control) {
             errors.push(FieldError {
                 field: "model",
-                message: "模型 ID 不能包含换行或控制字符".into(),
+                message: course2md::tr!("模型 ID 不能包含换行或控制字符").into(),
             });
         }
         if !self.protocol.keyless()
@@ -475,7 +473,7 @@ impl ServiceDraft {
         {
             errors.push(FieldError {
                 field: "api_key",
-                message: "此认证方式需要 API Key".into(),
+                message: course2md::tr!("此认证方式需要 API Key").into(),
             });
         }
         errors
@@ -491,7 +489,7 @@ impl ServiceDraft {
                     .iter()
                     .map(|error| error.message.as_str())
                     .collect::<Vec<_>>()
-                    .join("；")
+                    .join(course2md::tr!("；"))
             );
         }
         let endpoint = normalize_endpoint(&self.address, self.protocol)?;
@@ -591,21 +589,21 @@ impl ServiceVersion {
     pub fn changes_since(&self, old: &ServiceVersion) -> Vec<&'static str> {
         let mut changed = Vec::new();
         if old.config.name != self.config.name {
-            changed.push("名称");
+            changed.push(course2md::tr!("名称"));
         }
         if old.config.model != self.config.model {
-            changed.push("模型");
+            changed.push(course2md::tr!("模型"));
         }
         if old.config.endpoint != self.config.endpoint {
-            changed.push("地址");
+            changed.push(course2md::tr!("地址"));
         }
         if old.config.protocol != self.config.protocol {
-            changed.push("协议");
+            changed.push(course2md::tr!("协议"));
         }
         if old.config.authentication != self.config.authentication
             || old.config.credential != self.config.credential
         {
-            changed.push("认证");
+            changed.push(course2md::tr!("认证"));
         }
         changed
     }
@@ -748,30 +746,30 @@ trait Validate {
 impl Validate for GenerationPreferences {
     fn validate_value(&self) -> Result<()> {
         if self.options.out.is_some() {
-            bail!("保存位置由存储设置管理");
+            bail!(course2md::tr!("保存位置由存储设置管理"));
         }
         if self.ai_concurrency == 0 || self.ai_concurrency > 64 {
-            bail!("AI 并发请求数需要在 1 到 64 之间");
+            bail!(course2md::tr!("AI 并发请求数需要在 1 到 64 之间"));
         }
         for (name, value) in [
-            ("画面相似度", self.options.similarity),
-            ("画面采样间隔", self.options.sample_interval),
-            ("画面间隔", self.options.cooldown),
-            ("稳定画面时长", self.options.stable_secs),
+            (course2md::tr!("画面相似度"), self.options.similarity),
+            (course2md::tr!("画面采样间隔"), self.options.sample_interval),
+            (course2md::tr!("画面间隔"), self.options.cooldown),
+            (course2md::tr!("稳定画面时长"), self.options.stable_secs),
         ] {
             if value.is_some_and(|value| !value.is_finite() || value < 0.0) {
-                bail!("{name}需要是有效的非负数");
+                bail!(course2md::tr!("{}需要是有效的非负数", name));
             }
         }
         if self.options.similarity.is_some_and(|value| value > 1.0) {
-            bail!("画面相似度需要在 0 到 1 之间");
+            bail!(course2md::tr!("画面相似度需要在 0 到 1 之间"));
         }
         if self
             .options
             .max_speech
             .is_some_and(|value| !value.is_finite() || value <= 0.0)
         {
-            bail!("语音分段长度需要大于 0");
+            bail!(course2md::tr!("语音分段长度需要大于 0"));
         }
         Ok(())
     }
@@ -780,10 +778,10 @@ impl Validate for GenerationPreferences {
 impl Validate for ApplicationPreferences {
     fn validate_value(&self) -> Result<()> {
         if !self.appearance.valid() {
-            bail!("请为浅色和深色外观分别选择对应的主题");
+            bail!(course2md::tr!("请为浅色和深色外观分别选择对应的主题"));
         }
         if !crate::preferences::FONT_SCALES.contains(&self.font_scale) {
-            bail!("请选择 100%、125%、150% 或 200% 的文字大小");
+            bail!(course2md::tr!("请选择 100%、125%、150% 或 200% 的文字大小"));
         }
         Ok(())
     }
@@ -796,7 +794,7 @@ impl Validate for ServicesState {
                 || !valid_id(id, "service-draft-")
                 || !valid_id(&draft.service_id, "service-")
             {
-                bail!("服务设置记录不完整");
+                bail!(course2md::tr!("服务设置记录不完整"));
             }
         }
         for (id, version) in &self.versions {
@@ -804,14 +802,14 @@ impl Validate for ServicesState {
                 || !valid_id(id, "service-version-")
                 || !valid_id(&version.service_id, "service-")
             {
-                bail!("服务版本记录不完整");
+                bail!(course2md::tr!("服务版本记录不完整"));
             }
             let config = &version.config;
             if normalize_endpoint(&config.endpoint, config.protocol)? != config.endpoint
                 || config.model.trim().is_empty()
                 || (config.authentication == Authentication::ApiKey && config.credential.is_none())
             {
-                bail!("有效服务版本记录不完整");
+                bail!(course2md::tr!("有效服务版本记录不完整"));
             }
         }
         for (reference, purpose) in [
@@ -822,9 +820,9 @@ impl Validate for ServicesState {
                 let version = self
                     .versions
                     .get(reference)
-                    .ok_or_else(|| anyhow!("默认服务版本不存在"))?;
+                    .ok_or_else(|| anyhow!(course2md::tr!("默认服务版本不存在")))?;
                 if version.config.protocol.purpose() != purpose {
-                    bail!("默认服务用途不匹配");
+                    bail!(course2md::tr!("默认服务用途不匹配"));
                 }
             }
         }
@@ -900,12 +898,16 @@ impl Store {
         name: &str,
     ) -> Result<ServiceDraft> {
         if !Self::available_environment_credentials(draft.protocol.purpose()).contains(&name) {
-            bail!("这个环境变量当前没有可用的凭据，请重新选择或填写 API Key");
+            bail!(course2md::tr!(
+                "这个环境变量当前没有可用的凭据，请重新选择或填写 API Key"
+            ));
         }
-        let value = Secret::new(std::env::var(name).map_err(|_| anyhow!("无法读取所选环境变量"))?);
+        let value = Secret::new(
+            std::env::var(name).map_err(|_| anyhow!(course2md::tr!("无法读取所选环境变量")))?,
+        );
         let reference = self.vault.insert(value)?;
         draft.credential = Some(reference.clone());
-        draft.credential_source = Some(format!("环境变量 {name}"));
+        draft.credential_source = Some(course2md::tr!("环境变量 {}", name));
         draft.authentication = Authentication::ApiKey;
         match self.save_service_draft(draft, None) {
             Ok(draft) => Ok(draft),
@@ -1188,14 +1190,14 @@ impl Store {
         // to a normal settings file, including when the URL itself is not yet parseable.
         if draft.address.contains('@') || draft.address.contains('?') || draft.address.contains('#')
         {
-            bail!(URL_CREDENTIALS);
+            bail!(url_credentials());
         }
         if let Some(current) = self.services.drafts.get(&draft.id) {
             if current.revision != draft.revision {
-                bail!("服务编辑已发生变化，请重新打开服务后再试");
+                bail!(course2md::tr!("服务编辑已发生变化，请重新打开服务后再试"));
             }
         } else if draft.revision != 0 {
-            bail!("当前服务编辑已结束，请重新打开服务后再试");
+            bail!(course2md::tr!("当前服务编辑已结束，请重新打开服务后再试"));
         }
         let created_credential = match new_key {
             Some(secret) => {
@@ -1251,20 +1253,23 @@ impl Store {
         draft_id: &str,
         scope: BindingScope,
     ) -> Result<ServiceVersion> {
-        let draft = self
-            .services
-            .drafts
-            .get(draft_id)
-            .ok_or_else(|| anyhow!("当前服务编辑已结束，请重新打开服务后再试"))?;
+        let draft =
+            self.services.drafts.get(draft_id).ok_or_else(|| {
+                anyhow!(course2md::tr!("当前服务编辑已结束，请重新打开服务后再试"))
+            })?;
         if self.is_service_retired(&draft.service_id) {
-            bail!("此服务已删除。请添加新的服务，原任务不会自动恢复外发");
+            bail!(course2md::tr!(
+                "此服务已删除。请添加新的服务，原任务不会自动恢复外发"
+            ));
         }
         let config = draft.configuration()?;
         if self.services.versions.values().any(|version| {
             version.service_id == draft.service_id
                 && version.config.protocol.purpose() != config.protocol.purpose()
         }) {
-            bail!("修改接口不能改变此服务的用途，请添加另一用途的服务");
+            bail!(course2md::tr!(
+                "修改接口不能改变此服务的用途，请添加另一用途的服务"
+            ));
         }
         if let Some(reference) = &config.credential {
             // Local credential availability is part of static validation, not a paid test.
@@ -1310,7 +1315,7 @@ impl Store {
         if let Some(reference) = reference {
             let version = self.check_dispatch(reference)?;
             if version.config.protocol.purpose() != purpose {
-                bail!("此服务不支持所选用途");
+                bail!(course2md::tr!("此服务不支持所选用途"));
             }
         }
         let mut next = self.services.clone();
@@ -1334,7 +1339,7 @@ impl Store {
             .cloned()
             .collect();
         if versions.is_empty() {
-            bail!("找不到此服务");
+            bail!(course2md::tr!("找不到此服务"));
         }
         let credentials: Vec<_> = versions
             .iter()
@@ -1375,21 +1380,25 @@ impl Store {
 
     pub fn check_dispatch(&self, reference: &str) -> Result<&ServiceVersion> {
         if self.is_blocked(PreferenceGroup::Services) {
-            bail!("服务记录暂时不可用，已保留原文件");
+            bail!(course2md::tr!("服务记录暂时不可用，已保留原文件"));
         }
-        let version = self
-            .version(reference)
-            .ok_or_else(|| anyhow!("找不到任务使用的服务版本，请选择服务后建立新尝试"))?;
+        let version = self.version(reference).ok_or_else(|| {
+            anyhow!(course2md::tr!(
+                "找不到任务使用的服务版本，请选择服务后建立新尝试"
+            ))
+        })?;
         // Single stat of the marker: the match keeps the two error classes
         // ("retired" vs "cannot confirm"), and the in-memory stopped map is
         // checked above, so is_service_retired's second stat is not repeated.
         if self.services.stopped.contains_key(&version.service_id) {
-            bail!("此服务已删除，尚未发送新的请求");
+            bail!(course2md::tr!("此服务已删除，尚未发送新的请求"));
         }
         match std::fs::metadata(self.retired_marker(&version.service_id)) {
-            Ok(_) => bail!("此服务已删除，尚未发送新的请求"),
+            Ok(_) => bail!(course2md::tr!("此服务已删除，尚未发送新的请求")),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => bail!("暂时无法确认此服务是否已删除，尚未发送新的请求"),
+            Err(_) => bail!(course2md::tr!(
+                "暂时无法确认此服务是否已删除，尚未发送新的请求"
+            )),
         }
         Ok(version)
     }
@@ -1425,14 +1434,14 @@ impl Store {
             }
             ensure!(
                 !self.is_blocked(PreferenceGroup::Services),
-                "服务记录暂时不可用，已保留原文件"
+                course2md::tr!("服务记录暂时不可用，已保留原文件")
             );
-            let version = self
-                .version(id)
-                .context("找不到任务使用的服务版本，请选择服务后建立新尝试")?;
+            let version = self.version(id).context(course2md::tr!(
+                "找不到任务使用的服务版本，请选择服务后建立新尝试"
+            ))?;
             ensure!(
                 !self.services.stopped.contains_key(&version.service_id),
-                "此服务已删除，尚未发送新的请求"
+                course2md::tr!("此服务已删除，尚未发送新的请求")
             );
             Ok(version)
         };
@@ -1445,10 +1454,10 @@ impl Store {
             let id = required
                 .asr
                 .as_deref()
-                .ok_or_else(|| anyhow!("请为这次笔记设置语音服务"))?;
+                .ok_or_else(|| anyhow!(course2md::tr!("请为这次笔记设置语音服务")))?;
             let version = check(id)?;
             if version.config.protocol.purpose() != ServicePurpose::Speech {
-                bail!("所选服务不支持语音识别");
+                bail!(course2md::tr!("所选服务不支持语音识别"));
             }
             config.asr_api.base_url = version.config.endpoint.clone();
             config.asr_api.model = version.config.model.clone();
@@ -1461,10 +1470,10 @@ impl Store {
             let id = required
                 .llm
                 .as_deref()
-                .ok_or_else(|| anyhow!("请为这次笔记设置 AI 服务"))?;
+                .ok_or_else(|| anyhow!(course2md::tr!("请为这次笔记设置 AI 服务")))?;
             let version = check(id)?;
             if version.config.protocol.purpose() != ServicePurpose::Ai {
-                bail!("所选服务不支持 AI 校对或摘要");
+                bail!(course2md::tr!("所选服务不支持 AI 校对或摘要"));
             }
             config.llm.provider = version.config.protocol.llm_provider();
             // Codex 方言端点固定（provider::endpoint 忽略 base_url）；按 CLI 约定留空
@@ -1527,14 +1536,13 @@ impl Store {
                 // config_for_refs above already ran check_dispatch for exactly
                 // these required ids; same synchronous call chain, so reuse the
                 // validated lookup instead of statting the marker a second time.
-                let version = self
-                    .version(&id)
-                    .context("找不到任务使用的服务版本，请选择服务后建立新尝试")?;
+                let version = self.version(&id).context(course2md::tr!(
+                    "找不到任务使用的服务版本，请选择服务后建立新尝试"
+                ))?;
                 if let Some(reference) = &version.config.credential {
-                    let secret = secrets
-                        .get(reference)
-                        .cloned()
-                        .context("服务凭据尚未就绪，请重新打开服务设置保存一次")?;
+                    let secret = secrets.get(reference).cloned().context(course2md::tr!(
+                        "服务凭据尚未就绪，请重新打开服务设置保存一次"
+                    ))?;
                     if is_asr {
                         config.0.asr_api.api_key = secret;
                     } else {
@@ -1626,13 +1634,20 @@ impl Store {
                             SettingsIssueKind::SaveFailed
                         },
                         message: if restored.is_ok() {
-                            "已恢复最近一次可用的设置，原文件已保留".into()
+                            course2md::tr!("已恢复最近一次可用的设置，原文件已保留").into()
                         } else {
-                            "正在使用最近一次可用的设置，但恢复文件尚未保存；原文件已保留".into()
+                            course2md::tr!(
+                                "正在使用最近一次可用的设置，但恢复文件尚未保存；原文件已保留"
+                            )
+                            .into()
                         },
-                        detail: restored
-                            .err()
-                            .map(|error| format!("设置目录：{}\n{error:#}", self.root.display())),
+                        detail: restored.err().map(|error| {
+                            course2md::tr!(
+                                "设置目录：{}\n{}",
+                                self.root.display(),
+                                format!("{error:#}")
+                            )
+                        }),
                     });
                     envelope.value
                 }
@@ -1641,9 +1656,11 @@ impl Store {
                     self.issues.push(SettingsIssue {
                         group,
                         kind: SettingsIssueKind::NeedsReset,
-                        message: "此组设置暂时无法读取，原文件已保留。可以保留原文件并重置此组"
-                            .into(),
-                        detail: Some(format!("设置目录：{}", self.root.display())),
+                        message: course2md::tr!(
+                            "此组设置暂时无法读取，原文件已保留。可以保留原文件并重置此组"
+                        )
+                        .into(),
+                        detail: Some(course2md::tr!("设置目录：{}", self.root.display())),
                     });
                     T::default()
                 }
@@ -1683,13 +1700,13 @@ impl Store {
         self.load_recovery_intent::<GenerationPreferences>(
             PreferenceGroup::Generation,
             "generation-intent.json",
-            "已找回上次未生效的设置变更，可以重试保存；当前仍使用原来的有效选项",
+            course2md::tr!("已找回上次未生效的设置变更，可以重试保存；当前仍使用原来的有效选项"),
             |store| &mut store.generation_intent,
         );
         self.load_recovery_intent::<ApplicationPreferences>(
             PreferenceGroup::Application,
             "application-intent.json",
-            "已找回上次未生效的应用设置，可以重试保存；当前仍使用原来的有效选项",
+            course2md::tr!("已找回上次未生效的应用设置，可以重试保存；当前仍使用原来的有效选项"),
             |store| &mut store.application_intent,
         );
         let Ok(entries) = std::fs::read_dir(self.recovery_root()) else {
@@ -1740,7 +1757,7 @@ impl Store {
     ) -> Result<()> {
         let result = (|| {
             if self.blocked.contains(&group) {
-                bail!("此组设置需要先保留原文件并重置");
+                bail!(course2md::tr!("此组设置需要先保留原文件并重置"));
             }
             value.validate_value()?;
             let path = self.root.join(group.filename());
@@ -1753,12 +1770,12 @@ impl Store {
             if let Ok(Some(previous)) = read_envelope::<T>(&path) {
                 let previous = serde_json::to_vec_pretty(&previous)?;
                 atomic_write_with_retry(&path.with_extension("json.bak"), &previous)
-                    .context("无法保存此组设置的恢复副本")?;
+                    .context(course2md::tr!("无法保存此组设置的恢复副本"))?;
             } else if path.exists() {
                 // Never replace the last good backup with a corrupt primary file.
                 preserve_original(&self.root, &path)?;
             }
-            atomic_write_with_retry(&path, &bytes).context("无法保存此组设置")?;
+            atomic_write_with_retry(&path, &bytes).context(course2md::tr!("无法保存此组设置"))?;
             self.revisions.insert(group, revision);
             Ok(())
         })();
@@ -1769,7 +1786,11 @@ impl Store {
                 group,
                 kind: SettingsIssueKind::SaveFailed,
                 message: save_failure_message(group, error),
-                detail: Some(format!("设置目录：{}\n{error:#}", self.root.display())),
+                detail: Some(course2md::tr!(
+                    "设置目录：{}\n{}",
+                    self.root.display(),
+                    format!("{error:#}")
+                )),
             });
         }
         result
@@ -1782,9 +1803,10 @@ fn read_envelope<T: DeserializeOwned + Validate>(path: &Path) -> Result<Option<E
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let envelope: Envelope<T> = serde_json::from_slice(&bytes).context("设置记录无法解析")?;
+    let envelope: Envelope<T> =
+        serde_json::from_slice(&bytes).context(course2md::tr!("设置记录无法解析"))?;
     if envelope.schema != SCHEMA {
-        bail!("此组设置使用尚不支持的版本");
+        bail!(course2md::tr!("此组设置使用尚不支持的版本"));
     }
     envelope.value.validate_value()?;
     Ok(Some(envelope))
@@ -1841,16 +1863,16 @@ fn clear_service_fields(config: &mut ConfigFile) {
 /// query-string tokens and fragments are rejected before they can enter normal files/logs.
 pub fn normalize_endpoint(address: &str, protocol: ServiceProtocol) -> Result<String> {
     let mut url = url::Url::parse(address.trim())
-        .map_err(|_| anyhow!("请输入包含 http:// 或 https:// 的服务地址"))?;
+        .map_err(|_| anyhow!(course2md::tr!("请输入包含 http:// 或 https:// 的服务地址")))?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        bail!("请输入包含 http:// 或 https:// 的服务地址");
+        bail!(course2md::tr!("请输入包含 http:// 或 https:// 的服务地址"));
     }
     if !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        bail!(URL_CREDENTIALS);
+        bail!(url_credentials());
     }
     let path = url.path().trim_end_matches('/');
     let desired = protocol.endpoint_suffix();
@@ -1864,7 +1886,9 @@ pub fn normalize_endpoint(address: &str, protocol: ServiceProtocol) -> Result<St
             "/completions",
         ],
     ) {
-        bail!("这个地址和所选接口类型不匹配，请更换其中之一");
+        bail!(course2md::tr!(
+            "这个地址和所选接口类型不匹配，请更换其中之一"
+        ));
     }
     // Ollama 接受主机地址或 /v1 基础地址，统一补全到 OpenAI 兼容端点
     let base = if protocol == ServiceProtocol::OllamaChat

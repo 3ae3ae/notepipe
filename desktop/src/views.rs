@@ -123,7 +123,7 @@ impl Desktop {
             // A brand link, not a destination: no pill, so it never reads as selected.
             .hover(|style| style.opacity(0.8))
             .role(Role::Link)
-            .aria_label("course2md 工作台")
+            .aria_label(course2md::tr!("course2md 工作台"))
             .child(
                 div()
                     .text_size(rems(24. / 14.))
@@ -142,8 +142,10 @@ impl Desktop {
             cx,
         )
         .icon(icons::book_open())
-        .when(!is_compact(window), |button| button.label("笔记库"))
-        .accessibility_label("笔记库")
+        .when(!is_compact(window), |button| {
+            button.label(course2md::tr!("笔记库"))
+        })
+        .accessibility_label(course2md::tr!("笔记库"))
         .on_click(cx.listener(|this, _, _, cx| {
             this.folder_filter = None;
             this.navigate(Page::Library, cx);
@@ -157,9 +159,9 @@ impl Desktop {
                     icons::task()
                 })
                 .label(if task_count > 0 {
-                    format!("任务 · {task_count}")
+                    course2md::tr!("任务 · {}", task_count)
                 } else {
-                    "任务".to_owned()
+                    course2md::tr!("任务").to_owned()
                 })
                 .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Task, cx)))
         });
@@ -169,7 +171,7 @@ impl Desktop {
             } else {
                 icons::settings()
             })
-            .accessibility_label("设置")
+            .accessibility_label(course2md::tr!("设置"))
             .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)));
         apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window))).child(
             h_flex()
@@ -234,12 +236,12 @@ impl Desktop {
             None
         };
         let action = match task.state {
-            workspace::TaskState::Complete if exports_only => "打开导出位置",
-            workspace::TaskState::Complete => "阅读笔记",
-            workspace::TaskState::Partial if result.is_some() => "阅读笔记",
-            workspace::TaskState::Partial => "查看未完成部分",
-            workspace::TaskState::Uncertain => "查看结果",
-            _ => "查看任务",
+            workspace::TaskState::Complete if exports_only => course2md::tr!("打开导出位置"),
+            workspace::TaskState::Complete => course2md::tr!("阅读笔记"),
+            workspace::TaskState::Partial if result.is_some() => course2md::tr!("阅读笔记"),
+            workspace::TaskState::Partial => course2md::tr!("查看未完成部分"),
+            workspace::TaskState::Uncertain => course2md::tr!("查看结果"),
+            _ => course2md::tr!("查看任务"),
         };
         Some(crate::motion::enter(
             SharedString::from(format!("task-result-notice-{}", task.id)),
@@ -247,11 +249,11 @@ impl Desktop {
                 notice_banner(
                     "background-task-result",
                     NoticeKind::Info,
-                    format!(
+                    course2md::tr!(
                         "《{}》：{}",
                         task.plan.title,
                         if exports_only {
-                            "文件已导出"
+                            course2md::tr!("文件已导出")
                         } else {
                             task.state.label()
                         },
@@ -276,7 +278,7 @@ impl Desktop {
                     control("dismiss-task-result")
                         .ghost()
                         .icon(crate::icons::close())
-                        .accessibility_label("关闭提示")
+                        .accessibility_label(course2md::tr!("关闭提示"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.transient_task_result = None;
                             if let Some(workspace) = &mut this.workspace
@@ -287,8 +289,10 @@ impl Desktop {
                                     Ok(())
                                 })
                             {
-                                this.workspace_error =
-                                    Some(format!("提示关闭状态未能保存：{error:#}"));
+                                this.workspace_error = Some(course2md::tr!(
+                                    "提示关闭状态未能保存：{}",
+                                    format!("{error:#}")
+                                ));
                             }
                             cx.notify();
                         })),
@@ -298,15 +302,15 @@ impl Desktop {
     }
     fn page_title(&self) -> String {
         match self.page {
-            Page::New => "生成笔记".into(),
-            Page::Library => "笔记库".into(),
-            Page::Task => "任务".into(),
-            Page::Settings => "设置".into(),
+            Page::New => course2md::tr!("生成笔记").into(),
+            Page::Library => course2md::tr!("笔记库").into(),
+            Page::Task => course2md::tr!("任务").into(),
+            Page::Settings => course2md::tr!("设置").into(),
             Page::Result => self
                 .preview
                 .as_ref()
                 .map(|p| p.course.title.clone())
-                .unwrap_or_else(|| "笔记".into()),
+                .unwrap_or_else(|| course2md::tr!("笔记").into()),
         }
     }
     fn page_header(&self, window: &Window, cx: &mut Context<Self>) -> Div {
@@ -338,7 +342,7 @@ impl Desktop {
                 .child(
                     primary_pill("library-new-note")
                         .icon(icons::plus())
-                        .label("新笔记")
+                        .label(course2md::tr!("新笔记"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             if this.prepare_workbench_input(window, cx) {
                                 this.navigate(Page::New, cx);
@@ -417,7 +421,7 @@ impl Render for Desktop {
                             .gap(px(8.))
                             .child(crate::motion::spinner("opening-note-spinner", cx))
                             .child(
-                                accessible_text("opening-note", "正在打开笔记…")
+                                accessible_text("opening-note", course2md::tr!("正在打开笔记…"))
                                     .role(Role::Status)
                                     .text_color(color(GRAY)),
                             ),
@@ -478,7 +482,7 @@ impl Render for Desktop {
                             .child(
                                 control("retry-workspace-records")
                                     .icon(icons::refresh())
-                                    .label("重试")
+                                    .label(course2md::tr!("重试"))
                                     .disabled(self.job.is_some() || self.storage_ui.busy)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.retry_workspace_records(window, cx)
@@ -488,7 +492,7 @@ impl Render for Desktop {
                                 row.child(
                                     control("rebuild-workspace-records")
                                         .icon(icons::restart())
-                                        .label("备份并重建任务记录")
+                                        .label(course2md::tr!("备份并重建任务记录"))
                                         .disabled(self.job.is_some() || self.storage_ui.busy)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.rebuild_workspace_records(window, cx)
@@ -506,7 +510,7 @@ impl Render for Desktop {
                             control("dismiss-message")
                                 .ghost()
                                 .icon(crate::icons::close())
-                                .accessibility_label("关闭提示")
+                                .accessibility_label(course2md::tr!("关闭提示"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.message = None;
                                     cx.notify();

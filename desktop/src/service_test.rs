@@ -18,7 +18,9 @@ const SPEECH_SAMPLE: &[u8] = include_bytes!("../assets/tests/service-speech.wav"
 const BLUE_CARD: &[u8] = include_bytes!("../assets/tests/service-blue-card.png");
 const MAX_RESPONSE: u64 = 128 * 1024;
 
-pub const TEST_NOTICE: &str = "检查仅发送内置示例，服务商可能计费";
+pub fn test_notice() -> &'static str {
+    course2md::tr!("检查仅发送内置示例，服务商可能计费")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestKind {
@@ -31,10 +33,10 @@ pub enum TestKind {
 impl TestKind {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Speech => "语音识别",
-            Self::Proofread => "AI 校对",
-            Self::Summary => "生成摘要",
-            Self::Vision => "截图辅助校对",
+            Self::Speech => course2md::tr!("语音识别"),
+            Self::Proofread => course2md::tr!("AI 校对"),
+            Self::Summary => course2md::tr!("生成摘要"),
+            Self::Vision => course2md::tr!("截图辅助校对"),
         }
     }
 
@@ -143,7 +145,7 @@ pub fn test_services_blocking(
 }
 
 fn passed_message(kind: TestKind) -> String {
-    format!("{}测试通过", kind.label())
+    course2md::tr!("{}测试通过", kind.label())
 }
 
 /// Unsent evidence for this check; `None` when cancellation already stops it.
@@ -159,19 +161,21 @@ fn new_evidence(
         outcome: TestOutcome::NotSent,
         message: String::new(),
         details: vec![
-            format!("用途：{}", kind.label()),
-            format!("请求模型：{}", config.model),
+            course2md::tr!("用途：{}", kind.label()),
+            course2md::tr!("请求模型：{}", config.model),
         ],
         http_status: None,
     };
     if cancelled.load(Ordering::Acquire) {
-        evidence.message = CANCELLED.into();
+        evidence.message = cancelled_message().into();
         return Err(evidence);
     }
     Ok(evidence)
 }
 
-const CANCELLED: &str = "测试已取消，尚未发送请求";
+fn cancelled_message() -> &'static str {
+    course2md::tr!("测试已取消，尚未发送请求")
+}
 
 /// Codex uses the CLI's Responses/SSE dialect (course2md::llm::test_connection); the
 /// desktop chat/completions transport does not apply. The proofreading structure is
@@ -186,7 +190,7 @@ fn test_codex(
         Err(cancelled) => return cancelled,
     };
     if kind == TestKind::Speech || config.model.trim().is_empty() {
-        evidence.message = "所选服务不支持这项测试，尚未发送请求".into();
+        evidence.message = course2md::tr!("所选服务不支持这项测试，尚未发送请求").into();
         return evidence;
     }
     let settings = course2md::llm::LlmSettings {
@@ -206,10 +210,10 @@ fn test_codex(
             evidence.http_status = failure.http_status;
             evidence.message = match failure.outcome {
                 TestOutcome::AuthenticationRefused => {
-                    "Codex 登录已失效或尚未连接，请重新连接账号".into()
+                    course2md::tr!("Codex 登录已失效或尚未连接，请重新连接账号").into()
                 }
-                TestOutcome::OutcomeUnknown => UNKNOWN_RESULT.into(),
-                _ => "服务有回应但未通过检查，请确认模型支持此用途".into(),
+                TestOutcome::OutcomeUnknown => unknown_result_message().into(),
+                _ => course2md::tr!("服务有回应但未通过检查，请确认模型支持此用途").into(),
             };
             evidence.outcome = failure.outcome;
             evidence
@@ -255,7 +259,9 @@ fn codex_failure(error: &anyhow::Error) -> CodexFailure {
     }
 }
 
-const UNKNOWN_RESULT: &str = "未收到确定结果，测试可能已产生费用";
+fn unknown_result_message() -> &'static str {
+    course2md::tr!("未收到确定结果，测试可能已产生费用")
+}
 
 struct HttpRequest {
     endpoint: String,
@@ -326,7 +332,7 @@ fn run_test(
         Err(cancelled) => return cancelled,
     };
     if !kind.accepts(config.protocol) {
-        evidence.message = "所选接口类型不支持这项测试，尚未发送请求".into();
+        evidence.message = course2md::tr!("所选接口类型不支持这项测试，尚未发送请求").into();
         return evidence;
     }
     if normalize_endpoint(&config.endpoint, config.protocol)
@@ -335,18 +341,18 @@ fn run_test(
         != Some(config.endpoint.as_str())
         || config.model.trim().is_empty()
     {
-        evidence.message = "请先填写有效的服务地址和模型 ID，尚未发送请求".into();
+        evidence.message = course2md::tr!("请先填写有效的服务地址和模型 ID，尚未发送请求").into();
         return evidence;
     }
     let authorization = if config.authentication == Authentication::ApiKey {
         let Some(reference) = &config.credential else {
-            evidence.message = "此认证方式需要 API Key，尚未发送请求".into();
+            evidence.message = course2md::tr!("此认证方式需要 API Key，尚未发送请求").into();
             return evidence;
         };
         match vault.resolve(reference) {
             Ok(secret) => Some(secret),
             Err(error) => {
-                evidence.message = format!("{error}；尚未发送请求");
+                evidence.message = course2md::tr!("{}；尚未发送请求", error);
                 return evidence;
             }
         }
@@ -361,23 +367,24 @@ fn run_test(
         authorization,
     };
     if cancelled.load(Ordering::Acquire) {
-        evidence.message = CANCELLED.into();
+        evidence.message = cancelled_message().into();
         return evidence;
     }
     let response = match transport.send(&request) {
         Ok(response) => response,
         Err(TransportFailure::Unknown) => {
             evidence.outcome = TestOutcome::OutcomeUnknown;
-            evidence.message = UNKNOWN_RESULT.into();
+            evidence.message = unknown_result_message().into();
             return evidence;
         }
         Err(TransportFailure::ResponseTooLarge(status)) => {
             evidence.outcome = TestOutcome::ContractMismatch;
             evidence.http_status = Some(status);
-            evidence.message = "服务返回的内容异常，请核对服务地址".into();
-            evidence
-                .details
-                .push(format!("HTTP {status}；响应超过 128 KiB，未读取其余内容"));
+            evidence.message = course2md::tr!("服务返回的内容异常，请核对服务地址").into();
+            evidence.details.push(course2md::tr!(
+                "HTTP {}；响应超过 128 KiB，未读取其余内容",
+                status
+            ));
             return evidence;
         }
     };
@@ -386,7 +393,7 @@ fn run_test(
     let json = serde_json::from_slice::<Value>(&response.body).ok();
     if response.status == 401 || response.status == 403 {
         evidence.outcome = TestOutcome::AuthenticationRefused;
-        evidence.message = "服务拒绝凭据，请检查 API Key 或此模型的使用权限".into();
+        evidence.message = course2md::tr!("服务拒绝凭据，请检查 API Key 或此模型的使用权限").into();
         return evidence;
     }
     if !(200..300).contains(&response.status)
@@ -422,22 +429,22 @@ fn run_test(
             TestOutcome::ContractMismatch
         };
         evidence.message = if response.status >= 500 {
-            "服务返回错误，未收到确定结果，测试可能已产生费用"
+            course2md::tr!("服务返回错误，未收到确定结果，测试可能已产生费用")
         } else if response.status == 429 {
-            "服务暂时无法接受测试请求，请查看服务的额度或速率限制"
+            course2md::tr!("服务暂时无法接受测试请求，请查看服务的额度或速率限制")
         } else if model_error {
-            "服务不接受所选模型，请检查模型 ID 和使用权限"
+            course2md::tr!("服务不接受所选模型，请检查模型 ID 和使用权限")
         } else if (300..400).contains(&response.status) {
-            "服务地址已变更或不正确，请核对"
+            course2md::tr!("服务地址已变更或不正确，请核对")
         } else {
-            "已收到回应，但服务未接受这项测试请求"
+            course2md::tr!("已收到回应，但服务未接受这项测试请求")
         }
         .into();
         return evidence;
     }
     let Some(json) = json else {
         evidence.outcome = TestOutcome::ContractMismatch;
-        evidence.message = "服务返回的内容格式不对，请确认接口类型和地址".into();
+        evidence.message = course2md::tr!("服务返回的内容格式不对，请确认接口类型和地址").into();
         return evidence;
     };
     let content = if config.protocol == ServiceProtocol::SpeechTranscriptions {
@@ -448,7 +455,7 @@ fn run_test(
     };
     let Some(content) = content.filter(|content| !content.trim().is_empty()) else {
         evidence.outcome = TestOutcome::ContractMismatch;
-        evidence.message = "服务有回应但内容为空，请确认模型支持此用途".into();
+        evidence.message = course2md::tr!("服务有回应但内容为空，请确认模型支持此用途").into();
         return evidence;
     };
     match verify_sample(kind, content) {
@@ -459,17 +466,17 @@ fn run_test(
         Err((outcome, detail)) => {
             evidence.outcome = outcome;
             evidence.message = if evidence.outcome == TestOutcome::ContractMismatch {
-                "返回格式不符合要求".into()
+                course2md::tr!("返回格式不符合要求").into()
             } else {
-                "样例未通过，请查看详情".into()
+                course2md::tr!("样例未通过，请查看详情").into()
             };
             evidence.details.push(detail);
             let excerpt = if let Some(secret) = &request.authorization {
-                content.replace(secret.expose(), "[已隐藏凭据]")
+                content.replace(secret.expose(), course2md::tr!("[已隐藏凭据]"))
             } else {
                 content.to_owned()
             };
-            evidence.details.push(format!(
+            evidence.details.push(course2md::tr!(
                 "样例回应：{}",
                 excerpt.chars().take(240).collect::<String>()
             ));
@@ -547,14 +554,14 @@ fn verify_sample(kind: TestKind, content: &str) -> Result<(), (TestOutcome, Stri
                 .iter()
                 .all(|word| text.split_whitespace().any(|actual| actual == *word))
             {
-                return Err(mismatch(
-                    "内置音频：The blue notebook contains seven pages.；回应未保留其中的关键信息",
-                ));
+                return Err(mismatch(course2md::tr!(
+                    "内置音频：The blue notebook contains seven pages.；回应未保留其中的关键信息"
+                )));
             }
         }
         TestKind::Proofread | TestKind::Vision => {
             let pairs = course2md::llm::parse_segments(content)
-                .ok_or_else(|| contract("需要 segments 列表，每项有 id 与 text"))?;
+                .ok_or_else(|| contract(course2md::tr!("需要 segments 列表，每项有 id 与 text")))?;
             let expected: &[usize] = if kind == TestKind::Proofread {
                 &[0, 1]
             } else {
@@ -563,18 +570,18 @@ fn verify_sample(kind: TestKind, content: &str) -> Result<(), (TestOutcome, Stri
             let mut ids = pairs.iter().map(|(id, _)| *id).collect::<Vec<_>>();
             ids.sort_unstable();
             if ids != expected || pairs.iter().any(|(_, text)| text.trim().is_empty()) {
-                return Err(contract(
-                    "返回段落 ID 必须与内置输入一一对应，且每段包含有效文字",
-                ));
+                return Err(contract(course2md::tr!(
+                    "返回段落 ID 必须与内置输入一一对应，且每段包含有效文字"
+                )));
             }
             let first = words(&pairs.iter().find(|(id, _)| *id == 0).unwrap().1);
             if kind == TestKind::Vision {
                 if !first.split_whitespace().any(|word| word == "blue")
                     || first.split_whitespace().any(|word| word == "red")
                 {
-                    return Err(mismatch(
-                        "内置图片为蓝色卡片，校对后应将原文的 red 改为 blue",
-                    ));
+                    return Err(mismatch(course2md::tr!(
+                        "内置图片为蓝色卡片，校对后应将原文的 red 改为 blue"
+                    )));
                 }
             } else {
                 let second = words(&pairs.iter().find(|(id, _)| *id == 1).unwrap().1);
@@ -582,21 +589,21 @@ fn verify_sample(kind: TestKind, content: &str) -> Result<(), (TestOutcome, Stri
                     || !second.contains("water")
                     || !second.contains("celsius")
                 {
-                    return Err(mismatch(
-                        "第一段应纠正 have / book 的语法；第二段应保留水在零摄氏度结冰的原意",
-                    ));
+                    return Err(mismatch(course2md::tr!(
+                        "第一段应纠正 have / book 的语法；第二段应保留水在零摄氏度结冰的原意"
+                    )));
                 }
             }
         }
         TestKind::Summary => {
             let start = content
                 .find('{')
-                .ok_or_else(|| contract("需要摘要 JSON 对象"))?;
+                .ok_or_else(|| contract(course2md::tr!("需要摘要 JSON 对象")))?;
             let end = content
                 .rfind('}')
-                .ok_or_else(|| contract("需要摘要 JSON 对象"))?;
+                .ok_or_else(|| contract(course2md::tr!("需要摘要 JSON 对象")))?;
             let value: Value = serde_json::from_str(&content[start..=end])
-                .map_err(|_| contract("摘要 JSON 无法解析"))?;
+                .map_err(|_| contract(course2md::tr!("摘要 JSON 无法解析")))?;
             let tldr = value
                 .get("tldr")
                 .and_then(Value::as_str)
@@ -629,16 +636,18 @@ fn verify_sample(kind: TestKind, content: &str) -> Result<(), (TestOutcome, Stri
                         })
                 });
             if tldr.is_none() || points.is_none() || outline.is_none() {
-                return Err(contract("需要有效的 tldr、key_points 和带时间的 outline"));
+                return Err(contract(course2md::tr!(
+                    "需要有效的 tldr、key_points 和带时间的 outline"
+                )));
             }
             let text = words(content);
             if !["photosynthesis", "sunlight", "oxygen"]
                 .iter()
                 .all(|word| text.contains(word))
             {
-                return Err(mismatch(
-                    "短文讲述光合作用使用阳光并释放氧气，摘要未保留这些关键信息",
-                ));
+                return Err(mismatch(course2md::tr!(
+                    "短文讲述光合作用使用阳光并释放氧气，摘要未保留这些关键信息"
+                )));
             }
         }
     }
