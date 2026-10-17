@@ -10,6 +10,7 @@ pub mod doctor;
 pub mod error;
 pub mod execution;
 pub mod fetch;
+pub mod i18n;
 pub mod llm;
 pub mod login;
 pub mod media;
