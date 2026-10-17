@@ -8,11 +8,13 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 /// Preview/subtitle probing gives up on a hung helper after this long.
 const PREVIEW_TIMEOUT: Duration = Duration::from_secs(45);
+/// Cached covers and subtitles unused for this long are removed.
+const CACHE_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Source {
@@ -38,21 +40,6 @@ pub struct Source {
     #[serde(default)]
     pub subtitle_read_error: Option<course2md::subtitle::SubtitleReadError>,
 }
-impl Source {
-    pub fn detail(&self) -> String {
-        let seconds = self.duration.max(0.) as u64;
-        let mut details = Vec::new();
-        if !self.author.trim().is_empty() {
-            details.push(self.author.clone());
-        }
-        if seconds > 0 {
-            // 与 fmt_ts 同一记法（07:37，不带 0 小时位）：跨页时长一致（review2#8）
-            details.push(course2md::render::fmt_ts(seconds as f64));
-        }
-        details.join(" · ")
-    }
-}
-
 pub use course2md::fetch::SourceCandidate;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -73,7 +60,40 @@ struct CommandOutput {
     stderr: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+/// A read stopped by the user or by PREVIEW_TIMEOUT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Interrupted {
+    Cancelled,
+    TimedOut,
+}
+
+impl std::fmt::Display for Interrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Interrupted::Cancelled => "已取消读取",
+            Interrupted::TimedOut => "读取超时，请重试",
+        })
+    }
+}
+
+impl std::error::Error for Interrupted {}
+
+/// A helper exited unsuccessfully; `kind` is classified from its stderr.
+#[derive(Debug)]
+struct CommandFailure {
+    kind: FailureKind,
+    message: String,
+}
+
+impl std::fmt::Display for CommandFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CommandFailure {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FailureKind {
     NotFound,
     Forbidden,
@@ -83,6 +103,7 @@ enum FailureKind {
     Other,
 }
 
+/// Classifies external tool output (yt-dlp stderr), never this app's own messages.
 fn failure_kind(message: &str) -> FailureKind {
     let lower = message.to_ascii_lowercase();
     let http = |code: &str| {
@@ -92,12 +113,7 @@ fn failure_kind(message: &str) -> FailureKind {
     };
     if http("404") || lower.contains("video not found") || lower.contains("视频不存在") {
         FailureKind::NotFound
-    } else if lower.contains("timed out")
-        || lower.contains("timeout")
-        || lower.contains("超过 45 秒")
-        || lower.contains("读取超时")
-        || lower.contains("连接超时")
-    {
+    } else if lower.contains("timed out") || lower.contains("timeout") {
         FailureKind::Timeout
     } else if http("429") || http("412") || lower.contains("too many requests") {
         FailureKind::RateLimited
@@ -111,9 +127,6 @@ fn failure_kind(message: &str) -> FailureKind {
         "please login",
         "login required",
         "authentication required",
-        "请登录",
-        "需要登录",
-        "登录后",
     ]
     .iter()
     .any(|phrase| lower.contains(phrase))
@@ -124,7 +137,21 @@ fn failure_kind(message: &str) -> FailureKind {
     }
 }
 
+/// The kind of a failed read, from its typed cause.
+fn error_kind(error: &anyhow::Error) -> FailureKind {
+    for cause in error.chain() {
+        if cause.downcast_ref::<Interrupted>() == Some(&Interrupted::TimedOut) {
+            return FailureKind::Timeout;
+        }
+        if let Some(failure) = cause.downcast_ref::<CommandFailure>() {
+            return failure.kind;
+        }
+    }
+    FailureKind::Other
+}
+
 /// Repair actions follow the actual response, never a platform-wide login tip.
+/// Stored messages keep the tool's own lines, which are what this matches.
 pub fn is_login_failure(message: &str) -> bool {
     failure_kind(message) == FailureKind::LoginRequired
 }
@@ -147,26 +174,21 @@ fn preview_command_error(program: &str, code: Option<i32>, stderr: &str) -> anyh
         .or_else(|| lines.last())
         .copied()
         .unwrap_or_default();
-    let summary = match failure_kind(stderr) {
+    let kind = failure_kind(stderr);
+    let failure = |message: String| anyhow::Error::new(CommandFailure { kind, message });
+    let summary = match kind {
         FailureKind::NotFound => "无法找到这个视频，请检查链接或确认视频仍可访问。".to_owned(),
-        FailureKind::Forbidden => {
-"视频平台拒绝访问，请确认访问权限".to_owned()
-        }
+        FailureKind::Forbidden => "视频平台拒绝访问，请确认访问权限".to_owned(),
         FailureKind::Timeout => "读取视频信息超时，请检查网络后重新读取。".to_owned(),
-        FailureKind::RateLimited => {
-"平台暂时限制读取，请稍后重试".to_owned()
-        }
+        FailureKind::RateLimited => "平台暂时限制读取，请稍后重试".to_owned(),
         FailureKind::LoginRequired => "视频平台要求登录后读取，请登录对应账号后重试。".to_owned(),
         FailureKind::Other if !cause.is_empty() => {
             cause.trim_start_matches("ERROR:").trim().to_owned()
         }
-        // No stderr at all: the program and exit code are technical details.
+        // No stderr at all: the program and exit code only go to the log.
         FailureKind::Other => {
-            return anyhow::anyhow!(
-                "读取失败，请重试\n{program} 退出码 {}",
-                code.map(|code| code.to_string())
-                    .unwrap_or_else(|| "未提供".into())
-            );
+            eprintln!("{program} exited without output (code {code:?})");
+            return failure("读取失败，请重试".into());
         }
     };
     let details = lines
@@ -181,15 +203,15 @@ fn preview_command_error(program: &str, code: Option<i32>, stderr: &str) -> anyh
         || details == summary
         || details.trim_start_matches("ERROR:").trim() == summary
     {
-        anyhow::anyhow!(summary)
+        failure(summary)
     } else {
-        anyhow::anyhow!("{summary}\n{details}")
+        failure(format!("{summary}\n{details}"))
     }
 }
 
 fn subtitle_failure_message(error: &anyhow::Error) -> String {
     let message = format!("{error:#}");
-    let summary = match failure_kind(&message) {
+    let summary = match error_kind(error) {
         FailureKind::NotFound => "字幕链接暂时无法访问，请重新读取字幕，或选择其他文字来源。",
         FailureKind::Forbidden => {
             "平台拒绝了这次字幕读取，请确认视频的访问权限，或选择其他文字来源。"
@@ -218,9 +240,7 @@ fn command_output(name: &str, args: &[&str], cancel: &AtomicBool) -> Result<Comm
         let result = command_once(name, args, cancel, start);
         let Err(error) = &result else { return result };
         let message = error.to_string();
-        if name != "yt-dlp"
-            || cancel.load(Ordering::Relaxed)
-            || start.elapsed() >= PREVIEW_TIMEOUT
+        if name != "yt-dlp" || cancel.load(Ordering::Relaxed) || start.elapsed() >= PREVIEW_TIMEOUT
         {
             return result;
         }
@@ -239,12 +259,18 @@ fn command_output(name: &str, args: &[&str], cancel: &AtomicBool) -> Result<Comm
     }
 }
 
+fn check_cancel(cancel: &AtomicBool) -> Result<()> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Interrupted::Cancelled.into());
+    }
+    Ok(())
+}
+
 fn check_preview_deadline(cancel: &AtomicBool, start: Instant) -> Result<()> {
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
-    ensure!(
-        start.elapsed() < PREVIEW_TIMEOUT,
-        "读取超时，请重试"
-    );
+    check_cancel(cancel)?;
+    if start.elapsed() >= PREVIEW_TIMEOUT {
+        return Err(Interrupted::TimedOut.into());
+    }
     Ok(())
 }
 
@@ -287,9 +313,10 @@ fn command_once(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("无法启动 {name}，请在设置中检查运行环境"))?;
+    let mut child = command.spawn().map_err(|error| {
+        eprintln!("cannot start {name}: {error}");
+        anyhow::anyhow!("缺少读取视频所需的组件，请在设置中检查运行环境")
+    })?;
     let status = loop {
         if cancel.load(Ordering::Relaxed) || start.elapsed() > PREVIEW_TIMEOUT {
             crate::backend::terminate(&mut child);
@@ -319,12 +346,10 @@ fn command_once(
     };
     let error_bytes = read(stderr)?;
     let error_text = String::from_utf8_lossy(&error_bytes);
-    ensure!(
-        status.success(),
-        "{}",
-        preview_command_error(name, status.code(), &error_text)
-    );
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+    if !status.success() {
+        return Err(preview_command_error(name, status.code(), &error_text));
+    }
+    check_cancel(cancel)?;
     Ok(CommandOutput {
         stdout: read(stdout)?,
         stderr: error_text.into_owned(),
@@ -360,23 +385,11 @@ pub fn video_links(input: &str) -> Vec<String> {
     links
 }
 
-/// Compatibility wrapper. Call `probe` in the UI to present collection candidates.
-#[cfg(test)]
-pub fn inspect(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<Source> {
-    match probe(input, online, cancel)? {
-        SourceProbe::Single(source) => Ok(source),
-        SourceProbe::Collection { .. } => {
-            anyhow::bail!("这个链接包含多个视频，请选择具体单集后生成笔记")
-        }
-        SourceProbe::Unresolved { message } => anyhow::bail!("{message}"),
-    }
-}
-
 /// Read metadata and subtitle candidates without downloading video or running AI.
 /// The caller owns draft/revision matching; every successful return also checks
 /// cancellation, including after optional cover work and local content hashing.
 pub fn probe(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<SourceProbe> {
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+    check_cancel(&cancel)?;
     if !online {
         return inspect_local(input, &cancel).map(SourceProbe::Single);
     }
@@ -388,7 +401,7 @@ pub fn probe(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<Sou
             None,
         ),
         Err(error) => {
-            ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+            check_cancel(&cancel)?;
             // A subtitle channel can fail while basic metadata remains available.
             // Preserve that video and the failure evidence instead of claiming no captions.
             let basic = online_metadata(&input, false, &cancel)?;
@@ -452,7 +465,7 @@ pub fn probe(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<Sou
             SourceProbe::Single(source)
         }
     };
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+    check_cancel(&cancel)?;
     Ok(result)
 }
 
@@ -480,8 +493,48 @@ fn online_metadata(
     command_output("yt-dlp", &args, cancel)
 }
 
+/// The cache file for `key`: the same cover or track reuses one file instead
+/// of leaving a new one behind on every read.
+fn cache_file(kind: &str, key: &str, extension: &str) -> Result<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    key.hash(&mut hasher);
+    let dir = course2md::config::cache_dir().join(kind);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join(format!("{:016x}.{extension}", hasher.finish())))
+}
+
+/// Removes cached covers and subtitles that have not been written for
+/// CACHE_MAX_AGE. Notes keep their own copies, and drafts keep subtitle text.
+pub fn prune_cache() {
+    let Some(cutoff) = SystemTime::now().checked_sub(CACHE_MAX_AGE) else {
+        return;
+    };
+    for kind in ["covers", "subtitles"] {
+        let Ok(entries) = std::fs::read_dir(course2md::config::cache_dir().join(kind)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.modified().is_ok_and(|modified| modified < cutoff) {
+                let _ = if metadata.is_dir() {
+                    std::fs::remove_dir_all(entry.path())
+                } else {
+                    std::fs::remove_file(entry.path())
+                };
+            }
+        }
+    }
+}
+
 pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathBuf> {
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+    check_cancel(cancel)?;
+    let target = cache_file("covers", url, "jpg")?;
+    if target.is_file() {
+        return Ok(target);
+    }
     let response = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(3))
         .timeout_read(Duration::from_secs(2))
@@ -494,7 +547,7 @@ pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathB
     let mut bytes = Vec::new();
     let mut buffer = [0; 32 * 1024];
     loop {
-        ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+        check_cancel(&cancel)?;
         let count = reader.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -502,19 +555,18 @@ pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathB
         bytes.extend_from_slice(&buffer[..count]);
         ensure!(bytes.len() <= 12 * 1024 * 1024, "封面超过读取上限");
     }
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+    check_cancel(&cancel)?;
     let image = image::load_from_memory(&bytes).context("封面格式无法识别")?;
-    let cache = course2md::config::cache_dir().join("covers");
-    std::fs::create_dir_all(&cache)?;
     let file = tempfile::Builder::new()
         .suffix(".jpg")
-        .tempfile_in(&cache)?;
+        .tempfile_in(target.parent().context("封面缓存位置无效")?)?;
     image
         .thumbnail(1280, 720)
         .to_rgb8()
         .save_with_format(file.path(), image::ImageFormat::Jpeg)?;
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
-    Ok(file.keep()?.1)
+    check_cancel(cancel)?;
+    file.persist(&target)?;
+    Ok(target)
 }
 
 fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
@@ -524,7 +576,7 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
     let before_probe = std::fs::metadata(&path).context("无法读取所选视频")?;
     let input = path
         .to_str()
-        .context("视频路径无法编码，请为文件改用可读取的名称")?
+        .context("文件名含有无法识别的字符，请改名后重试")?
         .to_owned();
     let bytes = command(
         "ffprobe",
@@ -584,11 +636,15 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
         "视频在读取期间发生变化，请等文件保存完成后重新读取"
     );
     source.subtitles = local_subtitle_evidence(&path, &meta, &source.identity);
-    let cache = course2md::config::cache_dir().join("covers");
-    std::fs::create_dir_all(&cache)?;
+    let target = cache_file("covers", &source.identity, "jpg")?;
+    if target.is_file() {
+        source.cover = Some(target);
+        check_cancel(cancel)?;
+        return Ok(source);
+    }
     let file = tempfile::Builder::new()
         .suffix(".jpg")
-        .tempfile_in(&cache)?;
+        .tempfile_in(target.parent().context("封面缓存位置无效")?)?;
     let offset = (source.duration * 0.1).min(10.).to_string();
     match command(
         "ffmpeg",
@@ -604,14 +660,19 @@ fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
             "1",
             "-vf",
             "scale=960:-2",
-            file.path().to_str().context("封面缓存路径无法编码")?,
+            file.path()
+                .to_str()
+                .context("文件名含有无法识别的字符，请改名后重试")?,
         ],
         cancel,
     ) {
-        Ok(_) => source.cover = Some(file.keep()?.1),
+        Ok(_) => {
+            file.persist(&target)?;
+            source.cover = Some(target);
+        }
         Err(error) => source.cover_error = Some(format!("{error:#}")),
     }
-    ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+    check_cancel(&cancel)?;
     Ok(source)
 }
 
@@ -725,7 +786,7 @@ pub fn refresh_subtitles(
                     source.original_language.as_deref(),
                 );
             }
-            ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+            check_cancel(&cancel)?;
             Ok(video.subtitles)
         }
         _ => anyhow::bail!("还无法确定字幕对应哪个视频，请重新读取视频"),
@@ -742,7 +803,7 @@ pub fn read_subtitle(
 {
     use course2md::subtitle::{CachedSubtitle, SubtitleOrigin, SubtitleReadError};
     let read = || -> Result<CachedSubtitle> {
-        ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+        check_cancel(&cancel)?;
         ensure!(
             !source.identity.is_empty(),
             "请先重新读取视频，确认字幕对应的来源"
@@ -857,7 +918,7 @@ pub fn read_subtitle(
                 }
             }
         };
-        ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+        check_cancel(&cancel)?;
         let events = course2md::subtitle::parse_subtitle(&text);
         if events.is_empty() {
             return Err(SubtitleReadError::NoReadableText {
@@ -865,20 +926,27 @@ pub fn read_subtitle(
             }
             .into());
         }
+        let target = cache_file(
+            "subtitles",
+            &format!("{}\n{}", source.identity, track.id),
+            "srt",
+        )?;
         let mut file = tempfile::Builder::new()
             .suffix(".srt")
             .tempfile_in(&cache)?;
-        // The unique file is not published to a draft until keep() succeeds.
-        // Write through its existing handle: Windows cannot replace the open file.
+        // Write through the temporary file's handle, then publish it whole.
         use std::io::Write;
         file.write_all(course2md::subtitle::to_srt(&events).as_bytes())?;
         file.as_file().sync_all()?;
-        ensure!(!cancel.load(Ordering::Relaxed), "已取消读取");
+        check_cancel(&cancel)?;
         Ok(CachedSubtitle {
             source_identity: source.identity.clone(),
             track_id: track.id.clone(),
             label: track.label(),
-            path: file.keep()?.1,
+            path: {
+                file.persist(&target)?;
+                target
+            },
             events,
         })
     };
@@ -894,24 +962,6 @@ pub fn read_subtitle(
     }
 }
 
-/// An attached file can have any name/location; it never replaces the video.
-#[cfg(test)]
-pub fn attach_subtitle(
-    source: &Source,
-    path: PathBuf,
-    cancel: Arc<AtomicBool>,
-) -> std::result::Result<
-    (
-        course2md::subtitle::SubtitleTrack,
-        course2md::subtitle::CachedSubtitle,
-    ),
-    course2md::subtitle::SubtitleReadError,
-> {
-    let track = course2md::subtitle::file_track(path, None);
-    let subtitle = read_subtitle(source, &track, cancel)?;
-    Ok((track, subtitle))
-}
-
 pub fn save_cover(source: &Source, dir: &Path) -> Result<()> {
     if let Some(path) = &source.cover {
         course2md::checkpoint::atomic_write(&dir.join("cover.jpg"), &std::fs::read(path)?)?;
@@ -922,6 +972,13 @@ pub fn save_cover(source: &Source, dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn single_video(input: String, online: bool, cancel: Arc<AtomicBool>) -> Result<Source> {
+        match probe(input, online, cancel)? {
+            SourceProbe::Single(source) => Ok(source),
+            _ => anyhow::bail!("not a single video"),
+        }
+    }
 
     #[test]
     fn actual_http_failures_do_not_turn_into_login_repairs_or_repeat_stderr() {
@@ -967,7 +1024,6 @@ mod tests {
             source.subtitles,
             course2md::subtitle::SubtitleEvidence::Unchecked
         ));
-        assert_eq!(source.detail(), "");
         assert_eq!(
             source,
             serde_json::from_str::<Source>(&serde_json::to_string(&source).unwrap()).unwrap()
@@ -989,8 +1045,12 @@ mod tests {
             title: "Lecture".into(),
             ..Source::default()
         };
-        let (_, cached) =
-            attach_subtitle(&source, path.clone(), Arc::new(AtomicBool::new(false))).unwrap();
+        let cached = read_subtitle(
+            &source,
+            &course2md::subtitle::file_track(path.clone(), None),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
         assert_eq!(cached.source_identity, source.identity);
         assert_eq!(cached.events[0].text, "Bonjour le monde");
         assert_ne!(cached.path, path);
@@ -1007,7 +1067,11 @@ mod tests {
         assert_eq!(source.input, "original.mp4");
         std::fs::write(&path, "invalid subtitles").unwrap();
         assert!(matches!(
-            attach_subtitle(&source, path, Arc::new(AtomicBool::new(false))),
+            read_subtitle(
+                &source,
+                &course2md::subtitle::file_track(path, None),
+                Arc::new(AtomicBool::new(false))
+            ),
             Err(course2md::subtitle::SubtitleReadError::NoReadableText { .. })
         ));
         assert_eq!(cached.events[0].text, "Bonjour le monde");
@@ -1059,7 +1123,7 @@ mod tests {
             "https://www.youtube.com/watch?v=YE7VzlLtp-4",
             "https://www.bilibili.com/video/BV1pb8o6yE8f",
         ] {
-            let source = inspect(url.into(), true, Arc::new(AtomicBool::new(false))).unwrap();
+            let source = single_video(url.into(), true, Arc::new(AtomicBool::new(false))).unwrap();
             assert!(!source.title.is_empty());
             assert!(!source.author.is_empty());
             assert!(source.duration > 0.);
@@ -1098,7 +1162,7 @@ mod tests {
             &cancel,
         )
         .unwrap();
-        let source = inspect(path.display().to_string(), false, cancel.clone()).unwrap();
+        let source = single_video(path.display().to_string(), false, cancel.clone()).unwrap();
         assert_eq!(source.title, "Local lecture");
         assert!(source.author.is_empty());
         assert!(source.duration > 0.);
@@ -1107,7 +1171,7 @@ mod tests {
         std::fs::remove_file(cover).unwrap();
         let text = dir.path().join("not-video.txt");
         std::fs::write(&text, "not a video").unwrap();
-        assert!(inspect(text.display().to_string(), false, cancel).is_err());
+        assert!(single_video(text.display().to_string(), false, cancel).is_err());
     }
     #[test]
     fn cancelled_or_expired_preview_does_not_spawn() {
@@ -1130,7 +1194,7 @@ mod tests {
     #[test]
     #[ignore = "requires yt-dlp and Bilibili network access"]
     fn bilibili_example_preview() {
-        let source = inspect(
+        let source = single_video(
             "https://www.bilibili.com/video/BV1pb8o6yE8f".into(),
             true,
             Arc::new(AtomicBool::new(false)),
@@ -1148,7 +1212,7 @@ mod tests {
     #[test]
     fn unsupported_source_is_rejected_before_running_tools() {
         assert!(
-            inspect(
+            single_video(
                 "file:///private/file".into(),
                 true,
                 Arc::new(AtomicBool::new(false))
