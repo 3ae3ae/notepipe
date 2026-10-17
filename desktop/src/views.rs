@@ -147,7 +147,7 @@ impl Desktop {
         })
         .accessibility_label(course2md::tr!("笔记库"))
         .on_click(cx.listener(|this, _, _, cx| {
-            this.folder_filter = None;
+            this.folder_filter = crate::FolderFilter::All;
             this.navigate(Page::Library, cx);
         }));
         // Tasks stay reachable, but only claim space once there is work to show.

@@ -49,6 +49,26 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FolderFilter {
+    #[default]
+    All,
+    Unfiled,
+    Folder(u64),
+}
+
+impl FolderFilter {
+    pub(crate) fn is_all(self) -> bool {
+        self == Self::All
+    }
+    pub(crate) fn folder_id(self) -> Option<u64> {
+        match self {
+            Self::Folder(id) => Some(id),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     New,
@@ -231,7 +251,7 @@ struct Desktop {
     library_indexes: BTreeMap<PathBuf, organize::Library>,
     library_view_cache: course_library::LibraryViewCache,
     library_generation: u64,
-    folder_filter: Option<u64>, // None = all; 0 = unfiled
+    folder_filter: FolderFilter,
     target_folder: Option<u64>,
     folder_editor: Option<Option<u64>>,
     folder_origin: Option<library_ui::FolderOrigin>,
@@ -589,7 +609,7 @@ impl Desktop {
             library_indexes: BTreeMap::new(),
             library_view_cache: Default::default(),
             library_generation: 0,
-            folder_filter: None,
+            folder_filter: FolderFilter::All,
             target_folder: None,
             folder_editor: None,
             folder_origin: None,

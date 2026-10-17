@@ -57,13 +57,16 @@ pub(crate) fn library_filter_options(
 pub(crate) fn library_filter_selected(
     options: &[LibraryFilterOption],
     current_root: &std::path::Path,
-    folder: Option<u64>,
+    filter: crate::FolderFilter,
 ) -> String {
     options
         .iter()
-        .find(|option| match folder {
-            None => option.folder.is_none(),
-            Some(id) => option.folder == Some(id) && option.root == current_root,
+        .find(|option| match filter {
+            crate::FolderFilter::All => option.folder.is_none(),
+            crate::FolderFilter::Unfiled => option.folder == Some(0) && option.root == current_root,
+            crate::FolderFilter::Folder(id) => {
+                option.folder == Some(id) && option.root == current_root
+            }
         })
         .map(|option| option.value.clone())
         .unwrap_or_else(|| "all".into())
@@ -996,8 +999,7 @@ impl Desktop {
             items.push(LibraryItem::Checking);
             return self.library_list_page(items, layout, rem, cx);
         };
-        let in_scope =
-            |root: &&PathBuf| self.folder_filter.is_none() || **root == self.library_root;
+        let in_scope = |root: &&PathBuf| self.folder_filter.is_all() || **root == self.library_root;
         let scope = crate::storage::LibraryAccess {
             available: all_access
                 .available
@@ -1029,12 +1031,20 @@ impl Desktop {
                                 .is_some_and(|location| scope.available.contains(&location.root))
                     })
                     && course.title.to_lowercase().contains(&query)
-                    && self.folder_filter.is_none_or(|id| {
-                        self.course_location(course)
-                            .is_some_and(|location| location.root == self.library_root)
-                            && (!self.library_indexes.contains_key(&self.library_root)
-                                || self.course_folder(course).unwrap_or(0) == id)
-                    })
+                    && match self.folder_filter {
+                        crate::FolderFilter::All => true,
+                        filter => {
+                            let folder = self.course_folder(course);
+                            self.course_location(course)
+                                .is_some_and(|location| location.root == self.library_root)
+                                && (!self.library_indexes.contains_key(&self.library_root)
+                                    || match filter {
+                                        crate::FolderFilter::Unfiled => folder.is_none(),
+                                        crate::FolderFilter::Folder(id) => folder == Some(id),
+                                        crate::FolderFilter::All => true,
+                                    })
+                        }
+                    }
             })
             .map(|(index, _)| index)
             .collect();
@@ -1108,7 +1118,7 @@ impl Desktop {
             items.push(LibraryItem::SearchScope(scoped));
         }
         if self.desktop_settings.library_group_folders
-            && self.folder_filter.is_none()
+            && self.folder_filter.is_all()
             && self.library_error.is_none()
         {
             let mut groups: BTreeMap<(PathBuf, u64), Vec<usize>> = BTreeMap::new();
@@ -1337,7 +1347,7 @@ impl Desktop {
                             "library-empty-heading",
                             if !query.is_empty() {
                                 course2md::tr!("没有匹配的笔记")
-                            } else if self.folder_filter.is_some() {
+                            } else if !self.folder_filter.is_all() {
                                 course2md::tr!("这个文件夹还没有笔记")
                             } else {
                                 course2md::tr!("还没有笔记")
@@ -1358,7 +1368,7 @@ impl Desktop {
                                 })),
                         )
                     })
-                    .when(query.is_empty() && self.folder_filter.is_none(), |empty| {
+                    .when(query.is_empty() && self.folder_filter.is_all(), |empty| {
                         empty.child(
                             primary_pill("empty-library-add")
                                 .icon(crate::icons::plus())
@@ -1368,13 +1378,13 @@ impl Desktop {
                                 ),
                         )
                     })
-                    .when(query.is_empty() && self.folder_filter.is_some(), |empty| {
+                    .when(query.is_empty() && !self.folder_filter.is_all(), |empty| {
                         empty.child(
                             outline_pill("empty-folder-all-notes")
                                 .icon(crate::icons::book_open())
                                 .label(course2md::tr!("浏览全部笔记"))
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.folder_filter = None;
+                                    this.folder_filter = crate::FolderFilter::All;
                                     this.library_list.scroll_to(ListOffset {
                                         item_ix: 0,
                                         offset_in_item: px(0.),
@@ -1600,7 +1610,11 @@ impl Desktop {
                     if let Some(organization) = this.library_indexes.get(&option.root) {
                         this.library = organization.clone();
                     }
-                    this.folder_filter = option.folder;
+                    this.folder_filter = match option.folder {
+                        None => crate::FolderFilter::All,
+                        Some(0) => crate::FolderFilter::Unfiled,
+                        Some(id) => crate::FolderFilter::Folder(id),
+                    };
                     this.scrolls[Page::Library as usize].set_offset(point(px(0.), px(0.)));
                     cx.notify();
                 }))
@@ -1609,7 +1623,7 @@ impl Desktop {
 
     pub(super) fn library_controls_visible(&self, cx: &App) -> bool {
         !(self.courses.is_empty()
-            && self.folder_filter.is_none()
+            && self.folder_filter.is_all()
             && self.value(Field::Search, cx).is_empty()
             && self.library_error.is_none()
             && self.library_issues.is_empty()
@@ -1633,7 +1647,7 @@ impl Desktop {
         }
         let group_on = self.desktop_settings.library_group_folders;
         let cards_on = self.desktop_settings.library_cards;
-        let can_group = self.folder_filter.is_none() && self.library_error.is_none();
+        let can_group = self.folder_filter.is_all() && self.library_error.is_none();
         let entity = cx.entity().downgrade();
         let loading = self.loading;
         // Presentation choices are infrequent: one menu instead of two
@@ -1715,7 +1729,7 @@ impl Desktop {
                     .min_w_0()
                     .child(self.folder_filter_control(cx)),
             )
-            .when_some(self.folder_filter.filter(|id| *id != 0), |row, id| {
+            .when_some(self.folder_filter.folder_id(), |row, id| {
                 let entity = cx.entity().downgrade();
                 row.child(
                     control("manage-folder")
@@ -2473,7 +2487,7 @@ impl Desktop {
                         .child(crate::icons::chevron_right().size_4())
                         .text_color(color(ACCENT))
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.folder_filter = None;
+                            this.folder_filter = crate::FolderFilter::All;
                             this.navigate(Page::Library, cx);
                         })),
                 ),
@@ -2774,9 +2788,9 @@ mod tests {
         assert_eq!(options[0].label, "全部笔记");
         assert_eq!(options[1].folder, Some(0));
         assert_eq!(options[2].label, "讲座");
-        assert_eq!(super::library_filter_selected(&options, &root, None), "all");
+        assert_eq!(super::library_filter_selected(&options, &root, crate::FolderFilter::All), "all");
         assert_eq!(
-            super::library_filter_selected(&options, &root, Some(2)),
+            super::library_filter_selected(&options, &root, crate::FolderFilter::Folder(2)),
             "f-0-2"
         );
     }

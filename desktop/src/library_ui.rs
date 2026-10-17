@@ -513,7 +513,7 @@ impl Desktop {
             }
         } else {
             self.library_root = origin.root;
-            self.folder_filter = Some(saved);
+            self.folder_filter = crate::FolderFilter::Folder(saved);
             if self.page != Page::Library {
                 self.navigate(Page::Library, cx);
             }
@@ -620,8 +620,10 @@ impl Desktop {
                         // Drafts keep the deleted folder so their next submission
                         // asks for a deliberate destination.
                         Ok(()) => {
-                            if this.library_root == origin.root && this.folder_filter == Some(id) {
-                                this.folder_filter = Some(0);
+                            if this.library_root == origin.root
+                                && this.folder_filter == crate::FolderFilter::Folder(id)
+                            {
+                                this.folder_filter = crate::FolderFilter::Unfiled;
                             }
                         }
                         Err(error) => {
