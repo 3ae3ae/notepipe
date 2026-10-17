@@ -951,6 +951,9 @@ impl Store {
     fn is_recovery_draft(&self, id: &str) -> bool {
         self.recovery_drafts.contains(id)
     }
+    pub fn revision(&self, group: PreferenceGroup) -> u64 {
+        self.revisions.get(&group).copied().unwrap_or(0)
+    }
     pub fn application(&self) -> &ApplicationPreferences {
         &self.application
     }

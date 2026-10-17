@@ -3288,8 +3288,29 @@ impl Desktop {
                 })
             });
         let reading = self.preview_cancel.is_some() || self.subtitle_loading;
-        // Built once per render; both the issue text and the duplicate check use it.
-        let preview_plan = self.preview_plan();
+        // Derived once per draft/preference/source revision, not on every render.
+        let cache_key = (
+            self.workspace
+                .as_ref()
+                .map_or(0, |workspace| workspace.state.revision),
+            self.preferences
+                .revision(crate::preferences::PreferenceGroup::Generation),
+            self.preview_generation,
+        );
+        let preview_plan = match &self.preview_plan_cache {
+            Some((workspace, preferences, source, plan))
+                if (*workspace, *preferences, *source) == cache_key =>
+            {
+                plan.clone()
+            }
+            _ => {
+                let plan = self.preview_plan().map_err(|error| format!("{error:#}"));
+                self.preview_plan_cache =
+                    Some((cache_key.0, cache_key.1, cache_key.2, plan.clone()));
+                plan
+            }
+        }
+        .map_err(anyhow::Error::msg);
         let matching_task = preview_plan
             .as_ref()
             .ok()

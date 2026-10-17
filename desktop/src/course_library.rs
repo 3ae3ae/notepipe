@@ -1019,8 +1019,10 @@ impl Desktop {
             .courses
             .iter()
             .enumerate()
-            .filter(|(_, course)| {
-                self.course_location(course)
+            .filter_map(|(index, course)| {
+                let location = self.course_location(course);
+                let in_scope = location
+                    .as_ref()
                     .map(|location| scope.available.contains(&location.root))
                     .unwrap_or_else(|| {
                         self.workspace.is_none()
@@ -1029,24 +1031,27 @@ impl Desktop {
                                 .locations
                                 .get(&course.storage_dir())
                                 .is_some_and(|location| scope.available.contains(&location.root))
-                    })
-                    && course.title.to_lowercase().contains(&query)
-                    && match self.folder_filter {
-                        crate::FolderFilter::All => true,
-                        filter => {
-                            let folder = self.course_folder(course);
-                            self.course_location(course)
-                                .is_some_and(|location| location.root == self.library_root)
-                                && (!self.library_indexes.contains_key(&self.library_root)
-                                    || match filter {
-                                        crate::FolderFilter::Unfiled => folder.is_none(),
-                                        crate::FolderFilter::Folder(id) => folder == Some(id),
-                                        crate::FolderFilter::All => true,
-                                    })
-                        }
+                    });
+                if !in_scope || !course.title.to_lowercase().contains(&query) {
+                    return None;
+                }
+                let matches_folder = match self.folder_filter {
+                    crate::FolderFilter::All => true,
+                    filter => {
+                        let folder = self.course_folder(course);
+                        location
+                            .as_ref()
+                            .is_some_and(|location| location.root == self.library_root)
+                            && (!self.library_indexes.contains_key(&self.library_root)
+                                || match filter {
+                                    crate::FolderFilter::Unfiled => folder.is_none(),
+                                    crate::FolderFilter::Folder(id) => folder == Some(id),
+                                    crate::FolderFilter::All => true,
+                                })
                     }
+                };
+                matches_folder.then_some(index)
             })
-            .map(|(index, _)| index)
             .collect();
         if self.library_needs_recovery(&all_access) {
             items.push(LibraryItem::Recovery(all_access.clone()));
