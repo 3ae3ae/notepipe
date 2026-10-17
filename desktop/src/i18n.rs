@@ -13,10 +13,6 @@ pub(crate) fn apply(language: InterfaceLanguage) {
     gpui_component::set_locale(component_locale(lang));
 }
 
-pub(crate) fn resolve(language: InterfaceLanguage) -> Lang {
-    language.resolve()
-}
-
 /// Short calendar date in the interface language: "Sep 27" or "9月27日".
 pub(crate) fn month_day(month: u32, day: u32) -> String {
     month_day_for(i18n::lang(), month, day)

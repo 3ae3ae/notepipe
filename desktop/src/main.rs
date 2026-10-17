@@ -947,11 +947,15 @@ impl Desktop {
                     current,
                     total,
                     message,
-                } => self
-                    .progress
-                    .entry(stage)
-                    .or_insert_with(activity::Activity::new)
-                    .update(current, total, message),
+                    phase,
+                } => {
+                    let activity = self
+                        .progress
+                        .entry(stage)
+                        .or_insert_with(activity::Activity::new);
+                    activity.update(current, total, message);
+                    activity.phase = phase;
+                }
                 Event::Tokens {
                     stage,
                     prompt,

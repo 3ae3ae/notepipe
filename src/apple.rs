@@ -47,16 +47,25 @@ mod ffi {
 
 // Swift downloads report through the same serialized NDJSON stream as Rust.
 #[unsafe(no_mangle)]
-extern "C" fn c2m_model_progress(fraction: f64, message: *const std::ffi::c_char) {
+extern "C" fn c2m_model_progress(
+    fraction: f64,
+    phase: *const std::ffi::c_char,
+    message: *const std::ffi::c_char,
+) {
     if message.is_null() {
         return;
     }
     let message = unsafe { CStr::from_ptr(message) }.to_string_lossy();
+    let phase = if phase.is_null() {
+        "load"
+    } else {
+        unsafe { CStr::from_ptr(phase) }.to_str().unwrap_or("load")
+    };
     let fraction = fraction.clamp(0.0, 1.0);
     if crate::progress::is_json() {
         crate::progress::emit(serde_json::json!({"type":"progress", "stage":"model/apple",
             "current": (fraction * 10000.0) as u64, "total":10000,
-            "message":message}));
+            "phase": phase, "message":message}));
     } else if !crate::progress::is_quiet() {
         // 终端只在整百分比变化时打印一行，避免下载回调刷屏
         static LAST: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);

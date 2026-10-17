@@ -35,7 +35,10 @@ pub enum Event {
         stage: String,
         current: u64,
         total: u64,
+        #[serde(default)]
         message: Option<String>,
+        #[serde(default)]
+        phase: Option<String>,
     },
     Tokens {
         stage: String,

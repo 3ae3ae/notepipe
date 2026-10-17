@@ -899,7 +899,7 @@ impl Desktop {
                 extras.push(
                     crate::motion::transfer_status(
                         ("model-download-progress", index),
-                        crate::activity::model_transfer_phase(stage, &progress.message),
+                        crate::activity::model_transfer_phase(stage, progress.phase.as_deref()),
                         &progress.transfer_metrics(stage, true),
                         progress.fraction(),
                         window,

@@ -302,6 +302,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 下载视频	下载视频	Download video	下載影片	動画をダウンロードする
 下载视频 / Downloading video	下载视频	Downloading video	下載影片	動画をダウンロードする
 下载视频最大高度 / Maximum download height (1080 recommended)	下载视频最大高度	Maximum download height (1080 recommended)	下載影片最大高度	ダウンロード動画の最大高さ
+下载识别模型	下载识别模型	Downloading speech model	下載語音辨識模型	音声認識モデルをダウンロード
 下载识别模型 / Downloading speech model	下载识别模型	Downloading speech model	下載識別模型	ダウンロード認識モデル
 下载语音检测文件	下载语音检测文件	Download speech detection file	下載語音檢測檔案	音声検出ファイルをダウンロードする
 下载语音模型	下载语音模型	Download speech model	下載語音模型	音声モデルをダウンロードする

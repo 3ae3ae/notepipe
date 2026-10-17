@@ -1990,7 +1990,7 @@ impl Desktop {
             .enumerate()
         {
             has_phase = true;
-            let phase = activity::model_transfer_phase(stage, &progress.message);
+            let phase = activity::model_transfer_phase(stage, progress.phase.as_deref());
             view = view.child(motion::transfer_status(
                 ("setup-model-progress", index),
                 phase,
@@ -2236,7 +2236,8 @@ impl Desktop {
                             && !progress.done
                     })
                     .map(|(stage, progress)| {
-                        let phase = activity::model_transfer_phase(stage, &progress.message);
+                        let phase =
+                            activity::model_transfer_phase(stage, progress.phase.as_deref());
                         progress
                             .fraction()
                             .map(|fraction| {

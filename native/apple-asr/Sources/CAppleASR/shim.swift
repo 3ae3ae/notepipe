@@ -97,16 +97,19 @@ public func c2mFreeDoubles(_ p: UnsafeMutablePointer<Double>?) {
 }
 
 @_silgen_name("c2m_model_progress")
-private func reportModelProgress(_ progress: Double, _ message: UnsafePointer<CChar>)
+private func reportModelProgress(
+    _ progress: Double, _ phase: UnsafePointer<CChar>, _ message: UnsafePointer<CChar>)
 
-private func progressLog(_ p: Double, _ msg: String) {
-    msg.withCString { reportModelProgress(p, $0) }
+private func progressLog(_ p: Double, _ phase: String, _ msg: String) {
+    phase.withCString { phasePtr in
+        msg.withCString { reportModelProgress(p, phasePtr, $0) }
+    }
 }
 
 // Rust prepares missing files before loading, and loaders run offline, so every
 // progress report here is a local load whatever the library labels it.
 private func cachedLoadProgress(_ p: Double, _ msg: String) {
-    progressLog(p, "正在加载本机模型… / Loading local model…")
+    progressLog(p, "load", "正在加载本机模型… / Loading local model…")
 }
 
 // MARK: - ASR：qwen3（CoreML 0.6B/ANE）| qwen3-1.7b（MLX/GPU）| whisper
@@ -147,7 +150,7 @@ public func c2mAsrPrepareCache(_ model: UnsafePointer<CChar>, _ errBuf: UnsafeMu
             for (index, item) in downloads.enumerated() {
                 let directory = try HuggingFaceDownloader.getCacheDirectory(for: item.0)
                 try await HuggingFaceDownloader.downloadWeights(modelId: item.0, to: directory, additionalFiles: item.1, offlineMode: offline, progressHandler: { fraction in
-                    progressLog((Double(index) + fraction) / Double(downloads.count), item.0)
+                    progressLog((Double(index) + fraction) / Double(downloads.count), "download", item.0)
                 })
             }
         }
