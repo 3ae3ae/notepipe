@@ -11,8 +11,13 @@
 - 幻灯片式笔记：画面变化时自动截图，文字稿按截图分段，保存为 `course.md` 与 `course.html`。
 - 支持 YouTube、Bilibili 与本地文件。有字幕时直接使用字幕，没有字幕时自动识别语音。
 - 语音识别可在本机完成：Apple 芯片开箱即用；其他系统可用显卡、CPU 或 Intel Core Ultra 的 NPU。也可选择云端服务，只有选择云端时音频才会上传。
-- 可选 AI 润色与总结：支持任意 OpenAI 兼容服务、本地 Ollama 或 ChatGPT 订阅，默认关闭。
+- 可选 AI 校对与摘要：支持任意 OpenAI 兼容服务、本地 Ollama 或 ChatGPT 订阅，默认关闭。
 - 桌面应用提供可暂停的后台任务、支持文件夹与搜索的笔记库、带目录与查找的阅读器，以及 10 套主题。
+
+
+## 界面语言
+
+桌面应用与命令行支持**英语、简体中文、繁体中文和日语**。桌面应用默认跟随系统语言，可在**设置 → 外观 → 界面语言**中更改。命令行跟随系统语言，也可用 `--lang en|zh-Hans|zh-Hant|ja`（或 `COURSE2MD_LANG`）指定。`--json` 的机器可读消息保持简体中文，便于脚本稳定解析。
 
 ## 安装桌面应用（GUI）
 
@@ -99,8 +104,8 @@ course2md ./lecture.mp4 -o ./notes             # 指定输出根目录
 | `course2md doctor` | 检查依赖、识别后端和配置 |
 | `course2md config init` / `config show` | 生成配置模板 / 显示配置路径和文件设置 |
 | `course2md models list` / `models prepare` | 检查已下载模型 / 预先下载模型 |
-| `course2md llm setup` / `llm status` / `llm disable` | 配置、查看或关闭 AI 润色 |
-| `course2md summarize ./notes` | 为已有笔记生成 AI 总结 |
+| `course2md llm setup` / `llm status` / `llm disable` | 配置、查看或关闭 AI 校对 |
+| `course2md summarize ./notes` | 为已有笔记生成 AI 摘要 |
 
 使用 `<命令> --help` 查看每个子命令的参数。
 

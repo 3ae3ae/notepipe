@@ -14,6 +14,11 @@ Turn **YouTube, Bilibili, or local videos** into illustrated Markdown / HTML not
 - Optional AI proofreading and summaries using any OpenAI-compatible service, a local Ollama server, or a ChatGPT subscription. Off by default.
 - The desktop app adds background tasks you can pause, a notes library with folders and search, a reader with outline and find, and 10 themes.
 
+
+## Interface languages
+
+The desktop app and CLI are available in **English, 简体中文, 繁體中文 and 日本語**. The desktop follows the system language by default; change it in **Settings → Appearance → Interface language**. The CLI follows the system locale, and `--lang en|zh-Hans|zh-Hant|ja` (or `COURSE2MD_LANG`) overrides it. Machine-readable `--json` output stays in Simplified Chinese so scripts keep stable message text.
+
 ## Install the desktop app (GUI)
 
 The desktop app includes the conversion engine, so you do not need to install the CLI. It does need `ffmpeg`, which the steps below install.

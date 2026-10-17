@@ -13,7 +13,7 @@ The user has excluded specialist accessibility audits from this redesign. Preser
 
 ## Conventions
 
-CLI help and user-visible engine messages are bilingual, 「中文 / English」, with both halves saying the same thing, as in `src/cli.rs`.
+Human-readable text is localized from [`i18n/catalog.tsv`](i18n/catalog.tsv) into English, Simplified Chinese, Traditional Chinese and Japanese. Engine and desktop call sites use `tr!` / `course2md::tr!`; desktop pages must not hard-code Chinese labels. The CLI follows the system locale; `--lang` and `COURSE2MD_LANG` override it. Machine-readable output (`--json`, `run-task`) stays in Simplified Chinese for stable consumers.
 
 Before merging, run the checks in `.github/workflows/ci.yml` (engine) and `desktop.yml` (desktop). Releases follow [docs/PACKAGING.md](docs/PACKAGING.md).
 

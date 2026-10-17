@@ -430,7 +430,8 @@ pub fn take_lang_arg(args: &mut Vec<std::ffi::OsString>) -> Option<String> {
                 args.drain(index..index + 2);
                 continue;
             }
-            args.remove(index);
+            // Leave a value-less flag for clap to report the missing value.
+            index += 1;
             continue;
         }
         if let Some(rest) = arg.strip_prefix("--lang=") {
