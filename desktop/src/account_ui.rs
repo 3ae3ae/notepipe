@@ -281,28 +281,30 @@ impl Desktop {
                     .into_any_element(),
             );
         }
-        crate::settings_ui::account_card(
-            "bilibili-account",
-            icons::tv(),
-            if onboarding {
+        crate::settings_ui::AccountCard {
+            id: "bilibili-account",
+            icon: icons::tv(),
+            title: if onboarding {
                 "账号状态"
             } else {
                 "Bilibili 账号"
             },
-            kind,
-            label,
+            status: (kind, label),
             detail,
-            self.account.checking,
-            Some(if saved {
-                "退出登录不会删除笔记"
-            } else {
-                "登录后可读取账号有权访问的视频与字幕"
-            }),
-            None,
-            None,
-            cx,
+            busy: self.account.checking,
+            lines: vec![(
+                "policy",
+                if saved {
+                    "退出登录不会删除笔记"
+                } else {
+                    "登录后可读取账号有权访问的视频与字幕"
+                }
+                .into(),
+                false,
+            )],
             actions,
-        )
+        }
+        .render(cx)
     }
 
     /// Status text without the「Bilibili：」prefix and the「已登录 · 」name

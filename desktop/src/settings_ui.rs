@@ -430,80 +430,78 @@ pub(super) fn settings_detail_group(
     )
 }
 
-/// Shared skeleton of the Codex/Ollama account sections. The title row owns
-/// one trailing slot (busy spinner, status badge, then actions) that stays on
-/// the title line when it fits and wraps below as a unit when narrow. The
-/// optional detail, policy, extra note and failure/notice lines follow. The
-/// connection state machines stay in each module; this is render-only.
-pub(crate) fn account_card(
-    id: &'static str,
-    icon: Icon,
-    title: &'static str,
-    kind: BadgeKind,
-    label: &'static str,
-    detail: Option<String>,
-    busy: bool,
-    policy: Option<&'static str>,
-    extra: Option<(&'static str, &'static str)>,
-    notice: Option<(&'static str, String, bool)>,
-    cx: &App,
-    actions: Vec<AnyElement>,
-) -> Div {
-    let identity = h_flex()
-        .gap_2()
-        .items_center()
-        .flex_wrap()
-        .child(
-            text(SharedString::from(format!("{id}-heading")), title)
-                .text_size(TEXT_SETTINGS_BODY)
-                .font_weight(FontWeight::SEMIBOLD),
-        )
-        .when(busy, |row| {
-            row.child(crate::motion::spinner(
-                SharedString::from(format!("{id}-busy")),
-                cx,
-            ))
-        })
-        .child(badge(kind).text_size(TEXT_SETTINGS_AUX).child(label));
-    let line = move |suffix: &str, message: String, error: bool| {
-        text(SharedString::from(format!("{id}-{suffix}")), message)
-            .text_size(TEXT_SETTINGS_AUX)
-            .text_color(color(if error { DANGER } else { GRAY }))
-    };
-    h_flex()
-        .w_full()
-        .min_w_0()
-        .gap(px(16.))
-        .items_center()
-        .child(settings_resource_icon(icon))
-        .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap_1()
-                .child(identity)
-                .when_some(detail, |view, detail| {
-                    view.child(line("detail", detail, false))
-                })
-                .when_some(policy, |view, policy| {
-                    view.child(line("policy", policy.into(), false))
-                })
-                .when_some(extra, |view, (suffix, text)| {
-                    view.child(line(suffix, text.into(), false))
-                })
-                .when_some(notice, |view, (suffix, message, error)| {
-                    view.child(line(suffix, message, error))
-                }),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .flex_wrap()
-                .flex_shrink_0()
-                .max_w_full()
-                .children(actions),
-        )
+/// Shared skeleton of the Bilibili, Codex and Ollama account sections. The title
+/// row owns one trailing slot (busy spinner, status badge, then actions) that stays
+/// on the title line when it fits and wraps below as a unit when narrow. Each
+/// connection's state machine stays in its module; this is render-only.
+pub(crate) struct AccountCard {
+    pub(crate) id: &'static str,
+    pub(crate) icon: Icon,
+    pub(crate) title: &'static str,
+    pub(crate) status: (BadgeKind, &'static str),
+    pub(crate) detail: Option<String>,
+    pub(crate) busy: bool,
+    /// Lines under the status: element id suffix, text, and whether it is a failure.
+    pub(crate) lines: Vec<(&'static str, String, bool)>,
+    pub(crate) actions: Vec<AnyElement>,
+}
+
+impl AccountCard {
+    pub(crate) fn render(self, cx: &App) -> Div {
+        let id = self.id;
+        let (kind, label) = self.status;
+        let identity = h_flex()
+            .gap_2()
+            .items_center()
+            .flex_wrap()
+            .child(
+                text(SharedString::from(format!("{id}-heading")), self.title)
+                    .text_size(TEXT_SETTINGS_BODY)
+                    .font_weight(FontWeight::SEMIBOLD),
+            )
+            .when(self.busy, |row| {
+                row.child(crate::motion::spinner(
+                    SharedString::from(format!("{id}-busy")),
+                    cx,
+                ))
+            })
+            .child(badge(kind).text_size(TEXT_SETTINGS_AUX).child(label));
+        let line = move |suffix: &str, message: String, error: bool| {
+            text(SharedString::from(format!("{id}-{suffix}")), message)
+                .text_size(TEXT_SETTINGS_AUX)
+                .text_color(color(if error { DANGER } else { GRAY }))
+        };
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .gap(px(16.))
+            .items_center()
+            .child(settings_resource_icon(self.icon))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .child(identity)
+                    .when_some(self.detail, |view, detail| {
+                        view.child(line("detail", detail, false))
+                    })
+                    .children(
+                        self.lines
+                            .into_iter()
+                            .map(|(suffix, message, error)| line(suffix, message, error)),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .flex_wrap()
+                    .flex_shrink_0()
+                    .max_w_full()
+                    .children(self.actions),
+            )
+    }
 }
 
 pub(crate) fn settings_resource_icon(icon: Icon) -> Div {
@@ -977,8 +975,8 @@ impl Desktop {
             self.settings_return_focus = window.focused(cx);
         }
         self.navigate(Page::Settings, cx);
-        // 事件入口的准备动作（不是渲染副作用）：钳制遗留 tab、同步 tab stops、
-        // 首次水合输入框、按 key 去重的模型诊断检查
+        // Event-time preparation, not a render side effect: tab stops, first
+        // hydration of inputs and the deduplicated model check.
         self.prepare_settings_view(window, cx);
         self.settings_ui.tab_focus[self.settings_tab.index()].focus(window, cx);
     }

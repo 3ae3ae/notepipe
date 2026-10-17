@@ -363,19 +363,24 @@ impl Desktop {
             && !matches!(working, Some(CodexWork::LoggingOut));
         let notice = self.codex.notice.clone();
         let authorizing = working == Some(CodexWork::Authorizing);
-        crate::settings_ui::account_card(
+        let mut lines = vec![("policy", "使用你的 ChatGPT 订阅".to_owned(), false)];
+        if authorizing {
+            lines.push((
+                "authorizing",
+                "请在浏览器中完成授权（约 3 分钟内）".into(),
+                false,
+            ));
+        }
+        lines.extend(notice.map(|(message, is_error)| ("notice", message, is_error)));
+        crate::settings_ui::AccountCard {
             id,
-            icons::sparkles(),
-            "Codex 账号",
-            kind,
-            label,
+            icon: icons::sparkles(),
+            title: "Codex 账号",
+            status: (kind, label),
             detail,
             busy,
-            Some("使用你的 ChatGPT 订阅"),
-            authorizing.then_some(("authorizing", "请在浏览器中完成授权（约 3 分钟内）")),
-            notice.map(|(message, is_error)| ("notice", message, is_error)),
-            cx,
-            if !connected {
+            lines,
+            actions: if !connected {
                 vec![
                     quiet(SharedString::from(format!("{id}-authorize")))
                         .when(
@@ -433,6 +438,7 @@ impl Desktop {
                         .into_any_element(),
                 ]
             },
-        )
+        }
+        .render(cx)
     }
 }

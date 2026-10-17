@@ -704,6 +704,7 @@ impl Desktop {
             "保存并补做"
         };
         let repair_refusal = self.repair_service_refusal(cx);
+        let repair_refused = repair_refusal.is_some();
         let fixed_test_failure = if busy {
             None
         } else {
@@ -1017,7 +1018,7 @@ impl Desktop {
             fixed_test_failure,
             repair_submit_label,
             test_outcome_unknown,
-            cx,
+            repair_refused,
         );
         v_flex()
             .w_full()
@@ -1224,9 +1225,8 @@ impl Desktop {
         fixed_test_failure: Option<(TestKind, preferences::ServiceTestEvidence)>,
         repair_submit_label: &'static str,
         test_outcome_unknown: bool,
-        cx: &mut Context<Self>,
+        repair_refused: bool,
     ) -> Div {
-        let repair_refused = self.repair_service_refusal(cx).is_some();
         let (configuration_saved, repair_task) = self
             .settings_ui
             .editor

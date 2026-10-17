@@ -179,19 +179,19 @@ impl Desktop {
                 }))
                 .into_any_element(),
         );
-        crate::settings_ui::account_card(
+        crate::settings_ui::AccountCard {
             id,
-            icons::server(),
-            "Ollama 本地服务",
-            kind,
-            label,
+            icon: icons::server(),
+            title: "Ollama 本地服务",
+            status: (kind, label),
             detail,
-            working,
-            None,
-            None,
-            failure.map(|message| ("failure", message, false)),
-            cx,
+            busy: working,
+            lines: failure
+                .map(|message| ("failure", message, false))
+                .into_iter()
+                .collect(),
             actions,
-        )
+        }
+        .render(cx)
     }
 }
