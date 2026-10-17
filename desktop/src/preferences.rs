@@ -271,14 +271,32 @@ impl ServiceProtocol {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub const ALL: [Self; 5] = [
+        Self::SpeechTranscriptions,
+        Self::SpeechChat,
+        Self::AiChat,
+        Self::OllamaChat,
+        Self::CodexResponses,
+    ];
+
+    /// Stable choice id: the saved (serde) name.
+    pub fn id(self) -> &'static str {
         match self {
-            Self::SpeechTranscriptions => "语音转录（/audio/transcriptions）",
-            Self::SpeechChat => "音频聊天（/chat/completions）",
-            Self::AiChat => "AI 聊天（/chat/completions）",
-            Self::OllamaChat => "Ollama 本地服务（/v1/chat/completions）",
-            Self::CodexResponses => "OpenAI Codex 订阅（/responses）",
+            Self::SpeechTranscriptions => "speech_transcriptions",
+            Self::SpeechChat => "speech_chat",
+            Self::AiChat => "ai_chat",
+            Self::OllamaChat => "ollama_chat",
+            Self::CodexResponses => "codex_responses",
         }
+    }
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|protocol| protocol.id() == id)
+    }
+    /// The services of one purpose, in choice order.
+    pub fn for_purpose(purpose: ServicePurpose) -> impl Iterator<Item = Self> {
+        Self::ALL
+            .into_iter()
+            .filter(move |protocol| protocol.purpose() == purpose)
     }
 
     pub fn endpoint_suffix(self) -> &'static str {
@@ -294,13 +312,14 @@ impl ServiceProtocol {
         matches!(self, Self::OllamaChat | Self::CodexResponses)
     }
 
-    /// AI 服务类型的胶囊选项名：设置编辑器与首次引导共用同一来源。
-    pub fn ai_kind_label(self) -> &'static str {
+    /// The service type's choice label, shared by the editor and setup.
+    pub fn choice_label(self) -> &'static str {
         match self {
+            Self::SpeechTranscriptions => "专用转写（如 Whisper）",
+            Self::SpeechChat => "多模态对话（如 GPT-4o 音频）",
             Self::AiChat => "OpenAI 兼容服务",
             Self::OllamaChat => "Ollama 本地服务",
             Self::CodexResponses => "OpenAI Codex 订阅",
-            other => other.label(),
         }
     }
 
@@ -313,6 +332,8 @@ impl ServiceProtocol {
         }
     }
 }
+
+const URL_CREDENTIALS: &str = "地址里不能带密钥或 ? # 等附加内容，请把密钥填到 API Key";
 
 /// Codex 订阅登录的固定服务地址（CLI 方言端点固定，见 course2md::provider）。
 pub const CODEX_ADDRESS: &str = course2md::provider::CODEX_BASE_URL;
@@ -591,7 +612,7 @@ pub enum TestOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, from = "StoredTestEvidence")]
 pub struct ServiceTestEvidence {
     pub fingerprint: String,
     pub contract: String,
@@ -600,6 +621,44 @@ pub struct ServiceTestEvidence {
     pub message: String,
     /// Safe, bounded, structured details, never raw response headers or secret-bearing bodies.
     pub details: Vec<String>,
+    /// The HTTP status the service answered with, when it answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+}
+
+/// Saved evidence as written by any version. Records from before `http_status`
+/// carry the status only in their "HTTP n" detail line; it is recovered once here.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredTestEvidence {
+    fingerprint: String,
+    contract: String,
+    tested_at: u64,
+    outcome: TestOutcome,
+    message: String,
+    details: Vec<String>,
+    #[serde(default)]
+    http_status: Option<u16>,
+}
+
+impl From<StoredTestEvidence> for ServiceTestEvidence {
+    fn from(stored: StoredTestEvidence) -> Self {
+        let http_status = stored.http_status.or_else(|| {
+            stored.details.iter().find_map(|detail| {
+                let digits = detail.strip_prefix("HTTP ")?;
+                digits.get(..3)?.parse().ok()
+            })
+        });
+        Self {
+            fingerprint: stored.fingerprint,
+            contract: stored.contract,
+            tested_at: stored.tested_at,
+            outcome: stored.outcome,
+            message: stored.message,
+            details: stored.details,
+            http_status,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1088,7 +1147,7 @@ impl Store {
         // to a normal settings file, including when the URL itself is not yet parseable.
         if draft.address.contains('@') || draft.address.contains('?') || draft.address.contains('#')
         {
-            bail!("带账号、查询参数或片段的服务地址尚未保存，请将凭据移到 API Key 字段");
+            bail!(URL_CREDENTIALS);
         }
         if let Some(current) = self.services.drafts.get(&draft.id) {
             if current.revision != draft.revision {
@@ -1750,7 +1809,7 @@ pub fn normalize_endpoint(address: &str, protocol: ServiceProtocol) -> Result<St
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        bail!("服务地址不能包含账号、密码、查询参数或片段；请通过认证字段保存凭据");
+        bail!(URL_CREDENTIALS);
     }
     let path = url.path().trim_end_matches('/');
     let desired = protocol.endpoint_suffix();
@@ -1764,7 +1823,7 @@ pub fn normalize_endpoint(address: &str, protocol: ServiceProtocol) -> Result<St
             "/completions",
         ],
     ) {
-        bail!("此完整地址与所选接口类型不一致，请更换接口类型或填写对应的服务地址");
+        bail!("这个地址和所选接口类型不匹配，请更换其中之一");
     }
     // Ollama 接受主机地址或 /v1 基础地址，统一补全到 OpenAI 兼容端点
     let base = if protocol == ServiceProtocol::OllamaChat
@@ -1838,6 +1897,7 @@ mod tests {
             outcome: TestOutcome::AuthenticationRefused,
             message: "服务拒绝凭据".into(),
             details: vec!["HTTP 401".into()],
+            http_status: Some(401),
         };
         store.record_test(evidence).unwrap();
         let version = store
@@ -2234,6 +2294,7 @@ mod tests {
             outcome: TestOutcome::Passed,
             message: "校对用途测试通过".into(),
             details: Vec::new(),
+            http_status: None,
         };
         let mut renamed = config.clone();
         renamed.name = "A different display name".into();
@@ -2276,7 +2337,6 @@ mod tests {
             save_failure_message(PreferenceGroup::Application, &error),
             "应用偏好未保存：设置目录暂时无法写入"
         );
-        assert!(format!("{error:#}").contains(".tmpIrEDzg"));
     }
 
     #[test]

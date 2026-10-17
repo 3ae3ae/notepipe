@@ -1501,15 +1501,8 @@ impl Desktop {
         let ticket = editor.models.begin(&request);
         let editor_id = draft.id;
         let vault = self.preferences.vault();
-        // discover() performs synchronous keychain reads and bounded HTTP; it must not run
-        // on a GPUI executor task (see spawn_blocking_io).
-        let result_rx = crate::spawn_blocking_io(move || {
-            smol::block_on(crate::model_discovery::discover(request, vault))
-        });
         cx.spawn(async move |this, cx| {
-            let Ok(result) = result_rx.recv().await else {
-                return;
-            };
+            let result = crate::model_discovery::discover(request, vault).await;
             let _ = this.update(cx, |this, cx| {
                 let current = this.live_service_model_draft(cx).and_then(|draft| {
                     crate::model_discovery::RequestKey::from_draft(
@@ -1629,18 +1622,10 @@ impl Desktop {
         editor.test_running = Some(cancel.clone());
         editor.evidence = None;
         editor.status = Some(format!("正在测试{}…", kind.label()));
-        // Codex 订阅服务走 CLI 方言（Responses/SSE），而非桌面自带的 chat/completions 测试
-        let task = if config.protocol == ServiceProtocol::CodexResponses {
-            crate::spawn_blocking_io(move || {
-                service_test::test_codex_blocking(&config, kind, &cancel)
-            })
-        } else {
-            let vault = self.preferences.vault();
-            // 服务测试含同步 Keychain 读取与受限 HTTP；见 crate::spawn_blocking_io 的说明
-            crate::spawn_blocking_io(move || {
-                smol::block_on(service_test::test_service(config, kind, vault, cancel))
-            })
-        };
+        let vault = self.preferences.vault();
+        let task = crate::spawn_blocking_io(move || {
+            service_test::test_service_blocking(&config, kind, vault.as_ref(), &cancel)
+        });
         cx.spawn(async move |this, cx| {
             let Ok(evidence) = task.recv().await else {
                 return;

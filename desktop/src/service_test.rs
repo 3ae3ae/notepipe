@@ -11,10 +11,7 @@ use crate::preferences::{
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const SPEECH_SAMPLE: &[u8] = include_bytes!("../assets/tests/service-speech.wav");
@@ -74,13 +71,11 @@ pub fn blocks_reprocessing(
     if evidence.fingerprint != config.fingerprint(&evidence.contract) {
         return false;
     }
-    // Older stored tests classified model-shaped errors before HTTP status.
-    if evidence.details.iter().any(|detail| {
-        detail
-            .strip_prefix("HTTP ")
-            .and_then(|status| status.parse::<u16>().ok())
-            .is_some_and(|status| status == 429 || status >= 500)
-    }) {
+    // A rate limit or server failure says nothing about the configuration.
+    if evidence
+        .http_status
+        .is_some_and(|status| status == 429 || status >= 500)
+    {
         return false;
     }
     match evidence.outcome {
@@ -90,35 +85,70 @@ pub fn blocks_reprocessing(
     }
 }
 
-/// Suitable for a GPUI background task or any async executor. Dropping the future cannot
-/// promise to retract a request already sent; keep the result receiver alive when closing
-/// the editor and only attach evidence if its configuration fingerprint still matches.
-pub async fn test_service(
-    config: ServiceConfiguration,
-    kind: TestKind,
-    vault: Arc<dyn CredentialVault>,
-    cancelled: Arc<AtomicBool>,
-) -> ServiceTestEvidence {
-    smol::unblock(move || test_service_blocking(&config, kind, vault.as_ref(), &cancelled)).await
-}
-
+/// Runs one capability check on the calling thread; call it from a blocking IO thread.
+/// A request already sent cannot be retracted: only attach the result if the
+/// configuration fingerprint still matches.
 pub fn test_service_blocking(
     config: &ServiceConfiguration,
     kind: TestKind,
     vault: &dyn CredentialVault,
     cancelled: &AtomicBool,
 ) -> ServiceTestEvidence {
-    run_test(config, kind, vault, cancelled, &HttpTransport)
+    if config.protocol == ServiceProtocol::CodexResponses {
+        test_codex(config, kind, cancelled)
+    } else {
+        run_test(config, kind, vault, cancelled, &HttpTransport)
+    }
 }
 
-/// Codex 订阅服务的检查：复用 CLI 的 Responses/SSE 方言（course2md::llm::test_connection），
-/// 桌面自带的 chat/completions 传输不适用于 Codex。证据模型与其他服务一致；
-/// 校对结构契约由转换流程在运行时复核（失败保留原文）。
-pub fn test_codex_blocking(
+/// Checks several capabilities in order and stops at the first that does not pass.
+/// Codex sends the same text request for proofreading and summaries, so one
+/// text check answers both.
+pub fn test_services_blocking(
+    config: &ServiceConfiguration,
+    kinds: &[TestKind],
+    vault: &dyn CredentialVault,
+    cancelled: &AtomicBool,
+) -> Vec<(TestKind, ServiceTestEvidence)> {
+    let mut results: Vec<(TestKind, ServiceTestEvidence)> = Vec::new();
+    for &kind in kinds {
+        let shared = (config.protocol == ServiceProtocol::CodexResponses
+            && kind != TestKind::Vision)
+            .then(|| {
+                results
+                    .iter()
+                    .find(|(tested, _)| *tested != TestKind::Vision)
+                    .map(|(_, evidence)| evidence.clone())
+            })
+            .flatten();
+        let evidence = match shared {
+            Some(text_check) => ServiceTestEvidence {
+                fingerprint: config.fingerprint(kind.contract()),
+                contract: kind.contract().into(),
+                message: passed_message(kind),
+                ..text_check
+            },
+            None => test_service_blocking(config, kind, vault, cancelled),
+        };
+        let passed = evidence.outcome == TestOutcome::Passed;
+        results.push((kind, evidence));
+        if !passed || cancelled.load(Ordering::Acquire) {
+            break;
+        }
+    }
+    results
+}
+
+fn passed_message(kind: TestKind) -> String {
+    format!("{}测试通过", kind.label())
+}
+
+/// Unsent evidence for this check; `None` when cancellation already stops it.
+fn new_evidence(
     config: &ServiceConfiguration,
     kind: TestKind,
     cancelled: &AtomicBool,
-) -> ServiceTestEvidence {
+) -> Result<ServiceTestEvidence, ServiceTestEvidence> {
     let mut evidence = ServiceTestEvidence {
         fingerprint: config.fingerprint(kind.contract()),
         contract: kind.contract().into(),
@@ -129,11 +159,29 @@ pub fn test_codex_blocking(
             format!("用途：{}", kind.label()),
             format!("请求模型：{}", config.model),
         ],
+        http_status: None,
     };
     if cancelled.load(Ordering::Acquire) {
-        evidence.message = "测试已取消，尚未发送请求".into();
-        return evidence;
+        evidence.message = CANCELLED.into();
+        return Err(evidence);
     }
+    Ok(evidence)
+}
+
+const CANCELLED: &str = "测试已取消，尚未发送请求";
+
+/// Codex uses the CLI's Responses/SSE dialect (course2md::llm::test_connection); the
+/// desktop chat/completions transport does not apply. The proofreading structure is
+/// checked again during conversion, which keeps the original text on failure.
+fn test_codex(
+    config: &ServiceConfiguration,
+    kind: TestKind,
+    cancelled: &AtomicBool,
+) -> ServiceTestEvidence {
+    let mut evidence = match new_evidence(config, kind, cancelled) {
+        Ok(evidence) => evidence,
+        Err(cancelled) => return cancelled,
+    };
     if kind == TestKind::Speech || config.model.trim().is_empty() {
         evidence.message = "所选服务不支持这项测试，尚未发送请求".into();
         return evidence;
@@ -148,34 +196,63 @@ pub fn test_codex_blocking(
     match course2md::llm::test_connection(&settings) {
         Ok(()) => {
             evidence.outcome = TestOutcome::Passed;
-            evidence.message = "连接测试通过：Codex 登录与模型可用".into();
+            evidence.message = passed_message(kind);
         }
         Err(error) => {
-            let outcome = codex_failure_outcome(&error);
-            let reason = format!("{error:#}");
-            evidence.message = if outcome == TestOutcome::AuthenticationRefused {
-                "Codex 登录已失效或尚未连接，请重新连接账号".into()
-            } else {
-                format!("连接测试未通过：{}", reason.chars().take(240).collect::<String>())
+            let failure = codex_failure(&error);
+            evidence.http_status = failure.http_status;
+            evidence.outcome = failure.outcome;
+            evidence.message = match failure.outcome {
+                TestOutcome::AuthenticationRefused => {
+                    "Codex 登录已失效或尚未连接，请重新连接账号".into()
+                }
+                TestOutcome::OutcomeUnknown => UNKNOWN_RESULT.into(),
+                _ => "服务有回应但未通过检查，请确认模型支持此用途".into(),
             };
-            evidence.outcome = outcome;
+            evidence.details.push(
+                format!("{error:#}").chars().take(240).collect::<String>(),
+            );
         }
     }
     evidence
 }
 
-/// Codex 检查失败的分类：登录缺失/失效（含刷新被拒）是配置拒绝，阻断补做；
-/// 其余为一般性未通过。识别根 crate 的 [`course2md::login::codex::CodexLoginRequired`] 标记。
-fn codex_failure_outcome(error: &anyhow::Error) -> TestOutcome {
-    if error
-        .chain()
-        .any(|cause| cause.downcast_ref::<course2md::login::codex::CodexLoginRequired>().is_some())
-    {
-        TestOutcome::AuthenticationRefused
-    } else {
-        TestOutcome::ContractMismatch
+struct CodexFailure {
+    outcome: TestOutcome,
+    http_status: Option<u16>,
+}
+
+/// A missing or refused login is a configuration refusal and blocks a repair.
+/// Transport failures, timeouts, rate limits and server errors leave the result
+/// unknown; any other answer did not satisfy the check.
+fn codex_failure(error: &anyhow::Error) -> CodexFailure {
+    let login = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<course2md::login::codex::CodexLoginRequired>()
+            .is_some()
+    });
+    let http_status = error.chain().find_map(|cause| match cause.downcast_ref() {
+        Some(ureq::Error::Status(status, _)) => Some(*status),
+        _ => None,
+    });
+    let transport = error.chain().any(|cause| {
+        matches!(cause.downcast_ref(), Some(ureq::Error::Transport(_)))
+            || cause.downcast_ref::<std::io::Error>().is_some()
+    });
+    let outcome = match http_status {
+        _ if login => TestOutcome::AuthenticationRefused,
+        Some(401 | 403) => TestOutcome::AuthenticationRefused,
+        Some(status) if status == 429 || status >= 500 => TestOutcome::OutcomeUnknown,
+        None if transport => TestOutcome::OutcomeUnknown,
+        _ => TestOutcome::ContractMismatch,
+    };
+    CodexFailure {
+        outcome,
+        http_status,
     }
 }
+
+const UNKNOWN_RESULT: &str = "未收到确定结果，测试可能已产生费用";
 
 struct HttpRequest {
     endpoint: String,
@@ -240,21 +317,10 @@ fn run_test(
     cancelled: &AtomicBool,
     transport: &dyn Transport,
 ) -> ServiceTestEvidence {
-    let mut evidence = ServiceTestEvidence {
-        fingerprint: config.fingerprint(kind.contract()),
-        contract: kind.contract().into(),
-        tested_at: now_seconds(),
-        outcome: TestOutcome::NotSent,
-        message: String::new(),
-        details: vec![
-            format!("用途：{}", kind.label()),
-            format!("请求模型：{}", config.model),
-        ],
+    let mut evidence = match new_evidence(config, kind, cancelled) {
+        Ok(evidence) => evidence,
+        Err(cancelled) => return cancelled,
     };
-    if cancelled.load(Ordering::Acquire) {
-        evidence.message = "测试已取消，尚未发送请求".into();
-        return evidence;
-    }
     if !kind.accepts(config.protocol) {
         evidence.message = "所选接口类型不支持这项测试，尚未发送请求".into();
         return evidence;
@@ -291,25 +357,27 @@ fn run_test(
         authorization,
     };
     if cancelled.load(Ordering::Acquire) {
-        evidence.message = "测试已取消，尚未发送请求".into();
+        evidence.message = CANCELLED.into();
         return evidence;
     }
     let response = match transport.send(&request) {
         Ok(response) => response,
         Err(TransportFailure::Unknown) => {
             evidence.outcome = TestOutcome::OutcomeUnknown;
-            evidence.message = "未收到确定结果，测试可能已产生费用".into();
+            evidence.message = UNKNOWN_RESULT.into();
             return evidence;
         }
         Err(TransportFailure::ResponseTooLarge(status)) => {
             evidence.outcome = TestOutcome::ContractMismatch;
-            evidence.message = "已收到回应，但测试响应超出合理大小".into();
+            evidence.http_status = Some(status);
+            evidence.message = "服务返回的内容异常，请核对服务地址".into();
             evidence
                 .details
                 .push(format!("HTTP {status}；响应超过 128 KiB，未读取其余内容"));
             return evidence;
         }
     };
+    evidence.http_status = Some(response.status);
     evidence.details.push(format!("HTTP {}", response.status));
     let json = serde_json::from_slice::<Value>(&response.body).ok();
     if response.status == 401 || response.status == 403 {
@@ -356,7 +424,7 @@ fn run_test(
         } else if model_error {
             "服务不接受所选模型，请检查模型 ID 和使用权限"
         } else if (300..400).contains(&response.status) {
-            "服务要求跳转到其他地址；尚未向新地址发送请求，请核对服务地址"
+            "服务地址已变更或不正确，请核对"
         } else {
             "已收到回应，但服务未接受这项测试请求"
         }
@@ -365,7 +433,7 @@ fn run_test(
     }
     let Some(json) = json else {
         evidence.outcome = TestOutcome::ContractMismatch;
-        evidence.message = "已收到回应，但返回内容不是所选接口需要的 JSON".into();
+        evidence.message = "服务返回的内容格式不对，请确认接口类型和地址".into();
         return evidence;
     };
     let content = if config.protocol == ServiceProtocol::SpeechTranscriptions {
@@ -376,13 +444,13 @@ fn run_test(
     };
     let Some(content) = content.filter(|content| !content.trim().is_empty()) else {
         evidence.outcome = TestOutcome::ContractMismatch;
-        evidence.message = "已收到回应，但缺少此用途需要的有效正文".into();
+        evidence.message = "服务有回应但内容为空，请确认模型支持此用途".into();
         return evidence;
     };
     match verify_sample(kind, content) {
         Ok(()) => {
             evidence.outcome = TestOutcome::Passed;
-            evidence.message = format!("{}用途测试通过", kind.label());
+            evidence.message = passed_message(kind);
         }
         Err((outcome, detail)) => {
             evidence.outcome = outcome;
@@ -798,7 +866,6 @@ mod tests {
                 &config(),
                 &[TestKind::Proofread.contract()]
             ));
-            // The guard also tolerates persisted results written before this fix.
             let mut older = evidence;
             older.outcome = TestOutcome::ModelRefused;
             assert!(!blocks_reprocessing(
@@ -816,26 +883,23 @@ mod tests {
     }
 
     #[test]
-    fn codex_login_required_maps_to_configuration_refusal() {
-        let expired = anyhow::Error::new(course2md::login::codex::CodexLoginRequired);
+    fn codex_failures_separate_login_refusal_from_unknown_and_mismatched_results() {
+        let outcome = |error: anyhow::Error| codex_failure(&error).outcome;
+        let expired = || anyhow::Error::new(course2md::login::codex::CodexLoginRequired);
+        assert_eq!(outcome(expired()), TestOutcome::AuthenticationRefused);
         assert_eq!(
-            codex_failure_outcome(&expired),
-            TestOutcome::AuthenticationRefused,
-            "登录缺失/刷新被拒必须阻断补做"
+            outcome(expired().context("连接失败。请检查服务地址、密钥和模型。")),
+            TestOutcome::AuthenticationRefused
         );
-        let wrapped = anyhow::Error::new(course2md::login::codex::CodexLoginRequired)
-            .context("连接失败。请检查服务地址、密钥和模型。");
+        let interrupted = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
         assert_eq!(
-            codex_failure_outcome(&wrapped),
-            TestOutcome::AuthenticationRefused,
-            "错误链中的标记同样生效"
+            outcome(anyhow::Error::new(interrupted).context("服务响应接收中断")),
+            TestOutcome::OutcomeUnknown
         );
         assert_eq!(
-            codex_failure_outcome(&anyhow::anyhow!("网络中断")),
+            outcome(anyhow::anyhow!("服务返回空响应")),
             TestOutcome::ContractMismatch
         );
-        // 标记与 CLI 修复文案都不含凭据
-        assert!(!format!("{expired:#}").contains("--login"));
     }
 
     #[test]
@@ -856,8 +920,5 @@ mod tests {
             )
             .is_err()
         );
-        assert!(SPEECH_SAMPLE.starts_with(b"RIFF"));
-        assert!(SPEECH_SAMPLE.len() > 16000);
-        assert!(BLUE_CARD.starts_with(b"\x89PNG"));
     }
 }

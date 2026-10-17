@@ -671,32 +671,8 @@ impl Desktop {
         service.evidence.clear();
         self.onboarding.notice = None;
         let vault = self.preferences.vault();
-        // 服务测试含同步 Keychain 读取与受限 HTTP；见 crate::spawn_blocking_io 的说明
         let task = crate::spawn_blocking_io(move || {
-            smol::block_on(async move {
-                let mut results = Vec::new();
-                for kind in required {
-                    // Codex 订阅服务走 CLI 方言（Responses/SSE）检查登录态与模型
-                    let evidence =
-                        if config.protocol == preferences::ServiceProtocol::CodexResponses {
-                            service_test::test_codex_blocking(&config, kind, &cancel)
-                        } else {
-                            service_test::test_service(
-                                config.clone(),
-                                kind,
-                                vault.clone(),
-                                cancel.clone(),
-                            )
-                            .await
-                        };
-                    let passed = evidence.outcome == TestOutcome::Passed;
-                    results.push((kind, evidence));
-                    if !passed || cancel.load(Ordering::Acquire) {
-                        break;
-                    }
-                }
-                results
-            })
+            service_test::test_services_blocking(&config, &required, vault.as_ref(), &cancel)
         });
         cx.spawn(async move |this, cx| {
             let Ok(results) = task.recv().await else {
@@ -1526,15 +1502,8 @@ impl Desktop {
         let session = self.onboarding.session;
         let ticket = self.onboarding.service_mut(purpose).models.begin(&request);
         let vault = self.preferences.vault();
-        // discover() 内部是同步 Keychain/HTTP；见 crate::spawn_blocking_io 的说明
-        let task = crate::spawn_blocking_io(move || {
-            smol::block_on(crate::model_discovery::discover(request, vault))
-        });
         cx.spawn(async move |this, cx| {
-            let result = task
-                .recv()
-                .await
-                .unwrap_or(Err(crate::model_discovery::Error::Network));
+            let result = crate::model_discovery::discover(request, vault).await;
             let _ = this.update(cx, |this, cx| {
                 if !this.onboarding.active || this.onboarding.session != session {
                     return;
@@ -2890,6 +2859,7 @@ mod tests {
                     outcome: TestOutcome::Passed,
                     message: "样例通过".into(),
                     details: Vec::new(),
+                    http_status: None,
                 },
             )
         };

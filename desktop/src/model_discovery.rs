@@ -39,19 +39,15 @@ impl Error {
             Self::MissingKey => "请先填写 API Key，再获取模型".into(),
             Self::InvalidKey => "API Key 含无效字符，请检查后重试".into(),
             Self::CredentialUnavailable => "暂时无法读取已保存的 API Key，可重新填写后重试".into(),
-            Self::TimedOut => "获取模型超时，可重试或手动填写模型 ID".into(),
-            Self::Network => "暂时无法获取模型，请检查地址或网络；也可手动填写模型 ID".into(),
-            Self::AuthenticationRefused => {
-                "服务拒绝访问模型列表，请检查认证设置；也可手动填写模型 ID".into()
-            }
-            Self::Unsupported => "服务未提供可读取的模型列表，可手动填写模型 ID".into(),
-            Self::Refused(status) => {
-                format!("暂时无法获取模型（HTTP {status}），可重试或手动填写模型 ID")
-            }
-            Self::InvalidResponse => "未能识别服务返回的模型列表，可手动填写模型 ID".into(),
-            Self::TooLarge => "服务返回的模型列表过大，可手动填写模型 ID".into(),
+            Self::TimedOut => "获取模型超时，可重试".into(),
+            Self::Network => "暂时无法获取模型，请检查地址或网络".into(),
+            Self::AuthenticationRefused => "服务拒绝访问模型列表，请检查认证设置".into(),
+            Self::Unsupported => "服务未提供可读取的模型列表".into(),
+            Self::Refused(status) => format!("暂时无法获取模型（HTTP {status}），可重试"),
+            Self::InvalidResponse => "未能识别服务返回的模型列表".into(),
+            Self::TooLarge => "服务返回的模型列表过大".into(),
             Self::Custom(message) => message.clone(),
-            Self::Cancelled => "已取消获取模型，可手动填写模型 ID".into(),
+            Self::Cancelled => "已取消获取模型".into(),
         }
     }
 }
@@ -239,13 +235,14 @@ impl Drop for State {
 
 /// Uses the supplied draft's endpoint and authentication exactly once. Redirects
 /// are disabled so authentication never follows a server to another endpoint.
-/// The outer deadline also bounds waiting for the Keychain and system DNS.
+/// The work runs on a blocking IO thread; the deadline also bounds waiting for
+/// the Keychain and system DNS, which that thread cannot interrupt.
 pub async fn discover(
     request: Request,
     vault: Arc<dyn CredentialVault>,
 ) -> Result<Vec<String>, Error> {
     let deadline = Instant::now() + DISCOVERY_TIMEOUT;
-    let work = smol::unblock(move || {
+    let work = crate::spawn_blocking_io(move || {
         run_discovery(
             request,
             vault.as_ref(),
@@ -254,7 +251,11 @@ pub async fn discover(
             Instant::now,
         )
     });
-    before_deadline(work, deadline).await
+    before_deadline(
+        async move { work.recv().await.unwrap_or(Err(Error::Network)) },
+        deadline,
+    )
+    .await
 }
 
 async fn before_deadline(
@@ -432,14 +433,9 @@ pub fn model_field_with_error(
     let status = match state.status() {
         // 空闲时不加说明：输入框与右侧获取按钮已说明可做的事
         Status::Idle => None,
-        Status::Loading => Some("正在获取候选模型，仍可手动填写".into()),
-        Status::Ready(models) if models.is_empty() => {
-            Some("服务未返回模型，可手动填写模型 ID".into())
-        }
-        Status::Ready(models) => Some(format!(
-            "服务返回 {} 个候选，可展开选择或手动填写",
-            models.len()
-        )),
+        Status::Loading => Some("正在获取模型列表…".into()),
+        Status::Ready(models) if models.is_empty() => Some("服务未返回模型".into()),
+        Status::Ready(models) => Some(format!("找到 {} 个模型", models.len())),
         Status::Failed(error) => Some(error.message()),
     };
     let failed = matches!(state.status(), Status::Failed(_));
