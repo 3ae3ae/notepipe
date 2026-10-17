@@ -204,7 +204,7 @@ async fn run_task_inner(
             cfg,
             target,
             base_version_dir,
-            &components,
+            components,
             prior_work_dir.as_deref(),
             started,
         )
@@ -261,7 +261,7 @@ async fn reprocess(
 ) -> Result<()> {
     crate::dispatch::check_control()?;
     let base_dir_owned = base_dir.to_path_buf();
-    let (base, inputs) = blocking(move || {
+    let base = blocking(move || {
         let base = artifact::read_manifest(&base_dir_owned.join("manifest.json"))?;
         // Reprocessing consumes the internal document, timeline and image assets.
         // A manually edited presentation file must stay intact, and does not make
@@ -273,7 +273,7 @@ async fn reprocess(
                 || base.frames.iter().any(|frame| frame.image == asset.path)
         });
         artifact::validate_version(&base_dir_owned, &inputs)?;
-        Ok((base, inputs))
+        Ok(base)
     })
     .await?;
     if let Some(markdown) = base.assets.iter().find(|asset| asset.path == base.markdown) {

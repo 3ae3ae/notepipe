@@ -1,4 +1,5 @@
 //! End-to-end stdin task protocol, using real ffmpeg and isolated local files only.
+use course2md::execution::Component;
 use course2md::{
     artifact,
     config::{AsrProvider, SlideMode, TranscriptSource},
@@ -671,7 +672,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     retry.work_dir = root.path().join("retry-work");
     retry.operation = course2md::execution::Operation::Reprocess {
         base_version_dir: base.clone(),
-        components: vec!["summary".into()],
+        components: vec![Component::Summary],
         prior_work_dir: Some(initial.work_dir.clone()),
     };
     let second = run(root.path(), &retry);
@@ -716,7 +717,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     final_retry.work_dir = root.path().join("final-work");
     final_retry.operation = course2md::execution::Operation::Reprocess {
         base_version_dir: initial.course_dir.join("versions/summary-retry"),
-        components: vec!["summary".into()],
+        components: vec![Component::Summary],
         prior_work_dir: Some(retry.work_dir.clone()),
     };
     let third = run(root.path(), &final_retry);
@@ -814,7 +815,7 @@ fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() 
     retry.control_path = Some(retry.work_dir.join("control.json"));
     retry.operation = course2md::execution::Operation::Reprocess {
         base_version_dir: base.clone(),
-        components: vec!["proofreading".into(), "summary".into()],
+        components: vec![Component::Proofreading, Component::Summary],
         prior_work_dir: Some(original.work_dir.clone()),
     };
     std::fs::create_dir_all(&retry.work_dir).unwrap();
@@ -877,7 +878,7 @@ fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gon
     export.subtitle = Some(root.path().join("deleted-subtitles.srt"));
     export.operation = course2md::execution::Operation::Reprocess {
         base_version_dir: base,
-        components: vec!["exports".into()],
+        components: vec![Component::Exports],
         prior_work_dir: None,
     };
     export.config.defaults.formats = Some(vec![

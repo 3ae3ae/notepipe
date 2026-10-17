@@ -2519,7 +2519,6 @@ impl Desktop {
         let focus: Rc<Vec<FocusHandle>> = Rc::new(self.queue_focus.clone());
         let state = self.queue_list.clone();
         let items = Rc::new(items);
-        let tasks = Rc::new(tasks);
         let desktop = cx.weak_entity();
         let queue = list(state, move |index, _window, cx| {
             let Some(item) = items.get(index) else {
