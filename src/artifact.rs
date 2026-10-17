@@ -286,6 +286,38 @@ pub fn safe_asset_path(root: &Path, relative: &str) -> Result<PathBuf> {
     Ok(full)
 }
 
+fn verified_digest(path: &Path) -> Result<String> {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::UNIX_EPOCH;
+    type Cache = std::collections::HashMap<PathBuf, (u64, u128, String)>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let metadata = std::fs::metadata(path)?;
+    let modified = metadata
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let key = path.to_path_buf();
+    if let Some(digest) = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .ok()
+        .and_then(|cache| {
+            cache
+                .get(&key)
+                .filter(|(len, stamp, _)| *len == metadata.len() && *stamp == modified)
+                .map(|(_, _, digest)| digest.clone())
+        })
+    {
+        return Ok(digest);
+    }
+    let digest = execution::file_digest(path)?;
+    if let Ok(mut cache) = CACHE.get_or_init(Default::default).lock() {
+        cache.insert(key, (metadata.len(), modified, digest.clone()));
+    }
+    Ok(digest)
+}
+
 pub fn validate_version(dir: &Path, manifest: &Manifest) -> Result<()> {
     let required: Vec<&Asset> = manifest
         .assets
@@ -297,7 +329,7 @@ pub fn validate_version(dir: &Path, manifest: &Manifest) -> Result<()> {
         let path = safe_asset_path(dir, &asset.path)?;
         anyhow::ensure!(
             std::fs::metadata(&path)?.len() == asset.bytes
-                && execution::file_digest(&path)? == asset.sha256,
+                && verified_digest(&path)? == asset.sha256,
             "笔记文件已更改或损坏：{} / Note asset changed",
             asset.path
         );

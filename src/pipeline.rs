@@ -260,17 +260,22 @@ async fn reprocess(
     started: Instant,
 ) -> Result<()> {
     crate::dispatch::check_control()?;
-    let base = artifact::read_manifest(&base_dir.join("manifest.json"))?;
-    // Reprocessing consumes the internal document, timeline and image assets.
-    // A manually edited presentation file must stay intact, and does not make
-    // these verified inputs unusable.
-    let mut inputs = base.clone();
-    inputs.assets.retain(|asset| {
-        asset.path != base.markdown
-            || asset.path == base.document
-            || base.frames.iter().any(|frame| frame.image == asset.path)
-    });
-    artifact::validate_version(base_dir, &inputs)?;
+    let base_dir_owned = base_dir.to_path_buf();
+    let (base, inputs) = blocking(move || {
+        let base = artifact::read_manifest(&base_dir_owned.join("manifest.json"))?;
+        // Reprocessing consumes the internal document, timeline and image assets.
+        // A manually edited presentation file must stay intact, and does not make
+        // these verified inputs unusable.
+        let mut inputs = base.clone();
+        inputs.assets.retain(|asset| {
+            asset.path != base.markdown
+                || asset.path == base.document
+                || base.frames.iter().any(|frame| frame.image == asset.path)
+        });
+        artifact::validate_version(&base_dir_owned, &inputs)?;
+        Ok((base, inputs))
+    })
+    .await?;
     if let Some(markdown) = base.assets.iter().find(|asset| asset.path == base.markdown) {
         let unchanged = artifact::safe_asset_path(base_dir, &markdown.path)
             .and_then(|path| execution::file_digest(&path))
@@ -686,7 +691,8 @@ async fn run_prepared(
 ) -> Result<()> {
     asr::reset_llama_spawn_args();
     crate::dispatch::check_control()?;
-    if let Some(manifest) = artifact::published(target)? {
+    let published_target = target.clone();
+    if let Some(manifest) = blocking(move || artifact::published(&published_target)).await? {
         // Also finish a publication interrupted between the directory and pointer commits.
         let document: artifact::Document = serde_json::from_slice(&std::fs::read(
             target.version_dir().join(&manifest.document),
