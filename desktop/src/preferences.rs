@@ -2357,13 +2357,13 @@ mod tests {
     }
 
     #[test]
-    fn evidence_saved_before_http_status_recovers_it() {
+    fn evidence_without_http_status_remains_readable() {
         let evidence: ServiceTestEvidence = serde_json::from_value(serde_json::json!({
             "fingerprint": "f", "contract": "c", "tested_at": 1,
             "outcome": "model_refused", "message": "m", "details": ["用途：x", "HTTP 429"]
         }))
         .unwrap();
-        assert_eq!(evidence.http_status, Some(429));
+        assert_eq!(evidence.http_status, None);
     }
 
     #[test]
