@@ -303,6 +303,8 @@ struct Desktop {
     // the items the state currently describes.
     queue_list: ListState,
     queue_cache: Option<(u64, Rc<Vec<workspace::TaskRecord>>)>,
+    event_wake_tx: smol::channel::Sender<()>,
+    event_wake_rx: smol::channel::Receiver<()>,
     queue_keys: Vec<String>,
     queue_focus: Vec<FocusHandle>,
     queue_rem: f32,
@@ -536,14 +538,20 @@ impl Desktop {
         ));
         let options = ConversionOptions::from_config(&config);
         let poll = cx.spawn_in(window, async |this, cx| {
-            let mut busy = false;
             loop {
-                smol::Timer::after(Duration::from_millis(if busy { 100 } else { 500 })).await;
+                let wake = this.update_in(cx, |this, _, _| this.event_wake_rx.clone());
+                let Ok(wake) = wake else { break };
+                let wait = async {
+                    let _ = wake.recv().await;
+                };
+                smol::future::or(wait, async {
+                    smol::Timer::after(Duration::from_millis(500)).await;
+                })
+                .await;
                 match this.update_in(cx, |this, _, cx| {
                     this.poll(cx);
-                    this.job.is_some()
                 }) {
-                    Ok(active) => busy = active,
+                    Ok(()) => {}
                     Err(_) => break,
                 }
             }
@@ -556,6 +564,7 @@ impl Desktop {
                     Some(course2md::tr!("任务记录读取失败：{}", format!("{error:#}"))),
                 ),
             };
+        let (event_wake_tx, event_wake_rx) = smol::channel::bounded(1);
         let settings_ui = settings_ui::State::new(window, cx);
         let onboarding = onboarding::State::new(window, cx);
         let reader_ui = reader_ui::State::new(window, cx);
@@ -656,6 +665,8 @@ impl Desktop {
             reader_position_saved_at: None,
             queue_list: ListState::new(0, ListAlignment::Top, px(1000.)),
             queue_cache: None,
+            event_wake_tx,
+            event_wake_rx,
             queue_keys: Vec::new(),
             queue_focus: Vec::new(),
             queue_rem: f32::NAN,
@@ -878,7 +889,7 @@ impl Desktop {
         .detach();
     }
     fn start_model_preparation(&mut self, cx: &mut Context<Self>) {
-        match Job::start(self.model_preparation_args()) {
+        match Job::start(self.model_preparation_args(), self.event_wake_tx.clone()) {
             Ok(job) => {
                 self.job = Some(job);
                 self.active_task = None;

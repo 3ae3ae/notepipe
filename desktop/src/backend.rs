@@ -81,21 +81,31 @@ pub struct Job {
     cancel: mpsc::Sender<()>,
 }
 impl Job {
-    pub fn start(args: Vec<String>) -> Result<Self> {
-        Self::spawn_input(resolve_cli()?, args, None)
+    pub fn start(args: Vec<String>, wake: smol::channel::Sender<()>) -> Result<Self> {
+        Self::spawn_input(resolve_cli()?, args, None, wake)
     }
     #[cfg(test)]
     fn spawn(bin: PathBuf, args: Vec<String>) -> Result<Self> {
-        Self::spawn_input(bin, args, None)
+        let (wake, _) = smol::channel::bounded(1);
+        Self::spawn_input(bin, args, None, wake)
     }
-    pub fn start_task(request: &course2md::execution::Request) -> Result<Self> {
+    pub fn start_task(
+        request: &course2md::execution::Request,
+        wake: smol::channel::Sender<()>,
+    ) -> Result<Self> {
         Self::spawn_input(
             resolve_cli()?,
             vec!["run-task".into()],
             Some(serde_json::to_vec(request)?),
+            wake,
         )
     }
-    fn spawn_input(bin: PathBuf, args: Vec<String>, mut input: Option<Vec<u8>>) -> Result<Self> {
+    fn spawn_input(
+        bin: PathBuf,
+        args: Vec<String>,
+        mut input: Option<Vec<u8>>,
+        wake: smol::channel::Sender<()>,
+    ) -> Result<Self> {
         let redactions = std::sync::Arc::new(Redactions(
             input
                 .as_ref()
@@ -165,8 +175,8 @@ impl Job {
             .take()
             .context(course2md::tr!("缺少 stderr 管道"))?;
         let readers = [
-            reader(stdout, tx.clone(), true, redactions.clone()),
-            reader(stderr, tx.clone(), false, redactions),
+            reader(stdout, tx.clone(), true, redactions.clone(), wake.clone()),
+            reader(stderr, tx.clone(), false, redactions, wake.clone()),
         ];
         thread::spawn(move || {
             let mut was_cancelled = false;
@@ -206,6 +216,7 @@ impl Job {
                 success,
                 cancelled: was_cancelled,
             });
+            let _ = wake.try_send(());
         });
         Ok(Self { events, cancel })
     }
@@ -307,6 +318,7 @@ fn reader(
     tx: SyncSender<Event>,
     json: bool,
     redactions: std::sync::Arc<Redactions>,
+    wake: smol::channel::Sender<()>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         for line in BufReader::new(stream).lines() {
@@ -327,6 +339,7 @@ fn reader(
             if tx.send(event).is_err() {
                 break;
             }
+            let _ = wake.try_send(());
         }
     })
 }
@@ -643,7 +656,14 @@ mod tests {
              {{\"type\":\"blocked\",\"reason\":\"paused\",\"request_id\":null,\"purpose\":null,\"description\":null,\"message\":\"paused\"}}\n"
         );
         let (tx, rx) = mpsc::sync_channel(8);
-        let handle = reader(std::io::Cursor::new(source), tx, true, redactions.clone());
+        let (wake, _) = smol::channel::bounded(1);
+        let handle = reader(
+            std::io::Cursor::new(source),
+            tx,
+            true,
+            redactions.clone(),
+            wake,
+        );
         handle.join().unwrap();
         match rx.recv().unwrap() {
             Event::Error { message } => assert_eq!(message, "failed [已隐藏密钥]"),

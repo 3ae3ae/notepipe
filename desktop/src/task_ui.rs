@@ -1784,7 +1784,8 @@ impl Desktop {
         }
         // Starting the child and writing the full request to stdin can block on a pipe;
         // keep it off the UI thread.
-        let started = crate::spawn_blocking_io(move || Job::start_task(&request));
+        let wake = self.event_wake_tx.clone();
+        let started = crate::spawn_blocking_io(move || Job::start_task(&request, wake));
         let desktop = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
             let job = started.recv().await;
