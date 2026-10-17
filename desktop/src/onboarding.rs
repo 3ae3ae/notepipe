@@ -417,6 +417,10 @@ impl Desktop {
             recommended,
         );
         state.notice = notice.map(|message| (message, false));
+        if self.onboarding.step == Step::Model {
+            let request = self.setup_model_request();
+            self.ensure_model_diagnostic(request.provider, Some(&request.model), &request.root, cx);
+        }
         cx.notify();
     }
 
@@ -430,6 +434,10 @@ impl Desktop {
             self.onboarding.notice = None;
         } else {
             self.onboarding.notice = Some((unsupported_model().into(), true));
+        }
+        if self.onboarding.step == Step::Model {
+            let request = self.setup_model_request();
+            self.ensure_model_diagnostic(request.provider, Some(&request.model), &request.root, cx);
         }
         cx.notify();
     }
@@ -475,6 +483,10 @@ impl Desktop {
         self.onboarding.step = step;
         self.onboarding.notice = None;
         self.onboarding.scroll.set_offset(point(px(0.), px(0.)));
+        if step == Step::Model {
+            let request = self.setup_model_request();
+            self.ensure_model_diagnostic(request.provider, Some(&request.model), &request.root, cx);
+        }
         cx.notify();
     }
 
@@ -1178,7 +1190,6 @@ impl Desktop {
             .map(|choice| choice.label.clone())
             .unwrap_or_else(|| self.onboarding.model.clone());
         let request = self.setup_model_request();
-        self.ensure_model_diagnostic(request.provider, Some(&request.model), &request.root, cx);
         let snapshot =
             self.setup_model_snapshot(request.provider, Some(&request.model), &request.root);
         let model_ready = !snapshot.checking
@@ -1694,7 +1705,6 @@ impl Desktop {
             .is_some_and(|preparation| preparation.request == request && preparation.cancelled);
         let model = request.model;
         let root = request.root;
-        self.ensure_model_diagnostic(provider, Some(&model), &root, cx);
         let snapshot = self.setup_model_snapshot(provider, Some(&model), &root);
         let cancelled = if snapshot.notice.is_some() {
             snapshot.cancelled

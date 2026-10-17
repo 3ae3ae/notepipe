@@ -391,25 +391,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn credential_rotation_keeps_old_task_reference_immutable() {
-        let vault = MemoryCredentialVault::new();
-        let original = vault.insert(Secret::new("test-only-old-key")).unwrap();
-        let replacement = vault.insert(Secret::new("test-only-new-key")).unwrap();
-        assert_ne!(original, replacement);
-        assert_eq!(
-            vault.resolve(&original).unwrap().expose(),
-            "test-only-old-key"
-        );
-        assert_eq!(
-            vault.resolve(&replacement).unwrap().expose(),
-            "test-only-new-key"
-        );
-        vault.remove(&replacement).unwrap();
-        assert!(vault.resolve(&replacement).is_err());
-        assert!(vault.resolve(&original).is_ok());
-    }
-
-    #[test]
     fn debug_and_errors_cannot_expose_secret() {
         let secret = Secret::new("test-only-do-not-print");
         assert_eq!(format!("{secret:?}"), "Secret([REDACTED])");

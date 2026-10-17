@@ -1083,6 +1083,14 @@ impl Desktop {
 
     /// 选项监听器共享的收尾：草稿落盘成功后推进转换就绪，随后刷新界面。
     fn persist_task_options(&mut self, cx: &mut Context<Self>) {
+        if !self.task_options.uses_cloud_provider()
+            && (self.import_uses_speech()
+                || (self.generation_options_open
+                    && self.task_options.source_mode != TranscriptSource::Subtitle))
+        {
+            let (provider, model, root) = self.import_model_request();
+            self.ensure_model_diagnostic(provider, Some(&model), &root, cx);
+        }
         if self.save_current_draft(cx) {
             self.advance_conversion_when_ready(cx);
         }
@@ -2995,15 +3003,6 @@ impl Desktop {
     pub fn new_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let opening_result = self.reading && self.following_conversion.is_some();
         let linked_state = self.workbench_linked_task(cx).map(|task| task.state);
-        if linked_state.is_none()
-            && !self.task_options.uses_cloud_provider()
-            && (self.import_uses_speech()
-                || (self.generation_options_open
-                    && self.task_options.source_mode != TranscriptSource::Subtitle))
-        {
-            let (provider, model, root) = self.import_model_request();
-            self.ensure_model_diagnostic(provider, Some(&model), &root, cx);
-        }
         let cancelled_notice = self
             .current_input_task(cx)
             .filter(|task| task.state == workspace::TaskState::Cancelled)

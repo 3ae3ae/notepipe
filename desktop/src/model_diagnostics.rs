@@ -98,8 +98,6 @@ pub(super) struct State {
     outcome: Option<Outcome>,
     details: bool,
     cache_details: std::collections::BTreeSet<String>,
-    /// 渲染期只登记 key，真正的 entries 写入与后台检查在 cx.defer 中执行
-    pending_checks: std::collections::BTreeSet<String>,
 }
 
 /// A read-only view for setup. Checks and downloads keep the same ownership as Settings.
@@ -295,27 +293,19 @@ impl Desktop {
         root: &Path,
         cx: &mut Context<Self>,
     ) {
-        // 调用方多在渲染路径：这里只登记意图并 defer，真正的 entries 写入与
-        // 后台文件系统检查不在渲染期发生（SKILL.md：渲染期不做文件/网络工作）
         let request = Request::new(provider, model, root);
         if request.provider == AsrProvider::Api {
             return;
         }
-        let key = request.key();
-        let state = &mut self.settings_ui.model_diagnostics;
-        if state.entries.contains_key(&key) || !state.pending_checks.insert(key) {
+        if self
+            .settings_ui
+            .model_diagnostics
+            .entries
+            .contains_key(&request.key())
+        {
             return;
         }
-        let desktop = cx.entity().downgrade();
-        cx.defer(move |cx| {
-            let _ = desktop.update(cx, |this, cx| {
-                this.settings_ui
-                    .model_diagnostics
-                    .pending_checks
-                    .remove(&request.key());
-                this.check_model_request(request, false, cx);
-            });
-        });
+        self.check_model_request(request, false, cx);
     }
     fn check_model_request(&mut self, request: Request, force: bool, cx: &mut Context<Self>) {
         if request.provider == AsrProvider::Api {

@@ -1487,22 +1487,6 @@ impl Store {
         Ok(config)
     }
 
-    #[cfg(test)]
-    pub fn resolve_for_execution(
-        &self,
-        base: &ConfigFile,
-        references: &ServiceRefs,
-    ) -> Result<ResolvedConfig> {
-        let mut secrets = HashMap::new();
-        for reference in self.credential_references_for(base, references)? {
-            secrets.insert(
-                reference.clone(),
-                self.vault.resolve(&reference)?.expose().to_owned(),
-            );
-        }
-        self.resolve_for_execution_with_secrets(base, references, &secrets)
-    }
-
     /// Credential references a request build needs. Resolving them can block on the system
     /// keychain (its authorization dialog queue may even be held by another application), so
     /// UI callers must resolve these off the main thread and pass the results to
@@ -1552,27 +1536,6 @@ impl Store {
             }
         }
         Ok(config)
-    }
-
-    /// Async tests may finish after an edit. Only evidence for this exact content is attached
-    /// to the current draft; stale results cannot label replacement fields as tested.
-    #[cfg(test)]
-    pub fn record_draft_test(
-        &mut self,
-        draft_id: &str,
-        evidence: ServiceTestEvidence,
-    ) -> Result<bool> {
-        let Some(draft) = self.draft(draft_id) else {
-            return Ok(false);
-        };
-        let Ok(config) = draft.configuration() else {
-            return Ok(false);
-        };
-        if config.fingerprint(&evidence.contract) != evidence.fingerprint {
-            return Ok(false);
-        }
-        self.record_test(evidence)?;
-        Ok(true)
     }
 
     pub fn record_test(&mut self, evidence: ServiceTestEvidence) -> Result<()> {
@@ -1906,6 +1869,21 @@ pub fn normalize_endpoint(address: &str, protocol: ServiceProtocol) -> Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resolve_for_execution(
+        store: &Store,
+        base: &ConfigFile,
+        references: &ServiceRefs,
+    ) -> Result<ResolvedConfig> {
+        let mut secrets = HashMap::new();
+        for reference in store.credential_references_for(base, references)? {
+            secrets.insert(
+                reference.clone(),
+                store.vault.resolve(&reference)?.expose().to_owned(),
+            );
+        }
+        store.resolve_for_execution_with_secrets(base, references, &secrets)
+    }
     use crate::credentials::MemoryCredentialVault;
 
     fn isolated() -> (tempfile::TempDir, Store) {
@@ -2041,8 +2019,7 @@ mod tests {
             llm: Some(old.id),
             asr: None,
         };
-        let runtime = store
-            .resolve_for_execution(&config, &old_refs)
+        let runtime = resolve_for_execution(&store, &config, &old_refs)
             .unwrap()
             .into_config();
         assert_eq!(runtime.llm.model, "old-model");
@@ -2079,8 +2056,7 @@ mod tests {
         assert_eq!(reopened.versions().count(), 1);
         let mut config = ConfigFile::default();
         config.llm.enabled = true;
-        let runtime = reopened
-            .resolve_for_execution(&config, &submitted_refs)
+        let runtime = resolve_for_execution(&reopened, &config, &submitted_refs)
             .unwrap()
             .into_config();
         assert_eq!(runtime.llm.model, "active-model");
@@ -2376,7 +2352,11 @@ mod tests {
         let mut edit = draft.clone();
         edit.model = "model-b".into();
         store.save_service_draft(edit, None).unwrap();
-        assert!(!store.record_draft_test(&draft.id, evidence).unwrap());
+        let current = store.draft(&draft.id).unwrap().configuration().unwrap();
+        assert_ne!(
+            current.fingerprint(&evidence.contract),
+            evidence.fingerprint
+        );
     }
 
     #[test]
@@ -2552,7 +2532,7 @@ mod tests {
         std::fs::write(markers.join(&version.service_id), b"deleted\n").unwrap();
         assert!(store.config_for_preview(&config, &refs).is_ok());
         assert!(store.config_for_refs(&config, &refs).is_err());
-        assert!(store.resolve_for_execution(&config, &refs).is_err());
+        assert!(resolve_for_execution(&store, &config, &refs).is_err());
         store.delete_service(&version.service_id).unwrap();
         assert!(store.version(&version.id).is_none());
         assert!(store.config_for_preview(&config, &refs).is_err());
