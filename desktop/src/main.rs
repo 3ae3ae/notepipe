@@ -69,7 +69,7 @@ enum Field {
 }
 const PROVIDERS: [(&str, &str); 6] = [
     ("", "自动"),
-    ("coreml", "Apple 原生"),
+    ("coreml", "Apple 芯片"),
     ("gpu", "GPU"),
     ("cpu", "CPU"),
     ("npu", "Intel NPU"),

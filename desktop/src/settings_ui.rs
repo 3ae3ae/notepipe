@@ -126,7 +126,7 @@ impl State {
             let placeholder = match field {
                 EditField::Address => "https://api.example.com/v1",
                 EditField::Model => "",
-                EditField::Languages => "逗号分隔，例如 zh-Hans, en",
+                EditField::Languages => "按优先顺序填写语言代码，如 zh-Hans, en",
                 _ => "",
             };
             (

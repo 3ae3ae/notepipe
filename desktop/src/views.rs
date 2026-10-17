@@ -379,7 +379,7 @@ impl Render for Desktop {
             .child(content);
         let topbar = self.shell_topbar(window, cx);
         let task_notice = self.task_result_notice(cx);
-        let model_notice = self.onboarding_background_notice(window, cx);
+        let model_notice = self.onboarding_background_notice(cx);
         let body = v_flex()
             .flex_1()
             .min_w_0()

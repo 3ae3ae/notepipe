@@ -2143,7 +2143,7 @@ impl Desktop {
             "识别服务".to_owned()
         } else {
             let (_, model, _) = self.import_model_request();
-            format!("本机 · {}", crate::settings_ui::model_diagnostics::model_display_name(&model))
+            format!("本机 · {}", course2md::config::model_label(&model))
         };
         let engine = if cloud {
             String::new()
@@ -2221,7 +2221,7 @@ impl Desktop {
                 view = view.child(aux_text(
                     format!(
                         "模型已下载 · {}",
-                        crate::settings_ui::model_diagnostics::model_display_name(&model)
+                        course2md::config::model_label(&model)
                     ),
                 ));
             } else if snapshot.device_issue.is_none()
@@ -2247,7 +2247,7 @@ impl Desktop {
                         .child(div().flex_1().min_w_0().text_size(TEXT_AUX)
                             .text_color(color(GRAY))
                             .child(format!("{} · 待下载",
-                                crate::settings_ui::model_diagnostics::model_display_name(&model))))
+                                course2md::config::model_label(&model))))
                         .child(outline_pill("import-prepare-model")
                             .icon(icons::download()).label("下载模型")
                             .disabled(self.job.is_some())

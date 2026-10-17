@@ -1,5 +1,10 @@
 //! Generation defaults page: speech/AI model, languages and vision switches.
+use super::model_diagnostics::{
+    LOCAL_ENGINES, UNSUPPORTED_MODEL, engine_from_id, engine_icon, engine_id, engine_offered,
+    model_supported,
+};
 use super::*;
+use course2md::config::{AsrProvider, local_models, model_label};
 
 impl Desktop {
     pub(super) fn generation_settings_page(
@@ -8,13 +13,14 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let value = self.preferences.generation();
-        let provider = value.options.provider.map(|p| p.as_str()).unwrap_or("");
+        let provider = value.options.provider;
+        let online = provider == Some(AsrProvider::Api);
         let language = match value.preferred_subtitle_languages.as_slice() {
             [] => "",
             [one] if ["zh-Hans", "zh-Hant", "en", "ja"].contains(&one.as_str()) => one.as_str(),
             _ => "custom",
         };
-        let languages = group("language-settings", "文字来源")
+        let languages = group("language-settings", "字幕与识别")
             .child(settings_stacked_row(
                 "default-text-source-label",
                 icons::subtitles(),
@@ -65,7 +71,8 @@ impl Desktop {
                     .child(self.reveal_setting("default-subtitle-language-reveal", {
                         let current = language.to_owned();
                         let entity = cx.weak_entity();
-                        control("default-subtitle-language").settings_text()
+                        control("default-subtitle-language")
+                            .settings_text()
                             .h(px(56.))
                             .rounded(RADIUS_SMALL)
                             .w_full()
@@ -163,35 +170,38 @@ impl Desktop {
                                 .flex_wrap()
                                 .child(
                                     div().flex_1().min_w(rems(16.)).child(
-                                        text_input(&self.settings_ui.inputs[&EditField::Languages]).settings_text()
+                                        text_input(&self.settings_ui.inputs[&EditField::Languages])
+                                            .settings_text()
                                             .w_full()
                                             .aria_label("语言优先级"),
                                     ),
                                 )
                                 .child(
-                                    outline_pill("apply-languages").settings_text()
+                                    outline_pill("apply-languages")
+                                        .settings_text()
                                         .icon(icons::check_circle())
                                         .label("应用")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.apply_language_preferences(cx)
                                         })),
                                 ),
-                        ))),
+                        ),
+                    )),
             ));
         let mut recognition =
             group("asr-default-settings", "语音识别").child(settings_outlined_row(
                 "asr-method-label",
                 icons::mic(),
                 "识别方式",
-                if provider == "api" {
+                if online {
                     "音频会发送到所选服务"
                 } else {
                     ""
                 },
                 self.reveal_setting("default-asr-device-reveal", {
-                    let online = provider == "api";
                     let entity = cx.weak_entity();
-                    control("default-asr-device").settings_text()
+                    control("default-asr-device")
+                        .settings_text()
                         .h(px(56.))
                         .rounded(RADIUS_SMALL)
                         .w_full()
@@ -203,18 +213,9 @@ impl Desktop {
                         .child(div().flex_1())
                         .when(!online, |button| {
                             button.child(
-                                text(
-                                    "default-asr-engine-value",
-                                    match provider {
-                                        "coreml" => "Apple 原生",
-                                        "gpu" => "GPU",
-                                        "cpu" => "CPU",
-                                        "npu" => "Intel NPU",
-                                        _ => "自动选择引擎",
-                                    },
-                                )
-                                .text_color(color(GRAY))
-                                .font_weight(FontWeight::NORMAL),
+                                text("default-asr-engine-value", crate::provider_label(provider))
+                                    .text_color(color(GRAY))
+                                    .font_weight(FontWeight::NORMAL),
                             )
                         })
                         .child(icons::chevron_down().size_4())
@@ -238,9 +239,17 @@ impl Desktop {
                         })
                 }),
             ));
-        if provider == "api" {
+        if online {
             recognition = recognition.child(self.service_picker(ServicePurpose::Speech, false, cx));
         } else {
+            let engines: Vec<Option<AsrProvider>> = std::iter::once(None)
+                .chain(
+                    LOCAL_ENGINES
+                        .into_iter()
+                        .filter(|engine| engine_offered(*engine, provider))
+                        .map(Some),
+                )
+                .collect();
             recognition =
                 recognition
                     .child(self.local_model_picker(cx))
@@ -252,51 +261,32 @@ impl Desktop {
                             icons::computer(),
                             "本机引擎",
                             "",
-                            self.setting_choices("default-asr-hardware", "本机引擎")
-                                .options(
-                                    [
-                                        ("", "自动"),
-                                        ("coreml", "Apple 原生"),
-                                        ("gpu", "GPU"),
-                                        ("cpu", "CPU"),
-                                        ("npu", "Intel NPU"),
-                                    ]
-                                    .into_iter()
-                                    .filter(|(id, _)| {
-                                        *id != "coreml"
-                                            || cfg!(target_os = "macos")
-                                            || provider == "coreml"
-                                    })
-                                    .filter(|(id, _)| {
-                                        *id != "npu"
-                                            || !cfg!(target_os = "macos")
-                                            || provider == "npu"
-                                    }),
+                            engines
+                                .iter()
+                                .fold(
+                                    self.setting_choices("default-asr-hardware", "本机引擎")
+                                        .options(engines.iter().map(|engine| {
+                                            (engine_id(*engine), crate::provider_label(*engine))
+                                        })),
+                                    |choices, engine| {
+                                        choices.icon(engine_id(*engine), engine_icon(*engine))
+                                    },
                                 )
-                                .icon("", icons::auto_fix())
-                                .icon("coreml", icons::computer())
-                                .icon("gpu", icons::grid_view())
-                                .icon("cpu", icons::storage())
-                                .icon("npu", icons::sparkles())
                                 .full_width()
-                                .selected(provider.to_owned())
+                                .selected(engine_id(provider))
                                 .on_change(cx.listener(|this, id: &SharedString, _, cx| {
                                     let mut next = this.generation_edit_base();
-                                    next.select_provider(match id.as_ref() {
-                                        "coreml" => Some(course2md::config::AsrProvider::Coreml),
-                                        "gpu" => Some(course2md::config::AsrProvider::Gpu),
-                                        "cpu" => Some(course2md::config::AsrProvider::Cpu),
-                                        "npu" => Some(course2md::config::AsrProvider::Npu),
-                                        _ => None,
-                                    });
+                                    next.select_provider(engine_from_id(id));
                                     this.commit_generation(next, cx);
                                 })),
-                        )));
+                        ),
+                    ));
             let model_panel = self.default_model_readiness_panel(window, cx);
             recognition = recognition.detail(crate::motion::disclosure(
                 "default-model-management",
                 self.settings_ui.model_details_open,
-                model_panel));
+                model_panel,
+            ));
         }
         let mut ai = group("ai-default-settings", "AI 处理")
             .child(
@@ -346,7 +336,8 @@ impl Desktop {
                     icons::edit(),
                     "自定义校对规则",
                     "",
-                    quiet("show-proofread-rules").settings_text()
+                    quiet("show-proofread-rules")
+                        .settings_text()
                         .mr(-crate::theme::QUIET_INSET)
                         .label(if value.prompt.is_some() {
                             "已自定义"
@@ -389,7 +380,8 @@ impl Desktop {
                                 .gap_2()
                                 .flex_wrap()
                                 .child(
-                                    outline_pill("apply-proofread-rules").settings_text()
+                                    outline_pill("apply-proofread-rules")
+                                        .settings_text()
                                         .icon(icons::save())
                                         .label("应用校对规则")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -409,7 +401,8 @@ impl Desktop {
                                         })),
                                 )
                                 .child(
-                                    quiet("restore-proofread-rules").settings_text()
+                                    quiet("restore-proofread-rules")
+                                        .settings_text()
                                         .icon(icons::refresh())
                                         .label("恢复标准规则")
                                         .disabled(value.prompt.is_none())
@@ -428,7 +421,8 @@ impl Desktop {
                                             }
                                         })),
                                 ),
-                        )));
+                        ),
+                ));
         }
         let selected = value.options.formats.clone().unwrap_or_default();
         v_flex()
@@ -476,15 +470,24 @@ impl Desktop {
                                             )
                                             .text_size(TEXT_SETTINGS_AUX)
                                             .text_color(color(GRAY))
-                                            .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
-                                .min_w_0(),
+                                            .font_family(
+                                                gpui_component::Theme::global(cx)
+                                                    .mono_font_family
+                                                    .clone(),
+                                            )
+                                            .min_w_0(),
                                         ),
                                 )
                                 .child(
-                                    outline_pill("settings-manage-storage").settings_text()
+                                    outline_pill("settings-manage-storage")
+                                        .settings_text()
                                         .label("更改")
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.select_settings_tab(SettingsTab::Storage, window, cx);
+                                            this.select_settings_tab(
+                                                SettingsTab::Storage,
+                                                window,
+                                                cx,
+                                            );
                                         })),
                                 ),
                         ),
@@ -507,7 +510,8 @@ impl Desktop {
                                     ("default-export", index),
                                     selected.contains(&format),
                                     cx,
-                                ).settings_text()
+                                )
+                                .settings_text()
                                 .label(label)
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
@@ -543,87 +547,64 @@ impl Desktop {
     }
 
     fn local_model_picker(&self, cx: &mut Context<Self>) -> Div {
-        use course2md::config::AsrProvider;
         let preferences = self.preferences.generation();
-        let provider = preferences.options.provider;
+        let provider = preferences
+            .options
+            .provider
+            .unwrap_or_else(|| self.recommended_local_provider());
         let selected = preferences
             .options
             .asr_model
             .as_deref()
             .unwrap_or(course2md::config::DEFAULT_ASR_MODEL);
-        let mut models = vec![(course2md::config::DEFAULT_ASR_MODEL, "Qwen3 1.7B")];
-        if provider == Some(AsrProvider::Coreml)
-            || (provider.is_none() && cfg!(target_os = "macos"))
-            || provider == Some(AsrProvider::Npu)
-        {
-            models.extend([("qwen3-0.6b", "Qwen3 0.6B"), ("whisper", "Whisper")]);
-        }
-        if provider == Some(AsrProvider::Npu) {
-            models.extend([
-                ("whisper-tiny", "Whisper Tiny"),
-                ("whisper-base", "Whisper Base"),
-                ("whisper-small", "Whisper Small"),
-            ]);
-        }
-        let known = models.iter().any(|(id, _)| *id == selected);
-        let picker = if models.len() == 1 {
-            // 只有一个可选模型时不是「选择器」：展示静态值，不伪装可选择（settings#2）
-            let (_, label) = models[0];
-            settings_value("default-local-model-single", label.to_owned()).into_any_element()
+        let canonical = course2md::config::canonical_model(provider, selected).ok();
+        let models = local_models(provider);
+        let picker = if let [only] = models {
+            settings_value("default-local-model-single", only.label).into_any_element()
         } else if models.len() > 3 {
-            let current = selected.to_owned();
-            let label = models
-                .iter()
-                .find(|(id, _)| *id == selected)
-                .map(|(_, label)| *label)
-                .unwrap_or("自定义模型");
+            let current = canonical.clone();
+            let label = if canonical.is_some() {
+                model_label(canonical.as_deref().unwrap_or(selected))
+            } else {
+                "自定义模型"
+            };
             let entity = cx.entity().downgrade();
             self.reveal_setting(
                 "default-local-model-menu-reveal",
-                control("default-local-model-menu").settings_text()
+                control("default-local-model-menu")
+                    .settings_text()
                     .w_full()
-                    .label(label)
+                    .label(label.to_owned())
                     .child(crate::icons::chevron_down().size_4())
                     .dropdown_menu(move |menu, _, _| {
-                        models.iter().fold(menu, |menu, (id, label)| {
-                            let id = (*id).to_owned();
+                        models.iter().fold(menu, |menu, model| {
+                            let id = model.id;
                             let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(*label).checked(id == current).on_click(
-                                move |_, window, cx| {
-                                    let _ =
-                                        entity.update(cx, |this, cx| {
-                                            let mut next = this.generation_edit_base();
-                                            next.options.asr_model = Some(id.clone());
-                                            next.local_model_draft = None;
-                                            if this.commit_generation(next, cx) {
-                                                this.settings_ui.inputs[&EditField::LocalModel]
-                                                    .update(cx, |input, cx| {
-                                                        input.set_value(id.clone(), window, cx);
-                                                    });
-                                            }
+                            menu.item(
+                                PopupMenuItem::new(model.label)
+                                    .checked(current.as_deref() == Some(id))
+                                    .on_click(move |_, window, cx| {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.select_local_model(id, window, cx)
                                         });
-                                },
-                            ))
+                                    }),
+                            )
                         })
                     }),
             )
             .into_any_element()
         } else {
-            self.setting_choices("default-local-model", "默认识别模型")
-                .options(models)
-                .icon(course2md::config::DEFAULT_ASR_MODEL, icons::mic())
-                .icon("qwen3-0.6b", icons::mic())
-                .icon("whisper", icons::mic())
+            models
+                .iter()
+                .fold(
+                    self.setting_choices("default-local-model", "默认识别模型")
+                        .options(models.iter().map(|model| (model.id, model.label))),
+                    |choices, model| choices.icon(model.id, icons::mic()),
+                )
                 .full_width()
-                .selected(selected.to_owned())
+                .selected(canonical.clone().unwrap_or_default())
                 .on_change(cx.listener(move |this, id: &SharedString, window, cx| {
-                    let mut next = this.generation_edit_base();
-                    next.options.asr_model = Some(id.to_string());
-                    next.local_model_draft = None;
-                    if this.commit_generation(next, cx) {
-                        this.settings_ui.inputs[&EditField::LocalModel]
-                            .update(cx, |input, cx| input.set_value(id.clone(), window, cx));
-                    }
+                    this.select_local_model(id, window, cx)
                 }))
                 .into_any_element()
         };
@@ -655,7 +636,8 @@ impl Desktop {
                     ),
             )
             .child(
-                quiet("toggle-model-details").settings_text()
+                quiet("toggle-model-details")
+                    .settings_text()
                     .icon(if self.settings_ui.model_details_open {
                         icons::chevron_up()
                     } else {
@@ -672,7 +654,8 @@ impl Desktop {
                     })),
             )
             .child(
-                quiet("toggle-asr-advanced").settings_text()
+                quiet("toggle-asr-advanced")
+                    .settings_text()
                     .mr(-crate::theme::QUIET_INSET)
                     .icon(icons::tune())
                     .label(if self.settings_ui.asr_details_open {
@@ -697,21 +680,23 @@ impl Desktop {
                 .child(picker)
                 .child(model_footer),
         ));
-        if !known && provider != Some(AsrProvider::Npu) {
+        if !model_supported(provider, selected) {
             view = view.child(
-                text(
-                    "unavailable-fixed-model",
-                    format!("{selected} 不适用于当前识别方式，请重新选择"),
-                )
-                .text_size(TEXT_SETTINGS_AUX)
-                .text_color(color(DANGER)),
+                text("unavailable-fixed-model", UNSUPPORTED_MODEL)
+                    .text_size(TEXT_SETTINGS_AUX)
+                    .text_color(color(DANGER)),
             );
         }
-        if provider == Some(AsrProvider::Npu) {
+        if provider == AsrProvider::Npu {
             view = view
-                .child(self.setting_field(EditField::LocalModel, "NPU 模型 ID 或仓库 ID", cx))
+                .child(self.setting_field(
+                    EditField::LocalModel,
+                    "模型名称或 Hugging Face 仓库（如 org/model）",
+                    cx,
+                ))
                 .child(
-                    control("apply-custom-npu-model").settings_text()
+                    control("apply-custom-npu-model")
+                        .settings_text()
                         .icon(icons::check_circle())
                         .label("应用模型选择")
                         .self_start()
@@ -727,27 +712,16 @@ impl Desktop {
                         })),
                 );
         }
-        if let Some(environment) = &self.environment {
-            let ready = match provider {
-                Some(AsrProvider::Coreml) => environment.apple && environment.engine,
-                Some(AsrProvider::Gpu) => {
-                    environment.gpu.is_some() && environment.llama && environment.engine
-                }
-                Some(AsrProvider::Cpu) => environment.llama && environment.engine,
-                Some(AsrProvider::Npu) => environment.npu && environment.engine,
-                _ => true,
-            };
-            if !ready {
-                view = view.child(
-                    text(
-                        "selected-device-unavailable",
-                        "所选识别方式的运行环境未就绪，详见「应用」诊断",
-                    )
-                    .text_size(TEXT_SETTINGS_AUX)
-                    .text_color(color(WARNING)),
-                );
-            }
-        }
         view
+    }
+
+    fn select_local_model(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let mut next = self.generation_edit_base();
+        next.options.asr_model = Some(id.to_owned());
+        next.local_model_draft = None;
+        if self.commit_generation(next, cx) {
+            self.settings_ui.inputs[&EditField::LocalModel]
+                .update(cx, |input, cx| input.set_value(id.to_owned(), window, cx));
+        }
     }
 }

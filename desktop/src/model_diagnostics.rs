@@ -3,7 +3,7 @@ use super::{settings_detail_group, settings_detail_row, settings_status_row, set
 use crate::theme::*;
 use crate::*;
 use course2md::{
-    config::{AsrProvider, model_dir_from},
+    config::{AsrProvider, canonical_model, model_dir_from, model_label},
     models::status::{CacheState, LocalModelStatus},
 };
 use gpui_component::button::*;
@@ -17,30 +17,36 @@ fn model_status_row(
 ) -> Div {
     settings_status_row(id, label, value)
         .min_h(px(56.))
-        .when(divider, |row| row.border_b_1().border_color(color(HAIRLINE)))
+        .when(divider, |row| {
+            row.border_b_1().border_color(color(HAIRLINE))
+        })
 }
+
+/// Shown wherever a model cannot be prepared while another job runs.
+pub(crate) const JOB_BUSY: &str = "当前任务完成后才能准备模型";
 
 /// Preparation log lines shown when expanded; older lines stay in the task log.
 const LOG_TAIL: usize = 80;
 
-#[derive(Clone)]
-struct Request {
-    provider: AsrProvider,
-    model: String,
-    root: PathBuf,
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Request {
+    pub(crate) provider: AsrProvider,
+    pub(crate) model: String,
+    pub(crate) root: PathBuf,
 }
 impl Request {
-    fn new(provider: AsrProvider, model: Option<&str>, root: &Path) -> Self {
+    /// Aliases share the canonical cache entry; an unsupported value is checked as typed.
+    pub(crate) fn new(provider: AsrProvider, model: Option<&str>, root: &Path) -> Self {
+        let model = model
+            .filter(|model| !model.trim().is_empty())
+            .unwrap_or(course2md::config::DEFAULT_ASR_MODEL);
         Self {
             provider,
-            model: model
-                .filter(|model| !model.trim().is_empty())
-                .unwrap_or(course2md::config::DEFAULT_ASR_MODEL)
-                .into(),
+            model: canonical_model(provider, model).unwrap_or_else(|_| model.to_owned()),
             root: root.into(),
         }
     }
-    fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         format!(
             "{}:{}:{}",
             self.provider.as_str(),
@@ -96,17 +102,50 @@ fn provider_name(provider: AsrProvider) -> &'static str {
     crate::provider_label(Some(provider))
 }
 
-/// 模型展示名的唯一权威来源（与设置/引导页的选择标签一致）。
-pub(crate) fn model_display_name(model: &str) -> String {
-    match model {
-        "qwen3-1.7b" => "Qwen3 1.7B".to_owned(),
-        "qwen3-0.6b" => "Qwen3 0.6B".to_owned(),
-        "whisper" => "Whisper".to_owned(),
-        _ => model.to_owned(),
+/// Local recognition engines in display order.
+pub(crate) const LOCAL_ENGINES: [AsrProvider; 4] = [
+    AsrProvider::Coreml,
+    AsrProvider::Gpu,
+    AsrProvider::Cpu,
+    AsrProvider::Npu,
+];
+
+/// Choice id of an engine; automatic selection is the empty id.
+pub(crate) fn engine_id(provider: Option<AsrProvider>) -> &'static str {
+    provider.map_or("", |provider| provider.as_str())
+}
+pub(crate) fn engine_from_id(id: &str) -> Option<AsrProvider> {
+    LOCAL_ENGINES
+        .into_iter()
+        .find(|provider| provider.as_str() == id)
+}
+pub(crate) fn engine_icon(provider: Option<AsrProvider>) -> Icon {
+    match provider {
+        None => icons::auto_fix(),
+        Some(AsrProvider::Coreml) => icons::computer(),
+        Some(AsrProvider::Gpu) => icons::grid_view(),
+        Some(AsrProvider::Cpu) => icons::storage(),
+        Some(AsrProvider::Npu) => icons::sparkles(),
+        Some(AsrProvider::Api) => icons::cloud(),
     }
 }
+/// Hardware this platform cannot have is not offered: Apple silicon engines only on
+/// macOS, Intel NPU never there. A saved choice stays visible on any platform.
+pub(crate) fn engine_offered(provider: AsrProvider, selected: Option<AsrProvider>) -> bool {
+    Some(provider) == selected
+        || match provider {
+            AsrProvider::Coreml => cfg!(target_os = "macos"),
+            AsrProvider::Npu => !cfg!(target_os = "macos"),
+            _ => true,
+        }
+}
+/// The one compatibility rule for a saved local model, aliases and NPU repositories included.
+pub(crate) fn model_supported(provider: AsrProvider, model: &str) -> bool {
+    provider != AsrProvider::Api && canonical_model(provider, model).is_ok()
+}
+pub(crate) const UNSUPPORTED_MODEL: &str = "所选识别方式不支持这个模型，请换一个";
 
-/// 模型准备按钮文案的唯一权威来源（设置页与引导页共用；此前两处实现已漂移）。
+/// 模型准备按钮文案的唯一权威来源（设置页与引导页共用）。
 pub(crate) fn model_action_label(
     provider: AsrProvider,
     state: Option<&CacheState>,
@@ -114,27 +153,51 @@ pub(crate) fn model_action_label(
     match state {
         Some(CacheState::Missing) => "下载并准备模型",
         Some(CacheState::Partial) => "继续准备模型",
-        Some(CacheState::Loaded) => "重新验证加载",
+        Some(CacheState::Loaded) => "重新检查是否可用",
         Some(CacheState::Cached) if matches!(provider, AsrProvider::Cpu | AsrProvider::Gpu) => {
             "检查模型文件"
         }
-        Some(CacheState::Cached) => "验证模型加载",
+        Some(CacheState::Cached) => "检查模型是否可用",
         _ => "继续准备模型",
     }
 }
-/// Single classification of the device facts behind a chosen recognition
-/// provider. `model_device_issue` (message) and `model_runtime_repair` (repair
-/// UI) must stay in sync; classifying once keeps both derived from one tree.
+/// The one classification of why a local engine cannot run here. Messages,
+/// repair actions and engine choices all derive from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeviceIssue {
+pub(crate) enum DeviceIssue {
     Engine,
+    AppleHardware,
     AppleRuntime,
     LlamaMissing,
     GpuAbsent,
     NpuDevice,
     NpuRuntime,
 }
-fn device_issue(
+impl DeviceIssue {
+    /// A short status for an engine choice.
+    pub(crate) fn short(self) -> &'static str {
+        match self {
+            Self::Engine => "需要重新安装应用",
+            Self::AppleHardware => "需要 Apple 芯片的 Mac",
+            Self::GpuAbsent => "未检测到可用显卡",
+            Self::NpuDevice => "未检测到 Intel NPU",
+            Self::AppleRuntime | Self::LlamaMissing | Self::NpuRuntime => "需要安装识别组件",
+        }
+    }
+    /// The full explanation shown with repair actions.
+    fn message(self) -> &'static str {
+        match self {
+            Self::Engine => "转换程序无法运行，请重新安装应用",
+            Self::AppleHardware => "当前系统不支持 Apple 芯片识别，请改用其他方式",
+            Self::AppleRuntime => "缺少 Apple 识别组件，请重新安装应用或改用其他方式",
+            Self::LlamaMissing => "缺少 GPU/CPU 识别组件 llama.cpp，安装后重新检查",
+            Self::GpuAbsent => "未检测到可用显卡，可改用 CPU",
+            Self::NpuDevice => "未检测到 Intel NPU，请改用其他方式",
+            Self::NpuRuntime => "Intel NPU 识别需要 Python（uv），安装后重新检查",
+        }
+    }
+}
+pub(crate) fn device_issue(
     provider: AsrProvider,
     environment: &crate::backend::Environment,
 ) -> Option<DeviceIssue> {
@@ -142,6 +205,9 @@ fn device_issue(
         return Some(DeviceIssue::Engine);
     }
     match provider {
+        AsrProvider::Coreml if !cfg!(all(target_os = "macos", target_arch = "aarch64")) => {
+            Some(DeviceIssue::AppleHardware)
+        }
         AsrProvider::Coreml if !environment.apple => Some(DeviceIssue::AppleRuntime),
         AsrProvider::Gpu if !environment.llama => Some(DeviceIssue::LlamaMissing),
         AsrProvider::Gpu if environment.gpu.is_none() => Some(DeviceIssue::GpuAbsent),
@@ -329,7 +395,7 @@ impl Desktop {
     }
     fn begin_model_preparation(&mut self, request: Request, cx: &mut Context<Self>) {
         if self.job.is_some() {
-            self.message = Some("当前处理结束后才能准备模型".into());
+            self.message = Some(JOB_BUSY.into());
             cx.notify();
             return;
         }
@@ -378,40 +444,21 @@ impl Desktop {
         self.refresh_model_diagnostics(cx);
         cx.notify();
     }
+    /// Why the engine cannot run here; `None` while detection is pending.
+    pub(crate) fn engine_issue(&self, provider: AsrProvider) -> Option<DeviceIssue> {
+        device_issue(provider, self.environment.as_ref()?)
+    }
     fn model_device_issue(&self, provider: AsrProvider) -> Option<String> {
-        let environment = self.environment.as_ref()?;
-        Some(match device_issue(provider, environment)? {
-            DeviceIssue::Engine => "转换程序无法运行，请重新安装应用".into(),
-            DeviceIssue::AppleRuntime
-                if !cfg!(all(target_os = "macos", target_arch = "aarch64")) =>
-            {
-                "当前系统不支持 Apple 原生识别，请改用其他方式".into()
-            }
-            DeviceIssue::AppleRuntime => "缺少 Apple 识别组件，请重新安装应用或改用其他方式".into(),
-            DeviceIssue::LlamaMissing if provider == AsrProvider::Gpu => {
-                "未检测到 llama-server，安装后重新检查".into()
-            }
-            DeviceIssue::LlamaMissing => "未检测到 llama-server，安装后重新检查".into(),
-            DeviceIssue::GpuAbsent => "未检测到可用 GPU，可改用 CPU".into(),
-            DeviceIssue::NpuDevice => "未检测到 Intel NPU，请改用其他方式".into(),
-            DeviceIssue::NpuRuntime => "缺少 uv 或 Python，安装后重新检查".into(),
-        })
+        self.engine_issue(provider)
+            .map(|issue| issue.message().to_owned())
     }
     fn model_runtime_repair(&self, provider: AsrProvider, key: &str) -> Div {
         let mut view = v_flex().w_full().min_w_0().gap_2();
-        let Some(environment) = &self.environment else {
-            return view;
-        };
-        let reinstall = match device_issue(provider, environment) {
-            Some(DeviceIssue::Engine) => true,
-            Some(DeviceIssue::AppleRuntime) => {
-                cfg!(all(target_os = "macos", target_arch = "aarch64"))
-            }
-            _ => false,
-        };
-        if reinstall {
+        let issue = self.engine_issue(provider);
+        if matches!(issue, Some(DeviceIssue::Engine | DeviceIssue::AppleRuntime)) {
             return view.child(
-                control(SharedString::from(format!("model-reinstall-{key}"))).settings_text()
+                control(SharedString::from(format!("model-reinstall-{key}")))
+                    .settings_text()
                     .icon(icons::download())
                     .label("下载完整应用")
                     .self_start()
@@ -420,11 +467,12 @@ impl Desktop {
                     }),
             );
         }
-        if device_issue(provider, environment) == Some(DeviceIssue::LlamaMissing) {
+        if issue == Some(DeviceIssue::LlamaMissing) {
             view = view.child(
                 control(SharedString::from(format!(
                     "model-llama-install-help-{key}"
-                ))).settings_text()
+                )))
+                .settings_text()
                 .icon(icons::external_link())
                 .label("查看 llama.cpp 安装说明")
                 .self_start()
@@ -444,7 +492,8 @@ impl Desktop {
                     .child(
                         control(SharedString::from(format!(
                             "model-copy-llama-install-{key}"
-                        ))).settings_text()
+                        )))
+                        .settings_text()
                         .icon(icons::content_copy())
                         .label("复制安装命令")
                         .self_start()
@@ -458,17 +507,18 @@ impl Desktop {
                 view = view.child(
                     settings_value(
                         SharedString::from(format!("model-llama-path-help-{key}")),
-                        "安装 llama-server 并加入 PATH，然后重新打开应用",
+                        "安装 llama.cpp，确保可在终端直接运行 llama-server，然后重新打开应用",
                     )
                     .text_sm(),
                 );
             }
         }
-        if device_issue(provider, environment) == Some(DeviceIssue::NpuRuntime) {
+        if issue == Some(DeviceIssue::NpuRuntime) {
             view = view.child(
                 control(SharedString::from(format!(
                     "model-python-install-help-{key}"
-                ))).settings_text()
+                )))
+                .settings_text()
                 .icon(icons::external_link())
                 .label("查看 uv 安装说明")
                 .self_start()
@@ -523,9 +573,17 @@ impl Desktop {
         for extra in extras {
             view = view.child(extra);
         }
-        view.child(h_flex().w_full().min_w_0().gap_2().items_center().flex_wrap()
-            .child(actions.w_auto()).children(cache_action))
-            .when_some(cache_details, |view, details| view.child(details))
+        view.child(
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .items_center()
+                .flex_wrap()
+                .child(actions.w_auto())
+                .children(cache_action),
+        )
+        .when_some(cache_details, |view, details| view.child(details))
     }
 
     /// Status rows: engine, model name, device issue with repair guidance,
@@ -560,7 +618,7 @@ impl Desktop {
             "模型",
             settings_value(
                 SharedString::from(format!("model-name-{key}")),
-                model_display_name(&request.model),
+                model_label(&request.model),
             )
             .w_auto(),
             true,
@@ -621,9 +679,9 @@ impl Desktop {
             } else {
                 match status.state {
                     CacheState::Missing => (BadgeKind::Neutral, "待下载", None),
-                    CacheState::Partial => (BadgeKind::Warning, "待准备", None),
+                    CacheState::Partial => (BadgeKind::Warning, "未下载完整", None),
                     CacheState::Cached => (BadgeKind::Success, "已下载", None),
-                    CacheState::Loaded => (BadgeKind::Success, "已验证可加载", None),
+                    CacheState::Loaded => (BadgeKind::Success, "已确认可用", None),
                     CacheState::Unsupported => (
                         BadgeKind::Warning,
                         "不支持",
@@ -673,11 +731,12 @@ impl Desktop {
                             view.child(
                                 quiet(SharedString::from(format!(
                                     "open-model-cache-{key}-{index}"
-                                ))).settings_text()
+                                )))
+                                .settings_text()
                                 .icon(icons::folder_open())
-                                .label("打开缓存位置")
+                                .label("打开模型文件夹")
                                 .accessibility_label(format!(
-                                    "打开 {} 的缓存位置：{}",
+                                    "打开 {} 的模型文件夹：{}",
                                     part.name,
                                     part.path.display()
                                 ))
@@ -715,53 +774,52 @@ impl Desktop {
                 );
             }
             cache_action = Some(
-                        h_flex()
-                            .w_auto()
-                            .min_w_0()
-                            .gap_3()
-                            .flex_wrap()
-                            .child(
-                                quiet(SharedString::from(format!("model-cache-details-{key}"))).settings_text()
-                                    .ml(-crate::theme::QUIET_INSET)
-                                    .icon(icons::folder_open())
-                                    .label(if cache_open {
-                                        "收起缓存详情"
-                                    } else {
-                                        "查看缓存详情"
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if !this
-                                            .settings_ui
-                                            .model_diagnostics
-                                            .cache_details
-                                            .remove(&detail_key)
-                                        {
-                                            this.settings_ui
-                                                .model_diagnostics
-                                                .cache_details
-                                                .insert(detail_key.clone());
-                                        }
-                                        cx.notify();
-                                    })),
-                            )
-                            .when(status.bytes > 0, |row| {
-                                row.child(
-                                    settings_value(
-                                        SharedString::from(format!("model-cached-size-{key}")),
-                                        format!(
-                                            "缓存占用 {}",
-                                            crate::activity::bytes(status.bytes)
-                                        ),
-                                    )
-                                    .text_size(TEXT_SETTINGS_AUX)
-                                    .text_color(color(GRAY)),
-                                )
+                h_flex()
+                    .w_auto()
+                    .min_w_0()
+                    .gap_3()
+                    .flex_wrap()
+                    .child(
+                        quiet(SharedString::from(format!("model-cache-details-{key}")))
+                            .settings_text()
+                            .ml(-crate::theme::QUIET_INSET)
+                            .icon(icons::folder_open())
+                            .label(if cache_open {
+                                "收起模型文件"
+                            } else {
+                                "查看模型文件"
                             })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !this
+                                    .settings_ui
+                                    .model_diagnostics
+                                    .cache_details
+                                    .remove(&detail_key)
+                                {
+                                    this.settings_ui
+                                        .model_diagnostics
+                                        .cache_details
+                                        .insert(detail_key.clone());
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .when(status.bytes > 0, |row| {
+                        row.child(
+                            settings_value(
+                                SharedString::from(format!("model-cached-size-{key}")),
+                                format!("占用空间 {}", crate::activity::bytes(status.bytes)),
+                            )
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .text_color(color(GRAY)),
+                        )
+                    }),
             );
             cache_details = Some(crate::motion::disclosure(
-                        SharedString::from(format!("model-cache-content-{key}")),
-                        cache_open,
-                        cache));
+                SharedString::from(format!("model-cache-content-{key}")),
+                cache_open,
+                cache,
+            ));
             if let Some(error) = &status.last_error {
                 view = view.child(settings_detail_row(
                     SharedString::from(format!("model-last-error-label-{key}")),
@@ -794,7 +852,8 @@ impl Desktop {
         let request = request.clone();
         let active = self.is_preparing(key);
         let request_for_check = request.clone();
-        let recheck = outline_pill(SharedString::from(format!("recheck-model-{key}"))).settings_text()
+        let recheck = outline_pill(SharedString::from(format!("recheck-model-{key}")))
+            .settings_text()
             .icon(icons::refresh())
             .label("重新检查模型")
             .disabled(checking || active)
@@ -816,7 +875,7 @@ impl Desktop {
                         settings_value(
                             "active-model-prepare",
                             // 对外展示用显示名，不外露缓存目录里的技术 ID（review4 可选）
-                            format!("正在准备 {}", model_display_name(&request.model)),
+                            format!("正在准备 {}", model_label(&request.model)),
                         )
                         .role(Role::Status),
                     )
@@ -845,7 +904,8 @@ impl Desktop {
                 );
             }
             actions = actions.child(
-                control("stop-model-preparation").settings_text()
+                control("stop-model-preparation")
+                    .settings_text()
                     .icon(icons::pause())
                     .label(if self.cancelling {
                         "正在停止…"
@@ -865,7 +925,8 @@ impl Desktop {
             let loaded = status.is_some_and(|status| status.state == CacheState::Loaded);
             let label = model_action_label(provider, status.map(|status| &status.state));
             actions = actions.child(
-                control(SharedString::from(format!("prepare-model-{key}"))).settings_text()
+                control(SharedString::from(format!("prepare-model-{key}")))
+                    .settings_text()
                     .icon(if loaded {
                         icons::refresh()
                     } else {
@@ -877,7 +938,7 @@ impl Desktop {
                     .accessibility_label(format!(
                         "{label}：{} · {}",
                         provider_name(provider),
-                        request.model
+                        model_label(&request.model)
                     ))
                     .disabled(self.job.is_some())
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -888,7 +949,7 @@ impl Desktop {
                 extras.push(
                     settings_value(
                         SharedString::from(format!("model-waits-for-job-{key}")),
-                        "当前处理结束后可准备",
+                        JOB_BUSY,
                     )
                     .text_sm()
                     .into_any_element(),
@@ -948,7 +1009,8 @@ impl Desktop {
             && (self.job.is_some() || outcome.is_some())
         {
             view = view.child(
-                control("model-preparation-details").settings_text()
+                control("model-preparation-details")
+                    .settings_text()
                     .icon(icons::info())
                     .ghost()
                     .label(if self.settings_ui.model_diagnostics.details {
@@ -992,7 +1054,16 @@ impl Desktop {
         let mut hardware =
             settings_detail_group("model-hardware-heading", icons::computer(), "设备与运行时");
         for (id, label, value) in [
-            ("cpu-device", "CPU 架构", std::env::consts::ARCH),
+            (
+                "cpu-device",
+                "CPU 架构",
+                match std::env::consts::ARCH {
+                    "aarch64" if cfg!(target_os = "macos") => "Apple 芯片 (arm64)",
+                    "aarch64" => "ARM (arm64)",
+                    "x86_64" => "Intel / AMD (x86_64)",
+                    other => other,
+                },
+            ),
             (
                 "apple-device",
                 "Apple 平台",
@@ -1053,15 +1124,8 @@ impl Desktop {
                 settings_value(id, value.to_owned()),
             ));
         }
-        let alternatives = [
-            (AsrProvider::Coreml, environment.apple),
-            (
-                AsrProvider::Gpu,
-                environment.gpu.is_some() && environment.llama,
-            ),
-            (AsrProvider::Cpu, environment.llama),
-            (AsrProvider::Npu, environment.npu),
-        ];
+        let alternatives =
+            LOCAL_ENGINES.map(|provider| (provider, device_issue(provider, environment).is_none()));
         let available = alternatives
             .into_iter()
             .filter(|(_, available)| *available)
@@ -1084,7 +1148,8 @@ impl Desktop {
                             control(SharedString::from(format!(
                                 "choose-available-model-{}",
                                 provider.as_str()
-                            ))).settings_text()
+                            )))
+                            .settings_text()
                             .icon(icons::mic())
                             .label(format!("默认改用 {}", provider_name(provider)))
                             .on_click(cx.listener(
