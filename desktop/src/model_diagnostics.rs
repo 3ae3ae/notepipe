@@ -874,7 +874,6 @@ impl Desktop {
                     .child(
                         settings_value(
                             "active-model-prepare",
-                            // 对外展示用显示名，不外露缓存目录里的技术 ID（review4 可选）
                             format!("正在准备 {}", model_label(&request.model)),
                         )
                         .role(Role::Status),

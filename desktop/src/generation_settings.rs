@@ -692,7 +692,6 @@ impl Desktop {
                 .child(self.setting_field(
                     EditField::LocalModel,
                     "模型名称或 Hugging Face 仓库（如 org/model）",
-                    cx,
                 ))
                 .child(
                     control("apply-custom-npu-model")

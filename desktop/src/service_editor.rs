@@ -7,9 +7,9 @@ impl Desktop {
         let Some(editor) = &self.settings_ui.editor else {
             return v_flex();
         };
-        let purpose = editor.draft.protocol.purpose();
+        let purpose = editor.form.draft.protocol.purpose();
         // 纯文字标题，与打开它的「添加语音服务」/「添加 AI 服务」同一写法
-        let editing = editor.draft.based_on.is_some();
+        let editing = editor.form.draft.based_on.is_some();
         let title = match (purpose == ServicePurpose::Speech, editing) {
             (true, false) => "添加语音服务",
             (true, true) => "编辑语音服务",
@@ -162,7 +162,8 @@ impl Desktop {
                 })
                 .collect::<Vec<_>>();
             let entity = cx.entity().downgrade();
-            let picker = control(("service-choice", index)).settings_text()
+            let picker = control(("service-choice", index))
+                .settings_text()
                 .w_full()
                 .min_w_0()
                 .h_auto()
@@ -227,10 +228,16 @@ impl Desktop {
                                         .gap_1()
                                         .whitespace_normal()
                                         .child(div().child(name.clone()))
-                                        .child(div().text_size(TEXT_SETTINGS_AUX).child(detail.clone()))
+                                        .child(
+                                            div()
+                                                .text_size(TEXT_SETTINGS_AUX)
+                                                .child(detail.clone()),
+                                        )
                                         .when(!state.is_empty(), |view| {
                                             view.child(
-                                                div().text_size(TEXT_SETTINGS_AUX).child(state.clone()),
+                                                div()
+                                                    .text_size(TEXT_SETTINGS_AUX)
+                                                    .child(state.clone()),
                                             )
                                         })
                                 })
@@ -269,7 +276,8 @@ impl Desktop {
             control((
                 "configure-service",
                 purpose as usize * 2 + current_task as usize,
-            )).settings_text()
+            ))
+            .settings_text()
             .icon(if editor_version.is_some() {
                 icons::edit()
             } else {
@@ -325,7 +333,8 @@ impl Desktop {
                         .text_color(color(GRAY)),
                     )
                     .child(
-                        control(("inherit-default-service", purpose as usize)).settings_text()
+                        control(("inherit-default-service", purpose as usize))
+                            .settings_text()
                             .ghost()
                             .icon(icons::refresh())
                             .label("恢复默认")
@@ -540,7 +549,7 @@ impl Desktop {
             if editor.target.is_some() || editor.repair_task.is_some() {
                 return false;
             }
-            if editor.draft.id == draft.id
+            if editor.form.draft.id == draft.id
                 && editor.target == target
                 && editor.repair_task == repair_task
             {
@@ -548,8 +557,7 @@ impl Desktop {
                 self.navigate(Page::Settings, cx);
                 self.prepare_settings_view(window, cx);
                 self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
-                self.settings_ui.inputs[&EditField::Name]
-                    .update(cx, |input, cx| input.focus(window, cx));
+                self.focus_service_field(FormField::Name, window, cx);
                 return true;
             }
             // A second action must not reuse the previous editor's endpoint or scope.
@@ -572,17 +580,6 @@ impl Desktop {
                 (ServicePurpose::Ai, false) => "设置 AI 服务",
             }
         };
-        for (field, value) in [
-            (EditField::Name, draft.name.clone()),
-            (EditField::Address, draft.address.clone()),
-            (EditField::Model, draft.model.clone()),
-            (EditField::Key, String::new()),
-        ] {
-            self.settings_ui.inputs[&field]
-                .update(cx, |input, cx| input.set_value(value, window, cx));
-        }
-        self.settings_ui.inputs[&EditField::Key]
-            .update(cx, |input, cx| input.set_masked(true, window, cx));
         let kind = if draft.protocol.purpose() == ServicePurpose::Speech {
             TestKind::Speech
         } else {
@@ -607,17 +604,28 @@ impl Desktop {
                     .service_retired_in_snapshot(&version.service_id)
             });
         let draft_protocol = draft.protocol;
-        let origin_tab = (inline && self.page == Page::Settings && self.settings_tab != SettingsTab::Services)
-            .then_some(self.settings_tab);
-        self.settings_ui.editor = Some(ServiceEditor {
+        let origin_tab =
+            (inline && self.page == Page::Settings && self.settings_tab != SettingsTab::Services)
+                .then_some(self.settings_tab);
+        let form = ServiceForm::new(
+            FormOwner::Editor,
+            &[
+                FormField::Name,
+                FormField::Address,
+                FormField::Model,
+                FormField::Key,
+            ],
             draft,
-            models: Default::default(),
+            window,
+            cx,
+        );
+        self.settings_ui.editor = Some(ServiceEditor {
+            form,
             target,
             repair_task,
             scroll: ScrollHandle::new(),
             also_default,
             return_focus: window.focused(cx),
-            errors: Vec::new(),
             status: None,
             test_kind: kind,
             test_running: None,
@@ -625,7 +633,6 @@ impl Desktop {
             received_tests: BTreeMap::new(),
             pending_binding: None,
             saved_configuration: None,
-            show_key: false,
             test_details_open: false,
             save_failed: false,
             origin_tab,
@@ -638,8 +645,7 @@ impl Desktop {
             self.navigate(Page::Settings, cx);
             self.prepare_settings_view(window, cx);
             self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
-            self.settings_ui.inputs[&EditField::Name]
-                .update(cx, |input, cx| input.focus(window, cx));
+            self.focus_service_field(FormField::Name, window, cx);
             cx.notify();
             return true;
         }
@@ -673,10 +679,14 @@ impl Desktop {
                     let _ = closed.update(cx, |this, cx| this.restore_service_focus(window, cx));
                 })
         });
-        self.settings_ui.inputs[&EditField::Address]
-            .update(cx, |input, cx| input.focus(window, cx));
+        self.focus_service_field(FormField::Address, window, cx);
         cx.notify();
         true
+    }
+    fn focus_service_field(&self, field: FormField, window: &mut Window, cx: &mut App) {
+        if let Some(editor) = &self.settings_ui.editor {
+            editor.form.focus(field, window, cx);
+        }
     }
     pub(super) fn service_editor_content(
         &self,
@@ -687,8 +697,8 @@ impl Desktop {
         let Some(editor) = &self.settings_ui.editor else {
             return div().into_any_element();
         };
-        let protocol = editor.draft.protocol;
-        let auth = editor.draft.authentication;
+        let protocol = editor.form.draft.protocol;
+        let auth = editor.form.draft.authentication;
         let busy = editor.test_running.is_some();
         let awaiting_binding = editor.pending_binding.is_some();
         let configuration_saved = editor.saved_configuration.is_some() || awaiting_binding;
@@ -745,7 +755,7 @@ impl Desktop {
         use crate::settings_ui::{SettingsGroup, setting_surface};
         // 连接字段与其他设置页同一组卡片：每个字段一项，项间内缩分隔线
         let mut connection = SettingsGroup::new("service-connection-heading", "连接信息")
-            .child(setting_surface().child(self.setting_field(EditField::Name, "服务名称", cx)))
+            .child(setting_surface().child(self.service_field(FormField::Name, "服务名称", None)))
             .child(
                 setting_surface()
                     .child(setting_label(
@@ -758,66 +768,26 @@ impl Desktop {
                         },
                     ))
                     .child(
-                        self.setting_choices("service-protocol", "服务接口类型")
-                            .options(
-                                [
-                                    ServiceProtocol::SpeechTranscriptions,
-                                    ServiceProtocol::SpeechChat,
-                                    ServiceProtocol::AiChat,
-                                    ServiceProtocol::OllamaChat,
-                                    ServiceProtocol::CodexResponses,
-                                ]
-                                .into_iter()
-                                .filter(|candidate| candidate.purpose() == protocol.purpose())
-                                .map(|candidate| {
-                                    let short = if candidate.purpose() == ServicePurpose::Ai {
-                                        candidate.ai_kind_label()
-                                    } else {
-                                        service_protocol_label(candidate)
-                                    };
-                                    (candidate.label(), short)
-                                }),
-                            )
-                            .icon(
-                                ServiceProtocol::SpeechTranscriptions.label(),
-                                icons::mic(),
-                            )
-                            .icon(ServiceProtocol::SpeechChat.label(), icons::article())
-                            .icon(ServiceProtocol::AiChat.label(), icons::cloud())
-                            .icon(ServiceProtocol::OllamaChat.label(), icons::server())
-                            .icon(ServiceProtocol::CodexResponses.label(), icons::sparkles())
-                            .selected(protocol.label())
-                            .disabled(awaiting_binding)
-                            .on_change(cx.listener(
-                                move |this, selected: &SharedString, window, cx| {
-                                    let Some(candidate) = [
-                                        ServiceProtocol::SpeechTranscriptions,
-                                        ServiceProtocol::SpeechChat,
-                                        ServiceProtocol::AiChat,
-                                        ServiceProtocol::OllamaChat,
-                                        ServiceProtocol::CodexResponses,
-                                    ]
-                                    .into_iter()
-                                    .find(|candidate| candidate.label() == selected.as_ref()) else {
-                                        return;
-                                    };
-                                    this.service_protocol_switched(candidate, window, cx);
-                                },
-                            )),
+                        self.service_protocol_choices(
+                            FormOwner::Editor,
+                            self.setting_choices("service-protocol", "服务接口类型"),
+                            cx,
+                        )
+                        .disabled(awaiting_binding),
                     ),
             );
         // Codex 端点固定、凭据由登录态持有：不展示地址与认证编辑
         if protocol != ServiceProtocol::CodexResponses {
-            let address = self.setting_value(EditField::Address, cx);
+            let address = editor.form.value(FormField::Address, cx);
             let endpoint = preferences::normalize_endpoint(&address, protocol)
                 .ok()
                 .filter(|endpoint| endpoint != address.trim());
             connection = connection.child(
                 setting_surface()
-                    .child(self.setting_field(EditField::Address, "服务地址", cx))
+                    .child(self.service_field(FormField::Address, "服务地址", None))
                     .when_some(endpoint, |item, endpoint| {
                         item.child(
-                            text("service-actual-endpoint", format!("将请求 {endpoint}"))
+                            text("service-actual-endpoint", format!("实际地址：{endpoint}"))
                                 .text_size(TEXT_SETTINGS_AUX)
                                 .text_color(color(GRAY)),
                         )
@@ -833,65 +803,25 @@ impl Desktop {
                         "认证方式",
                     ))
                     .child(
-                        // 分段控件按内容宽度左对齐，不拉满整行
-                        self.setting_choices("service-auth-mode", "服务认证方式")
-                            .options([("api_key", "API Key"), ("none", "无需认证")])
-                            .icon("api_key", icons::shield())
-                            .icon("none", icons::web())
-                            .selected(if auth == Authentication::ApiKey {
-                                "api_key"
-                            } else {
-                                "none"
-                            })
-                            .disabled(awaiting_binding)
-                            .on_change(cx.listener(move |this, selected: &SharedString, _, cx| {
-                                let mode = if selected.as_ref() == "api_key" {
-                                    Authentication::ApiKey
-                                } else {
-                                    Authentication::None
-                                };
-                                if let Some(editor) = &mut this.settings_ui.editor {
-                                    editor.draft.authentication = mode;
-                                    editor.models.invalidate();
-                                    editor.errors.clear();
-                                    editor.evidence = None;
-                                    editor.saved_configuration = None;
-                                }
-                                cx.notify();
-                            })),
+                        self.service_auth_choices(
+                            FormOwner::Editor,
+                            self.setting_choices("service-auth-mode", "服务认证方式"),
+                            cx,
+                        )
+                        .disabled(awaiting_binding),
                     ),
             );
             if auth == Authentication::ApiKey {
-                // 显示/隐藏是输入框尾部的安静按钮（与首次引导的密钥字段一致），不再单列开关行
-                let visibility = quiet("toggle-service-key").settings_text()
-                    .mr(-crate::theme::QUIET_INSET)
-                    .icon(if editor.show_key {
-                        icons::eye_off()
-                    } else {
-                        icons::eye()
-                    })
-                    .label(if editor.show_key { "隐藏" } else { "显示" })
-                    .tooltip(if editor.show_key {
-                        "隐藏密钥"
-                    } else {
-                        "显示密钥"
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if let Some(editor) = &mut this.settings_ui.editor {
-                            editor.show_key = !editor.show_key;
-                            let masked = !editor.show_key;
-                            this.settings_ui.inputs[&EditField::Key]
-                                .update(cx, |input, cx| input.set_masked(masked, window, cx));
-                        }
-                        cx.notify();
-                    }))
+                let visibility = self
+                    .service_key_visibility(FormOwner::Editor, "toggle-service-key", cx)
+                    .settings_text()
                     .into_any_element();
-                let mut key = setting_surface().child(self.setting_field_with_action(
-                    EditField::Key,
+                let mut key = setting_surface().child(self.service_field(
+                    FormField::Key,
                     "API Key",
                     Some(visibility),
                 ));
-                if editor.draft.credential.is_some() {
+                if editor.form.draft.credential.is_some() {
                     key = key.child(
                         text("service-key-existing", "已保存密钥，留空则保留")
                             .text_size(TEXT_SETTINGS_AUX)
@@ -904,7 +834,8 @@ impl Desktop {
                         .enumerate()
                 {
                     key = key.child(
-                        control(("capture-environment-key", index)).settings_text()
+                        control(("capture-environment-key", index))
+                            .settings_text()
                             .icon(icons::content_copy())
                             .label(format!("使用环境变量 {name}"))
                             .disabled(awaiting_binding)
@@ -914,15 +845,16 @@ impl Desktop {
                                     .settings_ui
                                     .editor
                                     .as_ref()
-                                    .map(|editor| editor.draft.clone())
+                                    .map(|editor| editor.form.current_draft(cx))
                                 else {
                                     return;
                                 };
                                 match this.preferences.capture_environment_credential(draft, name) {
                                     Ok(draft) => {
                                         if let Some(editor) = &mut this.settings_ui.editor {
-                                            editor.draft = draft;
-                                            editor.models.invalidate();
+                                            editor.form.draft = draft;
+                                            editor.form.models.invalidate();
+                                            editor.form.clear_key(window, cx);
                                             editor.evidence = None;
                                             editor.saved_configuration = None;
                                             editor.save_failed = false;
@@ -930,10 +862,6 @@ impl Desktop {
                                                 "已使用环境变量中的密钥，点击保存后生效".into(),
                                             );
                                         }
-                                        this.settings_ui.inputs[&EditField::Key]
-                                            .update(cx, |input, cx| {
-                                                input.set_value("", window, cx)
-                                            });
                                     }
                                     Err(error) => {
                                         if let Some(editor) = &mut this.settings_ui.editor {
@@ -948,7 +876,7 @@ impl Desktop {
                 }
                 connection = connection.child(key);
             }
-            if let Some(source) = &editor.draft.credential_source {
+            if let Some(source) = &editor.form.draft.credential_source {
                 connection = connection.detail(
                     div().px(rems(20. / 14.)).pb(rems(14. / 14.)).child(
                         text("service-credential-source", format!("密钥来源：{source}"))
@@ -966,27 +894,23 @@ impl Desktop {
                 cx,
             )));
         }
-        let model_error = editor.errors.iter().find(|error| error.field == "model");
         connection = connection.child(
             setting_surface().child(
                 self.reveal_setting(
-                    ("setting-field-reveal", EditField::Model as usize),
+                    ("setting-field-reveal", 8 + FormField::Model as usize),
                     v_flex()
                         .w_full()
                         .min_w_0()
                         .gap_2()
                         .child(setting_label(
-                            ("setting-field-label", EditField::Model as usize),
+                            ("setting-field-label", 8 + FormField::Model as usize),
                             icons::storage(),
                             "模型 ID",
                         ))
-                        .child(crate::model_discovery::model_field_with_error(
+                        .child(self.service_model_field(
+                            FormOwner::Editor,
                             "service-models",
-                            &self.settings_ui.inputs[&EditField::Model],
-                            &editor.models,
                             awaiting_binding,
-                            model_error.map(|error| error.message.as_str()),
-                            cx.listener(|this, _, _, cx| this.fetch_service_models(cx)),
                             cx,
                         )),
                 ),
@@ -1011,7 +935,7 @@ impl Desktop {
             );
         }
         view = view.child(connection);
-        if let Some(testing) = self.service_test_section( cx) {
+        if let Some(testing) = self.service_test_section(cx) {
             view = view.child(testing);
         }
         if let Some(status) = &editor.status
@@ -1025,7 +949,8 @@ impl Desktop {
             .gap_2()
             .flex_wrap()
             .child(
-                quiet("close-service-editor").settings_text()
+                quiet("close-service-editor")
+                    .settings_text()
                     .ml(-crate::theme::QUIET_INSET)
                     .icon(icons::close())
                     .label(if configuration_saved {
@@ -1041,7 +966,8 @@ impl Desktop {
             )
             .child(div().flex_1())
             .child(
-                outline_pill("run-service-test").settings_text()
+                outline_pill("run-service-test")
+                    .settings_text()
                     .icon(icons::science())
                     .label(if busy {
                         format!("正在测试{test_label}…")
@@ -1074,7 +1000,8 @@ impl Desktop {
             )
             .when(editor.repair_task.is_some(), |row| {
                 row.child(
-                    quiet("save-repair-service-only").settings_text()
+                    quiet("save-repair-service-only")
+                        .settings_text()
                         .icon(icons::save())
                         .label("仅保存")
                         .disabled(busy || awaiting_binding || editor.saved_configuration.is_some())
@@ -1137,12 +1064,9 @@ impl Desktop {
     /// Test-kind choice, busy state, result card and expandable details.
     /// None when there is nothing to show yet (speech services before a test),
     /// so an empty 「检查服务」 heading never appears.
-    fn service_test_section(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn service_test_section(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let editor = self.settings_ui.editor.as_ref()?;
-        let protocol = editor.draft.protocol;
+        let protocol = editor.form.draft.protocol;
         let busy = editor.test_running.is_some();
         let awaiting_binding = editor.pending_binding.is_some();
         if protocol.purpose() != ServicePurpose::Ai && !busy && editor.evidence.is_none() {
@@ -1175,9 +1099,9 @@ impl Desktop {
                                 .settings_ui
                                 .editor
                                 .as_ref()
-                                .filter(|_| this.setting_value(EditField::Key, cx).is_empty())
+                                .filter(|editor| editor.form.typed_key(cx).is_empty())
                                 .and_then(|editor| {
-                                    let config = editor.draft.configuration().ok()?;
+                                    let config = editor.form.draft.configuration().ok()?;
                                     editor
                                         .received_tests
                                         .get(&config.fingerprint(kind.contract()))
@@ -1262,7 +1186,8 @@ impl Desktop {
             );
             if !evidence.details.is_empty() {
                 result = result.child(
-                    quiet("service-test-details").settings_text()
+                    quiet("service-test-details")
+                        .settings_text()
                         .icon(icons::info())
                         .self_start()
                         .label(if editor.test_details_open {
@@ -1287,7 +1212,8 @@ impl Desktop {
                 result = result.child(crate::motion::disclosure(
                     "service-test-details-content",
                     editor.test_details_open,
-                    details));
+                    details,
+                ));
             }
             testing = testing.child(crate::motion::enter(
                 SharedString::from(format!(
@@ -1388,195 +1314,6 @@ impl Desktop {
             .child(actions)
     }
 
-    fn live_service_model_draft(&self, cx: &App) -> Option<ServiceDraft> {
-        let mut draft = self.settings_ui.editor.as_ref()?.draft.clone();
-        draft.address = self.setting_value(EditField::Address, cx);
-        Some(draft)
-    }
-
-    /// 服务类型切换：无密钥协议收起认证编辑，并按协议预填/替换固定地址。
-    fn service_protocol_switched(
-        &mut self,
-        candidate: ServiceProtocol,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let codex_addresses = [
-            preferences::CODEX_ADDRESS,
-            course2md::provider::CODEX_RESPONSES_URL,
-        ];
-        let current = self.setting_value(EditField::Address, cx);
-        let current = current.trim().trim_end_matches('/').to_string();
-        if let Some(editor) = &mut self.settings_ui.editor {
-            // 派生名称（空或与旧地址主机一致）跟随新类型重新生成；手动命名保留
-            let previous_host = preferences::service_host(&current, editor.draft.protocol);
-            if editor.draft.name.trim().is_empty()
-                || Some(editor.draft.name.trim()) == previous_host.as_deref()
-            {
-                editor.draft.name.clear();
-                self.settings_ui.inputs[&EditField::Name].update(cx, |input, cx| {
-                    input.set_value("", window, cx);
-                });
-            }
-            let kind_changed = editor.draft.protocol.purpose() == ServicePurpose::Ai
-                && candidate.purpose() == ServicePurpose::Ai
-                && editor.draft.protocol != candidate;
-            editor.draft.protocol = candidate;
-            if candidate.keyless() {
-                editor.draft.authentication = Authentication::None;
-            }
-            if kind_changed {
-                // 模型 ID 不跨服务类型携带；Codex 连接成功后由账号目录自动填充
-                editor.draft.model.clear();
-                self.settings_ui.inputs[&EditField::Model].update(cx, |input, cx| {
-                    input.set_value("", window, cx);
-                });
-            }
-            editor.models.invalidate();
-            editor.errors.clear();
-            editor.evidence = None;
-            editor.saved_configuration = None;
-        }
-        let is_codex_address = codex_addresses.contains(&current.as_str());
-        let next = match candidate {
-            ServiceProtocol::CodexResponses => Some(preferences::CODEX_ADDRESS),
-            ServiceProtocol::OllamaChat if current.is_empty() || is_codex_address => {
-                Some(preferences::OLLAMA_DEFAULT_ADDRESS)
-            }
-            // 离开 Codex 时清掉固定地址（非用户数据），其余输入保留
-            _ if is_codex_address => Some(""),
-            _ => None,
-        };
-        if let Some(next) = next {
-            self.settings_ui.inputs[&EditField::Address].update(cx, |input, cx| {
-                input.set_value(next, window, cx);
-            });
-            // set_value 不触发 Change 事件，草稿在此同步
-            if let Some(editor) = &mut self.settings_ui.editor {
-                editor.draft.address = next.to_string();
-            }
-        }
-        if candidate.keyless() {
-            self.settings_ui.inputs[&EditField::Key].update(cx, |input, cx| {
-                input.set_value("", window, cx);
-            });
-        }
-        if candidate == ServiceProtocol::CodexResponses {
-            self.codex_refresh_status(crate::codex_ui::CodexSurface::Editor, cx);
-        }
-        cx.notify();
-    }
-
-    fn fetch_service_models(&mut self, cx: &mut Context<Self>) {
-        if self
-            .settings_ui
-            .editor
-            .as_ref()
-            .is_some_and(|editor| editor.draft.protocol == ServiceProtocol::CodexResponses)
-        {
-            self.codex_refresh_models(crate::codex_ui::CodexSurface::Editor, cx);
-            return;
-        }
-        let Some(draft) = self.live_service_model_draft(cx) else {
-            return;
-        };
-        let request = crate::model_discovery::Request::from_draft(
-            &draft,
-            Secret::new(self.setting_value(EditField::Key, cx)),
-        );
-        let Some(editor) = &mut self.settings_ui.editor else {
-            return;
-        };
-        if editor.pending_binding.is_some() {
-            return;
-        }
-        let request = match request {
-            Ok(request) => request,
-            Err(error) => {
-                editor.models.reject(error);
-                cx.notify();
-                return;
-            }
-        };
-        let ticket = editor.models.begin(&request);
-        let editor_id = draft.id;
-        let vault = self.preferences.vault();
-        cx.spawn(async move |this, cx| {
-            let result = crate::model_discovery::discover(request, vault).await;
-            let _ = this.update(cx, |this, cx| {
-                let current = this.live_service_model_draft(cx).and_then(|draft| {
-                    crate::model_discovery::RequestKey::from_draft(
-                        &draft,
-                        &this.setting_value(EditField::Key, cx),
-                    )
-                    .ok()
-                });
-                if let Some(editor) = &mut this.settings_ui.editor
-                    && editor.draft.id == editor_id
-                {
-                    editor.models.complete(ticket, current.as_ref(), result);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
-    /// codex_ui 的编辑器钩子：仅在编辑器仍在编辑 Codex 服务时落目录/错误。
-    pub(crate) fn editor_codex_needs_catalog(&self) -> bool {
-        self.settings_ui.editor.as_ref().is_some_and(|editor| {
-            editor.draft.protocol == ServiceProtocol::CodexResponses
-                && editor.models.models().is_empty()
-                && !editor.models.loading()
-        })
-    }
-    pub(crate) fn editor_codex_models_loading(&mut self) -> bool {
-        let Some(editor) = &mut self.settings_ui.editor else {
-            return false;
-        };
-        if editor.draft.protocol != ServiceProtocol::CodexResponses {
-            return false;
-        }
-        editor.models.begin_external();
-        true
-    }
-    pub(crate) fn editor_codex_models_failed(&mut self, message: String) {
-        if let Some(editor) = &mut self.settings_ui.editor
-            && editor.draft.protocol == ServiceProtocol::CodexResponses
-        {
-            editor
-                .models
-                .reject(crate::model_discovery::Error::Custom(message));
-        }
-    }
-    pub(crate) fn editor_codex_catalog(
-        &mut self,
-        models: Vec<String>,
-        suggested: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(editor) = &mut self.settings_ui.editor
-            && editor.draft.protocol == ServiceProtocol::CodexResponses
-        {
-            // 只补充候选：自动填充仅落到空输入，不改变已保存配置与测试证据
-            editor.models.prime(models);
-            crate::codex_ui::autofill_input(
-                self.window,
-                self.settings_ui.inputs[&EditField::Model].clone(),
-                suggested,
-                cx,
-            );
-        }
-    }
-    pub(crate) fn editor_codex_logged_out(&mut self) {
-        if let Some(editor) = &mut self.settings_ui.editor
-            && editor.draft.protocol == ServiceProtocol::CodexResponses
-        {
-            editor.models.invalidate();
-        }
-    }
-
     fn validate_service_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.save_open_service_draft(true, window, cx) {
             return false;
@@ -1584,19 +1321,9 @@ impl Desktop {
         let Some(editor) = &mut self.settings_ui.editor else {
             return false;
         };
-        editor.errors = editor.draft.validate();
-        if let Some(error) = editor.errors.first() {
-            let field = match error.field {
-                "address" => EditField::Address,
-                "model" => EditField::Model,
-                _ => EditField::Key,
-            };
-            self.settings_ui.inputs[&field].update(cx, |input, cx| input.focus(window, cx));
-            cx.notify();
-            false
-        } else {
-            true
-        }
+        let valid = editor.form.validate(window, cx);
+        cx.notify();
+        valid
     }
     fn start_service_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self
@@ -1613,10 +1340,10 @@ impl Desktop {
         let Some(editor) = &mut self.settings_ui.editor else {
             return;
         };
-        let Ok(config) = editor.draft.configuration() else {
+        let Ok(config) = editor.form.draft.configuration() else {
             return;
         };
-        let id = editor.draft.id.clone();
+        let id = editor.form.draft.id.clone();
         let kind = editor.test_kind;
         let cancel = Arc::new(AtomicBool::new(false));
         editor.test_running = Some(cancel.clone());
@@ -1632,16 +1359,25 @@ impl Desktop {
             };
             let _ = this.update(cx, |this, cx| {
                 let persisted = this.preferences.record_test(evidence.clone()).is_ok();
-                let key_unchanged = this.setting_value(EditField::Key, cx).is_empty();
+                let key_unchanged = this
+                    .settings_ui
+                    .editor
+                    .as_ref()
+                    .is_some_and(|editor| editor.form.typed_key(cx).is_empty());
                 if let Some(editor) = &mut this.settings_ui.editor
-                    && editor.draft.id == id
+                    && editor.form.draft.id == id
                 {
                     editor.test_running = None;
                     editor.status = None;
                     if key_unchanged
-                        && editor.draft.configuration().ok().is_some_and(|config| {
-                            config.fingerprint(&evidence.contract) == evidence.fingerprint
-                        })
+                        && editor
+                            .form
+                            .draft
+                            .configuration()
+                            .ok()
+                            .is_some_and(|config| {
+                                config.fingerprint(&evidence.contract) == evidence.fingerprint
+                            })
                     {
                         editor
                             .received_tests
@@ -1667,13 +1403,10 @@ impl Desktop {
     ) -> Option<(TestKind, preferences::ServiceTestEvidence)> {
         let editor = self.settings_ui.editor.as_ref()?;
         let (task_id, components) = editor.repair_task.as_ref()?;
-        if !self.setting_value(EditField::Key, cx).trim().is_empty() {
+        if !editor.form.typed_key(cx).trim().is_empty() {
             return None;
         }
-        let mut draft = editor.draft.clone();
-        draft.address = self.setting_value(EditField::Address, cx);
-        draft.model = self.setting_value(EditField::Model, cx);
-        let config = draft.configuration().ok()?;
+        let config = editor.form.current_draft(cx).configuration().ok()?;
         let uses_vision = self
             .workspace
             .as_ref()
@@ -1749,7 +1482,8 @@ impl Desktop {
         {
             Ok(version.clone())
         } else {
-            self.preferences.publish_service(&editor.draft.id, scope)
+            self.preferences
+                .publish_service(&editor.form.draft.id, scope)
         };
         let version = match result {
             Ok(version) => version,
@@ -1764,7 +1498,7 @@ impl Desktop {
         };
         if repairing && !continue_repair {
             if let Some(editor) = &mut self.settings_ui.editor {
-                editor.draft = ServiceDraft::from_version(&version);
+                editor.form.draft = ServiceDraft::from_version(&version);
                 editor.saved_configuration = Some(version);
                 editor.pending_binding = None;
                 editor.status = None;
@@ -1833,11 +1567,11 @@ impl Desktop {
         if let Some(editor) = &self.settings_ui.editor {
             // Tests can stage a private edit, but cancelling never publishes
             // it. A cleanup failure cannot make these hidden records active.
-            let _ = self.preferences.discard_service_draft(&editor.draft.id);
+            let _ = self
+                .preferences
+                .discard_service_draft(&editor.form.draft.id);
         }
         self.restore_service_focus(window, cx);
-        self.settings_ui.inputs[&EditField::Key]
-            .update(cx, |input, cx| input.set_value("", window, cx));
         true
     }
     fn restore_service_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {

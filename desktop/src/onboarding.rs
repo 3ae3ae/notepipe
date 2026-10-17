@@ -10,6 +10,7 @@ use crate::settings_ui::model_diagnostics::{
     JOB_BUSY, LOCAL_ENGINES, Request as ModelRequest, UNSUPPORTED_MODEL, engine_icon,
     engine_offered, model_supported,
 };
+use crate::settings_ui::service_form::{FormField, FormOwner, ServiceForm};
 use crate::settings_ui::{field_label, settings_detail_row, settings_value};
 use crate::theme::*;
 use crate::*;
@@ -31,34 +32,14 @@ enum Step {
     Model,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum InputField {
-    Address,
-    Model,
-    Key,
-}
-
-pub(crate) fn saved_api_key_placeholder(has_saved_credential: bool) -> &'static str {
-    if has_saved_credential {
-        "••••••••"
-    } else {
-        ""
-    }
-}
-
 struct ServiceSetup {
-    inputs: BTreeMap<InputField, Entity<InputState>>,
-    draft: ServiceDraft,
+    form: ServiceForm,
     original: Option<ServiceVersion>,
     pending_version: Option<ServiceVersion>,
-    errors: Vec<preferences::FieldError>,
     evidence: Vec<(TestKind, ServiceTestEvidence)>,
     running: Option<Arc<AtomicBool>>,
     test_serial: u64,
     details_open: bool,
-    show_key: bool,
-    models: crate::model_discovery::State,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl State {
@@ -86,55 +67,20 @@ struct ModelPreparation {
 
 impl ServiceSetup {
     fn new(purpose: ServicePurpose, window: &mut Window, cx: &mut Context<Desktop>) -> Self {
-        let inputs: BTreeMap<_, _> = [InputField::Address, InputField::Model, InputField::Key]
-            .into_iter()
-            .map(|field| {
-                let placeholder = match field {
-                    InputField::Address => "https://api.example.com/v1",
-                    InputField::Model => "",
-                    InputField::Key => "",
-                };
-                (
-                    field,
-                    cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .placeholder(placeholder)
-                            .masked(field == InputField::Key)
-                    }),
-                )
-            })
-            .collect();
-        let subscriptions = inputs
-            .iter()
-            .map(|(field, input)| {
-                let field = *field;
-                cx.subscribe_in(input, window, move |this, _, event, _, cx| {
-                    if matches!(event, InputEvent::Change) && this.onboarding.active {
-                        let service = this.onboarding.service_mut(purpose);
-                        service.errors.clear();
-                        service.evidence.clear();
-                        if matches!(field, InputField::Address | InputField::Key) {
-                            service.models.invalidate();
-                        }
-                        this.onboarding.notice = None;
-                        cx.notify();
-                    }
-                })
-            })
-            .collect();
         Self {
-            inputs,
-            draft: ServiceDraft::new(purpose),
+            form: ServiceForm::new(
+                FormOwner::Setup(purpose),
+                &[FormField::Address, FormField::Model, FormField::Key],
+                ServiceDraft::new(purpose),
+                window,
+                cx,
+            ),
             original: None,
             pending_version: None,
-            errors: Vec::new(),
             evidence: Vec::new(),
             running: None,
             test_serial: 0,
             details_open: false,
-            show_key: false,
-            models: crate::model_discovery::State::default(),
-            _subscriptions: subscriptions,
         }
     }
     fn cancel(&self) {
@@ -142,19 +88,11 @@ impl ServiceSetup {
             cancel.store(true, Ordering::Release);
         }
     }
-    fn value(&self, field: InputField, cx: &App) -> String {
-        self.inputs[&field].read(cx).value().to_string()
-    }
-    fn current_draft(&self, cx: &App) -> ServiceDraft {
-        let mut draft = self.draft.clone();
-        draft.address = self.value(InputField::Address, cx);
-        draft.model = self.value(InputField::Model, cx);
-        draft
-    }
     fn unchanged(&self, cx: &App) -> bool {
-        self.value(InputField::Key, cx).is_empty()
+        self.form.typed_key(cx).is_empty()
             && self.original.as_ref().is_some_and(|version| {
-                self.current_draft(cx)
+                self.form
+                    .current_draft(cx)
                     .configuration()
                     .ok()
                     .is_some_and(|config| {
@@ -418,7 +356,7 @@ impl Desktop {
         self.onboarding.speech.cancel();
         self.onboarding.ai.cancel();
         for purpose in [ServicePurpose::Speech, ServicePurpose::Ai] {
-            let id = self.onboarding.service(purpose).draft.id.clone();
+            let id = self.onboarding.service(purpose).form.draft.id.clone();
             let _ = self.preferences.discard_service_draft(&id);
         }
         self.onboarding.active = false;
@@ -513,29 +451,11 @@ impl Desktop {
         let service = self.onboarding.service_mut(purpose);
         service.cancel();
         service.running = None;
-        service.draft = draft.clone();
+        service.form.load(draft, window, cx);
         service.original = original;
         service.pending_version = None;
-        service.models.invalidate();
-        service.errors.clear();
         service.evidence.clear();
         service.details_open = false;
-        service.show_key = false;
-        for (field, value) in [
-            (InputField::Address, draft.address),
-            (InputField::Model, draft.model),
-            (InputField::Key, String::new()),
-        ] {
-            service.inputs[&field].update(cx, |input, cx| input.set_value(value, window, cx));
-        }
-        service.inputs[&InputField::Key].update(cx, |input, cx| {
-            input.set_placeholder(
-                saved_api_key_placeholder(draft.credential.is_some()),
-                window,
-                cx,
-            );
-            input.set_masked(true, window, cx);
-        });
     }
 
     fn setup_step(&mut self, step: Step, cx: &mut Context<Self>) {
@@ -549,15 +469,30 @@ impl Desktop {
         if step == Step::Account {
             self.refresh_account(cx);
         }
-        if step == Step::Ai
-            && self.onboarding.ai.draft.protocol == preferences::ServiceProtocol::CodexResponses
-        {
+        if step == Step::Ai && self.onboarding.ai.form.is_codex() {
             self.codex_refresh_status(crate::codex_ui::CodexSurface::Onboarding, cx);
         }
         self.onboarding.step = step;
         self.onboarding.notice = None;
         self.onboarding.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
+    }
+
+    /// The setup step's service form while the guide is open.
+    pub(crate) fn setup_form(&self, purpose: ServicePurpose) -> Option<&ServiceForm> {
+        self.onboarding
+            .active
+            .then(|| &self.onboarding.service(purpose).form)
+    }
+    pub(crate) fn setup_form_mut(&mut self, purpose: ServicePurpose) -> Option<&mut ServiceForm> {
+        self.onboarding
+            .active
+            .then(|| &mut self.onboarding.service_mut(purpose).form)
+    }
+    /// An edited form needs a new check; the old notice no longer applies.
+    pub(crate) fn setup_service_edited(&mut self, purpose: ServicePurpose) {
+        self.onboarding.service_mut(purpose).evidence.clear();
+        self.onboarding.notice = None;
     }
 
     fn setup_tests(&self, purpose: ServicePurpose) -> Vec<TestKind> {
@@ -585,8 +520,9 @@ impl Desktop {
 
     fn setup_service_passed(&self, purpose: ServicePurpose, cx: &App) -> bool {
         let service = self.onboarding.service(purpose);
-        service.value(InputField::Key, cx).is_empty()
+        service.form.typed_key(cx).is_empty()
             && service
+                .form
                 .current_draft(cx)
                 .configuration()
                 .ok()
@@ -606,31 +542,23 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> Option<ServiceConfiguration> {
         let service = self.onboarding.service(purpose);
-        let draft = service.current_draft(cx);
-        let key = service.value(InputField::Key, cx);
+        let draft = service.form.current_draft(cx);
+        let key = service.form.typed_key(cx);
         match self.preferences.save_service_draft(
             draft,
             (!key.trim().is_empty()).then(|| Secret::new(key.clone())),
         ) {
             Ok(draft) => {
-                let service = self.onboarding.service_mut(purpose);
-                service.draft = draft;
+                let form = &mut self.onboarding.service_mut(purpose).form;
+                form.draft = draft;
                 if !key.is_empty() {
-                    service.inputs[&InputField::Key]
-                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    form.clear_key(window, cx);
                 }
-                service.errors = service.draft.validate();
-                if let Some(error) = service.errors.first() {
-                    let field = match error.field {
-                        "address" => InputField::Address,
-                        "model" => InputField::Model,
-                        _ => InputField::Key,
-                    };
-                    service.inputs[&field].update(cx, |input, cx| input.focus(window, cx));
+                if !form.validate(window, cx) {
                     cx.notify();
                     return None;
                 }
-                service.draft.configuration().ok()
+                form.draft.configuration().ok()
             }
             Err(error) => {
                 self.onboarding.notice = Some((
@@ -689,8 +617,9 @@ impl Desktop {
                     return;
                 }
                 let service = this.onboarding.service(purpose);
-                let unchanged = service.value(InputField::Key, cx).is_empty()
+                let unchanged = service.form.typed_key(cx).is_empty()
                     && service
+                        .form
                         .current_draft(cx)
                         .configuration()
                         .ok()
@@ -754,7 +683,7 @@ impl Desktop {
             if self.stage_setup_service(purpose, window, cx).is_none() {
                 return false;
             }
-            let id = self.onboarding.service(purpose).draft.id.clone();
+            let id = self.onboarding.service(purpose).form.draft.id.clone();
             match self
                 .preferences
                 .publish_service(&id, BindingScope::Defaults)
@@ -891,12 +820,12 @@ impl Desktop {
 
     fn leave_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for purpose in [ServicePurpose::Speech, ServicePurpose::Ai] {
-            self.onboarding.service(purpose).cancel();
-            self.onboarding.service_mut(purpose).models.invalidate();
-            let id = self.onboarding.service(purpose).draft.id.clone();
+            let service = self.onboarding.service_mut(purpose);
+            service.cancel();
+            service.form.models.invalidate();
+            service.form.clear_key(window, cx);
+            let id = service.form.draft.id.clone();
             let _ = self.preferences.discard_service_draft(&id);
-            self.onboarding.service(purpose).inputs[&InputField::Key]
-                .update(cx, |input, cx| input.set_value("", window, cx));
         }
         self.onboarding.active = false;
         self.onboarding.finish_failed = false;
@@ -1362,264 +1291,78 @@ impl Desktop {
             .into_any_element()
     }
 
-    /// 引导的 AI 服务类型切换：无密钥协议收起认证编辑，并按协议预填/替换固定地址。
-    fn setup_ai_kind_switched(
-        &mut self,
-        protocol: preferences::ServiceProtocol,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        {
-            let current = self.onboarding.ai.value(InputField::Address, cx);
-            let service = self.onboarding.service_mut(ServicePurpose::Ai);
-            // 派生名称（空或与旧地址主机一致）跟随新类型重新生成；手动命名保留
-            let previous_host = preferences::service_host(&current, service.draft.protocol);
-            if service.draft.name.trim().is_empty()
-                || Some(service.draft.name.trim()) == previous_host.as_deref()
-            {
-                service.draft.name.clear();
-            }
-            let kind_changed = service.draft.protocol != protocol;
-            service.draft.protocol = protocol;
-            service.evidence.clear();
-            service.errors.clear();
-            service.models.invalidate();
-            if kind_changed {
-                // 模型 ID 不跨服务类型携带；Codex 连接成功后由账号目录自动填充
-                service.draft.model.clear();
-                service.inputs[&InputField::Model].update(cx, |input, cx| {
-                    input.set_value("", window, cx);
-                });
-            }
-            if protocol.keyless() {
-                service.draft.authentication = Authentication::None;
-                service.inputs[&InputField::Key].update(cx, |input, cx| {
-                    input.set_value("", window, cx);
-                });
-            }
-        }
-        let codex_addresses = [
-            preferences::CODEX_ADDRESS,
-            course2md::provider::CODEX_RESPONSES_URL,
-        ];
-        let current = self.onboarding.ai.value(InputField::Address, cx);
-        let current = current.trim().trim_end_matches('/').to_string();
-        let is_codex_address = codex_addresses.contains(&current.as_str());
-        let next = match protocol {
-            preferences::ServiceProtocol::CodexResponses => Some(preferences::CODEX_ADDRESS),
-            preferences::ServiceProtocol::OllamaChat if current.is_empty() || is_codex_address => {
-                Some(preferences::OLLAMA_DEFAULT_ADDRESS)
-            }
-            // 离开 Codex 时清掉固定地址（非用户数据），其余输入保留
-            _ if is_codex_address => Some(""),
-            _ => None,
-        };
-        if let Some(next) = next {
-            let service = self.onboarding.service_mut(ServicePurpose::Ai);
-            // set_value 不触发 Change 事件，草稿在此同步
-            service.inputs[&InputField::Address].update(cx, |input, cx| {
-                input.set_value(next, window, cx);
-            });
-            service.draft.address = next.to_string();
-        }
-        if protocol == preferences::ServiceProtocol::CodexResponses {
-            self.codex_refresh_status(crate::codex_ui::CodexSurface::Onboarding, cx);
-        }
-        cx.notify();
-    }
-
-    /// codex_ui 的引导钩子：仅在 AI 步骤仍在编辑 Codex 服务时落目录/错误。
-    pub(super) fn onboarding_codex_needs_catalog(&self) -> bool {
-        if !self.onboarding.active {
-            return false;
-        }
-        let service = self.onboarding.service(ServicePurpose::Ai);
-        service.draft.protocol == preferences::ServiceProtocol::CodexResponses
-            && service.models.models().is_empty()
-            && !service.models.loading()
-    }
-    pub(super) fn onboarding_codex_models_loading(&mut self) -> bool {
-        if !self.onboarding.active {
-            return false;
-        }
-        let service = self.onboarding.service_mut(ServicePurpose::Ai);
-        if service.draft.protocol != preferences::ServiceProtocol::CodexResponses {
-            return false;
-        }
-        service.models.begin_external();
-        true
-    }
-    pub(super) fn onboarding_codex_models_failed(&mut self, message: String) {
-        let service = self.onboarding.service_mut(ServicePurpose::Ai);
-        if service.draft.protocol == preferences::ServiceProtocol::CodexResponses {
-            service
-                .models
-                .reject(crate::model_discovery::Error::Custom(message));
-        }
-    }
-    pub(super) fn onboarding_codex_catalog(
-        &mut self,
-        models: Vec<String>,
-        suggested: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.onboarding.active {
-            return;
-        }
-        let service = self.onboarding.service_mut(ServicePurpose::Ai);
-        if service.draft.protocol != preferences::ServiceProtocol::CodexResponses {
-            return;
-        }
-        service.models.prime(models);
-        let input = service.inputs[&InputField::Model].clone();
-        crate::codex_ui::autofill_input(self.window, input, suggested, cx);
-    }
-    pub(super) fn onboarding_codex_logged_out(&mut self) {
-        let service = self.onboarding.service_mut(ServicePurpose::Ai);
-        if service.draft.protocol == preferences::ServiceProtocol::CodexResponses {
-            service.models.invalidate();
-        }
-    }
-
-    fn fetch_setup_models(&mut self, purpose: ServicePurpose, cx: &mut Context<Self>) {
-        if self.onboarding.service(purpose).draft.protocol
-            == preferences::ServiceProtocol::CodexResponses
-        {
-            self.codex_refresh_models(crate::codex_ui::CodexSurface::Onboarding, cx);
-            return;
-        }
-        let service = self.onboarding.service(purpose);
-        let draft = service.current_draft(cx);
-        let typed_key = Secret::new(service.value(InputField::Key, cx));
-        let request = match crate::model_discovery::Request::from_draft(&draft, typed_key) {
-            Ok(request) => request,
-            Err(error) => {
-                self.onboarding.service_mut(purpose).models.reject(error);
-                cx.notify();
-                return;
-            }
-        };
-        let session = self.onboarding.session;
-        let ticket = self.onboarding.service_mut(purpose).models.begin(&request);
-        let vault = self.preferences.vault();
-        cx.spawn(async move |this, cx| {
-            let result = crate::model_discovery::discover(request, vault).await;
-            let _ = this.update(cx, |this, cx| {
-                if !this.onboarding.active || this.onboarding.session != session {
-                    return;
-                }
-                let service = this.onboarding.service(purpose);
-                let current = crate::model_discovery::RequestKey::from_draft(
-                    &service.current_draft(cx),
-                    &service.value(InputField::Key, cx),
-                )
-                .ok();
-                this.onboarding.service_mut(purpose).models.complete(
-                    ticket,
-                    current.as_ref(),
-                    result,
-                );
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
     fn setup_input_row(
         &self,
         purpose: ServicePurpose,
-        field: InputField,
+        field: FormField,
         label: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let owner = FormOwner::Setup(purpose);
         let service = self.onboarding.service(purpose);
+        let form = &service.form;
+        let busy = service.running.is_some() || service.pending_version.is_some();
         let id = format!("setup-{}-{field:?}", purpose as usize);
-        let input = text_input(&service.inputs[&field])
-            .w_full()
-            .aria_label(label)
-            .disabled(service.running.is_some() || service.pending_version.is_some());
-        let key = match field {
-            InputField::Address => "address",
-            InputField::Model => "model",
-            InputField::Key => "api_key",
-        };
-        let mut field_column = v_flex().w_full().min_w_0().gap_2();
-        if field == InputField::Key {
-            field_column = field_column.child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .gap_2()
-                    .items_center()
-                    .child(div().flex_1().min_w_0().child(input))
-                    .child(
-                        quiet(format!("setup-key-visibility-{}", purpose as usize))
-                            .mr(-crate::theme::QUIET_INSET)
-                            .icon(if service.show_key {
-                                icons::eye_off()
-                            } else {
-                                icons::eye()
-                            })
-                            .label(if service.show_key { "隐藏" } else { "显示" })
-                            .tooltip(if service.show_key {
-                                "隐藏密钥"
-                            } else {
-                                "显示密钥"
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                let service = this.onboarding.service_mut(purpose);
-                                service.show_key = !service.show_key;
-                                let masked = !service.show_key;
-                                service.inputs[&InputField::Key]
-                                    .update(cx, |input, cx| input.set_masked(masked, window, cx));
-                                cx.notify();
-                            })),
-                    ),
-            );
-            if service.draft.credential.is_some() {
-                field_column = field_column.child(
-                    supporting_info(
-                        format!("setup-kept-key-{}", purpose as usize),
-                        "已保存密钥，留空则保留",
-                    )
-                    .text_size(TEXT_AUX),
-                );
-            }
-        } else if field == InputField::Model {
-            field_column = field_column.child(crate::model_discovery::model_field(
+        let field_column = if field == FormField::Model {
+            v_flex().w_full().min_w_0().child(self.service_model_field(
+                owner,
                 if purpose == ServicePurpose::Ai {
                     "setup-ai-model"
                 } else {
                     "setup-speech-model"
                 },
-                &service.inputs[&field],
-                &service.models,
-                service.running.is_some() || service.pending_version.is_some(),
-                cx.listener(move |this, _, _, cx| this.fetch_setup_models(purpose, cx)),
+                busy,
                 cx,
-            ));
+            ))
         } else {
-            field_column = field_column.child(input);
-        }
-        field_column = field_column.children(
-            service
-                .errors
-                .iter()
-                .filter(|error| error.field == key)
-                .enumerate()
-                .map(|(index, error)| {
-                    settings_value(
-                        SharedString::from(format!("{id}-error-{index}")),
-                        error.message.clone(),
+            let input = text_input(form.input(field))
+                .w_full()
+                .aria_label(label)
+                .disabled(busy);
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .child(if field == FormField::Key {
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_2()
+                        .items_center()
+                        .child(div().flex_1().min_w_0().child(input))
+                        .child(self.service_key_visibility(
+                            owner,
+                            format!("setup-key-visibility-{}", purpose as usize),
+                            cx,
+                        ))
+                        .into_any_element()
+                } else {
+                    input.into_any_element()
+                })
+                .when(
+                    field == FormField::Key && form.draft.credential.is_some(),
+                    |column| {
+                        column.child(
+                            supporting_info(
+                                format!("setup-kept-key-{}", purpose as usize),
+                                "已保存密钥，留空则保留",
+                            )
+                            .text_size(TEXT_AUX),
+                        )
+                    },
+                )
+                .when_some(form.error(field), |column, error| {
+                    column.child(
+                        settings_value(SharedString::from(format!("{id}-error")), error.to_owned())
+                            .text_color(color(DANGER)),
                     )
-                    .text_color(color(DANGER))
-                }),
-        );
+                })
+        };
         let icon = match field {
-            InputField::Address => icons::link(),
-            InputField::Model => icons::storage(),
-            InputField::Key => icons::shield(),
+            FormField::Address => icons::link(),
+            FormField::Model => icons::storage(),
+            FormField::Key => icons::shield(),
+            FormField::Name => icons::edit(),
         };
         let row = stacked_field(SharedString::from(id.clone()), label, icon, field_column);
         crate::focus_scroll::RevealFocus::new(
@@ -1631,98 +1374,40 @@ impl Desktop {
     }
 
     fn setup_service_content(&self, purpose: ServicePurpose, cx: &mut Context<Self>) -> Div {
+        let owner = FormOwner::Setup(purpose);
         let service = self.onboarding.service(purpose);
+        let draft = &service.form.draft;
         let busy = service.running.is_some() || service.pending_version.is_some();
-        let mut body = v_flex().w_full().min_w_0().gap_4();
-        if purpose == ServicePurpose::Speech {
-            body = body.child(
-                self.setup_reveal(
-                    "setup-speech-protocol-reveal",
-                    stacked_field(
-                        "setup-speech-protocol-label",
-                        "接口类型",
-                        icons::cloud(),
-                        SingleChoiceGroup::new("setup-speech-protocol", "语音接口类型")
-                            .full_width()
-                            .options([("transcriptions", "语音转录"), ("chat", "音频聊天")])
-                            .icon("transcriptions", icons::mic())
-                            .icon("chat", icons::article())
-                            .selected(
-                                if service.draft.protocol
-                                    == preferences::ServiceProtocol::SpeechChat
-                                {
-                                    "chat"
-                                } else {
-                                    "transcriptions"
-                                },
-                            )
-                            .disabled(busy)
-                            .on_change(cx.listener(|this, value: &SharedString, _, cx| {
-                                this.onboarding.speech.draft.protocol = if value.as_ref() == "chat"
-                                {
-                                    preferences::ServiceProtocol::SpeechChat
-                                } else {
-                                    preferences::ServiceProtocol::SpeechTranscriptions
-                                };
-                                this.onboarding.speech.evidence.clear();
-                                this.onboarding.speech.models.invalidate();
-                                cx.notify();
-                            })),
-                    ),
+        let (label, choice_label) = if purpose == ServicePurpose::Speech {
+            ("接口类型", "语音接口类型")
+        } else {
+            ("服务类型", "AI 服务类型")
+        };
+        let mut body = v_flex().w_full().min_w_0().gap_4().child(
+            self.setup_reveal(
+                format!("setup-protocol-reveal-{}", purpose as usize),
+                stacked_field(
+                    format!("setup-protocol-label-{}", purpose as usize),
+                    label,
+                    icons::cloud(),
+                    self.service_protocol_choices(
+                        owner,
+                        SingleChoiceGroup::new(
+                            format!("setup-protocol-{}", purpose as usize),
+                            choice_label,
+                        )
+                        .full_width(),
+                        cx,
+                    )
+                    .disabled(busy),
                 ),
-            );
-        }
-        if purpose == ServicePurpose::Ai {
-            body = body.child(
-                self.setup_reveal(
-                    "setup-ai-kind-reveal",
-                    stacked_field(
-                        "setup-ai-kind-label",
-                        "服务类型",
-                        icons::cloud(),
-                        SingleChoiceGroup::new("setup-ai-kind", "AI 服务类型")
-                            .full_width()
-                            .options(
-                                [
-                                    preferences::ServiceProtocol::AiChat,
-                                    preferences::ServiceProtocol::OllamaChat,
-                                    preferences::ServiceProtocol::CodexResponses,
-                                ]
-                                .into_iter()
-                                .map(|candidate| (candidate.label(), candidate.ai_kind_label())),
-                            )
-                            .icon(preferences::ServiceProtocol::AiChat.label(), icons::cloud())
-                            .icon(
-                                preferences::ServiceProtocol::OllamaChat.label(),
-                                icons::server(),
-                            )
-                            .icon(
-                                preferences::ServiceProtocol::CodexResponses.label(),
-                                icons::sparkles(),
-                            )
-                            .selected(service.draft.protocol.label())
-                            .disabled(busy)
-                            .on_change(cx.listener(|this, value: &SharedString, window, cx| {
-                                let Some(protocol) = [
-                                    preferences::ServiceProtocol::AiChat,
-                                    preferences::ServiceProtocol::OllamaChat,
-                                    preferences::ServiceProtocol::CodexResponses,
-                                ]
-                                .into_iter()
-                                .find(|candidate| candidate.label() == value.as_ref()) else {
-                                    return;
-                                };
-                                this.setup_ai_kind_switched(protocol, window, cx)
-                            })),
-                    ),
-                ),
-            );
-        }
-        let codex = service.draft.protocol == preferences::ServiceProtocol::CodexResponses;
+            ),
+        );
+        let codex = draft.protocol == preferences::ServiceProtocol::CodexResponses;
         if !codex {
-            body = body.child(self.setup_input_row(purpose, InputField::Address, "服务地址", cx));
+            body = body.child(self.setup_input_row(purpose, FormField::Address, "服务地址", cx));
         }
-        if !service.draft.protocol.keyless() {
+        if !draft.protocol.keyless() {
             body = body.child(
                 self.setup_reveal(
                     format!("setup-auth-reveal-{}", purpose as usize),
@@ -1730,42 +1415,22 @@ impl Desktop {
                         format!("setup-auth-label-{}", purpose as usize),
                         "认证方式",
                         icons::shield(),
-                        SingleChoiceGroup::new(
-                            format!("setup-auth-{}", purpose as usize),
-                            "服务认证",
+                        self.service_auth_choices(
+                            owner,
+                            SingleChoiceGroup::new(
+                                format!("setup-auth-{}", purpose as usize),
+                                "服务认证",
+                            )
+                            .full_width(),
+                            cx,
                         )
-                        .full_width()
-                        .options([("key", "API Key"), ("none", "无需认证")])
-                        .icon("key", icons::shield())
-                        .icon("none", icons::web())
-                        .selected(if service.draft.authentication == Authentication::ApiKey {
-                            "key"
-                        } else {
-                            "none"
-                        })
-                        .disabled(busy)
-                        .on_change(cx.listener(
-                            move |this, value: &SharedString, _, cx| {
-                                let service = this.onboarding.service_mut(purpose);
-                                service.draft.authentication = if value.as_ref() == "none" {
-                                    Authentication::None
-                                } else {
-                                    Authentication::ApiKey
-                                };
-                                service.evidence.clear();
-                                service.errors.clear();
-                                service.models.invalidate();
-                                cx.notify();
-                            },
-                        )),
+                        .disabled(busy),
                     ),
                 ),
             );
-        }
-        if !service.draft.protocol.keyless()
-            && service.draft.authentication == Authentication::ApiKey
-        {
-            body = body.child(self.setup_input_row(purpose, InputField::Key, "API Key", cx));
+            if draft.authentication == Authentication::ApiKey {
+                body = body.child(self.setup_input_row(purpose, FormField::Key, "API Key", cx));
+            }
         }
         if codex {
             body = body.child(self.codex_account_section(
@@ -1774,7 +1439,7 @@ impl Desktop {
                 cx,
             ));
         }
-        body = body.child(self.setup_input_row(purpose, InputField::Model, "模型", cx));
+        body = body.child(self.setup_input_row(purpose, FormField::Model, "模型", cx));
         if purpose == ServicePurpose::Ai {
             let mut uses = h_flex().w_full().min_w_0().flex_wrap().gap_4();
             for (id, label, checked, icon) in [

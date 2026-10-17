@@ -173,10 +173,6 @@ impl Default for GenerationPreferences {
 }
 
 impl GenerationPreferences {
-    pub fn needs_ai(&self) -> bool {
-        self.ai_proofread || self.ai_summary
-    }
-
     pub fn select_provider(&mut self, provider: Option<AsrProvider>) {
         if provider == Some(AsrProvider::Api) {
             if self.options.provider != Some(AsrProvider::Api) {
@@ -2207,8 +2203,11 @@ mod tests {
             );
         }
         assert!(
-            normalize_endpoint("http://localhost:11434/v1/responses", ServiceProtocol::OllamaChat)
-                .is_err()
+            normalize_endpoint(
+                "http://localhost:11434/v1/responses",
+                ServiceProtocol::OllamaChat
+            )
+            .is_err()
         );
         // Codex：固定地址归一到 Responses 端点，幂等
         let endpoint = normalize_endpoint(CODEX_ADDRESS, ServiceProtocol::CodexResponses).unwrap();
@@ -2222,8 +2221,11 @@ mod tests {
                 .is_err()
         );
         assert!(
-            normalize_endpoint("https://example.test/v1/chat/completions", ServiceProtocol::CodexResponses)
-                .is_err()
+            normalize_endpoint(
+                "https://example.test/v1/chat/completions",
+                ServiceProtocol::CodexResponses
+            )
+            .is_err()
         );
     }
 
@@ -2324,6 +2326,24 @@ mod tests {
         assert!(!config.llm.enabled && config.llm.summarize && !config.llm.vision);
         assert_eq!(config.defaults.out, Some(PathBuf::from("/test-library")));
         assert!(config.llm.api_key.is_empty());
+    }
+
+    #[test]
+    fn protocol_choice_ids_are_the_saved_names() {
+        for protocol in ServiceProtocol::ALL {
+            assert_eq!(serde_json::to_value(protocol).unwrap(), protocol.id());
+            assert_eq!(ServiceProtocol::from_id(protocol.id()), Some(protocol));
+        }
+    }
+
+    #[test]
+    fn evidence_saved_before_http_status_recovers_it() {
+        let evidence: ServiceTestEvidence = serde_json::from_value(serde_json::json!({
+            "fingerprint": "f", "contract": "c", "tested_at": 1,
+            "outcome": "model_refused", "message": "m", "details": ["用途：x", "HTTP 429"]
+        }))
+        .unwrap();
+        assert_eq!(evidence.http_status, Some(429));
     }
 
     #[test]

@@ -6,6 +6,8 @@ mod generation_settings;
 pub(crate) mod model_diagnostics;
 #[path = "service_editor.rs"]
 mod service_editor;
+#[path = "service_form.rs"]
+pub(crate) mod service_form;
 use crate::credentials::Secret;
 use crate::preferences::{
     ApplicationPreferences, Authentication, BindingScope, GenerationPreferences, PreferenceGroup,
@@ -20,11 +22,11 @@ use gpui_component::{
     menu::{DropdownMenu, PopupMenuItem},
     switch::Switch,
 };
+use service_form::{FormField, FormOwner, ServiceForm};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-
 
 actions!(
     course2md_settings,
@@ -38,23 +40,17 @@ actions!(
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum EditField {
-    Name,
-    Address,
-    Model,
-    Key,
     LocalModel,
     Languages,
 }
 
 struct ServiceEditor {
-    draft: ServiceDraft,
-    models: crate::model_discovery::State,
+    form: ServiceForm,
     target: Option<String>,
     repair_task: Option<(String, Vec<String>)>,
     scroll: ScrollHandle,
     also_default: bool,
     return_focus: Option<FocusHandle>,
-    errors: Vec<preferences::FieldError>,
     status: Option<String>,
     test_kind: TestKind,
     test_running: Option<Arc<AtomicBool>>,
@@ -62,7 +58,6 @@ struct ServiceEditor {
     received_tests: BTreeMap<String, preferences::ServiceTestEvidence>,
     pending_binding: Option<ServiceVersion>,
     saved_configuration: Option<ServiceVersion>,
-    show_key: bool,
     test_details_open: bool,
     save_failed: bool,
     /// The settings category the inline editor was opened from (e.g. 生成笔记);
@@ -113,32 +108,19 @@ impl State {
             KeyBinding::new("home", FirstSettingsTab, Some("SettingsTabs")),
             KeyBinding::new("end", LastSettingsTab, Some("SettingsTabs")),
         ]);
-        let inputs: BTreeMap<_, _> = [
-            EditField::Name,
-            EditField::Address,
-            EditField::Model,
-            EditField::Key,
-            EditField::LocalModel,
-            EditField::Languages,
-        ]
-        .into_iter()
-        .map(|field| {
-            let placeholder = match field {
-                EditField::Address => "https://api.example.com/v1",
-                EditField::Model => "",
-                EditField::Languages => "按优先顺序填写语言代码，如 zh-Hans, en",
-                _ => "",
-            };
-            (
-                field,
-                cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .placeholder(placeholder)
-                        .masked(field == EditField::Key)
-                }),
-            )
-        })
-        .collect();
+        let inputs: BTreeMap<_, _> = [EditField::LocalModel, EditField::Languages]
+            .into_iter()
+            .map(|field| {
+                let placeholder = match field {
+                    EditField::Languages => "按优先顺序填写语言代码，如 zh-Hans, en",
+                    EditField::LocalModel => "",
+                };
+                (
+                    field,
+                    cx.new(|cx| InputState::new(window, cx).placeholder(placeholder)),
+                )
+            })
+            .collect();
         let mut subscriptions = Vec::new();
         for (field, input) in &inputs {
             let field = *field;
@@ -341,7 +323,12 @@ pub(super) fn settings_outlined_row(
             .max_w(px(520.))
             .min_w_0()
             .gap_2()
-            .child(outlined_field_label(id.clone(), label, TEXT_SETTINGS_AUX, control))
+            .child(outlined_field_label(
+                id.clone(),
+                label,
+                TEXT_SETTINGS_AUX,
+                control,
+            ))
             .when(!hint.is_empty(), |view| {
                 view.child(
                     text(SharedString::from(format!("{id:?}-hint")), hint)
@@ -381,9 +368,15 @@ pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, contr
 
 /// Compact outlined chips used for capabilities and license links in settings.
 pub(super) fn settings_chip<T: Styled>(element: T) -> T {
-    element.rounded(RADIUS_SMALL).h(rems(32. / 14.)).min_h(rems(32. / 14.))
-        .px(rems(8. / 14.)).border_1().border_color(color(HAIRLINE))
-        .bg(gpui::transparent_black()).font_weight(FontWeight::NORMAL)
+    element
+        .rounded(RADIUS_SMALL)
+        .h(rems(32. / 14.))
+        .min_h(rems(32. / 14.))
+        .px(rems(8. / 14.))
+        .border_1()
+        .border_color(color(HAIRLINE))
+        .bg(gpui::transparent_black())
+        .font_weight(FontWeight::NORMAL)
 }
 
 /// Status rows inside an existing card: label on the shared axis, value trailing.
@@ -509,7 +502,8 @@ pub(crate) fn account_card(
                 .gap_2()
                 .items_center()
                 .flex_wrap()
-                .flex_shrink_0().max_w_full()
+                .flex_shrink_0()
+                .max_w_full()
                 .children(actions),
         )
 }
@@ -569,15 +563,6 @@ pub(super) fn settings_value(
         .text_size(TEXT_SETTINGS_BODY)
         .text_color(color(INK))
 }
-fn service_protocol_label(protocol: ServiceProtocol) -> &'static str {
-    match protocol {
-        ServiceProtocol::SpeechTranscriptions => "语音转录",
-        ServiceProtocol::SpeechChat => "音频对话",
-        // AI 服务类型的唯一文案来源：ServiceProtocol::ai_kind_label
-        ai => ai.ai_kind_label(),
-    }
-}
-
 /// Settings categories in navigation order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
@@ -589,8 +574,13 @@ pub(crate) enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub(crate) const ALL: [Self; 5] =
-        [Self::Appearance, Self::Generation, Self::Services, Self::Storage, Self::Application];
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Appearance,
+        Self::Generation,
+        Self::Services,
+        Self::Storage,
+        Self::Application,
+    ];
 
     fn index(self) -> usize {
         self as usize
@@ -701,7 +691,11 @@ impl RenderOnce for SettingsGroup {
                     div()
                         .h(px(1.))
                         .mr(SETTING_ITEM_INSET)
-                        .ml(if self.resource_dividers && index + 1 < count { rems(76. / 14.) } else { SETTING_ITEM_INSET })
+                        .ml(if self.resource_dividers && index + 1 < count {
+                            rems(76. / 14.)
+                        } else {
+                            SETTING_ITEM_INSET
+                        })
                         .flex_shrink_0()
                         .bg(color(HAIRLINE)),
                 );
@@ -737,7 +731,8 @@ pub(crate) fn settings_card() -> Div {
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .bg(color(SURFACE)).text_size(TEXT_SETTINGS_BODY)
+        .bg(color(SURFACE))
+        .text_size(TEXT_SETTINGS_BODY)
         .rounded(SETTINGS_CARD_RADIUS)
         .overflow_hidden()
 }
@@ -851,11 +846,14 @@ impl Desktop {
         label: impl Into<SharedString>,
     ) -> SingleChoiceGroup {
         let (reveals, editor_scroll) = self.active_editor_scroll();
-        SingleChoiceGroup::new(id, label).settings_text().segmented().when(reveals, |group| {
-            group.reveal_in(
-                editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
-            )
-        })
+        SingleChoiceGroup::new(id, label)
+            .settings_text()
+            .segmented()
+            .when(reveals, |group| {
+                group.reveal_in(
+                    editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
+                )
+            })
     }
     fn setting_preference(
         &self,
@@ -869,82 +867,96 @@ impl Desktop {
             preference(Some(icon), label, hint, control),
         )
     }
-    fn setting_field(&self, field: EditField, label: &'static str, _cx: &App) -> Div {
-        self.setting_field_with_action(field, label, None)
+    fn setting_field(&self, field: EditField, label: &'static str) -> Div {
+        self.input_field(
+            field as usize,
+            &self.settings_ui.inputs[&field],
+            match field {
+                EditField::LocalModel => icons::storage(),
+                EditField::Languages => icons::subtitles(),
+            },
+            label,
+            None,
+            false,
+            false,
+            None,
+        )
     }
-    /// A field whose input carries a trailing quiet action on the same line
-    /// (the key's 显示/隐藏), as the onboarding key field does.
-    fn setting_field_with_action(
+    /// A service editor input with its field error and an optional trailing action.
+    fn service_field(
         &self,
-        field: EditField,
+        field: FormField,
         label: &'static str,
         action: Option<AnyElement>,
     ) -> Div {
-        let error = self
-            .settings_ui
-            .editor
-            .as_ref()
-            .and_then(|editor| {
-                editor.errors.iter().find(|error| {
-                    error.field
-                        == match field {
-                            EditField::Address => "address",
-                            EditField::Model => "model",
-                            EditField::Key => "api_key",
-                            _ => "",
-                        }
-                })
+        let Some(editor) = &self.settings_ui.editor else {
+            return div();
+        };
+        self.input_field(
+            8 + field as usize,
+            editor.form.input(field),
+            match field {
+                FormField::Name => icons::edit(),
+                FormField::Address => icons::cloud(),
+                FormField::Key => icons::shield(),
+                FormField::Model => icons::storage(),
+            },
+            label,
+            editor.form.error(field).map(str::to_owned),
+            editor.pending_binding.is_some(),
+            field == FormField::Key,
+            action,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn input_field(
+        &self,
+        index: usize,
+        input: &Entity<InputState>,
+        icon: Icon,
+        label: &'static str,
+        error: Option<String>,
+        readonly: bool,
+        password: bool,
+        action: Option<AnyElement>,
+    ) -> Div {
+        let input = text_input(input)
+            .settings_text()
+            .w_full()
+            .when(password, |input| {
+                input.content_type(InputContentType::Password)
             })
-            .map(|error| error.message.clone());
+            .aria_label(
+                error
+                    .as_ref()
+                    .map(|error| format!("{label}，{error}"))
+                    .unwrap_or_else(|| label.to_owned()),
+            )
+            .readonly(readonly)
+            .when(error.is_some(), |input| input.border_color(color(DANGER)));
         self.reveal_setting(
-            ("setting-field-reveal", field as usize),
+            ("setting-field-reveal", index),
             settings_field_row(
-                ("setting-field-label", field as usize),
-                match field {
-                    EditField::Name => icons::edit(),
-                    EditField::Address => icons::cloud(),
-                    EditField::Key => icons::shield(),
-                    EditField::Model | EditField::LocalModel => icons::storage(),
-                    EditField::Languages => icons::subtitles(),
-                },
+                ("setting-field-label", index),
+                icon,
                 label,
                 v_flex()
                     .w_full()
                     .gap_2()
-                    .child({
-                        let input = text_input(&self.settings_ui.inputs[&field]).settings_text()
+                    .child(match action {
+                        Some(action) => h_flex()
                             .w_full()
-                            .when(field == EditField::Key, |input| {
-                                input.content_type(InputContentType::Password)
-                            })
-                            .aria_label(
-                                error
-                                    .as_ref()
-                                    .map(|error| format!("{label}，{error}"))
-                                    .unwrap_or_else(|| label.to_owned()),
-                            )
-                            .readonly(
-                                self.settings_ui
-                                    .editor
-                                    .as_ref()
-                                    .is_some_and(|editor| editor.pending_binding.is_some()),
-                            )
-                            .when(error.is_some(), |input| input.border_color(color(DANGER)));
-                        match action {
-                            Some(action) => h_flex()
-                                .w_full()
-                                .min_w_0()
-                                .gap_2()
-                                .items_center()
-                                .child(div().flex_1().min_w_0().child(input))
-                                .child(action)
-                                .into_any_element(),
-                            None => input.into_any_element(),
-                        }
+                            .min_w_0()
+                            .gap_2()
+                            .items_center()
+                            .child(div().flex_1().min_w_0().child(input))
+                            .child(action)
+                            .into_any_element(),
+                        None => input.into_any_element(),
                     })
                     .when_some(error, |view, error| {
                         view.child(
-                            text(("setting-error", field as usize), error)
+                            text(("setting-error", index), error)
                                 .text_size(TEXT_SETTINGS_AUX)
                                 .text_color(color(DANGER)),
                         )
@@ -1044,7 +1056,12 @@ impl Desktop {
             *focus = focus.clone().tab_stop(index == self.settings_tab.index());
         }
     }
-    pub(crate) fn select_settings_tab(&mut self, tab: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_settings_tab(
+        &mut self,
+        tab: SettingsTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.settings_tab = tab;
         self.sync_settings_tab_stops();
         self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
@@ -1066,11 +1083,7 @@ impl Desktop {
         }
     }
 
-    fn settings_navigation(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn settings_navigation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let rail = is_compact(window);
         let mut navigation = v_flex()
             .id("settings-navigation")
@@ -1082,7 +1095,11 @@ impl Desktop {
                 this.select_settings_tab(this.settings_tab.offset(1), window, cx);
             }))
             .on_action(cx.listener(|this, _: &PreviousSettingsTab, window, cx| {
-                this.select_settings_tab(this.settings_tab.offset(SettingsTab::ALL.len() - 1), window, cx);
+                this.select_settings_tab(
+                    this.settings_tab.offset(SettingsTab::ALL.len() - 1),
+                    window,
+                    cx,
+                );
             }))
             .on_action(cx.listener(|this, _: &FirstSettingsTab, window, cx| {
                 this.select_settings_tab(SettingsTab::ALL[0], window, cx)
@@ -1098,7 +1115,7 @@ impl Desktop {
                 .items_center()
                 .justify_center()
                 .h(px(32.))
-                .w(px(if rail {56.} else {24.}))
+                .w(px(if rail { 56. } else { 24. }))
                 .rounded_full()
                 .when(selected && rail, |view| view.bg(color(SECONDARY_CONTAINER)))
                 .child(tab.icon().size(px(22.)));
@@ -1126,7 +1143,11 @@ impl Desktop {
                             .child(icon)
                             .child(
                                 div()
-                                    .text_size(if rail { theme::TEXT_AUX } else { theme::TEXT_BODY })
+                                    .text_size(if rail {
+                                        theme::TEXT_AUX
+                                    } else {
+                                        theme::TEXT_BODY
+                                    })
                                     .child(label),
                             ),
                     )
@@ -1152,8 +1173,12 @@ impl Desktop {
             .gap_3()
             .flex_shrink_0()
             .child(
-                quiet("settings-return").settings_text()
-                    .w(CONTROL_HEIGHT).min_w(CONTROL_HEIGHT).px_0().flex_shrink_0()
+                quiet("settings-return")
+                    .settings_text()
+                    .w(CONTROL_HEIGHT)
+                    .min_w(CONTROL_HEIGHT)
+                    .px_0()
+                    .flex_shrink_0()
                     .icon(icons::arrow_left())
                     .accessibility_label("返回")
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -1208,8 +1233,7 @@ impl Desktop {
                 PreferenceGroup::Services => SettingsTab::Services,
                 PreferenceGroup::Application => SettingsTab::Appearance,
             };
-            if let Some((message, true)) = self.settings_group_notice(group)
-            {
+            if let Some((message, true)) = self.settings_group_notice(group) {
                 panel = panel.child(
                     h_flex()
                         .w_full()
@@ -1236,7 +1260,8 @@ impl Desktop {
                             .text_size(TEXT_SETTINGS_AUX),
                         )
                         .child(
-                            control(("open-failed-settings-group", target.index())).settings_text()
+                            control(("open-failed-settings-group", target.index()))
+                                .settings_text()
                                 .icon(icons::settings())
                                 .label("查看设置")
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1290,7 +1315,11 @@ impl Desktop {
             });
         // Wide references reserve 56 px after the content; center that complete
         // box so the navigation and panel share the same left ruler.
-        let wide_trailing_space = if f32::from(window.viewport_size().width) >= 1200. { 56. } else { 0. };
+        let wide_trailing_space = if f32::from(window.viewport_size().width) >= 1200. {
+            56.
+        } else {
+            0.
+        };
         let body = div()
             .max_w(px(layout_width + wide_trailing_space))
             .pr(px(wide_trailing_space))
@@ -1360,13 +1389,20 @@ impl Desktop {
             // same list instead of a near-identical group of their own.
             if purpose == ServicePurpose::Ai {
                 empty = false;
-                section = section
-                    .child(setting_surface().py(rems(16. / 14.)).child(self.codex_account_section(
-                        crate::codex_ui::CodexSurface::Settings,
-                        false,
-                        cx,
-                    )))
-                    .child(setting_surface().py(rems(16. / 14.)).child(self.ollama_account_section(cx)));
+                section =
+                    section
+                        .child(setting_surface().py(rems(16. / 14.)).child(
+                            self.codex_account_section(
+                                crate::codex_ui::CodexSurface::Settings,
+                                false,
+                                cx,
+                            ),
+                        ))
+                        .child(
+                            setting_surface()
+                                .py(rems(16. / 14.))
+                                .child(self.ollama_account_section(cx)),
+                        );
             }
             for version in latest.values().filter(|version| {
                 version.config.protocol.purpose() == purpose
@@ -1395,17 +1431,18 @@ impl Desktop {
                 None
             };
             section = section.child(
-                setting_surface().when(purpose == ServicePurpose::Ai, |row| row.py(rems(9. / 14.))).child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .min_h(CONTROL_HEIGHT)
-                        .gap_4()
-                        .items_center()
-                        .flex_wrap()
-                        .when(purpose == ServicePurpose::Speech, |row| {
-                            row.child(settings_resource_icon(icons::mic()))
-                                .child(
+                setting_surface()
+                    .when(purpose == ServicePurpose::Ai, |row| row.py(rems(9. / 14.)))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .min_h(CONTROL_HEIGHT)
+                            .gap_4()
+                            .items_center()
+                            .flex_wrap()
+                            .when(purpose == ServicePurpose::Speech, |row| {
+                                row.child(settings_resource_icon(icons::mic())).child(
                                     v_flex()
                                         .flex_1()
                                         .min_w_0()
@@ -1433,22 +1470,24 @@ impl Desktop {
                                             .text_color(color(GRAY)),
                                         ),
                                 )
-                        })
-                        .child(
-                            (if purpose == ServicePurpose::Ai {
-                                quiet(("add-service", purpose as usize)).settings_text()
-                            } else {
-                                outline_pill(("add-service", purpose as usize)).settings_text()
                             })
-                            .icon(icons::plus())
-                            .label(add_label)
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    this.open_settings_service_editor(purpose, None, window, cx);
-                                },
-                            )),
-                        ),
-                ),
+                            .child(
+                                (if purpose == ServicePurpose::Ai {
+                                    quiet(("add-service", purpose as usize)).settings_text()
+                                } else {
+                                    outline_pill(("add-service", purpose as usize)).settings_text()
+                                })
+                                .icon(icons::plus())
+                                .label(add_label)
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.open_settings_service_editor(
+                                            purpose, None, window, cx,
+                                        );
+                                    },
+                                )),
+                            ),
+                    ),
             );
             view = view.child(section);
         }
@@ -1504,10 +1543,14 @@ impl Desktop {
             });
         let mut status_badges = Vec::new();
         if tests.is_empty() {
-            status_badges.push(badge(BadgeKind::Neutral).text_size(TEXT_SETTINGS_AUX).child(text(
-                SharedString::from(format!("saved-service-badge-{id}")),
-                "尚未测试",
-            )));
+            status_badges.push(
+                badge(BadgeKind::Neutral)
+                    .text_size(TEXT_SETTINGS_AUX)
+                    .child(text(
+                        SharedString::from(format!("saved-service-badge-{id}")),
+                        "尚未测试",
+                    )),
+            );
         }
         for (kind, evidence) in &tests {
             let (status_kind, outcome) = match evidence.outcome {
@@ -1562,7 +1605,8 @@ impl Desktop {
                         .whitespace_normal(),
                     )
                     .child(
-                        quiet(SharedString::from(format!("test-saved-service-{id}"))).settings_text()
+                        quiet(SharedString::from(format!("test-saved-service-{id}")))
+                            .settings_text()
                             .icon(icons::science())
                             .label("测试…")
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1575,7 +1619,8 @@ impl Desktop {
                             })),
                     )
                     .child(
-                        quiet(SharedString::from(format!("edit-saved-service-{id}"))).settings_text()
+                        quiet(SharedString::from(format!("edit-saved-service-{id}")))
+                            .settings_text()
                             .icon(icons::edit())
                             .label("编辑")
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1590,7 +1635,8 @@ impl Desktop {
                     .child(
                         quiet(SharedString::from(format!(
                             "delete-saved-service-{service_id}"
-                        ))).settings_text()
+                        )))
+                        .settings_text()
                         .icon(icons::delete())
                         .label("删除…")
                         .on_click(cx.listener(
@@ -1631,7 +1677,8 @@ impl Desktop {
                             .text_color(color(GRAY)),
                         )
                         .child(
-                            quiet(SharedString::from(format!("update-default-service-{id}"))).settings_text()
+                            quiet(SharedString::from(format!("update-default-service-{id}")))
+                                .settings_text()
                                 .icon(icons::check_circle())
                                 .label("用于以后生成…")
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1664,12 +1711,10 @@ impl Desktop {
     }
 
     fn setting_input_changed(&mut self, field: EditField, cx: &mut Context<Self>) {
-        if !self.settings_ui.initialized
-            && matches!(field, EditField::LocalModel | EditField::Languages)
-        {
+        if !self.settings_ui.initialized {
             return;
         }
-        if matches!(field, EditField::LocalModel | EditField::Languages) {
+        {
             let input = self.setting_value(field, cx);
             let mut next = self.generation_edit_base();
             let previous = if field == EditField::LocalModel {
@@ -1690,27 +1735,7 @@ impl Desktop {
                 next.subtitle_languages_draft = Some(input);
             }
             self.stage_generation_text(next, cx);
-            return;
         }
-        let input = self.setting_value(field, cx);
-        if let Some(editor) = &mut self.settings_ui.editor {
-            if matches!(field, EditField::Address | EditField::Key) {
-                editor.models.invalidate();
-            }
-            match field {
-                EditField::Name => editor.draft.name = input,
-                EditField::Address => editor.draft.address = input,
-                EditField::Model => editor.draft.model = input,
-                _ => {}
-            }
-            editor.errors.clear();
-            editor.saved_configuration = None;
-            if field != EditField::Name {
-                editor.evidence = None;
-            }
-            editor.status = None;
-        }
-        cx.notify();
     }
     fn save_prompt_draft(&mut self, cx: &mut Context<Self>) {
         if !self.settings_ui.initialized {
@@ -1790,12 +1815,9 @@ impl Desktop {
         if editor.pending_binding.is_some() || editor.saved_configuration.is_some() {
             return true;
         }
-        let mut draft = editor.draft.clone();
-        draft.name = self.setting_value(EditField::Name, cx);
-        draft.address = self.setting_value(EditField::Address, cx);
-        draft.model = self.setting_value(EditField::Model, cx);
+        let draft = editor.form.current_draft(cx);
         let key = include_key
-            .then(|| self.setting_value(EditField::Key, cx))
+            .then(|| editor.form.typed_key(cx))
             .filter(|key| !key.trim().is_empty());
         if key.is_none()
             && draft.revision == 0
@@ -1815,13 +1837,12 @@ impl Desktop {
         {
             Ok(draft) => {
                 if let Some(editor) = &mut self.settings_ui.editor {
-                    editor.draft = draft;
+                    editor.form.draft = draft;
                     editor.save_failed = false;
                     editor.status = None;
-                }
-                if include_key {
-                    self.settings_ui.inputs[&EditField::Key]
-                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    if include_key {
+                        editor.form.clear_key(window, cx);
+                    }
                 }
                 cx.notify();
                 true
@@ -1978,7 +1999,8 @@ impl Desktop {
             if let Some(detail) = detail {
                 let expanded = self.settings_ui.expanded_feedback.contains(&group);
                 view = view.child(
-                    control(("settings-feedback-details", group as usize)).settings_text()
+                    control(("settings-feedback-details", group as usize))
+                        .settings_text()
                         .icon(icons::info())
                         .ghost()
                         .self_start()
@@ -2017,7 +2039,8 @@ impl Desktop {
         }
         if self.preferences.is_blocked(group) {
             view = view.child(
-                control(("reset-settings-group", group as usize)).settings_text()
+                control(("reset-settings-group", group as usize))
+                    .settings_text()
                     .icon(icons::refresh())
                     .label("保留原文件并重置此组")
                     .self_start()
@@ -2057,8 +2080,9 @@ impl Desktop {
                                     .any(|l| l.root.canonicalize().ok() == path.canonicalize().ok())
                             });
                             if !duplicate
-                                && let Ok(identity) =
-                                    std::fs::read_to_string(path.join(crate::storage::LIBRARY_ID_FILE))
+                                && let Ok(identity) = std::fs::read_to_string(
+                                    path.join(crate::storage::LIBRARY_ID_FILE),
+                                )
                                 && let Some(existing) = this
                                     .workspace
                                     .as_ref()
@@ -2148,17 +2172,19 @@ impl Desktop {
                         )),
                 ))
                 .child(
-                    setting_surface().py(rems(10. / 14.)).child(settings_switch_row(
-                        "减少动态效果",
-                        "关闭过渡动画和进度条的流动效果",
-                        Switch::new("app-reduce-motion")
-                            .checked(self.preferences.application().desktop.reduce_motion)
-                            .on_click(cx.listener(|this, enabled, _, cx| {
-                                let mut next = this.application_edit_base();
-                                next.desktop.reduce_motion = *enabled;
-                                this.commit_application(next, cx);
-                            })),
-                    )),
+                    setting_surface()
+                        .py(rems(10. / 14.))
+                        .child(settings_switch_row(
+                            "减少动态效果",
+                            "关闭过渡动画和进度条的流动效果",
+                            Switch::new("app-reduce-motion")
+                                .checked(self.preferences.application().desktop.reduce_motion)
+                                .on_click(cx.listener(|this, enabled, _, cx| {
+                                    let mut next = this.application_edit_base();
+                                    next.desktop.reduce_motion = *enabled;
+                                    this.commit_application(next, cx);
+                                })),
+                        )),
                 ),
         )
     }
@@ -2194,7 +2220,8 @@ impl Desktop {
                                         ),
                                 )
                                 .child(
-                                    outline_pill("restart-onboarding").settings_text()
+                                    outline_pill("restart-onboarding")
+                                        .settings_text()
                                         .label("重新开始用户引导")
                                         .icon(icons::restart())
                                         .on_click(cx.listener(|this, _, window, cx| {
@@ -2309,7 +2336,8 @@ impl Desktop {
                                             ),
                                     )
                                     .child(
-                                        quiet("refresh-environment").settings_text()
+                                        quiet("refresh-environment")
+                                            .settings_text()
                                             .icon(icons::refresh())
                                             .label("重新检查")
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -2329,16 +2357,20 @@ impl Desktop {
                                             .iter()
                                             .filter(|(_, _, optional)| !optional)
                                             .map(|(label, _, _)| {
-                                                settings_chip(badge(BadgeKind::Neutral).text_size(TEXT_SETTINGS_AUX))
-                                                    .child(icons::check().size(px(14.)))
-                                                    .child(*label)
+                                                settings_chip(
+                                                    badge(BadgeKind::Neutral)
+                                                        .text_size(TEXT_SETTINGS_AUX),
+                                                )
+                                                .child(icons::check().size(px(14.)))
+                                                .child(*label)
                                             }),
                                     ),
                             ),
                     )
-                    .child(
-                        setting_surface().py(rems(9. / 14.)).children(toggle_details.take().map(|toggle| {
-                            quiet("toggle-diagnostics-details").settings_text()
+                    .child(setting_surface().py(rems(9. / 14.)).children(
+                        toggle_details.take().map(|toggle| {
+                            quiet("toggle-diagnostics-details")
+                                .settings_text()
                                 .w_full()
                                 .label("诊断详情")
                                 .child(div().flex_1())
@@ -2348,8 +2380,8 @@ impl Desktop {
                                     icons::chevron_right()
                                 })
                                 .on_click(toggle)
-                        })),
-                    );
+                        }),
+                    ));
             }
             for (index, (label, ready, optional)) in
                 capabilities.into_iter().enumerate().filter(|_| !all_ready)
@@ -2364,7 +2396,8 @@ impl Desktop {
                             BadgeKind::Success
                         } else {
                             BadgeKind::Warning
-                        }).text_size(TEXT_SETTINGS_AUX)
+                        })
+                        .text_size(TEXT_SETTINGS_AUX)
                         .child(if optional {
                             "当前未使用"
                         } else if ready {
@@ -2383,7 +2416,8 @@ impl Desktop {
                             "转换程序无法运行，重新安装应用后笔记仍会保留",
                         ))
                         .child(
-                            control("download-repair-app").settings_text()
+                            control("download-repair-app")
+                                .settings_text()
                                 .icon(icons::download())
                                 .label("下载安装包")
                                 .self_start()
@@ -2413,7 +2447,8 @@ impl Desktop {
                         .gap_2()
                         .flex_wrap()
                         .child(
-                            control("refresh-environment").settings_text()
+                            control("refresh-environment")
+                                .settings_text()
                                 .icon(icons::refresh())
                                 .label("重新检查环境")
                                 .loading(self.environment.is_none())
@@ -2423,7 +2458,8 @@ impl Desktop {
                                 ),
                         )
                         .child(
-                            quiet("toggle-diagnostics-details").settings_text()
+                            quiet("toggle-diagnostics-details")
+                                .settings_text()
                                 .icon(icons::info())
                                 .label(if open {
                                     "收起诊断详情"
@@ -2488,7 +2524,8 @@ impl Desktop {
                         .child(settings_value("install-media-tools-help", help))
                         .child(settings_value("install-media-tools-command", command))
                         .child(
-                            quiet("copy-media-install-command").settings_text()
+                            quiet("copy-media-install-command")
+                                .settings_text()
                                 .icon(icons::content_copy())
                                 .label("复制安装命令")
                                 .self_start()
@@ -2510,7 +2547,8 @@ impl Desktop {
             .child(checks.detail(crate::motion::disclosure(
                 "diagnostics-detail-content",
                 open,
-                details.px(SETTING_ITEM_INSET).pb(rems(16. / 14.)))))
+                details.px(SETTING_ITEM_INSET).pb(rems(16. / 14.)),
+            )))
             .child(self.model_diagnostics_panel(window, cx))
     }
     // Wrappers only while the other interface modules are being integrated.

@@ -54,7 +54,10 @@ impl TestKind {
                 ServiceProtocol::SpeechTranscriptions | ServiceProtocol::SpeechChat
             ),
             // Ollama 与 AiChat 同为 chat/completions 方言；Codex 由 test_codex_blocking 覆盖
-            _ => matches!(protocol, ServiceProtocol::AiChat | ServiceProtocol::OllamaChat),
+            _ => matches!(
+                protocol,
+                ServiceProtocol::AiChat | ServiceProtocol::OllamaChat
+            ),
         }
     }
 }
@@ -201,7 +204,6 @@ fn test_codex(
         Err(error) => {
             let failure = codex_failure(&error);
             evidence.http_status = failure.http_status;
-            evidence.outcome = failure.outcome;
             evidence.message = match failure.outcome {
                 TestOutcome::AuthenticationRefused => {
                     "Codex 登录已失效或尚未连接，请重新连接账号".into()
@@ -209,9 +211,10 @@ fn test_codex(
                 TestOutcome::OutcomeUnknown => UNKNOWN_RESULT.into(),
                 _ => "服务有回应但未通过检查，请确认模型支持此用途".into(),
             };
-            evidence.details.push(
-                format!("{error:#}").chars().take(240).collect::<String>(),
-            );
+            evidence.outcome = failure.outcome;
+            evidence
+                .details
+                .push(format!("{error:#}").chars().take(240).collect::<String>());
         }
     }
     evidence
@@ -298,14 +301,15 @@ impl Transport for HttpTransport {
             Err(ureq::Error::Transport(_)) => return Err(TransportFailure::Unknown),
         };
         let status = response.status();
-        let body = crate::bounded_http::read_bounded(response, MAX_RESPONSE).map_err(|error| {
-            match error {
-                crate::bounded_http::BoundedReadError::TooLarge => {
-                    TransportFailure::ResponseTooLarge(status)
-                }
-                crate::bounded_http::BoundedReadError::Network => TransportFailure::Unknown,
-            }
-        })?;
+        let body =
+            crate::bounded_http::read_bounded(response, MAX_RESPONSE).map_err(
+                |error| match error {
+                    crate::bounded_http::BoundedReadError::TooLarge => {
+                        TransportFailure::ResponseTooLarge(status)
+                    }
+                    crate::bounded_http::BoundedReadError::Network => TransportFailure::Unknown,
+                },
+            )?;
         Ok(HttpResponse { status, body })
     }
 }

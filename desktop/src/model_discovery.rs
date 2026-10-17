@@ -309,12 +309,13 @@ impl Transport for HttpTransport {
             Err(ureq::Error::Transport(_)) => return Err(Error::Network),
         };
         let status = response.status();
-        let body = crate::bounded_http::read_bounded(response, MAX_RESPONSE).map_err(|error| {
-            match error {
-                crate::bounded_http::BoundedReadError::TooLarge => Error::TooLarge,
-                crate::bounded_http::BoundedReadError::Network => Error::Network,
-            }
-        })?;
+        let body =
+            crate::bounded_http::read_bounded(response, MAX_RESPONSE).map_err(
+                |error| match error {
+                    crate::bounded_http::BoundedReadError::TooLarge => Error::TooLarge,
+                    crate::bounded_http::BoundedReadError::Network => Error::Network,
+                },
+            )?;
         Ok(Response { status, body })
     }
 }
@@ -399,17 +400,6 @@ fn parse_models(body: &[u8], authorization: Option<&Secret>) -> Result<Vec<Strin
 /// Shared settings/setup model control. The input remains editable in every
 /// discovery state; choosing a candidate emits its ordinary input-change event.
 pub fn model_field(
-    id: &'static str,
-    input: &gpui::Entity<gpui_component::input::InputState>,
-    state: &State,
-    disabled: bool,
-    on_fetch: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    cx: &mut gpui::App,
-) -> gpui::Div {
-    model_field_with_error(id, input, state, disabled, None, on_fetch, cx)
-}
-
-pub fn model_field_with_error(
     id: &'static str,
     input: &gpui::Entity<gpui_component::input::InputState>,
     state: &State,
@@ -670,11 +660,7 @@ mod tests {
         assert!(state.models().is_empty());
         state.reject(Error::Custom("fixture failure".into()));
         assert!(matches!(state.status(), Status::Failed(Error::Custom(_))));
-        assert_eq!(
-            state.models().len(),
-            0,
-            "失败状态不提供候选，仍可手动填写"
-        );
+        assert_eq!(state.models().len(), 0, "失败状态不提供候选，仍可手动填写");
         state.prime(vec!["gpt-fixture".into()]);
         state.invalidate();
         assert!(state.models().is_empty());

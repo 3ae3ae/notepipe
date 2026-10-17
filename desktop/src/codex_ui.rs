@@ -120,11 +120,7 @@ impl Desktop {
                 }
                 // 已连接的 Codex 界面没有目录时，顺接拉取账号目录（空模型输入自动填首个候选）
                 let needs_catalog = matches!(this.codex.status, Some(LoginStatus::Connected(_)))
-                    && match surface {
-                        CodexSurface::Editor => this.editor_codex_needs_catalog(),
-                        CodexSurface::Onboarding => this.onboarding_codex_needs_catalog(),
-                        CodexSurface::Settings => false,
-                    };
+                    && this.codex_form_needs_catalog(surface);
                 if needs_catalog {
                     this.codex_refresh_models(surface, cx);
                 }
@@ -217,22 +213,13 @@ impl Desktop {
     /// 用已保存的登录态重新拉取账号可用的模型目录。
     pub(crate) fn codex_refresh_models(&mut self, surface: CodexSurface, cx: &mut Context<Self>) {
         // 先让模型字段进入加载状态：即使随后被忙碌守卫拦下，点击也不是静默无响应
-        let armed = match surface {
-            CodexSurface::Editor => self.editor_codex_models_loading(),
-            CodexSurface::Onboarding => self.onboarding_codex_models_loading(),
-            // 设置页账号卡片没有模型输入，无目录可刷新
-            CodexSurface::Settings => false,
-        };
-        if !armed {
+        // 设置页账号卡片没有模型输入，无目录可刷新
+        if !self.codex_form_models_loading(surface) {
             return;
         }
         if self.codex.busy() {
             let message = "上一个 Codex 请求尚未完成".to_string();
-            match surface {
-                CodexSurface::Editor => self.editor_codex_models_failed(message),
-                CodexSurface::Onboarding => self.onboarding_codex_models_failed(message),
-                CodexSurface::Settings => {}
-            }
+            self.codex_form_models_failed(surface, message);
             cx.notify();
             return;
         }
@@ -259,13 +246,7 @@ impl Desktop {
                         } else {
                             format!("暂时无法获取 Codex 模型目录：{error:#}")
                         };
-                        match surface {
-                            CodexSurface::Editor => this.editor_codex_models_failed(message),
-                            CodexSurface::Onboarding => {
-                                this.onboarding_codex_models_failed(message)
-                            }
-                            CodexSurface::Settings => {}
-                        }
+                        this.codex_form_models_failed(surface, message);
                     }
                 }
                 cx.notify();
@@ -299,8 +280,7 @@ impl Desktop {
                             this.codex
                                 .inform("已退出 Codex 登录；默认 AI 服务已解除绑定".into());
                         }
-                        this.editor_codex_logged_out();
-                        this.onboarding_codex_logged_out();
+                        this.codex_forms_logged_out();
                     }
                     Err(error) => {
                         this.codex.fail(format!("退出登录尚未完成：{error:#}"));
@@ -348,11 +328,7 @@ impl Desktop {
     ) {
         let models: Vec<String> = catalog.into_iter().map(|(slug, _)| slug).collect();
         let suggested = models.first().cloned();
-        match surface {
-            CodexSurface::Editor => self.editor_codex_catalog(models, suggested, cx),
-            CodexSurface::Onboarding => self.onboarding_codex_catalog(models, suggested, cx),
-            CodexSurface::Settings => {}
-        }
+        self.codex_form_catalog(surface, models, suggested, cx);
     }
 
     /// 编辑器/引导共用的 Codex 账号区：状态、说明与登录动作。
