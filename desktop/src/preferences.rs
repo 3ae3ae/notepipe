@@ -1836,7 +1836,7 @@ fn preserve_original(root: &Path, source: &Path) -> Result<()> {
         .unwrap_or("settings");
     atomic_write_with_retry(
         &root
-            .join("recovery")
+            .with_extension("recovery")
             .join(format!("{}-{name}", new_id("original"))),
         &bytes,
     )
@@ -2119,7 +2119,7 @@ mod tests {
                 .iter()
                 .any(|issue| issue.kind == SettingsIssueKind::Recovered)
         );
-        let preserved = std::fs::read_dir(directory.path().join("recovery"))
+        let preserved = std::fs::read_dir(directory.path().with_extension("recovery"))
             .unwrap()
             .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
             .collect::<Vec<_>>();
@@ -2164,7 +2164,7 @@ mod tests {
         reopened.reset_group(PreferenceGroup::Generation).unwrap();
         assert!(!reopened.is_blocked(PreferenceGroup::Generation));
         assert!(
-            std::fs::read_dir(directory.path().join("recovery"))
+            std::fs::read_dir(directory.path().with_extension("recovery"))
                 .unwrap()
                 .count()
                 >= 1
