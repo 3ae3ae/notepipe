@@ -4,6 +4,25 @@ use super::model_diagnostics::{
     unsupported_model,
 };
 use super::*;
+
+const SUBTITLE_LANGUAGES: [(&str, &str); 5] = [
+    ("", "自动"),
+    ("zh-Hans", "简体中文"),
+    ("zh-Hant", "繁體中文"),
+    ("en", "英语"),
+    ("ja", "日语"),
+];
+
+fn subtitle_language_label(id: &str) -> &'static str {
+    match id {
+        "custom" => course2md::tr!("自定义优先级"),
+        id => SUBTITLE_LANGUAGES
+            .iter()
+            .find(|(language, _)| *language == id)
+            .map(|(_, label)| course2md::tr!(label))
+            .unwrap_or_else(|| course2md::tr!("自动")),
+    }
+}
 use course2md::config::{AsrProvider, local_models, model_label};
 
 impl Desktop {
@@ -74,53 +93,41 @@ impl Desktop {
                             .h(px(56.))
                             .rounded(RADIUS_SMALL)
                             .w_full()
-                            .label(match language {
-                                "zh-Hans" => course2md::tr!("简体中文"),
-                                "zh-Hant" => course2md::tr!("繁體中文"),
-                                "en" => course2md::tr!("英语"),
-                                "ja" => course2md::tr!("日语"),
-                                "custom" => course2md::tr!("自定义优先级"),
-                                _ => course2md::tr!("自动"),
-                            })
+                            .label(subtitle_language_label(language))
                             .child(div().flex_1())
                             .child(icons::chevron_down().size_4())
                             .dropdown_menu(move |menu, _, _| {
-                                [
-                                    ("", course2md::tr!("自动")),
-                                    ("zh-Hans", course2md::tr!("简体中文")),
-                                    ("zh-Hant", course2md::tr!("繁體中文")),
-                                    ("en", course2md::tr!("英语")),
-                                    ("ja", course2md::tr!("日语")),
-                                ]
-                                .into_iter()
-                                .fold(menu, |menu, (id, label)| {
-                                    let entity = entity.clone();
-                                    menu.item(
-                                        PopupMenuItem::new(label).checked(id == current).on_click(
-                                            move |_, window, cx| {
-                                                let _ = entity.update(cx, |this, cx| {
-                                                    let mut next = this.generation_edit_base();
-                                                    next.preferred_subtitle_languages =
-                                                        if id.is_empty() {
-                                                            Vec::new()
-                                                        } else {
-                                                            vec![id.to_owned()]
-                                                        };
-                                                    next.subtitle_languages_draft = None;
-                                                    if this.commit_generation(next, cx) {
-                                                        this.settings_ui.language_details_open =
-                                                            false;
-                                                        this.settings_ui.inputs
-                                                            [&EditField::Languages]
-                                                            .update(cx, |input, cx| {
-                                                                input.set_value(id, window, cx)
-                                                            });
-                                                    }
-                                                });
-                                            },
-                                        ),
-                                    )
-                                })
+                                SUBTITLE_LANGUAGES
+                                    .into_iter()
+                                    .map(|(id, label)| (id, course2md::tr!(label)))
+                                    .fold(menu, |menu, (id, label)| {
+                                        let entity = entity.clone();
+                                        menu.item(
+                                            PopupMenuItem::new(label)
+                                                .checked(id == current)
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        let mut next = this.generation_edit_base();
+                                                        next.preferred_subtitle_languages =
+                                                            if id.is_empty() {
+                                                                Vec::new()
+                                                            } else {
+                                                                vec![id.to_owned()]
+                                                            };
+                                                        next.subtitle_languages_draft = None;
+                                                        if this.commit_generation(next, cx) {
+                                                            this.settings_ui
+                                                                .language_details_open = false;
+                                                            this.settings_ui.inputs
+                                                                [&EditField::Languages]
+                                                                .update(cx, |input, cx| {
+                                                                    input.set_value(id, window, cx)
+                                                                });
+                                                        }
+                                                    });
+                                                }),
+                                        )
+                                    })
                             })
                     }))
                     .child(

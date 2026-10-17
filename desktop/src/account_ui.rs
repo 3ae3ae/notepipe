@@ -218,6 +218,27 @@ impl Desktop {
         self.account_summary(true, cx)
     }
 
+    /// The single detail source shared by the summary card and status text.
+    fn account_detail(&self) -> Option<String> {
+        if self.account.checking {
+            None
+        } else if self.account.logout_failed {
+            Some(course2md::tr!("退出登录尚未完成，原登录状态已保留").to_owned())
+        } else if self.account.status_error.is_some() {
+            self.account
+                .has_saved_login
+                .then(|| course2md::tr!("已保存登录信息").to_owned())
+        } else {
+            match &self.account.status {
+                Some(AccountStatus::Connected(profile)) if !profile.name.trim().is_empty() => {
+                    Some(profile.name.clone())
+                }
+                None if self.account.has_saved_login => Some(course2md::tr!("尚未验证").to_owned()),
+                _ => None,
+            }
+        }
+    }
+
     fn account_summary(&self, onboarding: bool, cx: &mut Context<Self>) -> Div {
         let saved = self.account.has_saved_login;
         let (kind, label) = if self.account.checking {
@@ -233,21 +254,7 @@ impl Desktop {
             }
         };
         // The badge carries the state; the line adds only what it does not say.
-        let detail = if self.account.checking {
-            None
-        } else if self.account.logout_failed {
-            Some(course2md::tr!("退出登录尚未完成，原登录状态已保留").to_owned())
-        } else if self.account.status_error.is_some() {
-            saved.then(|| course2md::tr!("已保存登录信息").to_owned())
-        } else {
-            match &self.account.status {
-                Some(AccountStatus::Connected(profile)) if !profile.name.trim().is_empty() => {
-                    Some(profile.name.clone())
-                }
-                None if saved => Some(course2md::tr!("尚未验证").to_owned()),
-                _ => None,
-            }
-        };
+        let detail = self.account_detail();
         let mut actions = Vec::new();
         if let Some(login) = self.account.login_action() {
             actions.push(
