@@ -673,7 +673,7 @@ mod tests {
             extractor: "local".into(),
             id: "source".into(),
         };
-        let manifest = smol::block_on(course2md::artifact::publish(
+        let manifest = course2md::artifact::publish_blocking(
             &target,
             &work,
             &meta,
@@ -681,7 +681,7 @@ mod tests {
             None,
             &[],
             Default::default(),
-        ))
+        )
         .unwrap();
         let preview = read_preview(Course {
             dir: target.version_dir(),
@@ -732,7 +732,7 @@ mod tests {
             extractor: "local".into(),
             id: "source".into(),
         };
-        smol::block_on(course2md::artifact::publish(
+        course2md::artifact::publish_blocking(
             &target,
             &work,
             &meta,
@@ -740,7 +740,7 @@ mod tests {
             None,
             &[],
             Default::default(),
-        ))
+        )
         .unwrap();
         let version = target.version_dir();
         // Tamper with the published records: the frame reference now escapes the note.

@@ -486,7 +486,7 @@ pub(crate) mod fixtures {
             extractor: "bilibili".into(),
             id: "fixture".into(),
         };
-        let manifest = smol::block_on(artifact::publish(
+        let manifest = artifact::publish_blocking(
             &target,
             &work,
             &meta,
@@ -494,7 +494,7 @@ pub(crate) mod fixtures {
             None,
             &[],
             outcomes,
-        ))
+        )
         .unwrap();
         Course {
             dir: target.version_dir(),

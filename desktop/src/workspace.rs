@@ -2794,7 +2794,7 @@ mod tests {
                 raw: None,
             }],
         }];
-        smol::block_on(artifact::publish(
+        artifact::publish_blocking(
             &target,
             &task.work_dir,
             &meta,
@@ -2802,7 +2802,7 @@ mod tests {
             None,
             formats,
             outcomes,
-        ))
+        )
         .unwrap();
         target.version_dir()
     }

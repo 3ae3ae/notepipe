@@ -370,6 +370,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 任务保存位置暂时不可用	任务保存位置暂时不可用	The task save location is temporarily unavailable	任務儲存位置暫時不可用	タスクの保存場所が一時的に利用できなくなりました
 任务保存位置记录缺失	任务保存位置记录缺失	The task save location record is missing	任務儲存位置記錄缺失	タスクの保存場所レコードがありません
 任务参数过大 / Task input exceeds 16 MiB	任务参数过大	Task input exceeds 16 MiB	任務引數過大	タスクパラメータが大きすぎます
+任务参数过大（上限 {} MiB） / Task input exceeds {} MiB	任务参数过大（上限 {} MiB）	Task input exceeds {} MiB	工作參數過大（上限 {} MiB）	タスク入力が {} MiB を超えています
 任务只能指定一种已选字幕内容 / Specify subtitle file or parsed events, not both	任务只能指定一种已选字幕内容	Specify subtitle file or parsed events, not both	任務只能指定一種已選字幕內容	タスクでは選択した字幕コンテンツを 1 つだけ指定できます
 任务尚未加入队列：{error:#}	任务尚未加入队列：{error:#}	Task has not been queued yet: {error:#}	任務尚未加入佇列：{error:#}	タスクはまだキューに登録されていません: {error:#}
 任务尚未加入队列：{}	任务尚未加入队列：{}	Task has not been queued yet: {}	任務尚未加入佇列：{}	タスクはまだキューに登録されていません: {}
@@ -594,6 +595,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 发送文字和截图 / Send text and slide images	发送文字和截图	Send text and slide images	傳送文字和截圖	テキストとスクリーンショットを送信する
 取消	取消	Cancel	取消	キャンセル
 取消任务	取消任务	Cancel task	取消任務	タスクをキャンセルする
+取消授权	取消授权	Cancel authorization	取消授權	認可をキャンセル
 取消清理	取消清理	Cancel cleanup	取消清理	クリーンアップをキャンセルする
 取消移动	取消移动	Cancel move	取消移動	移動をキャンセルする
 取消读取字幕	取消读取字幕	Cancel reading subtitles	取消讀取字幕	字幕の読み上げをキャンセルする
@@ -780,6 +782,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已发布笔记与任务身份不匹配，原文件已保留	已发布笔记与任务身份不匹配，原文件已保留	The published notes do not match the task identity, and the original file has been retained.	已釋出筆記與任務身份不匹配，原檔案已保留	公開されたノートはタスク ID と一致せず、元のファイルは保持されています。
 已取消	已取消	Cancelled	已取消	キャンセルしました
 已取消模型选择，未开始下载 / Model selection cancelled; download not started	已取消模型选择，未开始下载	Model selection cancelled; download not started	已取消模型選擇，未開始下載	モデルの選択がキャンセルされ、ダウンロードが開始されません
+已取消浏览器授权 / Browser authorization cancelled	已取消浏览器授权	Browser authorization cancelled	已取消瀏覽器授權	ブラウザ認可をキャンセルしました
 已取消清理	已取消清理	Cleanup cancelled	已取消清理	クリーンアップがキャンセルされました
 已取消登录。/ Login cancelled.	已取消登录。/ Login cancelled.	Login cancelled. /Login cancelled.	已取消登入。/ Login cancelled.	ログインがキャンセルされました。 /ログインがキャンセルされました。
 已取消登录，未保存配置。 / Login cancelled; no configuration saved.	已取消登录，未保存配置。	Login cancelled; no configuration saved.	已取消登入，未儲存配置。	ログインがキャンセルされ、設定は保存されませんでした。
@@ -1371,6 +1374,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 未找到 llama-server / llama-server not found. 安装 llama.cpp 并加入 PATH / Install llama.cpp and add it to PATH.	未找到 llama-server / llama-server not found. 安装 llama.cpp 并加入 PATH	Install llama.cpp and add it to PATH.	未找到 llama-server / llama-server not found. 安裝 llama.cpp 並加入 PATH	ラマサーバーが見つかりません / ラマサーバーが見つかりません。 llama.cppをインストールし、PATHに追加します。
 未找到 llama-server。请安装 llama.cpp 并加入 PATH	未找到 llama-server。请安装 llama.cpp 并加入 PATH	llama-server not found. Install llama.cpp and add it to PATH.	找不到 llama-server。請安裝 llama.cpp 並加入 PATH	ラマサーバーが見つかりません。 llama.cppをインストールしてPATHに追加してください
 未找到 uv 或 Python	未找到 uv 或 Python	uv or Python not found	未找到 uv 或 Python	UV または Python が見つかりません
+未找到下载的视频（期望 {} 或 {}） / Downloaded video missing (expected {} or {})	未找到下载的视频（期望 {} 或 {}）	Downloaded video missing (expected {} or {})	找不到下載的影片（預期 {} 或 {}）	ダウンロードした動画が見つかりません（{} または {} を想定）
 未找到匹配的笔记	未找到匹配的笔记	No matching notes	找不到符合的筆記	一致するノートはありません
 未找到字幕	未找到字幕	Subtitles not found	未找到字幕	字幕が見つかりません
 未找到字幕 / No subtitles found. 请选择已有字幕，或改用语音识别 / Select subtitles or use speech recognition.	未找到字幕 / No subtitles found. 请选择已有字幕，或改用语音识别	Select subtitles or use speech recognition.	未找到字幕 / No subtitles found. 請選擇已有字幕，或改用語音識別	字幕が見つかりませんでした。既存の字幕を選択するか、代わりに音声認識を使用してください。
@@ -1552,6 +1556,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 正在切换版本…	正在切换版本…	Switching versions...	正在切換版本…	バージョンを切り替えています...
 正在取消	正在取消	Canceling	正在取消	キャンセルする
 正在取消…	正在取消…	Canceling…	正在取消…	キャンセル中…
+正在取消浏览器授权…	正在取消浏览器授权…	Cancelling browser authorization…	正在取消瀏覽器授權…	ブラウザ認可をキャンセルしています…
 正在启动任务…	正在启动任务…	Starting task...	正在啟動任務…	タスクを開始中...
 正在处理	正在处理	Processing	正在處理	処理中
 正在处理内容，结束或停止后再重新定位	正在处理内容，结束或停止后再重新定位	Content is being processed, end or stop before repositioning	正在處理內容，結束或停止後再重新定位	コンテンツは処理中です。再配置する前に終了または停止します。
@@ -1824,6 +1829,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 第一段应纠正 have / book 的语法；第二段应保留水在零摄氏度结冰的原意	第一段应纠正 have / book 的语法；第二段应保留水在零摄氏度结冰的原意	The first paragraph should correct the grammar of have / book; the second paragraph should retain the original meaning of water freezing at zero degrees Celsius	第一段應糾正 have / book 的語法；第二段應保留水在零攝氏度結冰的原意	最初の段落では、have / book の文法を修正する必要があります。 2 番目の段落は、摂氏 0 度で水が凍るという本来の意味を保持する必要があります。
 等待 AI 服务返回结果	等待 AI 服务返回结果	Wait for the AI service to return results	等待 AI 服務返回結果	AI サービスが結果を返すまで待ちます
 等待 yt-dlp 结束失败	等待 yt-dlp 结束失败	Waiting for yt-dlp to finish failed	等待 yt-dlp 結束失敗	yt-dlp が完了するのを待機できませんでした
+等待 yt-dlp 结束失败 / Failed waiting for yt-dlp to exit	等待 yt-dlp 结束失败	Failed waiting for yt-dlp to exit	等待 yt-dlp 結束失敗	yt-dlp の終了待ちに失敗しました
 等待准备进度	等待准备进度	Waiting for preparation progress	等待準備進度	準備の進行を待っています
 等待响应	等待响应	Waiting for response	等待響應	応答を待っています
 等待处理	等待处理	Waiting for processing	等待處理	処理を待っています

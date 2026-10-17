@@ -400,6 +400,7 @@ impl Desktop {
             return false;
         }
         self.cancel_background_reads();
+        self.codex.cancel_authorization();
         self.closing = true;
         self.quit_deadline = Some(Instant::now() + Duration::from_secs(10));
         self.refresh_dispatch_controls(cx);

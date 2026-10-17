@@ -1995,7 +1995,7 @@ mod tests {
             extractor: "local".into(),
             id: "original-video".into(),
         };
-        smol::block_on(course2md::artifact::publish(
+        course2md::artifact::publish_blocking(
             &target,
             &work,
             &meta,
@@ -2003,7 +2003,7 @@ mod tests {
             None,
             &[],
             Default::default(),
-        ))
+        )
         .unwrap();
         std::fs::remove_dir_all(&work).unwrap();
         let old = old.canonicalize().unwrap();

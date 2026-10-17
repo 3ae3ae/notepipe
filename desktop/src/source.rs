@@ -260,7 +260,7 @@ fn command_output(name: &str, args: &[&str], cancel: &AtomicBool) -> Result<Comm
             return result;
         }
         let Some(delay) = course2md::fetch::bilibili_retry_delay(&message, retries) else {
-            return result.context(course2md::fetch::BILIBILI_412_HINT);
+            return result.context(course2md::fetch::BILIBILI_412_DESKTOP_HINT);
         };
         retries += 1;
         let retry_at = Instant::now() + delay;

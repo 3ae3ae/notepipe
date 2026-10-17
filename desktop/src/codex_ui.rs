@@ -41,6 +41,7 @@ pub(crate) struct CodexUi {
     /// 最近一次动作的可见结果；bool = 是否为失败（失败用危险色呈现）
     pub(crate) notice: Option<(String, bool)>,
     surface: Option<CodexSurface>,
+    authorize_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl CodexUi {
@@ -59,6 +60,12 @@ impl CodexUi {
     }
     pub(crate) fn busy(&self) -> bool {
         self.working.is_some()
+    }
+
+    pub(crate) fn cancel_authorization(&self) {
+        if let Some(cancel) = &self.authorize_cancel {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
     fn fail(&mut self, message: String) {
         self.notice = Some((message, true));
@@ -112,6 +119,7 @@ impl Desktop {
                     return;
                 }
                 this.codex.working = None;
+                this.codex.authorize_cancel = None;
                 match result {
                     Ok(status) => this.codex.status = Some(status),
                     Err(error) => this
@@ -142,10 +150,12 @@ impl Desktop {
 
     /// 浏览器 PKCE 授权：阻塞最长 180 秒并打开系统浏览器，必须离开 UI 线程。
     pub(crate) fn codex_authorize(&mut self, surface: CodexSurface, cx: &mut Context<Self>) {
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.codex.authorize_cancel = Some(cancel.clone());
         self.codex_login(
             surface,
             CodexWork::Authorizing,
-            course2md::login::codex::authorize_for_desktop,
+            move || course2md::login::codex::authorize_for_desktop(cancel),
             cx,
         );
     }
@@ -154,7 +164,9 @@ impl Desktop {
         &mut self,
         surface: CodexSurface,
         work: CodexWork,
-        action: fn() -> anyhow::Result<course2md::login::codex::DesktopCatalog>,
+        action: impl FnOnce() -> anyhow::Result<course2md::login::codex::DesktopCatalog>
+            + Send
+            + 'static,
         cx: &mut Context<Self>,
     ) {
         if self.codex.busy() {
@@ -172,6 +184,7 @@ impl Desktop {
                     return;
                 }
                 this.codex.working = None;
+                this.codex.authorize_cancel = None;
                 match result {
                     Ok(catalog) => {
                         this.codex.status = Some(LoginStatus::Connected("Codex".into()));
@@ -235,6 +248,7 @@ impl Desktop {
                     return;
                 }
                 this.codex.working = None;
+                this.codex.authorize_cancel = None;
                 match result {
                     Ok(catalog) => {
                         this.codex.notice = None;
@@ -273,6 +287,7 @@ impl Desktop {
                     return;
                 }
                 this.codex.working = None;
+                this.codex.authorize_cancel = None;
                 match result {
                     Ok(_) => {
                         this.codex.status = Some(LoginStatus::Disconnected);
@@ -379,6 +394,25 @@ impl Desktop {
             ));
         }
         lines.extend(notice.map(|(message, is_error)| ("notice", message, is_error)));
+        let mut actions = Vec::new();
+        if authorizing {
+            actions.push(
+                quiet(SharedString::from(format!("{id}-cancel-authorize")))
+                    .when(
+                        surface == CodexSurface::Settings,
+                        SettingsText::settings_text,
+                    )
+                    .icon(icons::close())
+                    .label(course2md::tr!("取消授权"))
+                    .disabled(disabled)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.codex.cancel_authorization();
+                        this.codex.inform(course2md::tr!("正在取消浏览器授权…").into());
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
         crate::settings_ui::AccountCard {
             id,
             icon: icons::sparkles(),
@@ -388,7 +422,9 @@ impl Desktop {
             busy,
             lines,
             actions: if !connected {
-                vec![
+                {
+                    let mut buttons = actions;
+                    buttons.push(
                     quiet(SharedString::from(format!("{id}-authorize")))
                         .when(
                             surface == CodexSurface::Settings,
@@ -400,8 +436,8 @@ impl Desktop {
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.codex_authorize(surface, cx)),
                         )
-                        .into_any_element(),
-                    tonal_pill(SharedString::from(format!("{id}-import")), cx)
+                        .into_any_element());
+                    buttons.push(tonal_pill(SharedString::from(format!("{id}-import")), cx)
                         .when(
                             surface == CodexSurface::Settings,
                             SettingsText::settings_text,
@@ -414,8 +450,9 @@ impl Desktop {
                         })
                         .disabled(disabled || busy)
                         .on_click(cx.listener(move |this, _, _, cx| this.codex_import(surface, cx)))
-                        .into_any_element(),
-                ]
+                        .into_any_element());
+                    buttons
+                }
             } else {
                 // 与 Bilibili 账号同序：重新检查在前、退出登录在后
                 vec![

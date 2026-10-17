@@ -431,7 +431,7 @@ fn exchange_code(code: &str, verifier: &str, port: u16) -> Result<CodexTokens> {
 }
 
 /// 浏览器授权全流程：本地回调服务器 + PKCE + 令牌交换。
-fn browser_authorization() -> Result<CodexTokens> {
+fn browser_authorization(cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<CodexTokens> {
     use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
 
@@ -457,6 +457,11 @@ fn browser_authorization() -> Result<CodexTokens> {
 
     let deadline = std::time::Instant::now() + CALLBACK_TIMEOUT;
     let code = loop {
+        if cancel.is_some_and(|cancel| cancel.load(std::sync::atomic::Ordering::Relaxed)) {
+            bail!(crate::tr!(
+                "已取消浏览器授权 / Browser authorization cancelled"
+            ));
+        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 stream.set_nonblocking(false)?;
@@ -525,8 +530,10 @@ pub fn import_for_desktop() -> Result<DesktopCatalog> {
 
 /// 桌面端使用：浏览器 PKCE 授权（无 codex CLI 时），成功后保存并返回模型目录。
 /// 会打开系统浏览器并阻塞等待回调（最长 180 秒）；须在非 UI 线程调用。
-pub fn authorize_for_desktop() -> Result<DesktopCatalog> {
-    let tokens = browser_authorization()?;
+pub fn authorize_for_desktop(
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<DesktopCatalog> {
+    let tokens = browser_authorization(Some(&cancel))?;
     save_tokens(&tokens)?;
     Ok(desktop_catalog(&tokens))
 }
@@ -562,7 +569,7 @@ fn confirm_browser(prompt: &str) -> Result<CodexTokens> {
     if !browser {
         bail!(crate::tr!("已取消登录。/ Login cancelled."));
     }
-    browser_authorization()
+    browser_authorization(None)
 }
 
 /// `course2md --login codex`：导入 codex CLI 登录态（失败时可改用浏览器授权），选模型并启用 AI 校对。
