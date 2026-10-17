@@ -61,7 +61,7 @@ pub fn discover_for_desktop() -> Result<(String, Vec<String>)> {
     Ok((host, names))
 }
 
-/// `course2md --login ollama`：探测本机服务、选模型并启用 AI 润色。
+/// `course2md --login ollama`：探测本机服务、选模型并启用 AI 校对。
 pub(super) fn login() -> Result<()> {
     let host = host();
     let names = models(&host)?;
@@ -74,7 +74,7 @@ pub(super) fn login() -> Result<()> {
         names.into_iter().next().unwrap_or_default()
     } else if interactive {
         let pick = dialoguer::Select::new()
-            .with_prompt("选择用于润色的模型 / Choose a model for proofreading")
+            .with_prompt("选择用于校对的模型 / Choose a model for proofreading")
             .items(&names)
             .default(0)
             .interact_opt()?
@@ -99,7 +99,7 @@ pub(super) fn login() -> Result<()> {
         // 本地模型多数不支持图片输入；登录时回落纯文本，需要时可在 llm setup 重开
         cfg.llm.vision = false;
         println!(
-            "已关闭截图辅助润色（本地模型通常不支持图片输入）。/ Image-assisted proofreading disabled (local models usually do not accept images)."
+            "已关闭截图辅助校对（本地模型通常不支持图片输入）。/ Image-assisted proofreading disabled (local models usually do not accept images)."
         );
     }
     cfg.llm.enabled = true;
@@ -118,7 +118,7 @@ pub(super) fn login() -> Result<()> {
     Ok(())
 }
 
-/// `course2md --logout ollama`：当前 AI 润色使用 Ollama 时重置配置。
+/// `course2md --logout ollama`：当前 AI 校对使用 Ollama 时重置配置。
 pub(super) fn logout() -> Result<()> {
     let mut cfg = crate::settings::load()?;
     if cfg.llm.provider != LlmProvider::Ollama {
@@ -130,7 +130,7 @@ pub(super) fn logout() -> Result<()> {
     cfg.llm = crate::llm::LlmSettings::default();
     crate::settings::save(&cfg)?;
     println!(
-        "已清除 Ollama 登录配置并关闭 AI 润色。/ Ollama login removed and AI proofreading disabled."
+        "已清除 Ollama 登录配置并关闭 AI 校对。/ Ollama login removed and AI proofreading disabled."
     );
     Ok(())
 }

@@ -221,7 +221,7 @@ fn refresh(tokens: &CodexTokens) -> Result<CodexTokens> {
     Ok(refreshed)
 }
 
-/// 刷新互斥：润色 worker 并发取认证头，避免 thundering refresh（refresh token
+/// 刷新互斥：校对 worker 并发取认证头，避免 thundering refresh（refresh token
 /// 单次使用，并发刷新必然只有一个成功）。
 static REFRESH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -537,7 +537,7 @@ fn confirm_browser(prompt: &str) -> Result<CodexTokens> {
     browser_authorization()
 }
 
-/// `course2md --login codex`：导入 codex CLI 登录态（失败时可改用浏览器授权），选模型并启用 AI 润色。
+/// `course2md --login codex`：导入 codex CLI 登录态（失败时可改用浏览器授权），选模型并启用 AI 校对。
 pub(super) fn login() -> Result<()> {
     let interactive = interactive();
     let mut tokens = match import_from_codex_cli() {
@@ -605,7 +605,7 @@ pub(super) fn login() -> Result<()> {
     crate::llm::validate(&cfg.llm)?;
     crate::settings::save(&cfg)?;
     println!(
-        "已导入 Codex 登录态并启用 AI 润色（模型 {0}）。/ Codex login imported and AI proofreading enabled (model {0}).",
+        "已导入 Codex 登录态并启用 AI 校对（模型 {0}）。/ Codex login imported and AI proofreading enabled (model {0}).",
         cfg.llm.model
     );
     match crate::llm::test_connection(&cfg.llm) {
@@ -637,7 +637,7 @@ pub fn status() -> Result<LoginStatus> {
     })
 }
 
-/// `course2md --logout codex`：删除凭据；当前 AI 润色使用 Codex 时一并重置。
+/// `course2md --logout codex`：删除凭据；当前 AI 校对使用 Codex 时一并重置。
 pub(super) fn logout() -> Result<()> {
     if remove_credentials()? {
         println!("已清除 Codex 登录状态。/ Codex login removed.");
@@ -649,7 +649,7 @@ pub(super) fn logout() -> Result<()> {
         cfg.llm = crate::llm::LlmSettings::default();
         crate::settings::save(&cfg)?;
         println!(
-            "已关闭 AI 润色并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset."
+            "已关闭 AI 校对并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset."
         );
     }
     Ok(())

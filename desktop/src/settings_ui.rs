@@ -2019,7 +2019,7 @@ impl Desktop {
                             let name = path
                                 .file_name()
                                 .and_then(|v| v.to_str())
-                                .unwrap_or("课程库")
+                                .unwrap_or("笔记库")
                                 .to_owned();
                             let duplicate = this.workspace.as_ref().is_some_and(|w| {
                                 w.state
@@ -2037,7 +2037,7 @@ impl Desktop {
                                     .and_then(|workspace| workspace.state.library(identity.trim()))
                             {
                                 this.workspace_error = Some(format!(
-                                    "「{}」已登记，可在该课程库中“重新定位…”",
+                                    "「{}」已登记，可在该笔记库中“重新定位…”",
                                     existing.name
                                 ));
                                 cx.notify();
@@ -2046,13 +2046,13 @@ impl Desktop {
                             match this
                                 .workspace
                                 .as_mut()
-                                .ok_or_else(|| anyhow!("课程库记录暂时不可用"))
+                                .ok_or_else(|| anyhow!("笔记库记录暂时不可用"))
                                 .and_then(|w| w.register_library(path, name, false))
                             {
                                 Ok(_) => {
                                     this.message = Some(
                                         if duplicate {
-                                            "这个存储位置已经在课程库中"
+                                            "这个存储位置已经在笔记库中"
                                         } else {
                                             "已添加存储位置"
                                         }

@@ -1,10 +1,10 @@
-//! LLM 字幕润色（可选，默认关闭）。
+//! LLM 字幕校对（可选，默认关闭）。
 //!
 //! 配置文件：`~/.config/course2md/config.toml`（XDG；Windows 为 `%APPDATA%\course2md\config.toml`）。
 //! 支持 OpenAI 兼容 /chat/completions 端点；所有配置项均可被命令行覆盖。
 //! 关闭时每次任务结束打印开启提示（可用配置项或 `--no-llm-hint` 关闭）。
 //!
-//! 视觉润色（`vision = true`）：按 Section 分批，每个请求附该节幻灯片截图，
+//! 视觉校对（`vision = true`）：按 Section 分批，每个请求附该节幻灯片截图，
 //! 供模型校正技术词汇拼写；请求失败时该批保留原文，不改发纯文本请求。
 
 use crate::timeline::{Section, TranscriptEvent};
@@ -67,11 +67,11 @@ pub struct LlmSettings {
     pub prompt: Option<String>,
     /// 关闭「可开启 LLM」的结束提示
     pub disable_hint: bool,
-    /// 视觉润色：每个请求附对应幻灯片截图，辅助纠正技术词汇（模型须支持图片输入）
+    /// 视觉校对：每个请求附对应幻灯片截图，辅助纠正技术词汇（模型须支持图片输入）
     pub vision: bool,
-    /// 独立生成视频总结并写入笔记（不依赖校对 enabled）
+    /// 独立生成视频摘要并写入笔记（不依赖校对 enabled）
     pub summarize: bool,
-    /// 润色并发数（chunk 间相互独立；自建网关/代理可调高）
+    /// 校对并发数（chunk 间相互独立；自建网关/代理可调高）
     pub concurrency: usize,
 }
 
@@ -133,25 +133,25 @@ pub fn validate(s: &LlmSettings) -> Result<()> {
     Ok(())
 }
 
-/// LLM 润色默认并发数（chunk 间相互独立；可经 [llm] concurrency 调整）。
+/// LLM 校对默认并发数（chunk 间相互独立；可经 [llm] concurrency 调整）。
 const DEFAULT_CONCURRENCY: usize = 8;
-/// 润色并发上限：再高对端点限流没有好处，只放大 429 风险
+/// 校对并发上限：再高对端点限流没有好处，只放大 429 风险
 const MAX_CONCURRENCY: usize = 16;
 /// LLM 请求最大尝试次数（1 次原始 + 重试）。
 const MAX_ATTEMPTS: u32 = 3;
 
-/// 润色/总结共享的 HTTP agent：整个任务复用同一连接池（clone 共享底层池）。
+/// 校对/摘要共享的 HTTP agent：整个任务复用同一连接池（clone 共享底层池）。
 pub(crate) fn chat_agent() -> ureq::Agent {
     crate::runtime::http_agent(Duration::from_secs(300))
 }
 
-/// chat/completions 公共参数：温度固定 0（校对/总结都要求确定性输出）。
+/// chat/completions 公共参数：温度固定 0（校对/摘要都要求确定性输出）。
 pub(crate) const CHAT_TEMPERATURE: f64 = 0.0;
-/// 单次请求输出 token 上限（润色与总结共用）。
+/// 单次请求输出 token 上限（校对与摘要共用）。
 pub(crate) const CHAT_MAX_TOKENS: u32 = 16384;
 
 /// 构造标准 chat/completions 请求体（temperature=0、json_object 结构化输出）。
-/// 润色与总结共用，避免两处各自拼 body 参数漂移；
+/// 校对与摘要共用，避免两处各自拼 body 参数漂移；
 /// `user` 传 &str 为纯文本消息，传 `serde_json::Value::Array` 为多模态内容块。
 pub(crate) fn chat_body(
     model: &str,
@@ -181,7 +181,7 @@ pub struct PolishReport {
     pub note: Option<String>,
 }
 
-/// 润色 worker 池骨架（非 vision / vision 两条路径原先各复制一份，此处置于一处）：
+/// 校对 worker 池骨架（非 vision / vision 两条路径原先各复制一份，此处置于一处）：
 /// `Mutex` 队列 + `std::thread::scope` workers 抢占式取活，每轮先 `check_control`，
 /// 中止（或锁中毒）记 `aborted` 并由首个错误胜出；队列取走即计进度，
 /// `work` 返回本批成功条数（0 = 该批被跳过/失败，与成功语义一致地不累加）。
@@ -225,8 +225,8 @@ fn run_pool<T: Send>(
     Ok(())
 }
 
-/// 对已合并的 Section 做润色（在 merge 之后调用；配置已由调用方校验）。
-/// - 失败批次保留原文（润色失败不阻断转换），不拆分、不改发另一种请求
+/// 对已合并的 Section 做校对（在 merge 之后调用；配置已由调用方校验）。
+/// - 失败批次保留原文（校对失败不阻断转换），不拆分、不改发另一种请求
 /// - vision=true 时附对应截图（每节只读盘 + base64 一次）；截图不可用的节保留原文
 /// - 模型对纯语气词条目返回空 text → 该条被删除
 /// - 队列单元为 chunk：纯文本跨 Section 展平后每 BATCH 条一批；vision 按节分批
@@ -286,7 +286,7 @@ pub fn polish_sections_report(
         &|(image, mut chunk)| polish_chunk(&agent, s, &mut chunk, image, &warned, &first_error),
     )?;
     pb.finish();
-    // 删除「成功润色为空串」的纯语气词条目（全部 chunk 完成后统一过滤）
+    // 删除「成功校对为空串」的纯语气词条目（全部 chunk 完成后统一过滤）
     for sec in sections.iter_mut() {
         sec.speech.retain(|e| !e.text.trim().is_empty());
     }
@@ -375,7 +375,7 @@ fn brief(msg: &str) -> String {
     s
 }
 
-/// 润色结果的 id 集恰好覆盖 0..expected（无缺失/重复/越界）。
+/// 校对结果的 id 集恰好覆盖 0..expected（无缺失/重复/越界）。
 fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
     let ids: std::collections::HashSet<usize> = polished.iter().map(|(id, _)| *id).collect();
     polished.len() == expected && ids.len() == expected && (0..expected).all(|id| ids.contains(&id))
@@ -404,7 +404,7 @@ fn warn_once(warned: &std::sync::atomic::AtomicBool, msg: &str) {
     }
 }
 
-/// 发一批（id, 文本）给 LLM，返回润色后的 (id, 文本) 列表。
+/// 发一批（id, 文本）给 LLM，返回校对后的 (id, 文本) 列表。
 /// `image_b64` 提供时在用户消息中附上该幻灯片截图（OpenAI 兼容 image_url 协议）。
 /// 失败由持久请求账本记录；此层保留完整原文。
 fn chat(
@@ -452,7 +452,7 @@ fn build_chat_body(
         ""
     };
     let system = format!(
-        "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":润色后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{vision_note}",
+        "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{vision_note}",
         effective_prompt(s)
     );
     let mut content = vec![serde_json::json!({
@@ -473,7 +473,7 @@ fn build_chat_body(
     ))
 }
 
-/// 从模型输出提取润色结果。约定契约为顶层对象 {"segments":[{"id":n,"text":"..."}]}
+/// 从模型输出提取校对结果。约定契约为顶层对象 {"segments":[{"id":n,"text":"..."}]}
 /// （与 response_format=json_object 一致）；兼容模型无视指令仍返回
 /// 顶层数组的情况。两者都容忍代码围栏、前后杂文与尾逗号。
 pub fn parse_segments(content: &str) -> Option<Vec<(usize, String)>> {
@@ -626,7 +626,7 @@ fn lenient_scan(s: &str) -> Option<Vec<(usize, String)>> {
     if out.is_empty() { None } else { Some(out) }
 }
 
-/// 发 chat/completions 请求并返回 message.content（润色与总结共用）。
+/// 发 chat/completions 请求并返回 message.content（校对与摘要共用）。
 /// `validate` 校验正文结构，在请求账本里执行：无效响应记为失败，不会被当成已完成复用。
 ///
 /// 兼容性降级：部分 OpenAI 兼容端点不支持 `response_format: json_object`，
@@ -883,7 +883,7 @@ pub fn setup_interactive(
     // 视觉能力仅交互式终端询问（脚本化调用全部传参时不阻塞）
     if interactive {
         cfg.llm.vision = dialoguer::Select::new()
-            .with_prompt("润色时附上幻灯片截图？需支持图片的模型。 / Attach slide images when polishing? Requires an image-capable model.")
+            .with_prompt("校对时附上幻灯片截图？需支持图片的模型。 / Attach slide images when polishing? Requires an image-capable model.")
             .items([
                 "仅发送文字 / Send text only",
                 "发送文字和截图 / Send text and slide images",
@@ -913,7 +913,7 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
         "配置文件 / Configuration: {}",
         crate::settings::config_path().display()
     );
-    println!("  LLM 润色 / Transcript polish: {}", state(s.enabled));
+    println!("  LLM 校对 / Transcript polish: {}", state(s.enabled));
     println!("  服务类型 / Provider: {}", s.provider);
     println!(
         "  服务地址 / Base URL: {}",
@@ -936,14 +936,14 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
         if s.model.is_empty() { "—" } else { &s.model }
     );
     println!(
-        "  截图辅助润色 / Slide-assisted polish: {}",
+        "  截图辅助校对 / Slide-assisted polish: {}",
         state(s.vision)
     );
-    println!("  自动总结 / Automatic summary: {}", state(s.summarize));
+    println!("  自动摘要 / Automatic summary: {}", state(s.summarize));
     println!("  并发请求 / Concurrent requests: {}", s.concurrency);
     println!("  使用提示 / Usage hint: {}", state(!s.disable_hint));
     if !s.enabled {
-        println!("开启润色 / Enable transcript polish: course2md llm setup");
+        println!("开启校对 / Enable transcript polish: course2md llm setup");
     }
 }
 

@@ -1108,7 +1108,7 @@ fn validate_record_location(task: &TaskRecord, libraries: &[LibraryLocation]) ->
     ensure!(
         library.root.is_absolute()
             && task.work_dir == library.root.join(".course2md/work").join(&task.id),
-        "任务工作目录与记录的课程库不匹配"
+        "任务工作目录与记录的笔记库不匹配"
     );
     ensure!(
         !task.plan.source_id.trim().is_empty() && !task.plan.title.trim().is_empty(),
@@ -1174,7 +1174,7 @@ pub fn check_library(location: &LibraryLocation) -> Result<()> {
         .context("保存位置需要重新关联")?;
     ensure!(
         identity.trim() == location.id,
-        "保存位置对应其他课程库，请恢复原位置或在存储设置中重新登记"
+        "保存位置对应其他笔记库，请恢复原位置或在存储设置中重新登记"
     );
     Ok(())
 }
@@ -1583,7 +1583,7 @@ impl Workspace {
             let root_path = library.root.canonicalize()?;
             ensure!(
                 work_root.canonicalize()?.starts_with(&root_path),
-                "任务材料位置越出课程库，原记录已保留"
+                "任务材料位置越出笔记库，原记录已保留"
             );
             for entry in std::fs::read_dir(&work_root)? {
                 let entry = entry?;
@@ -1934,7 +1934,7 @@ impl Workspace {
         name: String,
         make_default: bool,
     ) -> Result<String> {
-        ensure!(root.is_dir(), "请选择已有文件夹；新建课程库请使用新建操作");
+        ensure!(root.is_dir(), "请选择已有文件夹；新建笔记库请使用新建操作");
         let canonical = root.canonicalize()?;
         if let Some(existing) = self
             .state
@@ -1957,10 +1957,10 @@ impl Workspace {
         let id = if identity.is_file() {
             let id = std::fs::read_to_string(&identity)?.trim().to_owned();
             if id.is_empty() {
-                bail!("课程库身份记录为空，请检查所选位置");
+                bail!("笔记库身份记录为空，请检查所选位置");
             }
             if self.state.libraries.iter().any(|l| l.id == id) {
-                bail!("这个库已经登记在另一个位置，请使用移动课程库操作");
+                bail!("这个库已经登记在另一个位置，请使用移动笔记库操作");
             }
             id
         } else {

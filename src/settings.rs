@@ -251,20 +251,20 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 #model = "{API_MODEL}"
 
 [llm]
-# 可选 AI 润色；运行 course2md llm setup 配置 / Optional AI proofreading; configure with course2md llm setup
+# 可选 AI 校对；运行 course2md llm setup 配置 / Optional AI proofreading; configure with course2md llm setup
 enabled = false
 #base_url = "https://api.deepseek.com/v1"
 #api_key = ""
 #model = "deepseek-chat"
-# 自定义润色要求 / Custom proofreading instructions
+# 自定义校对要求 / Custom proofreading instructions
 #prompt = ""
 # 隐藏完成后的提示 / Hide the completion tip
 #disable_hint = false
-# 附截图辅助润色，需要视觉模型 / Attach slides; requires an image-capable model
+# 附截图辅助校对，需要视觉模型 / Attach slides; requires an image-capable model
 #vision = false
 # 并发请求数 / Concurrent requests
 #concurrency = 8
-# 在笔记中加入 AI 总结，需要 enabled = true / Add AI summaries; requires enabled = true
+# 在笔记中加入 AI 摘要，需要 enabled = true / Add AI summaries; requires enabled = true
 #summarize = false
 "#;
 

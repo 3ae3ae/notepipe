@@ -423,7 +423,7 @@ pub(crate) fn task_requires_service_repair(task: &TaskRecord) -> bool {
     task_service_repair_reason(task).is_some()
 }
 
-/// 组件 key → 补做按钮文案的唯一来源（任务卡/课程库/阅读页共用，防止多处漂移）。
+/// 组件 key → 补做按钮文案的唯一来源（任务卡/笔记库/阅读页共用，防止多处漂移）。
 pub(crate) fn retry_component_label(component: &str) -> &'static str {
     match Component::parse(component) {
         Some(Component::Screenshots) => "补生成截图",
@@ -893,7 +893,7 @@ impl Desktop {
         self.active_task.as_deref() == Some(id) && self.job.is_some()
     }
 
-    /// 任务计划对应的课程库保存位置；记录可能引用了已移除的库。
+    /// 任务计划对应的笔记库保存位置；记录可能引用了已移除的库。
     pub(crate) fn task_library(&self, task: &TaskRecord) -> Option<&workspace::LibraryLocation> {
         self.workspace
             .as_ref()
@@ -1040,7 +1040,7 @@ impl Desktop {
         Ok(environment)
     }
 
-    /// 保存位置仍在课程库中且当前可写；两个计划构造函数同一组校验与错误文案。
+    /// 保存位置仍在笔记库中且当前可写；两个计划构造函数同一组校验与错误文案。
     fn ensure_plan_storage(
         &self,
         workspace: &workspace::Workspace,
@@ -1050,7 +1050,7 @@ impl Desktop {
         let library = workspace
             .state
             .library(&draft.library_id)
-            .context("保存位置已不在课程库中，请选择保存位置")?;
+            .context("保存位置已不在笔记库中，请选择保存位置")?;
         validate_plan_storage(
             validation,
             library,
@@ -1450,7 +1450,7 @@ impl Desktop {
         workspace::check_library(location)?;
         ensure!(
             task.work_dir == location.root.join(".course2md/work").join(&task.id),
-            "任务位置与课程库记录不匹配，请先恢复存储位置"
+            "任务位置与笔记库记录不匹配，请先恢复存储位置"
         );
         let refs = ServiceRefs {
             asr: task.plan.asr_service.clone(),

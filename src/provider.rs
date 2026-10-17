@@ -15,7 +15,7 @@ pub const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 
 /// 该后端对 text.format=json_object 有前置检查：input 消息须含小写 "json"
-///（大小写敏感；instructions 中出现不算数）。润色的首个文本块是纯 segments
+///（大小写敏感；instructions 中出现不算数）。校对的首个文本块是纯 segments
 /// JSON，不能污染，因此在末尾追加独立的约束块。
 fn ensure_json_marker(content: &mut Value) {
     let Some(parts) = content.as_array_mut() else {

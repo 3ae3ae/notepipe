@@ -380,7 +380,7 @@ pub async fn run(request: Request) -> Result<()> {
 pub fn relocate_work_bindings(root_old: &Path, root_new: &Path) -> Result<usize> {
     anyhow::ensure!(
         root_old.is_absolute() && root_new.is_absolute() && root_old != root_new,
-        "课程库迁移位置无效 / Invalid relocation roots"
+        "笔记库迁移位置无效 / Invalid relocation roots"
     );
     fn visit(root: &Path, current: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
         for entry in std::fs::read_dir(current)? {
@@ -391,7 +391,7 @@ pub fn relocate_work_bindings(root_old: &Path, root_new: &Path) -> Result<usize>
             let path = entry.path();
             if path.strip_prefix(root)?.components().count() > 64 {
                 anyhow::bail!(
-                    "课程库目录层级过深 / Library directory depth exceeds the safe limit"
+                    "笔记库目录层级过深 / Library directory depth exceeds the safe limit"
                 );
             }
             if entry.file_type()?.is_dir() {

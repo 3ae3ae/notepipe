@@ -16,9 +16,9 @@ pub struct FrameEvent {
 pub struct TranscriptEvent {
     pub start: f64,
     pub end: f64,
-    /// 展示文本（LLM 润色后的）；未润色时与 raw 相同
+    /// 展示文本（LLM 校对后的）；未校对时与 raw 相同
     pub text: String,
-    /// ASR 原始文本（provenance；润色后保留）
+    /// ASR 原始文本（provenance；校对后保留）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
 }

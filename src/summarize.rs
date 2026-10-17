@@ -1,6 +1,6 @@
-//! LLM 视频总结：基于带时间戳字幕生成 TL;DR / 核心要点 / 内容大纲。
+//! LLM 视频摘要：基于带时间戳字幕生成 TL;DR / 核心要点 / 内容大纲。
 //!
-//! 支持超长视频：字幕超过阈值时自动 map-reduce（分段总结 → 合并）。
+//! 支持超长视频：字幕超过阈值时自动 map-reduce（分段摘要 → 合并）。
 //! 幻觉防护：仅以字幕为输入、temperature=0、json_object 结构化输出、要点带时间戳可溯源。
 
 use crate::fetch::VideoMeta;
@@ -9,7 +9,7 @@ use crate::timeline::TranscriptEvent;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-/// 直接单次总结的最大字幕字符数。
+/// 直接单次摘要的最大字幕字符数。
 /// 依据：中文场景 1 字符 ≈ 1-2 token（Qwen/GPT 系分词），25_000 字符 ≈ 2.5-5 万
 /// token，加上 system/user prompt 与结构化输出，128K 上下文内仍留足余量；
 /// 英文等低 token 密度语言则更宽松。超过即走 map-reduce。
@@ -18,7 +18,7 @@ const DIRECT_CHAR_LIMIT: usize = 25_000;
 const CHUNK_CHAR_LIMIT: usize = 25_000;
 /// 每个字幕事件在 prompt 里的非文本开销（"[mm:ss] " 时间戳前缀 + 换行符）。
 const PER_EVENT_OVERHEAD: usize = 16;
-/// map-reduce 分段总结的并发上限：LLM 端点普遍限流，取保守的 4 路。
+/// map-reduce 分段摘要的并发上限：LLM 端点普遍限流，取保守的 4 路。
 const SUMMARIZE_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,12 +36,12 @@ pub struct Summary {
     pub outline: Vec<OutlineItem>,
 }
 
-/// 总结区块哨兵注释（md/html 通用；HTML 注释在两种渲染产物中都原样保留）。
+/// 摘要区块哨兵注释（md/html 通用；HTML 注释在两种渲染产物中都原样保留）。
 /// 幂等判断与原地替换均以哨兵为准。
 const SUMMARY_BEGIN: &str = "<!-- course2md:summary -->";
 const SUMMARY_END: &str = "<!-- /course2md:summary -->";
 
-const SYSTEM_PROMPT: &str = "你是视频内容总结助手。根据提供的带时间戳字幕为视频生成结构化总结。\
+const SYSTEM_PROMPT: &str = "你是视频内容摘要助手。根据提供的带时间戳字幕为视频生成结构化摘要。\
 严格要求：1) 只依据字幕内容，严禁编造字幕中不存在的事实、数字、人名或观点；\
 2) 对不确定的信息宁可省略也不要猜测；3) 使用视频原语言输出；\
 4) 只输出一个合法 JSON 对象，不要代码围栏、不要任何多余文字。";
@@ -73,7 +73,7 @@ fn parse_time(v: Option<&serde_json::Value>) -> f64 {
         return n;
     }
     // 字符串形式（"01:30" / "120s" / "[90s]" 等）走共享的宽容解析；
-    // 解析失败按 0.0 处理（outline 条目缺时间不至于丢弃整条总结）
+    // 解析失败按 0.0 处理（outline 条目缺时间不至于丢弃整条摘要）
     v.and_then(|x| x.as_str())
         .and_then(crate::timeline::parse_timestamp)
         .unwrap_or(0.0)
@@ -213,7 +213,7 @@ fn split_chunks(events: &[TranscriptEvent], char_limit: usize) -> Vec<Vec<Transc
     chunks
 }
 
-/// 视频元信息（标题/UP主）作为背景注入 prompt，提升总结相关性；
+/// 视频元信息（标题/UP主）作为背景注入 prompt，提升摘要相关性；
 /// 幻觉防护不变——SYSTEM_PROMPT 仍要求只依据字幕内容。
 fn meta_context(meta: &VideoMeta) -> String {
     let mut s = String::new();
@@ -226,7 +226,7 @@ fn meta_context(meta: &VideoMeta) -> String {
     if s.is_empty() { s } else { format!("{s}\n") }
 }
 
-/// 主入口：对全部字幕生成总结；超长自动 map-reduce。
+/// 主入口：对全部字幕生成摘要；超长自动 map-reduce。
 pub async fn summarize(
     s: &LlmSettings,
     events: &[TranscriptEvent],
@@ -238,7 +238,7 @@ pub async fn summarize(
         .sum();
     // 空转写直接报错：发给模型只会得到编造内容或报错，浪费请求
     if events.is_empty() {
-        bail!("转写为空，无法总结 / Transcript is empty; cannot summarize");
+        bail!("转写为空，无法摘要 / Transcript is empty; cannot summarize");
     }
     llm::validate(s)?;
     let ctx = meta_context(meta);
@@ -302,10 +302,10 @@ pub async fn summarize(
             ));
         }
     }
-    // 合并分段总结
+    // 合并分段摘要
     let mut combiner_input = ctx.clone();
     for (idx, sm) in partials.iter().enumerate() {
-        combiner_input.push_str(&format!("== 第 {} 段总结 ==\n", idx + 1));
+        combiner_input.push_str(&format!("== 第 {} 段摘要 ==\n", idx + 1));
         if !sm.tldr.is_empty() {
             combiner_input.push_str(&format!("概述：{}\n", sm.tldr));
         }
@@ -325,8 +325,8 @@ pub async fn summarize(
             &s2,
             SYSTEM_PROMPT,
             &format!(
-                "以下是各分段的总结（时间已按原视频绝对秒数标注）：\n\n{input}\n\n\
-请合并为整个视频的最终总结，输出 JSON：{{\"tldr\": \"不超过150字的一句话概述\", \
+                "以下是各分段的摘要（时间已按原视频绝对秒数标注）：\n\n{input}\n\n\
+请合并为整个视频的最终摘要，输出 JSON：{{\"tldr\": \"不超过150字的一句话概述\", \
 \"key_points\": [整个视频的3-8条要点], \
 \"outline\": [{{\"t\":秒,\"title\":\"章节标题\",\"detail\":\"简述\"}}]}}"
             ),
@@ -341,10 +341,10 @@ pub async fn summarize(
     )
 }
 
-/// 生成插入 course.md 的总结区块（markdown，哨兵注释包裹）。
+/// 生成插入 course.md 的摘要区块（markdown，哨兵注释包裹）。
 /// 有意信任 LLM 输出（markdown 语义直通），不做转义。
 pub fn render_md_block(sm: &Summary) -> String {
-    let mut out = format!("\n{SUMMARY_BEGIN}\n\n## 📝 视频总结\n\n");
+    let mut out = format!("\n{SUMMARY_BEGIN}\n\n## 📝 视频摘要\n\n");
     out.push_str(&format!("> {}\n", sm.tldr));
     if !sm.key_points.is_empty() {
         out.push_str("\n### 核心要点\n\n");
@@ -367,9 +367,9 @@ pub fn render_md_block(sm: &Summary) -> String {
     out
 }
 
-/// 生成插入 course.html 的总结区块（HTML，哨兵注释包裹）。
+/// 生成插入 course.html 的摘要区块（HTML，哨兵注释包裹）。
 pub fn render_html_block(sm: &Summary) -> String {
-    let mut out = format!("{SUMMARY_BEGIN}<section class=\"summary\"><h2>📝 视频总结</h2>");
+    let mut out = format!("{SUMMARY_BEGIN}<section class=\"summary\"><h2>📝 视频摘要</h2>");
     out.push_str(&format!(
         "<p class=\"mute\">{}</p>",
         crate::render::esc(&sm.tldr)
@@ -397,7 +397,7 @@ pub fn render_html_block(sm: &Summary) -> String {
     out
 }
 
-/// 把总结区块插入已渲染的 markdown：已有总结块时按哨兵原地替换（幂等）；
+/// 把摘要区块插入已渲染的 markdown：已有摘要块时按哨兵原地替换（幂等）；
 /// 首次插入定位到元信息之后、首个字幕小节（## [mm:ss]）之前。
 pub fn insert_into_md(md: &str, sm: &Summary) -> String {
     let block = render_md_block(sm);
@@ -414,7 +414,7 @@ pub fn insert_into_md(md: &str, sm: &Summary) -> String {
     out
 }
 
-/// 把总结区块插入已渲染的 HTML：已有总结块时按哨兵原地替换（幂等）；
+/// 把摘要区块插入已渲染的 HTML：已有摘要块时按哨兵原地替换（幂等）；
 /// 首次插入定位到 </header> 之后（兜底 </body> 前 / 文末）。
 pub fn insert_into_html(html: &str, sm: &Summary) -> String {
     let block = render_html_block(sm);
@@ -442,14 +442,14 @@ fn sentinel_range(doc: &str) -> Option<std::ops::Range<usize>> {
     let start = doc.find(SUMMARY_BEGIN)?;
     let Some(end_rel) = doc[start..].find(SUMMARY_END) else {
         tracing::warn!(
-            "已有总结的格式不完整，保留原文 / Existing summary markup is incomplete; original text kept"
+            "已有摘要的格式不完整，保留原文 / Existing summary markup is incomplete; original text kept"
         );
         return None;
     };
     Some(start..start + end_rel + SUMMARY_END.len())
 }
 
-/// 原地替换哨兵之间的总结区块；缺闭合哨兵时保守不改（告警）。
+/// 原地替换哨兵之间的摘要区块；缺闭合哨兵时保守不改（告警）。
 fn replace_sentinel_block(doc: &str, block: &str) -> String {
     let Some(range) = sentinel_range(doc) else {
         return doc.to_string();
@@ -457,7 +457,7 @@ fn replace_sentinel_block(doc: &str, block: &str) -> String {
     format!("{}{block}{}", &doc[..range.start], &doc[range.end..])
 }
 
-/// 生成独立总结文件（markdown），用于 -o 导出。
+/// 生成独立摘要文件（markdown），用于 -o 导出。
 pub fn render_standalone_md(title: &str, sm: &Summary) -> String {
     let mut out = format!("# {title}\n\n");
     out.push_str(&render_md_block(sm));
@@ -502,10 +502,10 @@ mod tests {
         let with = insert_into_md(md, &sm);
         assert!(
             with.find(SUMMARY_BEGIN).unwrap() < with.find("## [00:00]").unwrap(),
-            "总结在正文前"
+            "摘要在正文前"
         );
-        // 标题含「视频总结」不当作已有总结
-        let titled = "# 视频总结速览课\n\n## [00:00](u)\n";
+        // 标题含「视频摘要」不当作已有摘要
+        let titled = "# 视频摘要速览课\n\n## [00:00](u)\n";
         assert_eq!(
             insert_into_md(titled, &sm).matches(SUMMARY_BEGIN).count(),
             1

@@ -940,7 +940,7 @@ async fn run_prepared(
         );
         if !cfg.llm.enabled && !cfg.llm.disable_hint {
             eprintln!(
-                "提示：运行 course2md llm setup 可开启 AI 润色与总结 / Tip: run course2md llm setup to enable AI proofreading and summaries"
+                "提示：运行 course2md llm setup 可开启 AI 校对与摘要 / Tip: run course2md llm setup to enable AI proofreading and summaries"
             );
         }
     }
