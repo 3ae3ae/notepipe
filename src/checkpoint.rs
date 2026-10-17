@@ -142,8 +142,9 @@ impl Checkpoint {
                     .truncate(false)
                     .open(&path)
                     .with_context(|| {
-                        format!(
-                            "打开 checkpoint {0} / Failed to open checkpoint {0}",
+                        crate::tr!(
+                            "打开 checkpoint {} / Failed to open checkpoint {}",
+                            path.display(),
                             path.display()
                         )
                     })?;
@@ -155,14 +156,15 @@ impl Checkpoint {
                     // 注意：不能用 append-only 句柄做 set_len——Windows 上
                     // FILE_APPEND_DATA 不含写长度权限，会 Access denied。
                     f.set_len(loaded.valid_len)
-                        .with_context(|| format!("截断 checkpoint 残行 {0} / Failed to truncate checkpoint partial line {0}", path.display()))?;
+                        .with_context(|| crate::tr!("截断 checkpoint 残行 {} / Failed to truncate checkpoint partial line {}", path.display(), path.display()))?;
                 } else if loaded.needs_newline {
                     // 末行是合法 JSON 但缺尾换行（手改文件）：先补换行再追加
                     use std::io::Seek as _;
                     f.seek(std::io::SeekFrom::End(0))?;
                     f.write_all(b"\n").with_context(|| {
-                        format!(
-                            "补换行 {0} / Failed to append newline to {0}",
+                        crate::tr!(
+                            "补换行 {} / Failed to append newline to {}",
+                            path.display(),
                             path.display()
                         )
                     })?;
@@ -185,11 +187,16 @@ impl Checkpoint {
         if !path.is_file() {
             return Ok(None);
         }
-        let s = std::fs::read_to_string(path)
-            .with_context(|| format!("读取 {0} / Failed to read {0}", path.display()))?;
-        Ok(Some(serde_json::from_str(&s).context(
-            "识别进度记录已损坏 / The transcription progress record is damaged",
-        )?))
+        let s = std::fs::read_to_string(path).with_context(|| {
+            crate::tr!(
+                "读取 {} / Failed to read {}",
+                path.display(),
+                path.display()
+            )
+        })?;
+        Ok(Some(serde_json::from_str(&s).context(crate::tr!(
+            "识别进度记录已损坏 / The transcription progress record is damaged"
+        ))?))
     }
 
     fn clear(path: &Path, done_path: &Path, identity_path: &Path) -> Result<()> {
@@ -211,8 +218,9 @@ impl Checkpoint {
             .keep();
         for file in old {
             std::fs::rename(file, archive.join(file.file_name().unwrap())).with_context(|| {
-                format!(
-                    "无法保留旧识别进度 {0} / Cannot preserve previous transcription progress {0}",
+                crate::tr!(
+                    "无法保留旧识别进度 {} / Cannot preserve previous transcription progress {}",
+                    file.display(),
                     file.display()
                 )
             })?;
@@ -230,8 +238,13 @@ impl Checkpoint {
                 needs_newline: false,
             });
         }
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("读取 {0} / Failed to read {0}", path.display()))?;
+        let content = std::fs::read_to_string(path).with_context(|| {
+            crate::tr!(
+                "读取 {} / Failed to read {}",
+                path.display(),
+                path.display()
+            )
+        })?;
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         let last_idx = lines.len().saturating_sub(1);
         let mut out: Vec<TranscriptEvent> = vec![];
@@ -310,8 +323,9 @@ impl Checkpoint {
         if self.file.is_none() {
             if let Some(dir) = self.path.parent() {
                 std::fs::create_dir_all(dir).with_context(|| {
-                    format!(
-                        "创建 checkpoint 目录 {0} / Failed to create checkpoint directory {0}",
+                    crate::tr!(
+                        "创建 checkpoint 目录 {} / Failed to create checkpoint directory {}",
+                        dir.display(),
                         dir.display()
                     )
                 })?;
@@ -322,8 +336,9 @@ impl Checkpoint {
                     .append(true)
                     .open(&self.path)
                     .with_context(|| {
-                        format!(
-                            "打开 checkpoint {0} / Failed to open checkpoint {0}",
+                        crate::tr!(
+                            "打开 checkpoint {} / Failed to open checkpoint {}",
+                            self.path.display(),
                             self.path.display()
                         )
                     })?,
@@ -332,8 +347,9 @@ impl Checkpoint {
         let line = serde_json::to_string(&ev)?;
         if let Some(f) = &mut self.file {
             writeln!(f, "{line}").with_context(|| {
-                format!(
-                    "写 checkpoint {0} / Failed to write checkpoint {0}",
+                crate::tr!(
+                    "写 checkpoint {} / Failed to write checkpoint {}",
+                    self.path.display(),
                     self.path.display()
                 )
             })?;
@@ -387,20 +403,27 @@ fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir).with_context(|| {
-        format!(
-            "创建目录 {0} / Failed to create directory {0}",
+        crate::tr!(
+            "创建目录 {} / Failed to create directory {}",
+            dir.display(),
             dir.display()
         )
     })?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
-    tmp.write_all(bytes)
-        .with_context(|| format!("写 {0} / Failed to write {0}", path.display()))?;
+    tmp.write_all(bytes).with_context(|| {
+        crate::tr!("写 {} / Failed to write {}", path.display(), path.display())
+    })?;
     if shared {
         make_shared(tmp.as_file())?;
     }
     tmp.as_file().sync_all()?;
-    tmp.persist(path)
-        .with_context(|| format!("替换 {0} / Failed to replace {0}", path.display()))?;
+    tmp.persist(path).with_context(|| {
+        crate::tr!(
+            "替换 {} / Failed to replace {}",
+            path.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 

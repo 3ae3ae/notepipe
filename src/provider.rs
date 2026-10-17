@@ -195,11 +195,11 @@ pub(crate) fn sse_to_chat_json(bytes: &[u8]) -> Result<Value> {
     }
     ensure!(
         completed,
-        "AI 服务响应中断（流未完成）/ AI response stream ended before completion"
+        crate::tr!("AI 服务响应中断（流未完成）/ AI response stream ended before completion")
     );
     ensure!(
         !out.trim().is_empty(),
-        "AI 服务响应缺少正文 / AI response is missing text"
+        crate::tr!("AI 服务响应缺少正文 / AI response is missing text")
     );
     Ok(serde_json::json!({"choices": [{"message": {"content": out}}], "usage": usage}))
 }

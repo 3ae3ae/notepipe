@@ -118,15 +118,15 @@ pub fn render_html(meta: &VideoMeta, sections: &[Section]) -> String {
     // 本地来源的 canonicalize 每次渲染只算一次
     let source = source_url(meta);
     if !meta.uploader.is_empty() {
-        details.push(format!("作者 {}", esc(&meta.uploader)));
+        details.push(crate::tr!("作者 {}", esc(&meta.uploader)));
     }
     if meta.duration > 0. {
-        details.push(format!("时长 {}", fmt_ts(meta.duration)));
+        details.push(crate::tr!("时长 {}", fmt_ts(meta.duration)));
     }
     if !meta.webpage_url.is_empty() {
-        details.push(format!("<a href=\"{}\">源视频</a>", esc(&source)));
+        details.push(crate::tr!("<a href=\"{}\">源视频</a>", esc(&source)));
     }
-    details.push(format!(
+    details.push(crate::tr!(
         "{} 张截图 / {} 段文字",
         sections.iter().filter(|s| !s.image.is_empty()).count(),
         sections.iter().map(|s| s.speech.len()).sum::<usize>()

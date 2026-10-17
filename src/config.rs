@@ -29,11 +29,13 @@ pub const DEFAULT_GPU_LAYERS: u32 = 99;
 /// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr_api 共用同一判定）。
 pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
     let url = url::Url::parse(raw.trim()).context(
-        "服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL.",
+        crate::tr!("服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL."),
     )?;
     anyhow::ensure!(
         matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-        "服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL."
+        crate::tr!(
+            "服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL."
+        )
     );
     Ok(url)
 }
@@ -69,7 +71,7 @@ pub fn asr_endpoint(api: &crate::settings::AsrApi) -> AnyhowResult<String> {
             suffix,
             &["/audio/transcriptions", "/chat/completions"]
         ),
-        "服务地址与所选接口类型不一致 / Service endpoint and protocol do not match"
+        crate::tr!("服务地址与所选接口类型不一致 / Service endpoint and protocol do not match")
     );
     Ok(append_endpoint_suffix(base, suffix))
 }
@@ -108,11 +110,11 @@ impl AsrProvider {
     /// 面向用户的识别方式名称（中文 / English）。
     pub fn label(&self) -> (&'static str, &'static str) {
         match self {
-            Self::Coreml => ("Apple 芯片本机识别", "Apple silicon on-device"),
-            Self::Gpu => ("显卡加速", "GPU"),
-            Self::Cpu => ("CPU（较慢）", "CPU (slower)"),
-            Self::Npu => ("Intel NPU 加速", "Intel NPU"),
-            Self::Api => ("云端语音识别", "Cloud speech service"),
+            Self::Coreml => (crate::tr!("Apple 芯片本机识别"), "Apple silicon on-device"),
+            Self::Gpu => (crate::tr!("显卡加速"), "GPU"),
+            Self::Cpu => (crate::tr!("CPU（较慢）"), "CPU (slower)"),
+            Self::Npu => (crate::tr!("Intel NPU 加速"), "Intel NPU"),
+            Self::Api => (crate::tr!("云端语音识别"), "Cloud speech service"),
         }
     }
 }
@@ -230,7 +232,7 @@ pub fn canonical_model(provider: AsrProvider, raw: &str) -> AnyhowResult<String>
             let available = models.iter().map(|m| m.id).collect::<Vec<_>>().join(", ");
             let (repo_zh, repo_en) = if provider == AsrProvider::Npu {
                 (
-                    "，或 Hugging Face 仓库名（如 org/model）",
+                    crate::tr!("，或 Hugging Face 仓库名（如 org/model）"),
                     ", or a Hugging Face repository (org/model)",
                 )
             } else {
@@ -399,7 +401,7 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
         let percent: f64 = p.trim().parse()?;
         anyhow::ensure!(
             (0.0..=100.0).contains(&percent),
-            "ROI 百分比必须在 0–100 / ROI percentages must be between 0 and 100"
+            crate::tr!("ROI 百分比必须在 0–100 / ROI percentages must be between 0 and 100")
         );
         percent / 100.0
     } else {
@@ -407,7 +409,9 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
     };
     anyhow::ensure!(
         v.is_finite() && v >= 0.0,
-        "ROI 坐标必须为非负有限数值 / ROI coordinates must be finite, non-negative numbers"
+        crate::tr!(
+            "ROI 坐标必须为非负有限数值 / ROI coordinates must be finite, non-negative numbers"
+        )
     );
     Ok(v)
 }
@@ -501,16 +505,20 @@ impl PipelineConfig {
             ensure_http_url(&asr_endpoint(&self.asr_api)?)?;
             anyhow::ensure!(
                 !self.asr_api.model.trim().is_empty(),
-                "请输入语音服务提供的模型 ID / Speech model ID is required"
+                crate::tr!("请输入语音服务提供的模型 ID / Speech model ID is required")
             );
             let has_key = !self.asr_api.api_key.trim().is_empty()
                 || (allow_environment && asr_api_key_from_env().is_some());
             if require_key && !has_key {
                 // 桌面任务不读环境变量，只有命令行才提示它
                 anyhow::bail!(if allow_environment {
-                    "云端语音识别需要 API Key：用 --asr-api-key 或环境变量 COURSE2MD_ASR_API_KEY 提供 / Cloud transcription requires an API key: pass --asr-api-key or set COURSE2MD_ASR_API_KEY"
+                    crate::tr!(
+                        "云端语音识别需要 API Key：用 --asr-api-key 或环境变量 COURSE2MD_ASR_API_KEY 提供 / Cloud transcription requires an API key: pass --asr-api-key or set COURSE2MD_ASR_API_KEY"
+                    )
                 } else {
-                    "云端语音识别需要 API Key，请在服务设置中填写 / Cloud transcription requires an API key; add it in service settings"
+                    crate::tr!(
+                        "云端语音识别需要 API Key，请在服务设置中填写 / Cloud transcription requires an API key; add it in service settings"
+                    )
                 });
             }
         }

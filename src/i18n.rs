@@ -43,9 +43,9 @@ impl Lang {
     pub fn native_name(self) -> &'static str {
         match self {
             Self::En => "English",
-            Self::ZhHans => crate::tr!("简体中文"),
-            Self::ZhHant => crate::tr!("繁體中文"),
-            Self::Ja => crate::tr!("日本語"),
+            Self::ZhHans => crate::tr!(crate::tr!("简体中文")),
+            Self::ZhHant => crate::tr!(crate::tr!("繁體中文")),
+            Self::Ja => crate::tr!(crate::tr!("日本語")),
         }
     }
 
@@ -79,12 +79,7 @@ impl Lang {
 
     /// `COURSE2MD_LANG`, then the POSIX locale variables, then the platform locale.
     pub fn detect() -> Self {
-        for name in [
-            "COURSE2MD_LANG",
-            "LC_ALL",
-            "LC_MESSAGES",
-            "LANG",
-        ] {
+        for name in ["COURSE2MD_LANG", "LC_ALL", "LC_MESSAGES", "LANG"] {
             if let Ok(value) = std::env::var(name)
                 && let Some(lang) = Self::from_code(&value)
             {
@@ -226,6 +221,7 @@ fn unescape(value: &str) -> String {
     out
 }
 
+#[cfg(test)]
 fn escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
@@ -243,8 +239,7 @@ fn escape(value: &str) -> String {
 
 /// Left and right halves of the historical bilingual engine messages.
 fn bilingual_halves(source: &str) -> Option<(&str, &str)> {
-    let mut candidates = source.match_indices(" / ").map(|(index, _)| index);
-    while let Some(index) = candidates.next() {
+    for index in source.match_indices(" / ").map(|(index, _)| index) {
         let (left, right) = (&source[..index], &source[index + 3..]);
         if contains_cjk(left) && !contains_cjk(right) {
             return Some((left.trim(), right.trim()));
@@ -264,12 +259,8 @@ fn t_in(source: &str, lang: Lang) -> &str {
         return entry.text(lang);
     }
     match lang {
-        Lang::ZhHans | Lang::ZhHant => {
-            bilingual_halves(source).map_or(source, |(zh, _)| zh)
-        }
-        Lang::En | Lang::Ja => {
-            bilingual_halves(source).map_or(source, |(_, en)| en)
-        }
+        Lang::ZhHans | Lang::ZhHant => bilingual_halves(source).map_or(source, |(zh, _)| zh),
+        Lang::En | Lang::Ja => bilingual_halves(source).map_or(source, |(_, en)| en),
     }
 }
 
@@ -412,7 +403,10 @@ mod tests {
     fn template_fills_placeholders() {
         // Uses the source language so the assertion is independent of the environment.
         set_lang(Lang::ZhHans);
-        assert_eq!(template("共 {} 项，{} 项完成", &[&3, &2]), "共 3 项，2 项完成");
+        assert_eq!(
+            template("共 {} 项，{} 项完成", &[&3, &2]),
+            "共 3 项，2 项完成"
+        );
         assert_eq!(template("花括号 {{}} 保留", &[]), "花括号 {} 保留");
     }
 
@@ -451,10 +445,4 @@ mod tests {
         let value = "第一行\n第二行\tTab \\ \"引号\"";
         assert_eq!(unescape(&escape(value)), value);
     }
-}
-
-/// Exposed for catalog maintenance scripts; not part of the runtime API.
-#[doc(hidden)]
-pub fn catalog_escape(value: &str) -> String {
-    escape(value)
 }

@@ -62,7 +62,7 @@ extern "C" fn c2m_model_progress(fraction: f64, message: *const std::ffi::c_char
         static LAST: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
         let percent = (fraction * 100.0) as i64;
         if LAST.swap(percent, std::sync::atomic::Ordering::Relaxed) != percent {
-            eprintln!("模型 / Model {percent}% · {message}");
+            crate::eprintln_tr!("模型 {}% · {}", percent, message);
         }
     }
 }
@@ -100,7 +100,7 @@ pub fn vad(wav: &Path, min_speech: f64, min_silence: f64) -> Result<Vec<(f64, f6
     // FFI 契约防御：rc==0 且 n>0 时指针必须非空
     anyhow::ensure!(
         n <= 0 || (!starts.is_null() && !ends.is_null()),
-        "语音检测返回了空结果指针 / Speech detection returned null result pointers"
+        crate::tr!("语音检测返回了空结果指针 / Speech detection returned null result pointers")
     );
     let mut out = Vec::with_capacity(n as usize);
     if n > 0 {
@@ -134,9 +134,9 @@ fn ensure_metallib() -> Result<()> {
         "源码构建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 复制为 {}",
         dir.join("mlx.metallib").display()
     );
-    anyhow::bail!(
+    anyhow::bail!(crate::tr!(
         "缺少 Apple 识别所需的组件，请重新安装 course2md / Apple speech component missing; reinstall course2md"
-    )
+    ))
 }
 
 fn interactive() -> bool {
@@ -187,24 +187,24 @@ fn prompt_model_choice() -> Result<String> {
         .iter()
         .map(|m| {
             let note = match m.id {
-                "qwen3-1.7b" => "（推荐，下载约 2.3GB / Recommended, ~2.3GB）",
-                "qwen3-0.6b" => "（低功耗，约 1GB / Low power, ~1GB）",
-                "whisper" => "（多语种 / Multilingual）",
+                "qwen3-1.7b" => crate::tr!("（推荐，下载约 2.3GB / Recommended, ~2.3GB）"),
+                "qwen3-0.6b" => crate::tr!("（低功耗，约 1GB / Low power, ~1GB）"),
+                "whisper" => crate::tr!("（多语种 / Multilingual）"),
                 _ => "",
             };
             format!("{}{note}", m.label)
         })
         .collect();
     let choice = dialoguer::Select::new()
-        .with_prompt("选择识别模型 / Choose a speech model")
+        .with_prompt(crate::tr!("选择识别模型 / Choose a speech model"))
         .items(&items)
         .default(0)
         .interact_opt()?;
     match choice {
         Some(index) => Ok(models[index].id.to_owned()),
-        None => anyhow::bail!(
+        None => anyhow::bail!(crate::tr!(
             "已取消模型选择，未开始下载 / Model selection cancelled; download not started"
-        ),
+        )),
     }
 }
 
@@ -300,7 +300,8 @@ pub fn prepare_cache(model: &str) -> Result<()> {
             CStr::from_bytes_until_nul(&error)
                 .map(|error| error.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| {
-                    "Apple 模型缓存准备失败 / Apple model cache preparation failed".into()
+                    crate::tr!("Apple 模型缓存准备失败 / Apple model cache preparation failed")
+                        .into()
                 })
         );
     }
@@ -328,7 +329,9 @@ pub fn run_coreml(
     // 时长缺失时不能按 0 处理：末段语音会被当成静音丢掉
     let dur = crate::media::probe_duration_blocking(wav)
         .filter(|d| d.is_finite() && *d > 0.0)
-        .context("无法读取音频时长 / Could not read the audio duration")?;
+        .context(crate::tr!(
+            "无法读取音频时长 / Could not read the audio duration"
+        ))?;
     let segs = crate::asr::normalize_segments(raw, max_speech, wav, dur)?;
     tracing::info!(segs = segs.len(), engine = "silero-coreml", "vad");
     if segs.is_empty() {
@@ -341,8 +344,9 @@ pub fn run_coreml(
     ensure_metallib()?;
     tracing::info!(model, "loading cached Apple native ASR");
     crate::progress::stage("model/apple", "start");
-    let asr =
-        CoremlAsr::load(model).context("CoreML 模型加载失败 / CoreML model loading failed")?;
+    let asr = CoremlAsr::load(model).context(crate::tr!(
+        "CoreML 模型加载失败 / CoreML model loading failed"
+    ))?;
     crate::progress::stage("model/apple", "done");
     tracing::info!(
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),

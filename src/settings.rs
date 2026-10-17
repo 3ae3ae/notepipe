@@ -274,7 +274,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     let d = &cfg.defaults;
     let r = crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)?;
     println!("配置文件 / Configuration: {}", config_path().display());
-    println!(
+    crate::println_tr!(
         "文件设置与内置默认值；不含本次命令行或环境变量覆盖 / File settings and built-in defaults, before CLI and environment overrides"
     );
     let rows: Vec<(&str, String)> = vec![
@@ -289,7 +289,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
             "provider",
             match d.provider {
                 Some(p) => p.to_string(),
-                None => format!("{}（自动选择 / automatic）", r.provider),
+                None => crate::tr!("{}（自动选择）", r.provider),
             },
         ),
         ("slide_mode", r.slide_mode.to_string()),
@@ -326,7 +326,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         if key.is_empty() {
             "-"
         } else {
-            "(已设置，隐藏 / set, hidden)"
+            crate::tr!("(已设置，隐藏 / set, hidden)")
         }
     };
     println!("[asr_api]");

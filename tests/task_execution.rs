@@ -52,6 +52,7 @@ fn run(root: &Path, request: &Request) -> Output {
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("config.toml"), "[broken").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_course2md"))
+        .env("COURSE2MD_LANG", "zh-Hans")
         .arg("run-task")
         .current_dir(root)
         .env("XDG_CONFIG_HOME", root.join("config"))
@@ -141,6 +142,7 @@ fn scanning_finishes_before_a_slow_screenshot_reports_progress_with_estimated_to
     request.duration = 18.;
     request.config.defaults.sample_interval = Some(1.);
     let mut child = Command::new(env!("CARGO_BIN_EXE_course2md"))
+        .env("COURSE2MD_LANG", "zh-Hans")
         .arg("run-task")
         .env("PATH", std::env::join_paths(paths).unwrap())
         .env("XDG_CONFIG_HOME", root.path().join("config"))
@@ -356,7 +358,7 @@ fn missing_frozen_cloud_credentials_fail_before_download_and_ignore_environment(
             && event["message"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("API key")
+                .contains("API Key")
     }));
     assert!(!request.work_dir.join("media.mp4").exists());
     assert!(!request.course_dir.join("current.json").exists());

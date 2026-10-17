@@ -61,13 +61,13 @@ impl SubtitleTrack {
                     .into_owned(),
             );
         } else if let SubtitleOrigin::Embedded { stream_index, .. } = &self.origin {
-            parts.push(format!("内嵌字幕（轨道 {stream_index}）"));
+            parts.push(crate::tr!("内嵌字幕（轨道 {}）", stream_index));
         } else {
-            parts.push("字幕".into());
+            parts.push(crate::tr!("字幕").into());
         }
         match self.kind {
-            SubtitleKind::Manual => parts.push("人工字幕".into()),
-            SubtitleKind::Automatic => parts.push("自动字幕".into()),
+            SubtitleKind::Manual => parts.push(crate::tr!("人工字幕").into()),
+            SubtitleKind::Automatic => parts.push(crate::tr!("自动字幕").into()),
             SubtitleKind::Unknown => {}
         }
         parts.join(" · ")
@@ -130,7 +130,9 @@ impl std::fmt::Display for SubtitleReadError {
             Self::Failed { message }
             | Self::NoReadableText { message }
             | Self::Unsupported { message } => f.write_str(message),
-            Self::Cancelled => f.write_str("已取消读取字幕 / Subtitle reading cancelled"),
+            Self::Cancelled => {
+                f.write_str(crate::tr!("已取消读取字幕 / Subtitle reading cancelled"))
+            }
         }
     }
 }
@@ -139,19 +141,19 @@ impl std::error::Error for SubtitleReadError {}
 
 pub fn language_label(language: &str) -> String {
     match normalize_language(language).as_str() {
-        "zh" => "中文".into(),
-        "zh-hans" | "zh-cn" | "zh-sg" => "简体中文".into(),
-        "zh-hant" | "zh-tw" | "zh-hk" => "繁体中文".into(),
-        "en" => "英语".into(),
-        "fr" => "法语".into(),
-        "de" => "德语".into(),
-        "ja" => "日语".into(),
-        "ko" => "韩语".into(),
-        "es" => "西班牙语".into(),
-        "pt" => "葡萄牙语".into(),
-        "ru" => "俄语".into(),
-        "ar" => "阿拉伯语".into(),
-        "it" => "意大利语".into(),
+        "zh" => crate::tr!("中文").into(),
+        "zh-hans" | "zh-cn" | "zh-sg" => crate::tr!("简体中文").into(),
+        "zh-hant" | "zh-tw" | "zh-hk" => crate::tr!("繁体中文").into(),
+        "en" => crate::tr!("英语").into(),
+        "fr" => crate::tr!("法语").into(),
+        "de" => crate::tr!("德语").into(),
+        "ja" => crate::tr!("日语").into(),
+        "ko" => crate::tr!("韩语").into(),
+        "es" => crate::tr!("西班牙语").into(),
+        "pt" => crate::tr!("葡萄牙语").into(),
+        "ru" => crate::tr!("俄语").into(),
+        "ar" => crate::tr!("阿拉伯语").into(),
+        "it" => crate::tr!("意大利语").into(),
         _ => language.to_owned(),
     }
 }
@@ -268,8 +270,9 @@ pub fn read_subtitle_text(path: &Path) -> Result<String> {
     use std::io::Read;
     const MAX_BYTES: usize = 32 * 1024 * 1024;
     let file = std::fs::File::open(path).with_context(|| {
-        format!(
-            "无法读取字幕文件 {0} / Cannot read subtitle file {0}",
+        crate::tr!(
+            "无法读取字幕文件 {} / Cannot read subtitle file {}",
+            path.display(),
             path.display()
         )
     })?;
@@ -277,7 +280,9 @@ pub fn read_subtitle_text(path: &Path) -> Result<String> {
     file.take((MAX_BYTES + 1) as u64).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() <= MAX_BYTES,
-        "字幕文件超过 32 MB，请选择较小的 SRT 或 VTT 文件 / Subtitle file exceeds 32 MB; choose a smaller SRT or VTT file"
+        crate::tr!(
+            "字幕文件超过 32 MB，请选择较小的 SRT 或 VTT 文件 / Subtitle file exceeds 32 MB; choose a smaller SRT or VTT file"
+        )
     );
     decode_text_with_bom(&bytes)
 }
@@ -288,7 +293,9 @@ pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         ensure!(
             (bytes.len() - 2).is_multiple_of(2),
-            "文件的 UTF-16 编码不完整，请重新导出为 UTF-8 / The file's UTF-16 encoding is incomplete; re-export as UTF-8"
+            crate::tr!(
+                "文件的 UTF-16 编码不完整，请重新导出为 UTF-8 / The file's UTF-16 encoding is incomplete; re-export as UTF-8"
+            )
         );
         let little = bytes[0] == 0xff;
         let words: Vec<u16> = bytes[2..]
@@ -303,10 +310,10 @@ pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
                 }
             })
             .collect();
-        return String::from_utf16(&words).context("文件的字符编码无法读取，请重新导出为 UTF-8 / The file's character encoding is unreadable; re-export as UTF-8");
+        return String::from_utf16(&words).context(crate::tr!("文件的字符编码无法读取，请重新导出为 UTF-8 / The file's character encoding is unreadable; re-export as UTF-8"));
     }
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
-    String::from_utf8(bytes.to_vec()).context("文件的字符编码无法读取，请重新导出为 UTF-8 / The file's character encoding is unreadable; re-export as UTF-8")
+    String::from_utf8(bytes.to_vec()).context(crate::tr!("文件的字符编码无法读取，请重新导出为 UTF-8 / The file's character encoding is unreadable; re-export as UTF-8"))
 }
 
 pub fn to_srt(events: &[TranscriptEvent]) -> String {

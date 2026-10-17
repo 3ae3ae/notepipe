@@ -72,10 +72,12 @@ fn slide_name(n: usize) -> String {
 async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f64, f64)>> {
     let info = media::probe_video(media)
         .await
-        .context("无法读取视频尺寸，请检查文件是否可播放 / Could not read video dimensions; check that the file plays correctly")?;
+        .context(crate::tr!("无法读取视频尺寸，请检查文件是否可播放 / Could not read video dimensions; check that the file plays correctly"))?;
     anyhow::ensure!(
         cfg.sample_interval >= 0.2,
-        "画面采样间隔至少为 0.2 秒 / Frame sampling interval must be at least 0.2 seconds"
+        crate::tr!(
+            "画面采样间隔至少为 0.2 秒 / Frame sampling interval must be at least 0.2 seconds"
+        )
     );
     let interval = cfg.sample_interval;
     let (tw, th) = scaled_wh(info.width, info.height, SAMPLE_WIDTH);
@@ -101,7 +103,9 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .context("无法读取视频画面 / Could not start ffmpeg frame sampling")?;
+        .context(crate::tr!(
+            "无法读取视频画面 / Could not start ffmpeg frame sampling"
+        ))?;
     let mut stdout = child.stdout.take().context("ffmpeg stdout")?;
     // stderr 必须全程 drain：piped 而不读的话，写满 64KB 管道缓冲会死锁。
     // 缓存尾部供失败诊断，debug 时逐行转发。
@@ -198,8 +202,9 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
                     candidate_first_t = None;
                     candidate_last_t = None;
                     last_emit_t = t;
-                    pb.set_message(format!(
-                        "已找到 {0} 张候选截图 / Found {0} candidate slides",
+                    pb.set_message(crate::tr!(
+                        "已找到 {} 张候选截图 / Found {} candidate slides",
+                        times.len(),
                         times.len()
                     ));
                 }
@@ -234,7 +239,10 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     crate::progress::stage("scenes/scan", "start");
     let times = sample_timestamps(cfg, media).await?;
     crate::progress::stage("scenes/scan", "done");
-    anyhow::ensure!(!times.is_empty(), "未采样到任何帧 / No frames sampled");
+    anyhow::ensure!(
+        !times.is_empty(),
+        crate::tr!("未采样到任何帧 / No frames sampled")
+    );
 
     crate::progress::stage("scenes/extract", "start");
     let pb = crate::progress::Bar::new("scenes/extract", times.len() as u64)
@@ -265,7 +273,9 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
                 results.push(item);
             }
             Some(Err(e)) => {
-                return Err(e).context("截图任务异常终止 / Slide extraction stopped unexpectedly");
+                return Err(e).context(crate::tr!(
+                    "截图任务异常终止 / Slide extraction stopped unexpectedly"
+                ));
             }
             None => break,
         }

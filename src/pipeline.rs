@@ -26,7 +26,8 @@ const FRAME_DIGEST_LANES: usize = 4;
 /// New settings or --no-resume use another work directory and never overwrite old notes.
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let started = Instant::now();
-    cfg.validate().context("配置预检失败 / Invalid settings")?;
+    cfg.validate()
+        .context(crate::tr!("配置预检失败 / Invalid settings"))?;
     let local = Path::new(&cfg.url);
     let is_local = local.is_file();
     if !is_local {
@@ -41,11 +42,9 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     // 本地视频先探时长：成功进 meta；失败不当 0 静默（merge 会失真），
     // 延迟到诊断作用域内返回，失败同样写 run.json
     let local_duration = if is_local {
-        Some(
-            media::probe_duration(local)
-                .await
-                .context("无法探测本地视频时长 / Could not probe the local video duration"),
-        )
+        Some(media::probe_duration(local).await.context(crate::tr!(
+            "无法探测本地视频时长 / Could not probe the local video duration"
+        )))
     } else {
         None
     };
@@ -212,8 +211,9 @@ async fn run_task_inner(
     let subtitle = if let Some(events) = &request.subtitle_events {
         Some(events.clone())
     } else if let Some(path) = &request.subtitle {
-        let content = std::fs::read_to_string(path)
-            .context("无法读取已选字幕 / Cannot read selected subtitles")?;
+        let content = std::fs::read_to_string(path).context(crate::tr!(
+            "无法读取已选字幕 / Cannot read selected subtitles"
+        ))?;
         Some(crate::subtitle::parse_subtitle(&content))
     } else {
         None
@@ -281,7 +281,7 @@ async fn reprocess(
     }
     anyhow::ensure!(
         base.source_id == request.source_id && base.course_id == request.course_id,
-        "补做任务与原笔记来源不一致 / Reprocessing source does not match the base note"
+        crate::tr!("补做任务与原笔记来源不一致 / Reprocessing source does not match the base note")
     );
     use execution::Component;
     let has = |component: Component| components.contains(&component);
@@ -305,13 +305,13 @@ async fn reprocess(
             serde_json::from_slice(&std::fs::read(prior.join("task-identity.json"))?)?;
         anyhow::ensure!(
             identity["source_id"].as_str() == Some(request.source_id.as_str()),
-            "旧进度与此视频来源不符 / Prior work belongs to another source"
+            crate::tr!("旧进度与此视频来源不符 / Prior work belongs to another source")
         );
         anyhow::ensure!(
             identity["task_id"]
                 .as_str()
                 .is_none_or(|id| id == base.task_id),
-            "旧进度与原笔记任务不符 / Prior work belongs to another task"
+            crate::tr!("旧进度与原笔记任务不符 / Prior work belongs to another task")
         );
         let ledger_dir = cfg.out_dir.join("requests");
         std::fs::create_dir_all(&ledger_dir)?;
@@ -388,11 +388,15 @@ async fn reprocess(
                 anyhow::ensure!(
                     !Path::new(&request.source).is_absolute()
                         && !request.source_id.starts_with("local:"),
-                    "原视频已移动或删除，无法补做截图；原笔记仍可阅读 / Original video is unavailable; the saved note remains readable"
+                    crate::tr!(
+                        "原视频已移动或删除，无法补做截图；原笔记仍可阅读 / Original video is unavailable; the saved note remains readable"
+                    )
                 );
                 anyhow::ensure!(
                     !cfg.no_download,
-                    "找不到截图所需的视频 / Video required for screenshots is unavailable"
+                    crate::tr!(
+                        "找不到截图所需的视频 / Video required for screenshots is unavailable"
+                    )
                 );
                 // 与主路径同一纪律：无法校验的现存文件已由 prepare_cached_media 归档，
                 // 此处只会真正下载新内容，不会把未校验文件标记为已校验
@@ -413,12 +417,12 @@ async fn reprocess(
             result => {
                 outcomes.screenshots = Outcome::failed(match result {
                     Err(error) => format!("{error:#}"),
-                    _ => "没有提取到截图 / No screenshots captured".into(),
+                    _ => crate::tr!("没有提取到截图 / No screenshots captured").into(),
                 });
                 if components.len() == 1 {
-                    anyhow::bail!(
+                    anyhow::bail!(crate::tr!(
                         "截图失败，原笔记不受影响 / Screenshot extraction failed; the original note is unaffected"
-                    );
+                    ));
                 }
             }
         }
@@ -512,7 +516,7 @@ fn export_only(
 ) -> Result<()> {
     anyhow::ensure!(
         !cfg.formats.is_empty(),
-        "请选择需要导出的文件格式 / Select an export format"
+        crate::tr!("请选择需要导出的文件格式 / Select an export format")
     );
     let export_root = target
         .course_dir
@@ -561,7 +565,9 @@ fn export_for_task(
             let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&marker)?)?;
             anyhow::ensure!(
                 saved["sha256"].as_str() == Some(execution::file_digest(destination)?.as_str()),
-                "导出文件已被修改，原文件已保留 / Export file changed; original retained"
+                crate::tr!(
+                    "导出文件已被修改，原文件已保留 / Export file changed; original retained"
+                )
             );
         } else {
             // Publication can finish just before a crash loses its receipt. Compare a
@@ -571,7 +577,9 @@ fn export_for_task(
             crate::portable::export(base, format, &comparison)?;
             anyhow::ensure!(
                 execution::file_digest(&comparison)? == execution::file_digest(destination)?,
-                "导出位置已有不同文件，未覆盖 / Existing export differs; not overwritten"
+                crate::tr!(
+                    "导出位置已有不同文件，未覆盖 / Existing export differs; not overwritten"
+                )
             );
         }
     } else {
@@ -614,7 +622,7 @@ async fn subtitles(
             }
             anyhow::ensure!(
                 cfg.transcript_source != config::TranscriptSource::Subtitle,
-                "任务缺少已选字幕 / Selected subtitles are missing from this task"
+                crate::tr!("任务缺少已选字幕 / Selected subtitles are missing from this task")
             );
             return Ok(None);
         }
@@ -626,16 +634,19 @@ async fn subtitles(
     let found = if local {
         fetch::sidecar_subtitle(Path::new(&cfg.url))
     } else {
-        let video =
-            probed.context("缺少视频信息，请重新读取 / Missing video info; please probe again")?;
+        let video = probed.context(crate::tr!(
+            "缺少视频信息，请重新读取 / Missing video info; please probe again"
+        ))?;
         fetch::fetch_subtitle(&video, &cfg.out_dir)
             .await
-            .context("读取视频字幕失败 / Could not read video subtitles")?
+            .context(crate::tr!(
+                "读取视频字幕失败 / Could not read video subtitles"
+            ))?
     };
     match found {
         Some(file) => {
             let content = std::fs::read_to_string(&file.path)
-                .context("无法读取字幕文件 / Cannot read subtitle file")?;
+                .context(crate::tr!("无法读取字幕文件 / Cannot read subtitle file"))?;
             let events = crate::subtitle::parse_subtitle(&content);
             execution::validate_events(&events)?;
             Ok(Some((
@@ -648,9 +659,9 @@ async fn subtitles(
                 .into(),
             )))
         }
-        None if cfg.transcript_source == config::TranscriptSource::Subtitle => anyhow::bail!(
-            "未找到字幕 / No subtitles found. 请选择已有字幕，或改用语音识别 / Select subtitles or use speech recognition."
-        ),
+        None if cfg.transcript_source == config::TranscriptSource::Subtitle => {
+            anyhow::bail!(crate::tr!("未找到字幕。请选择已有字幕，或改用语音识别"))
+        }
         None => Ok(None),
     }
 }
@@ -748,7 +759,9 @@ async fn run_prepared(
     if !is_local && !media_existed {
         anyhow::ensure!(
             !cfg.no_download,
-            "找不到已下载的视频，请允许重新下载 / The downloaded video is missing; allow downloading it again"
+            crate::tr!(
+                "找不到已下载的视频，请允许重新下载 / The downloaded video is missing; allow downloading it again"
+            )
         );
         progress::stage("download", "start");
         fetch::download(
@@ -824,7 +837,8 @@ async fn run_prepared(
             frames
         }
         Ok(_) => {
-            outcomes.screenshots = Outcome::failed("未提取到截图 / No screenshots were captured");
+            outcomes.screenshots =
+                Outcome::failed(crate::tr!("未提取到截图 / No screenshots were captured"));
             Vec::new()
         }
         Err(error) => {
@@ -838,11 +852,12 @@ async fn run_prepared(
             cache
         }
         Ok(_) => {
-            outcomes.transcript = Outcome::failed("没有获得可读文字 / No readable transcript");
+            outcomes.transcript =
+                Outcome::failed(crate::tr!("没有获得可读文字 / No readable transcript"));
             save_materials(cfg, &frames, &[], &outcomes)?;
-            anyhow::bail!(
+            anyhow::bail!(crate::tr!(
                 "没有获得可读文字；已保留可用截图 / No readable transcript; available screenshots were retained"
-            );
+            ));
         }
         Err(error) => {
             let completed = match crate::checkpoint::Checkpoint::saved_events(&cfg.out_dir) {
@@ -929,17 +944,17 @@ async fn run_prepared(
     }
     emit_done(target, &manifest, &sections, started);
     if !progress::is_json() && !progress::is_quiet() {
-        eprintln!(
+        crate::eprintln_tr!(
             "{}：{}",
             if manifest.partial {
-                "笔记已保存，部分处理未完成 / Notes saved with unfinished work"
+                crate::tr!("笔记已保存，部分处理未完成 / Notes saved with unfinished work")
             } else {
-                "笔记已生成 / Notes ready"
+                crate::tr!("笔记已生成 / Notes ready")
             },
             target.version_dir().display()
         );
         if !cfg.llm.enabled && !cfg.llm.disable_hint {
-            eprintln!(
+            crate::eprintln_tr!(
                 "提示：运行 course2md llm setup 可开启 AI 校对与摘要 / Tip: run course2md llm setup to enable AI proofreading and summaries"
             );
         }
@@ -970,8 +985,9 @@ struct FramesCache {
 async fn cached_frames(cfg: &PipelineConfig, media: &Path) -> Result<Vec<timeline::FrameEvent>> {
     let cache_path = cfg.out_dir.join("screenshots.json");
     if cache_path.is_file() {
-        let cache: FramesCache = serde_json::from_slice(&std::fs::read(&cache_path)?)
-            .context("截图进度损坏，原文件已保留 / Screenshot checkpoint is damaged")?;
+        let cache: FramesCache = serde_json::from_slice(&std::fs::read(&cache_path)?).context(
+            crate::tr!("截图进度损坏，原文件已保留 / Screenshot checkpoint is damaged"),
+        )?;
         if !cache.frames.is_empty() {
             let out_dir = cfg.out_dir.clone();
             if blocking(move || Ok(verified_cache_files(&out_dir, &cache.files))).await? {
@@ -1010,9 +1026,9 @@ async fn cached_frames(cfg: &PipelineConfig, media: &Path) -> Result<Vec<timelin
 /// Content hashing reads whole media files; keep it off the async workers so the
 /// sibling screenshot/transcript branch and control polling keep running.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
-    tokio::task::spawn_blocking(f)
-        .await
-        .context("后台文件校验中断 / Background file check interrupted")?
+    tokio::task::spawn_blocking(f).await.context(crate::tr!(
+        "后台文件校验中断 / Background file check interrupted"
+    ))?
 }
 async fn save_file_digest_async(path: PathBuf, marker: PathBuf) -> Result<()> {
     blocking(move || save_file_digest(&path, &marker)).await
@@ -1044,7 +1060,9 @@ fn prepare_cached_media(cfg: &PipelineConfig) -> Result<bool> {
     }
     anyhow::ensure!(
         !cfg.no_download,
-        "已保存的视频无法校验；需要重新下载才能继续 / Cached video cannot be verified; downloading is required"
+        crate::tr!(
+            "已保存的视频无法校验；需要重新下载才能继续 / Cached video cannot be verified; downloading is required"
+        )
     );
     let archives = cfg.out_dir.join(".previous-media");
     std::fs::create_dir_all(&archives)?;
@@ -1096,8 +1114,9 @@ fn cached_transcript(cache_path: &Path) -> Result<Option<TranscriptCache>> {
     if !cache_path.is_file() {
         return Ok(None);
     }
-    let cache: TranscriptCache = serde_json::from_slice(&std::fs::read(cache_path)?)
-        .context("已保存的文字损坏，原文件已保留 / Saved transcript is damaged")?;
+    let cache: TranscriptCache = serde_json::from_slice(&std::fs::read(cache_path)?).context(
+        crate::tr!("已保存的文字损坏，原文件已保留 / Saved transcript is damaged"),
+    )?;
     if cache.events.iter().any(|e| !e.text.trim().is_empty()) {
         execution::validate_events(&cache.events)?;
         return Ok(Some(cache));
@@ -1123,7 +1142,9 @@ async fn polish_with_rollback(
             .map(|report| (sections, report))
     })
     .await
-    .context("AI 校对工作进程中断 / Proofreading worker interrupted")??;
+    .context(crate::tr!(
+        "AI 校对工作进程中断 / Proofreading worker interrupted"
+    ))??;
     if !artifact::has_readable_body(&sections) {
         sections = original;
         report.succeeded = 0;
@@ -1145,12 +1166,13 @@ impl Outcome {
                 Status::Failed
             },
             message: (report.failed > 0).then(|| {
-                let base = format!(
-                    "校对未全部完成（{}/{} 失败），原文已保留 / Proofreading incomplete ({}/{} failed); original text retained",
-                    report.failed, report.attempted, report.failed, report.attempted
+                let base = crate::tr!(
+                    "校对未全部完成（{}/{} 失败），原文已保留",
+                    report.failed,
+                    report.attempted
                 );
                 match &report.note {
-                    Some(note) => format!("{base}；首个错误 / First error: {note}"),
+                    Some(note) => crate::tr!("{}；首个错误：{}", base, note),
                     None => base,
                 }
             }),

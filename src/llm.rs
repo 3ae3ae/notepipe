@@ -122,10 +122,14 @@ pub fn endpoint(base_url: &str) -> String {
 /// 校验配置可直接使用。
 pub fn validate(s: &LlmSettings) -> Result<()> {
     if s.provider != LlmProvider::Codex && s.base_url.trim().is_empty() {
-        bail!("未设置 AI 服务地址 / AI service URL is not set. Run: course2md llm setup");
+        bail!(crate::tr!(
+            "未设置 AI 服务地址 / AI service URL is not set. Run: course2md llm setup"
+        ));
     }
     if s.model.trim().is_empty() {
-        bail!("未设置 AI 模型 / AI model is not set. Run: course2md llm setup");
+        bail!(crate::tr!(
+            "未设置 AI 模型 / AI model is not set. Run: course2md llm setup"
+        ));
     }
     if !s.base_url.trim().is_empty() {
         crate::config::ensure_http_url(&s.base_url)?;
@@ -334,8 +338,10 @@ fn polish_chunk(
     let (Some(first), Some(last)) = (chunk.first(), chunk.last()) else {
         return 0;
     };
-    let description = format!(
-        "校对 {0}–{1} 的文字 / Proofread transcript {0}–{1}",
+    let description = crate::tr!(
+        "校对 {}–{} 的文字 / Proofread transcript {}–{}",
+        crate::render::fmt_ts(first.start),
+        crate::render::fmt_ts(last.end),
         crate::render::fmt_ts(first.start),
         crate::render::fmt_ts(last.end)
     );
@@ -348,9 +354,7 @@ fn polish_chunk(
         Err(error) => {
             warn_once(
                 warned,
-                &format!(
-                    "校对未完成，已保留原文 / Proofreading incomplete; original text retained: {error:#}"
-                ),
+                &crate::tr!("校对未完成，已保留原文：{}", format!("{error:#}")),
             );
             record_first_error(first_error, format!("{error:#}"));
             0
@@ -423,16 +427,21 @@ fn chat(
         Purpose::Proofreading,
         description,
         &|content| {
-            let parsed = parse_segments(content)
-                .context("服务返回的校对结构无效 / Invalid proofreading structure")?;
+            let parsed = parse_segments(content).context(crate::tr!(
+                "服务返回的校对结构无效 / Invalid proofreading structure"
+            ))?;
             anyhow::ensure!(
                 segment_ids_match(&parsed, expected),
-                "校对结果与原文段落不对应，已保留原文 / Proofread segments do not match the input"
+                crate::tr!(
+                    "校对结果与原文段落不对应，已保留原文 / Proofread segments do not match the input"
+                )
             );
             Ok(())
         },
     )?;
-    parse_segments(&content).context("服务返回的校对结构无效 / Invalid proofreading structure")
+    parse_segments(&content).context(crate::tr!(
+        "服务返回的校对结构无效 / Invalid proofreading structure"
+    ))
 }
 
 /// 构造 /chat/completions 请求体（独立出来便于单测覆盖视觉路径）。
@@ -447,13 +456,16 @@ fn build_chat_body(
         .map(|(i, t)| serde_json::json!({"id": i, "text": t}))
         .collect();
     let vision_note = if image_b64.is_some() {
-        " 消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。"
+        crate::tr!(
+            " 消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。"
+        )
     } else {
         ""
     };
-    let system = format!(
-        "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{vision_note}",
-        effective_prompt(s)
+    let system = crate::tr!(
+        "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{}",
+        effective_prompt(s),
+        vision_note
     );
     let mut content = vec![serde_json::json!({
         "type": "text",
@@ -716,12 +728,14 @@ fn request_chat_once(
             // protocol failure, never an empty success.
             anyhow::ensure!(
                 value.get("error").is_none_or(serde_json::Value::is_null),
-                "AI 服务返回了错误 / The AI service returned an error"
+                crate::tr!("AI 服务返回了错误 / The AI service returned an error")
             );
             let content = value["choices"][0]["message"]["content"]
                 .as_str()
                 .filter(|s| !s.trim().is_empty())
-                .context("AI 服务没有返回内容 / The AI service returned no content")?;
+                .context(crate::tr!(
+                    "AI 服务没有返回内容 / The AI service returned no content"
+                ))?;
             validate(content)
         },
     )
@@ -780,13 +794,17 @@ pub fn test_connection(s: &LlmSettings) -> Result<()> {
             {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{TEST_PNG_B64}")}},
         ])
     } else {
-        serde_json::Value::String("只回复两个字符：ok".into())
+        serde_json::Value::String(crate::tr!("只回复两个字符：ok").into())
     };
     let body = crate::provider::test_body(s, user);
     let fail_hint = if s.vision {
-        "连接失败。请确认服务地址、密钥及模型，并检查图片输入支持。 / Connection failed. Check the URL, API key, model, and image input support."
+        crate::tr!(
+            "连接失败。请确认服务地址、密钥及模型，并检查图片输入支持。 / Connection failed. Check the URL, API key, model, and image input support."
+        )
     } else {
-        "连接失败。请检查服务地址、密钥和模型。 / Connection failed. Check the URL, API key, and model."
+        crate::tr!(
+            "连接失败。请检查服务地址、密钥和模型。 / Connection failed. Check the URL, API key, and model."
+        )
     };
     // 与生产路径同一纪律：禁止跟随重定向；空密钥不发送 Bearer 头（本地无鉴权服务）
     let agent = crate::runtime::http_agent(Duration::from_secs(60));
@@ -801,11 +819,13 @@ pub fn test_connection(s: &LlmSettings) -> Result<()> {
         resp.into_reader()
             .take(4 * 1024 * 1024 + 1)
             .read_to_end(&mut bytes)
-            .context("服务响应接收中断 / Service response was interrupted")?;
+            .context(crate::tr!(
+                "服务响应接收中断 / Service response was interrupted"
+            ))?;
         crate::provider::sse_to_chat_json(&bytes)?
     } else {
         resp.into_json()
-            .context("无法解析响应 / Cannot parse response")?
+            .context(crate::tr!("无法解析响应 / Cannot parse response"))?
     };
     let text = v["choices"][0]["message"]["content"]
         .as_str()
@@ -813,7 +833,9 @@ pub fn test_connection(s: &LlmSettings) -> Result<()> {
         .trim();
     anyhow::ensure!(
         !text.is_empty(),
-        "服务返回空响应；请确认模型可用 / The service returned an empty response; make sure the model works"
+        crate::tr!(
+            "服务返回空响应；请确认模型可用 / The service returned an empty response; make sure the model works"
+        )
     );
     Ok(())
 }
@@ -840,9 +862,9 @@ pub fn setup_interactive(
         cfg.llm.base_url = v.trim().to_string();
     } else if interactive {
         let v: String = dialoguer::Input::new()
-            .with_prompt(
-                "服务地址 / Base URL (OpenAI-compatible, e.g. https://api.deepseek.com/v1)",
-            )
+            .with_prompt(crate::tr!(
+                "服务地址 / Base URL (OpenAI-compatible, e.g. https://api.deepseek.com/v1)"
+            ))
             .with_initial_text(&cfg.llm.base_url)
             .allow_empty(true)
             .interact_text()?;
@@ -852,9 +874,13 @@ pub fn setup_interactive(
         cfg.llm.api_key = v;
     } else if interactive {
         let keep_hint = if cfg.llm.api_key.is_empty() {
-            "（输入隐藏；无密钥的本地服务可留空） / API key (hidden; leave blank for a local service without authentication)"
+            crate::tr!(
+                "（输入隐藏；无密钥的本地服务可留空） / API key (hidden; leave blank for a local service without authentication)"
+            )
         } else {
-            "（输入隐藏；回车保留已保存的密钥） / API key (hidden; Enter keeps the saved key)"
+            crate::tr!(
+                "（输入隐藏；回车保留已保存的密钥） / API key (hidden; Enter keeps the saved key)"
+            )
         };
         let v = dialoguer::Password::new()
             .with_prompt(format!("API Key{keep_hint}"))
@@ -866,7 +892,7 @@ pub fn setup_interactive(
         cfg.llm.model = v.trim().to_string();
     } else if interactive {
         let v: String = dialoguer::Input::new()
-            .with_prompt("模型名 / Model name (e.g. deepseek-chat)")
+            .with_prompt(crate::tr!("模型名 / Model name (e.g. deepseek-chat)"))
             .with_initial_text(&cfg.llm.model)
             .allow_empty(true)
             .interact_text()?;
@@ -874,7 +900,9 @@ pub fn setup_interactive(
     }
     anyhow::ensure!(
         !cfg.llm.base_url.trim().is_empty() && !cfg.llm.model.trim().is_empty(),
-        "需要填写服务地址和模型名。在终端运行 course2md llm setup，或传入 --base-url 和 --model / A base URL and model are required. Run course2md llm setup in a terminal, or pass --base-url and --model."
+        crate::tr!(
+            "需要填写服务地址和模型名。在终端运行 course2md llm setup，或传入 --base-url 和 --model / A base URL and model are required. Run course2md llm setup in a terminal, or pass --base-url and --model."
+        )
     );
     // 容错：没写 scheme 时补 https://
     if !cfg.llm.base_url.is_empty() && !cfg.llm.base_url.contains("://") {
@@ -883,14 +911,14 @@ pub fn setup_interactive(
     // 视觉能力仅交互式终端询问（脚本化调用全部传参时不阻塞）
     if interactive {
         cfg.llm.vision = dialoguer::Select::new()
-            .with_prompt("校对时附上幻灯片截图？需支持图片的模型。 / Attach slide images when polishing? Requires an image-capable model.")
+            .with_prompt(crate::tr!("校对时附上幻灯片截图？需支持图片的模型。 / Attach slide images when polishing? Requires an image-capable model."))
             .items([
-                "仅发送文字 / Send text only",
-                "发送文字和截图 / Send text and slide images",
+                crate::tr!("仅发送文字 / Send text only"),
+                crate::tr!("发送文字和截图 / Send text and slide images"),
             ])
             .default(if cfg.llm.vision { 1 } else { 0 })
             .interact_opt()?
-            .ok_or_else(|| anyhow::anyhow!("已取消设置，未保存配置。 / Setup cancelled; no configuration saved."))? == 1;
+            .ok_or_else(|| anyhow::anyhow!(crate::tr!("已取消设置，未保存配置。 / Setup cancelled; no configuration saved.")))? == 1;
     }
     // setup 面向 OpenAI 兼容端点；codex/ollama 登录态由此显式退出
     cfg.llm.provider = LlmProvider::OpenAiCompatible;
@@ -904,9 +932,9 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
     let s = &cfg.llm;
     let state = |enabled| {
         if enabled {
-            "开启 / enabled"
+            crate::tr!("开启 / enabled")
         } else {
-            "关闭 / disabled"
+            crate::tr!("关闭 / disabled")
         }
     };
     println!(
@@ -926,9 +954,9 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
     println!(
         "  API key: {}",
         if s.api_key.is_empty() {
-            "未设置 / not set"
+            crate::tr!("未设置 / not set")
         } else {
-            "已设置（隐藏） / set (hidden)"
+            crate::tr!("已设置（隐藏） / set (hidden)")
         }
     );
     println!(
@@ -943,7 +971,7 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
     println!("  并发请求 / Concurrent requests: {}", s.concurrency);
     println!("  使用提示 / Usage hint: {}", state(!s.disable_hint));
     if !s.enabled {
-        println!("开启校对 / Enable transcript polish: course2md llm setup");
+        crate::println_tr!("开启校对 / Enable transcript polish: course2md llm setup");
     }
 }
 
@@ -1015,14 +1043,14 @@ mod tests {
             text: text.into(),
             raw: None,
         };
-        let (mut a, mut b) = (event("今天讲编译原理"), event("啊"));
+        let (mut a, mut b) = (event(crate::tr!("今天讲编译原理")), event(crate::tr!("啊")));
         let mut refs = vec![&mut a, &mut b];
-        let polished = [(0, "今天讲编译原理".into()), (1, String::new())];
+        let polished = [(0, crate::tr!("今天讲编译原理").into()), (1, String::new())];
         assert!(segment_ids_match(&polished, refs.len()));
         apply_polish(&mut refs, &polished);
         assert_eq!(a.raw, None, "未改动的条目不记 raw");
         assert_eq!(b.text, "", "纯语气词被置空，随后由调用方删除");
-        assert_eq!(b.raw.as_deref(), Some("啊"), "原文进 raw 溯源");
+        assert_eq!(b.raw.as_deref(), Some(crate::tr!("啊")), "原文进 raw 溯源");
         assert!(!segment_ids_match(&[(0, "x".into()), (1, "y".into())], 1));
         assert!(!segment_ids_match(&[], 1));
         assert!(!segment_ids_match(&[(0, "x".into()), (0, "y".into())], 2));
@@ -1082,7 +1110,7 @@ mod tests {
         let got = parse_segments("[{\"id\":0,\"text\":\"a\"}]").unwrap();
         assert_eq!(got, vec![(0, "a".into())]);
         assert!(parse_segments("{\"segments\":[]}").is_none());
-        assert!(parse_segments("没有 JSON").is_none());
+        assert!(parse_segments(crate::tr!("没有 JSON")).is_none());
     }
 
     #[test]
@@ -1092,7 +1120,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
-        assert!(parse_id_text_pairs("没有数组").is_none());
+        assert!(parse_id_text_pairs(crate::tr!("没有数组")).is_none());
         assert!(parse_id_text_pairs("[]").is_none());
     }
 }

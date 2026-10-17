@@ -219,9 +219,10 @@ pub fn run_npu(
     worker.stop();
 
     let events = r.map_err(|e| {
-        worker
-            .stderr
-            .attach(e, "NPU 识别错误详情 / NPU transcription error details")
+        worker.stderr.attach(
+            e,
+            crate::tr!("NPU 识别错误详情 / NPU transcription error details"),
+        )
     })?;
     tracing::info!(
         n = events.len(),
@@ -335,9 +336,9 @@ fn spawn_npu_worker(
     } else if crate::runtime::which("python3").is_some() {
         Command::new("python3")
     } else {
-        anyhow::bail!(
+        anyhow::bail!(crate::tr!(
             "未找到 Python/uv，无法启动 NPU 识别 / Install Python or uv to use Intel NPU transcription"
-        );
+        ));
     };
 
     #[cfg(unix)]

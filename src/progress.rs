@@ -59,21 +59,25 @@ pub fn stage(name: &str, status: &str) {
     if !is_json() && !is_quiet() && status == "start" {
         let label = match name {
             "model-load" | "model/apple" => {
-                "加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)"
+                crate::tr!(
+                    "加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)"
+                )
             }
-            "fetch" => "读取视频信息 / Reading video information",
-            "subtitle" => "查找字幕 / Looking for subtitles",
-            "download" => "下载视频 / Downloading video",
-            "scenes" => "提取截图 / Extracting slides",
-            "scenes/scan" => "扫描画面 / Scanning video frames",
-            "scenes/extract" => "生成截图 / Saving screenshots",
-            "audio" => "提取音频 / Extracting audio",
-            "transcribe" | "asr" => "识别语音 / Transcribing speech",
-            "llm" => "校对文字 / Proofreading transcript",
-            "summary" | "summarize" => "生成摘要 / Generating summary",
-            "render" => "生成笔记 / Writing notes",
-            "model/prepare" => "检查识别模型 / Checking speech model",
-            name if name.starts_with("model/") => "下载识别模型 / Downloading speech model",
+            "fetch" => crate::tr!("读取视频信息 / Reading video information"),
+            "subtitle" => crate::tr!("查找字幕 / Looking for subtitles"),
+            "download" => crate::tr!("下载视频 / Downloading video"),
+            "scenes" => crate::tr!("提取截图 / Extracting slides"),
+            "scenes/scan" => crate::tr!("扫描画面 / Scanning video frames"),
+            "scenes/extract" => crate::tr!("生成截图 / Saving screenshots"),
+            "audio" => crate::tr!("提取音频 / Extracting audio"),
+            "transcribe" | "asr" => crate::tr!("识别语音 / Transcribing speech"),
+            "llm" => crate::tr!("校对文字 / Proofreading transcript"),
+            "summary" | "summarize" => crate::tr!("生成摘要 / Generating summary"),
+            "render" => crate::tr!("生成笔记 / Writing notes"),
+            "model/prepare" => crate::tr!("检查识别模型 / Checking speech model"),
+            name if name.starts_with("model/") => {
+                crate::tr!("下载识别模型 / Downloading speech model")
+            }
             _ => return,
         };
         eprintln!("{label}…");
@@ -140,7 +144,7 @@ pub fn download_progress(current: u64, total: u64) {
 /// 共享进度条样式：模板均为静态字符串，解析失败是编程错误。
 fn progress_style(template: &str) -> ProgressStyle {
     ProgressStyle::with_template(template)
-        .expect("静态进度条模板")
+        .expect(crate::tr!("静态进度条模板"))
         .progress_chars("##-")
 }
 

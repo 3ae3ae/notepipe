@@ -67,7 +67,7 @@ fn configure_with_path(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
             return Err(e)
-                .context("无法读取 Bilibili 登录状态，请重新运行 course2md --login bilibili / Cannot read Bilibili login state; run course2md --login bilibili again");
+                .context(crate::tr!("无法读取 Bilibili 登录状态，请重新运行 course2md --login bilibili / Cannot read Bilibili login state; run course2md --login bilibili again"));
         }
     };
     let mut file = tempfile::NamedTempFile::new()?;
@@ -82,15 +82,17 @@ pub fn clear_bilibili_login() -> Result<bool> {
     match std::fs::remove_file(cookie_path()) {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e).context("清除 Bilibili 登录状态失败 / Could not remove Bilibili login"),
+        Err(e) => Err(e).context(crate::tr!(
+            "清除 Bilibili 登录状态失败 / Could not remove Bilibili login"
+        )),
     }
 }
 
 pub fn logout_bilibili() -> Result<()> {
     if clear_bilibili_login()? {
-        println!("已清除 Bilibili 本地登录状态。/ Bilibili login removed.");
+        crate::println_tr!("已清除 Bilibili 本地登录状态。/ Bilibili login removed.");
     } else {
-        println!("尚未登录 Bilibili。/ No Bilibili login saved.");
+        crate::println_tr!("尚未登录 Bilibili。/ No Bilibili login saved.");
     }
     Ok(())
 }
@@ -133,7 +135,9 @@ fn cookie_header(cookies: &Cookies) -> String {
 fn netscape(cookies: &Cookies) -> Result<String> {
     ensure!(
         complete(cookies),
-        "登录响应未包含完整凭据，请重新扫码 / Login response did not include complete credentials; scan the QR code again"
+        crate::tr!(
+            "登录响应未包含完整凭据，请重新扫码 / Login response did not include complete credentials; scan the QR code again"
+        )
     );
     let mut text = String::from(
         "# Netscape HTTP Cookie File\n# course2md Bilibili login; do not share this file.\n",
@@ -150,8 +154,9 @@ fn netscape(cookies: &Cookies) -> Result<String> {
 fn save_cookies(path: &Path, cookies: &Cookies) -> Result<()> {
     let text = netscape(cookies)?;
     // atomic_write 经 tempfile 落盘，Unix 上权限为 0600
-    crate::checkpoint::atomic_write(path, text.as_bytes())
-        .context("保存 Bilibili 登录状态失败 / Failed to save Bilibili login state")
+    crate::checkpoint::atomic_write(path, text.as_bytes()).context(crate::tr!(
+        "保存 Bilibili 登录状态失败 / Failed to save Bilibili login state"
+    ))
 }
 
 fn request(agent: &ureq::Agent, url: &str, cookies: &Cookies) -> Result<ureq::Response> {
@@ -162,27 +167,29 @@ fn request(agent: &ureq::Agent, url: &str, cookies: &Cookies) -> Result<ureq::Re
         .set("Referer", "https://passport.bilibili.com/")
         .set("Cookie", &cookie_header(cookies))
         .call()
-        .map_err(|_| anyhow::anyhow!("Bilibili 登录请求失败，请检查网络后重试 / Bilibili login request failed; check the network and retry"))
+        .map_err(|_| anyhow::anyhow!(crate::tr!("Bilibili 登录请求失败，请检查网络后重试 / Bilibili login request failed; check the network and retry")))
 }
 
 fn data(response: ureq::Response) -> Result<Value> {
-    let value: Value = response
-        .into_json()
-        .context("无法解析 Bilibili 登录响应 / Cannot parse Bilibili login response")?;
+    let value: Value = response.into_json().context(crate::tr!(
+        "无法解析 Bilibili 登录响应 / Cannot parse Bilibili login response"
+    ))?;
     ensure!(
         value["code"].as_i64() == Some(0),
-        "Bilibili 登录接口返回错误 / Bilibili login API returned an error"
+        crate::tr!("Bilibili 登录接口返回错误 / Bilibili login API returned an error")
     );
     ensure!(
         value["data"].is_object(),
-        "Bilibili 登录响应缺少 data / Bilibili login response is missing data"
+        crate::tr!("Bilibili 登录响应缺少 data / Bilibili login response is missing data")
     );
     Ok(value["data"].clone())
 }
 
 fn trusted_ticket_url(raw: &str) -> Result<url::Url> {
     let url = url::Url::parse(raw).map_err(|_| {
-        anyhow::anyhow!("Bilibili 登录跳转地址无效 / Invalid Bilibili login redirect URL")
+        anyhow::anyhow!(crate::tr!(
+            "Bilibili 登录跳转地址无效 / Invalid Bilibili login redirect URL"
+        ))
     })?;
     ensure!(
         url.scheme() == "https"
@@ -192,7 +199,7 @@ fn trusted_ticket_url(raw: &str) -> Result<url::Url> {
             && url
                 .host_str()
                 .is_some_and(|host| host == "bilibili.com" || host.ends_with(".bilibili.com")),
-        "Bilibili 登录跳转地址不受支持 / Unsupported Bilibili login redirect URL"
+        crate::tr!("Bilibili 登录跳转地址不受支持 / Unsupported Bilibili login redirect URL")
     );
     Ok(url)
 }
@@ -213,8 +220,9 @@ fn finish_with(
     if let Some(raw) = login["url"].as_str().filter(|s| !s.is_empty()) {
         // Older responses embed cookies in the callback query; newer responses
         // provide a crossDomain ticket whose response sets the real cookies.
-        let url = url::Url::parse(raw)
-            .map_err(|_| anyhow::anyhow!("登录回调地址无效 / Invalid login callback URL"))?;
+        let url = url::Url::parse(raw).map_err(|_| {
+            anyhow::anyhow!(crate::tr!("登录回调地址无效 / Invalid login callback URL"))
+        })?;
         for pair in url.query().unwrap_or_default().split('&') {
             if let Some((name, value)) = pair.split_once('=')
                 && !cookies.contains_key(name)
@@ -233,11 +241,11 @@ fn finish_with(
                 if !(300..400).contains(&response.status()) {
                     break;
                 }
-                let location = response
-                    .header("location")
-                    .context("登录跳转缺少地址 / Login redirect is missing an address")?;
+                let location = response.header("location").context(crate::tr!(
+                    "登录跳转缺少地址 / Login redirect is missing an address"
+                ))?;
                 let joined = next.join(location).map_err(|_| {
-                    anyhow::anyhow!("登录跳转地址无效 / Invalid login redirect URL")
+                    anyhow::anyhow!(crate::tr!("登录跳转地址无效 / Invalid login redirect URL"))
                 })?;
                 next = trusted_ticket_url(joined.as_str())?;
             }
@@ -245,16 +253,18 @@ fn finish_with(
     }
     ensure!(
         complete(cookies),
-        "登录响应缺少凭据，请重新运行 course2md --login bilibili / Login response is missing credentials; run course2md --login bilibili again"
+        crate::tr!(
+            "登录响应缺少凭据，请重新运行 course2md --login bilibili / Login response is missing credentials; run course2md --login bilibili again"
+        )
     );
-    let value: Value = fetch(NAV, cookies)?
-        .into_json()
-        .context("无法解析 Bilibili 登录响应 / Cannot parse Bilibili login response")?;
+    let value: Value = fetch(NAV, cookies)?.into_json().context(crate::tr!(
+        "无法解析 Bilibili 登录响应 / Cannot parse Bilibili login response"
+    ))?;
     match nav_status(&value)? {
         AccountStatus::Connected(profile) => Ok(profile),
-        _ => bail!(
+        _ => bail!(crate::tr!(
             "Bilibili 未确认登录，请重新扫码 / Bilibili did not confirm the login; scan the QR code again"
-        ),
+        )),
     }
 }
 
@@ -265,20 +275,20 @@ fn nav_status(value: &Value) -> Result<AccountStatus> {
     }
     ensure!(
         value["code"].as_i64() == Some(0),
-        "无法验证账号状态，请稍后重试 / Cannot verify account status; retry later"
+        crate::tr!("无法验证账号状态，请稍后重试 / Cannot verify account status; retry later")
     );
     let profile = &value["data"];
     match profile["isLogin"].as_bool() {
         Some(true) => Ok(AccountStatus::Connected(AccountProfile {
             name: profile["uname"]
                 .as_str()
-                .unwrap_or("Bilibili 用户")
+                .unwrap_or(crate::tr!("Bilibili 用户"))
                 .to_owned(),
         })),
         Some(false) => Ok(AccountStatus::Expired),
-        None => bail!(
+        None => bail!(crate::tr!(
             "账号状态响应不完整，请稍后重试 / Account status response is incomplete; retry later"
-        ),
+        )),
     }
 }
 
@@ -295,9 +305,9 @@ fn qr_state(value: &Value) -> Result<QrState> {
         Some(86090) => Ok(QrState::Confirm),
         Some(86038) => Ok(QrState::Expired),
         Some(0) => Ok(QrState::Done),
-        _ => bail!(
+        _ => bail!(crate::tr!(
             "Bilibili 返回未知扫码状态，请重试 / Bilibili returned an unknown QR scan status; retry"
-        ),
+        )),
     }
 }
 
@@ -325,9 +335,9 @@ pub fn bilibili_account_status() -> Result<AccountStatus> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AccountStatus::Disconnected);
         }
-        Err(_) => bail!(
+        Err(_) => bail!(crate::tr!(
             "无法读取本地登录状态，请重新登录 / Cannot read the saved login state; log in again"
-        ),
+        )),
     };
     let mut cookies = Cookies::new();
     for line in text.lines().filter(|line| !line.starts_with('#')) {
@@ -341,7 +351,9 @@ pub fn bilibili_account_status() -> Result<AccountStatus> {
     }
     let value: Value = request(&login_agent(), NAV, &cookies)?
         .into_json()
-        .map_err(|_| anyhow::anyhow!("无法解析账号状态 / Cannot parse account status"))?;
+        .map_err(|_| {
+            anyhow::anyhow!(crate::tr!("无法解析账号状态 / Cannot parse account status"))
+        })?;
     nav_status(&value)
 }
 
@@ -381,14 +393,14 @@ impl QrSession {
         let response = request(&agent, &format!("{PASSPORT}/generate"), &cookies)?;
         read_cookies(&response, &mut cookies);
         let qr = data(response)?;
-        let key = qr["qrcode_key"]
-            .as_str()
-            .context("二维码响应缺少 key / QR code response is missing key")?;
-        let link = qr["url"]
-            .as_str()
-            .context("二维码响应缺少 url / QR code response is missing url")?;
+        let key = qr["qrcode_key"].as_str().context(crate::tr!(
+            "二维码响应缺少 key / QR code response is missing key"
+        ))?;
+        let link = qr["url"].as_str().context(crate::tr!(
+            "二维码响应缺少 url / QR code response is missing url"
+        ))?;
         let code = qrcode::QrCode::new(link.as_bytes())
-            .context("生成二维码失败 / Failed to generate QR code")?;
+            .context(crate::tr!("生成二维码失败 / Failed to generate QR code"))?;
         let mut poll_url = url::Url::parse(&format!("{PASSPORT}/poll"))?;
         poll_url.query_pairs_mut().append_pair("qrcode_key", key);
         Ok(Self {
@@ -439,7 +451,7 @@ impl QrSession {
 
 pub fn login_bilibili() -> Result<()> {
     let mut session = QrSession::generate()?;
-    println!(
+    crate::println_tr!(
         "请用哔哩哔哩 App 扫描二维码，并在手机上确认登录（Ctrl+C 取消）：/ Scan with the Bilibili app and confirm the login on your phone (Ctrl+C to cancel):"
     );
     println!(
@@ -458,18 +470,18 @@ pub fn login_bilibili() -> Result<()> {
             QrPoll::Waiting => {}
             QrPoll::AwaitingConfirmation => {
                 if !confirmed {
-                    println!(
+                    crate::println_tr!(
                         "已扫码，请在手机上确认登录。/ Code scanned; confirm the login on your phone."
                     );
                     confirmed = true;
                 }
             }
-            QrPoll::Expired => bail!(
+            QrPoll::Expired => bail!(crate::tr!(
                 "二维码已过期，请重新运行 course2md --login bilibili / QR code expired; run course2md --login bilibili again"
-            ),
+            )),
             QrPoll::Authenticated(login) => {
                 login.save()?;
-                println!(
+                crate::println_tr!(
                     "Bilibili 登录成功。预览、字幕和视频下载将自动使用此登录状态。/ Bilibili login successful. Previews, subtitles and video downloads will use it automatically."
                 );
                 return Ok(());

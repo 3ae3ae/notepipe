@@ -35,7 +35,10 @@ pub mod ytdlp;
 pub(crate) fn random_b64url(bytes: usize) -> anyhow::Result<String> {
     use base64::Engine as _;
     let mut buf = vec![0u8; bytes];
-    getrandom::getrandom(&mut buf)
-        .map_err(|_| anyhow::anyhow!("无法生成安全随机数 / Cannot generate secure random bytes"))?;
+    getrandom::getrandom(&mut buf).map_err(|_| {
+        anyhow::anyhow!(crate::tr!(
+            "无法生成安全随机数 / Cannot generate secure random bytes"
+        ))
+    })?;
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf))
 }

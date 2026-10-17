@@ -154,12 +154,12 @@ fn chat_once(
         &|content| {
             anyhow::ensure!(
                 parse_summary(content).is_some(),
-                "服务返回的摘要结构无效 / Invalid summary structure"
+                crate::tr!("服务返回的摘要结构无效 / Invalid summary structure")
             );
             Ok(())
         },
     )
-    .context("生成摘要请求失败 / Summary request failed")
+    .context(crate::tr!("生成摘要请求失败 / Summary request failed"))
 }
 
 /// One requested summary scope. A protocol failure is retained, never hidden by another paid request.
@@ -176,7 +176,9 @@ fn summarize_text(
         &user_prompt(transcript),
         description,
     )?;
-    parse_summary(&content).context("服务返回的摘要结构无效 / Invalid summary response")
+    parse_summary(&content).context(crate::tr!(
+        "服务返回的摘要结构无效 / Invalid summary response"
+    ))
 }
 
 /// Show the actionable cause once. Provider bodies never reach these errors;
@@ -238,7 +240,9 @@ pub async fn summarize(
         .sum();
     // 空转写直接报错：发给模型只会得到编造内容或报错，浪费请求
     if events.is_empty() {
-        bail!("转写为空，无法摘要 / Transcript is empty; cannot summarize");
+        bail!(crate::tr!(
+            "转写为空，无法摘要 / Transcript is empty; cannot summarize"
+        ));
     }
     llm::validate(s)?;
     let ctx = meta_context(meta);
@@ -247,14 +251,18 @@ pub async fn summarize(
     if total_chars <= DIRECT_CHAR_LIMIT {
         let t = transcript;
         let s2 = s.clone();
-        let description = format!(
-            "生成整篇摘要（{0}–{1}） / Generate the full summary ({0}–{1})",
+        let description = crate::tr!(
+            "生成整篇摘要（{}–{}） / Generate the full summary ({}–{})",
+            crate::render::fmt_ts(events.first().unwrap().start),
+            crate::render::fmt_ts(events.last().unwrap().end),
             crate::render::fmt_ts(events.first().unwrap().start),
             crate::render::fmt_ts(events.last().unwrap().end)
         );
         return tokio::task::spawn_blocking(move || summarize_text(&agent, &s2, &t, &description))
             .await
-            .context("生成摘要时意外中断 / Summary generation was interrupted")?;
+            .context(crate::tr!(
+                "生成摘要时意外中断 / Summary generation was interrupted"
+            ))?;
     }
     // ---- map-reduce：分段按 SUMMARIZE_CONCURRENCY 分批并发 ----
     let chunks = split_chunks(events, CHUNK_CHAR_LIMIT);
@@ -270,8 +278,12 @@ pub async fn summarize(
             let t = format!("{ctx}{}", build_transcript(chunk));
             let s2 = s.clone();
             let agent = agent.clone();
-            let description = format!(
-                "生成第 {0}/{1} 部分摘要（{2}–{3}） / Generate summary part {0}/{1} ({2}–{3})",
+            let description = crate::tr!(
+                "生成第 {}/{} 部分摘要（{}–{}） / Generate summary part {}/{} ({}–{})",
+                partials.len() + offset + 1,
+                chunks.len(),
+                crate::render::fmt_ts(chunk.first().unwrap().start),
+                crate::render::fmt_ts(chunk.last().unwrap().end),
                 partials.len() + offset + 1,
                 chunks.len(),
                 crate::render::fmt_ts(chunk.first().unwrap().start),
@@ -286,7 +298,7 @@ pub async fn summarize(
         for handle in handles {
             match handle
                 .await
-                .context("摘要工作进程中断 / Summary worker interrupted")?
+                .context(crate::tr!("摘要工作进程中断 / Summary worker interrupted"))?
             {
                 Ok(summary) => partials.push(summary),
                 Err(error) => {
@@ -297,9 +309,9 @@ pub async fn summarize(
             }
         }
         if let Some(error) = failure {
-            return Err(error.context(
-                "部分摘要尚未完成，没有生成不完整的整篇摘要 / Summary parts are incomplete",
-            ));
+            return Err(error.context(crate::tr!(
+                "部分摘要尚未完成，没有生成不完整的整篇摘要 / Summary parts are incomplete"
+            )));
         }
     }
     // 合并分段摘要
@@ -330,15 +342,19 @@ pub async fn summarize(
 \"key_points\": [整个视频的3-8条要点], \
 \"outline\": [{{\"t\":秒,\"title\":\"章节标题\",\"detail\":\"简述\"}}]}}"
             ),
-            "将全部分段摘要合并为整篇摘要 / Merge all partial summaries into the full summary",
+            crate::tr!(
+                "将全部分段摘要合并为整篇摘要 / Merge all partial summaries into the full summary"
+            ),
         )
     })
     .await
-    .context("生成摘要时意外中断 / Summary generation was interrupted")?;
+    .context(crate::tr!(
+        "生成摘要时意外中断 / Summary generation was interrupted"
+    ))?;
     let combined = combined?;
-    parse_summary(&combined).context(
-        "摘要合并未完成，已保存各段已确认结果 / Summary merge failed; completed parts retained",
-    )
+    parse_summary(&combined).context(crate::tr!(
+        "摘要合并未完成，已保存各段已确认结果 / Summary merge failed; completed parts retained"
+    ))
 }
 
 /// 生成插入 course.md 的摘要区块（markdown，哨兵注释包裹）。
@@ -369,22 +385,25 @@ pub fn render_md_block(sm: &Summary) -> String {
 
 /// 生成插入 course.html 的摘要区块（HTML，哨兵注释包裹）。
 pub fn render_html_block(sm: &Summary) -> String {
-    let mut out = format!("{SUMMARY_BEGIN}<section class=\"summary\"><h2>📝 视频摘要</h2>");
+    let mut out = crate::tr!(
+        "{}<section class=\"summary\"><h2>📝 视频摘要</h2>",
+        SUMMARY_BEGIN
+    );
     out.push_str(&format!(
         "<p class=\"mute\">{}</p>",
         crate::render::esc(&sm.tldr)
     ));
     if !sm.key_points.is_empty() {
-        out.push_str("<h3>核心要点</h3><ul>");
+        out.push_str(crate::tr!("<h3>核心要点</h3><ul>"));
         for p in &sm.key_points {
             out.push_str(&format!("<li>{}</li>", crate::render::esc(p)));
         }
         out.push_str("</ul>");
     }
     if !sm.outline.is_empty() {
-        out.push_str("<h3>内容大纲</h3><ul>");
+        out.push_str(crate::tr!("<h3>内容大纲</h3><ul>"));
         for o in &sm.outline {
-            out.push_str(&format!(
+            out.push_str(&crate::tr!(
                 "<li><b>{}</b> {}：{}</li>",
                 crate::render::esc(&crate::render::fmt_ts(o.t)),
                 crate::render::esc(&o.title),

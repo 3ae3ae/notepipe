@@ -11,11 +11,15 @@ impl CliTest {
         }
     }
     fn run(&self, args: &[&str]) -> Output {
+        self.run_with_lang(args, "zh-Hans")
+    }
+    fn run_with_lang(&self, args: &[&str], lang: &str) -> Output {
         Command::new(env!("CARGO_BIN_EXE_course2md"))
             .args(args)
             .current_dir(self.dir.path())
             .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
             .env("XDG_CACHE_HOME", self.dir.path().join("cache"))
+            .env("COURSE2MD_LANG", lang)
             .env_remove("RUST_LOG")
             .env_remove("COURSE2MD_ASR_API_KEY")
             .stdin(std::process::Stdio::null())
@@ -49,15 +53,29 @@ fn json_error(output: &Output) -> serde_json::Value {
 }
 
 #[test]
-fn no_arguments_or_help_succeed_with_bilingual_guidance() {
+fn no_arguments_or_help_succeed_with_localized_guidance() {
     let cli = CliTest::new();
     for args in [vec![], vec!["--help"]] {
         let result = cli.run(&args);
         assert!(result.status.success());
         let text = stdout(&result);
-        assert!(text.contains("快速开始 / Quick start"));
-        assert!(text.contains("Speech recognition"));
+        assert!(
+            text.contains("快速开始") || text.contains("Quick start"),
+            "{text}"
+        );
+        assert!(
+            text.contains("语音识别") || text.contains("Speech recognition"),
+            "{text}"
+        );
     }
+    let english = cli.run_with_lang(&["--help"], "en");
+    assert!(english.status.success());
+    let text = stdout(&english);
+    assert!(text.contains("Quick start"), "{text}");
+    assert!(text.contains("Speech recognition"), "{text}");
+    let traditional = cli.run_with_lang(&["--help"], "zh-Hant");
+    assert!(traditional.status.success());
+    assert!(!stdout(&traditional).is_empty());
     for cmd in ["models", "llm", "config", "summarize", "remove", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
     }
@@ -68,10 +86,18 @@ fn missing_or_invalid_sources_fail_with_recovery() {
     let cli = CliTest::new();
     let missing = cli.run(&["--provider", "api"]);
     assert!(!missing.status.success());
-    assert!(stderr(&missing).contains("Missing video source"));
+    assert!(
+        stderr(&missing).contains("缺少视频来源"),
+        "{}",
+        stderr(&missing)
+    );
     let invalid = cli.run(&["./missing lecture.mp4"]);
     assert!(!invalid.status.success());
-    assert!(stderr(&invalid).contains("Check the path"));
+    assert!(
+        stderr(&invalid).contains("请检查路径"),
+        "{}",
+        stderr(&invalid)
+    );
     assert!(invalid.stdout.is_empty());
 }
 
@@ -118,7 +144,7 @@ fn model_listing_uses_configured_directory_and_rejects_partial_files() {
     let dir = cli.dir.path().join("custom models/llama-qwen3-1.7b");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("Qwen3-ASR-1.7B-Q8_0.gguf"), b"partial").unwrap();
-    let result = cli.run(&["models", "list"]);
+    let result = cli.run_with_lang(&["models", "list"], "en");
     assert!(result.status.success());
     let text = stdout(&result);
     assert!(text.contains("custom models"));
@@ -194,6 +220,7 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
 fn doctor_reports_required_failures_with_nonzero_exit() {
     let cli = CliTest::new();
     let result = Command::new(env!("CARGO_BIN_EXE_course2md"))
+        .env("COURSE2MD_LANG", "zh-Hans")
         .arg("doctor")
         .env("PATH", "")
         .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
@@ -202,8 +229,12 @@ fn doctor_reports_required_failures_with_nonzero_exit() {
         .output()
         .unwrap();
     assert!(!result.status.success());
-    assert!(stdout(&result).contains("Required tools"));
-    assert!(stderr(&result).contains("required-tool or configuration issues"));
+    assert!(stdout(&result).contains("必需工具"), "{}", stdout(&result));
+    assert!(
+        stderr(&result).contains("必需依赖或配置问题"),
+        "{}",
+        stderr(&result)
+    );
 }
 
 #[cfg(all(unix, feature = "integration"))]
@@ -266,6 +297,7 @@ printf 'raw downloader stderr\n' >&2
     for flag in ["--json", "--quiet"] {
         let output_dir = cli.dir.path().join(flag.trim_start_matches('-'));
         let result = Command::new(env!("CARGO_BIN_EXE_course2md"))
+            .env("COURSE2MD_LANG", "zh-Hans")
             .args([
                 "https://example.test/video",
                 "--transcript-source",

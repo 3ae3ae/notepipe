@@ -1,4 +1,4 @@
-use crate::i18n::{t, Lang};
+use crate::i18n::{Lang, t};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -30,7 +30,7 @@ First conversion in a terminal offers setup; scripts should pass options explici
 #[command(
     name = "course2md",
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("COURSE2MD_COMMIT_HASH"), ")"),
-    about = "将课程视频转换为图文笔记 / Turn course videos into illustrated notes",
+    about = crate::tr!("将课程视频转换为图文笔记 / Turn course videos into illustrated notes"),
     args_conflicts_with_subcommands = true,
     after_help = QUICK_START
 )]
@@ -403,22 +403,44 @@ pub enum ConfigCmd {
     Show,
 }
 
-/// Resolves `--lang` / `COURSE2MD_LANG` / the system locale before clap renders help.
-pub fn requested_lang() -> Lang {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        let value = if arg == "--lang" {
-            args.next()
-        } else {
-            arg.strip_prefix("--lang=").map(str::to_owned)
-        };
-        if let Some(value) = value
-            && let Some(lang) = Lang::from_code(&value)
-        {
-            return lang;
+/// Removes `--lang` from the argument list before clap parses it.
+///
+/// `--lang` is a global option, but clap's `args_conflicts_with_subcommands`
+/// would otherwise reject `course2md --lang en doctor`. Keeping the flag in the
+/// command definition documents it in `--help`; taking it out here lets it
+/// appear before or after a subcommand.
+pub fn take_lang_arg(args: &mut Vec<std::ffi::OsString>) -> Option<String> {
+    let mut value = None;
+    let mut index = 0;
+    let mut literal = false;
+    while index < args.len() {
+        let arg = args[index].to_string_lossy().into_owned();
+        if literal {
+            index += 1;
+            continue;
         }
+        if arg == "--" {
+            literal = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--lang" {
+            if index + 1 < args.len() {
+                value = Some(args[index + 1].to_string_lossy().into_owned());
+                args.drain(index..index + 2);
+                continue;
+            }
+            args.remove(index);
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--lang=") {
+            value = Some(rest.to_owned());
+            args.remove(index);
+            continue;
+        }
+        index += 1;
     }
-    Lang::detect()
+    value
 }
 
 /// Replaces clap's compile-time help and about texts with catalog translations.
@@ -477,7 +499,7 @@ pub fn localize_command(command: clap::Command) -> clap::Command {
 
     let command = about(command);
     let command = args(command);
-    command.mut_subcommands(|subcommand| localize_command(subcommand))
+    command.mut_subcommands(localize_command)
 }
 
 /// Localizes clap's own section headings in rendered help and error text.
@@ -490,9 +512,27 @@ pub fn localize_rendered(text: &str) -> String {
         return text.to_owned();
     }
     let (usage, options, commands, arguments, more) = match lang {
-        Lang::ZhHans => ("用法：", "选项：", "命令：", "参数：", "更多信息请运行 --help。"),
-        Lang::ZhHant => ("用法：", "選項：", "命令：", "參數：", "更多資訊請執行 --help。"),
-        Lang::Ja => ("使用法：", "オプション：", "コマンド：", "引数：", "詳細は --help を参照してください。"),
+        Lang::ZhHans => (
+            crate::tr!("用法："),
+            crate::tr!("选项："),
+            crate::tr!("命令："),
+            crate::tr!("参数："),
+            crate::tr!("更多信息请运行 --help。"),
+        ),
+        Lang::ZhHant => (
+            crate::tr!("用法："),
+            crate::tr!("選項："),
+            crate::tr!("命令："),
+            crate::tr!("參數："),
+            crate::tr!("更多資訊請執行 --help。"),
+        ),
+        Lang::Ja => (
+            crate::tr!("使用法："),
+            crate::tr!("オプション："),
+            crate::tr!("コマンド："),
+            crate::tr!("引数："),
+            crate::tr!("詳細は --help を参照してください。"),
+        ),
         Lang::En => unreachable!(),
     };
     let mut out = String::with_capacity(text.len());
@@ -532,27 +572,27 @@ pub fn localize_rendered(text: &str) -> String {
 
 fn more_help(lang: Lang) -> &'static str {
     match lang {
-        Lang::ZhHans => "显示帮助",
-        Lang::ZhHant => "顯示說明",
-        Lang::Ja => "ヘルプを表示",
+        Lang::ZhHans => crate::tr!("显示帮助"),
+        Lang::ZhHant => crate::tr!("顯示說明"),
+        Lang::Ja => crate::tr!("ヘルプを表示"),
         Lang::En => "Print help",
     }
 }
 
 fn more_help_command(lang: Lang) -> &'static str {
     match lang {
-        Lang::ZhHans => "显示此消息或子命令的帮助",
-        Lang::ZhHant => "顯示此訊息或子命令的說明",
-        Lang::Ja => "このメッセージまたはサブコマンドのヘルプを表示",
+        Lang::ZhHans => crate::tr!("显示此消息或子命令的帮助"),
+        Lang::ZhHant => crate::tr!("顯示此訊息或子命令的說明"),
+        Lang::Ja => crate::tr!("このメッセージまたはサブコマンドのヘルプを表示"),
         Lang::En => "Print this message or the help of the given subcommand(s)",
     }
 }
 
 fn more_version(lang: Lang) -> &'static str {
     match lang {
-        Lang::ZhHans => "显示版本",
-        Lang::ZhHant => "顯示版本",
-        Lang::Ja => "バージョンを表示",
+        Lang::ZhHans => crate::tr!("显示版本"),
+        Lang::ZhHant => crate::tr!("顯示版本"),
+        Lang::Ja => crate::tr!("バージョンを表示"),
         Lang::En => "Print version",
     }
 }

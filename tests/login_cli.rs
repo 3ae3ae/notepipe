@@ -43,6 +43,7 @@ fn login_is_standalone_or_precedes_video_processing() {
 #[test]
 fn invalid_source_does_not_start_login() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_course2md"))
+        .env("COURSE2MD_LANG", "zh-Hans")
         .args(["--login", "bilibili", "doctor"])
         .output()
         .unwrap();
@@ -56,6 +57,7 @@ fn initial_config_recommends_bilibili_login_without_creating_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_course2md"))
         .env("XDG_CONFIG_HOME", dir.path())
+        .env("COURSE2MD_LANG", "zh-Hans")
         .args(["config", "init"])
         .output()
         .unwrap();

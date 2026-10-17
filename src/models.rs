@@ -56,21 +56,25 @@ async fn fetch_model(
                     Ok(())
                 })
                 .await
-                .context("模型准备未完成 / Model preparation did not complete")?
+                .context(crate::tr!(
+                    "模型准备未完成 / Model preparation did not complete"
+                ))?
             }
             #[cfg(not(apple_native))]
             {
                 let _ = (model, cached, verify);
-                Err(anyhow::anyhow!(
+                Err(anyhow::anyhow!(crate::tr!(
                     "此程序未包含 Apple 原生识别运行时 / This build does not include the Apple native transcription runtime"
-                ))
+                )))
             }
         }
         AsrProvider::Npu => {
             let model = crate::npu::resolve_npu_model(Some(model));
             tokio::task::spawn_blocking(move || crate::npu::prepare_npu_model(&model))
                 .await
-                .context("NPU 模型准备未完成 / NPU model preparation did not complete")?
+                .context(crate::tr!(
+                    "NPU 模型准备未完成 / NPU model preparation did not complete"
+                ))?
         }
         AsrProvider::Api => Ok(()),
     }
@@ -206,7 +210,7 @@ fn file_complete(path: &Path) -> bool {
 pub async fn ensure_llama_or_download(root: &Path) -> Result<LlamaAsr> {
     if !llama_ready(root) {
         if !crate::progress::is_json() && !crate::progress::is_quiet() {
-            eprintln!(
+            crate::eprintln_tr!(
                 "正在下载识别模型（约 2.4GB）/ Downloading speech models (~2.4GB): {}",
                 root.display()
             );
@@ -220,7 +224,7 @@ pub async fn ensure_llama_or_download(root: &Path) -> Result<LlamaAsr> {
 /// 不稳定是常见失败原因）；已设镜像则回显当前端点便于排查。
 fn mirror_hint() -> String {
     match current_hf_endpoint() {
-        Some(ep) => format!("下载失败 / Download failed (HF_ENDPOINT={ep})"),
+        Some(ep) => crate::tr!("下载失败：{}", ep),
         None => "下载失败，请检查网络或配置镜像 / Download failed; check your connection or configure a mirror: \
                  HF_ENDPOINT=https://hf-mirror.com"
             .into(),
@@ -244,7 +248,9 @@ pub async fn download_models(root: &Path) -> Result<()> {
     projector.with_context(mirror_hint)?;
     anyhow::ensure!(
         llama_ready(root),
-        "模型文件下载不完整，请重新运行 course2md models download / Model download incomplete; run course2md models download again"
+        crate::tr!(
+            "模型文件下载不完整，请重新运行 course2md models download / Model download incomplete; run course2md models download again"
+        )
     );
     tracing::info!(path = %root.display(), "models ready");
     Ok(())
@@ -333,10 +339,10 @@ async fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("模型下载失败 / Model download failed")))
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!(crate::tr!("模型下载失败 / Model download failed"))))
     })
     .await
-    .context("模型下载任务失败 / Model download task failed")??;
+    .context(crate::tr!("模型下载任务失败 / Model download task failed"))??;
     crate::progress::stage(&stage, "done");
     Ok(())
 }
@@ -365,7 +371,11 @@ fn download_once(
                 "模型请求失败 / Model request failed: {msg}"
             ));
         }
-        Err(e) => return Err(anyhow::Error::new(e).context("模型请求失败 / Model request failed")),
+        Err(e) => {
+            return Err(
+                anyhow::Error::new(e).context(crate::tr!("模型请求失败 / Model request failed"))
+            );
+        }
     };
     let total: u64 = resp
         .header("content-length")
@@ -426,18 +436,18 @@ pub fn list_models(root: &Path) {
     println!(
         "  model  {} {}",
         if file_complete(&p.model) {
-            "就绪 / Ready"
+            crate::tr!("就绪 / Ready")
         } else {
-            "缺失或不完整 / Missing or incomplete"
+            crate::tr!("缺失或不完整 / Missing or incomplete")
         },
         p.model.display()
     );
     println!(
         "  mmproj {} {}",
         if file_complete(&p.mmproj) {
-            "就绪 / Ready"
+            crate::tr!("就绪 / Ready")
         } else {
-            "缺失或不完整 / Missing or incomplete"
+            crate::tr!("缺失或不完整 / Missing or incomplete")
         },
         p.mmproj.display()
     );
@@ -447,7 +457,7 @@ pub fn list_models(root: &Path) {
             root.display()
         );
     }
-    println!(
+    crate::println_tr!(
         "Apple 和 NPU 模型由各自后端管理 / Apple and NPU models are managed by their backends."
     );
 }

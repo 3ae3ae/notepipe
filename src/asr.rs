@@ -159,7 +159,9 @@ where
         r
     })
     .await
-    .context("语音识别任务未能完成 / Speech recognition task did not complete")?
+    .context(crate::tr!(
+        "语音识别任务未能完成 / Speech recognition task did not complete"
+    ))?
 }
 
 pub async fn run(cfg: &PipelineConfig, wav: &std::path::Path) -> Result<Vec<TranscriptEvent>> {
@@ -204,13 +206,13 @@ pub async fn run(cfg: &PipelineConfig, wav: &std::path::Path) -> Result<Vec<Tran
                 crate::apple::run_coreml(&wav, max_speech, &model, tmp.path(), cp)
             })
             .await;
-            return joined.context("已选的 Apple 识别方式未完成；任务参数和进度已保留 / Selected Apple transcription failed; task settings retained");
+            return joined.context(crate::tr!("已选的 Apple 识别方式未完成；任务参数和进度已保留 / Selected Apple transcription failed; task settings retained"));
         }
         #[cfg(not(apple_native))]
         {
-            anyhow::bail!(
+            anyhow::bail!(crate::tr!(
                 "此版本不支持 Apple 识别，请改用 GPU 或 CPU 识别 / This build lacks Apple transcription; use GPU or CPU transcription."
-            );
+            ));
         }
     }
     // 剩余 Gpu/Cpu 走 llama-server（Metal/CUDA/Vulkan/CPU）
@@ -271,16 +273,20 @@ fn run_blocking(
     let cpu_only = offload.provider == crate::config::AsrProvider::Cpu;
     if cpu_only && !(caps.device && caps.no_op_offload && caps.no_mmproj_offload) {
         let devices = gpu_devices(&bin).context(
-            "当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry",
+            crate::tr!("当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry"),
         )?;
         anyhow::ensure!(
             devices.is_empty(),
-            "当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry"
+            crate::tr!(
+                "当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry"
+            )
         );
     } else if !cpu_only && !offload.mmproj_offload {
         anyhow::ensure!(
             caps.no_mmproj_offload,
-            "当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试 / This llama.cpp is too old for this GPU setting; upgrade and retry"
+            crate::tr!(
+                "当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试 / This llama.cpp is too old for this GPU setting; upgrade and retry"
+            )
         );
     }
     let args = build_server_args(model, mmproj, offload, caps, threads, port);
@@ -317,7 +323,7 @@ fn run_blocking(
         }
         return Err(stderr_tail.attach(
             e,
-            "无法启动识别服务 / Could not start the speech recognition service",
+            crate::tr!("无法启动识别服务 / Could not start the speech recognition service"),
         ));
     }
     tracing::info!(
@@ -345,7 +351,10 @@ fn run_blocking(
     let _ = child.wait();
     let events = r.map_err(|e| {
         // 转写中途失败大概率是 server 侧问题，附上 stderr 尾部便于定位
-        stderr_tail.attach(e, "识别服务错误详情 / llama-server error details")
+        stderr_tail.attach(
+            e,
+            crate::tr!("识别服务错误详情 / llama-server error details"),
+        )
     })?;
     tracing::info!(
         n = events.len(),
@@ -391,9 +400,9 @@ pub(crate) fn run_chunks(
                 Some((j, handle)) => {
                     debug_assert_eq!(j, i, "预切游标与当前 chunk 对齐");
                     handle.join().unwrap_or_else(|_| {
-                        Err(anyhow::anyhow!(
+                        Err(anyhow::anyhow!(crate::tr!(
                             "音频切分线程异常终止 / Audio split thread terminated unexpectedly"
-                        ))
+                        )))
                     })
                 }
                 None => cut_wav(wav, seg.cut_start, seg.cut_end, &chunk),
@@ -532,9 +541,7 @@ fn run_api(
                     }
                 }
                 Err(e) => {
-                    err = Some(e.context(format!(
-                        "云端语音识别失败 / Cloud transcription failed (segment {i})"
-                    )));
+                    err = Some(e.context(crate::tr!("云端语音识别失败：{}", i)));
                     abort.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
@@ -598,8 +605,9 @@ fn post_local_json(
             Ok(response) => Err(Failure {
                 status: Some(response.status),
                 retryable: response.status == 429 || response.status >= 500,
-                ..Failure::local(format!(
-                    "本机识别请求失败（HTTP {0}） / Local transcription request failed (HTTP {0})",
+                ..Failure::local(crate::tr!(
+                    "本机识别请求失败（HTTP {}） / Local transcription request failed (HTTP {})",
+                    response.status,
                     response.status
                 ))
             }),
@@ -620,8 +628,10 @@ fn post_cloud(
     body: &[u8],
     identity: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let description = format!(
-        "识别视频 {0}–{1} 的声音 / Transcribe video audio {0}–{1}",
+    let description = crate::tr!(
+        "识别视频 {}–{} 的声音 / Transcribe video audio {}–{}",
+        crate::render::fmt_ts(seg.start),
+        crate::render::fmt_ts(seg.end),
         crate::render::fmt_ts(seg.start),
         crate::render::fmt_ts(seg.end)
     );
@@ -645,7 +655,7 @@ fn post_cloud(
             |value| {
                 anyhow::ensure!(
                     value.get("error").is_none_or(serde_json::Value::is_null),
-                    "语音服务返回了错误 / The speech service returned an error"
+                    crate::tr!("语音服务返回了错误 / The speech service returned an error")
                 );
                 let has_text = match t.mode {
                     crate::settings::AsrApiMode::Transcriptions => value["text"].is_string(),
@@ -653,7 +663,7 @@ fn post_cloud(
                 };
                 anyhow::ensure!(
                     has_text,
-                    "语音服务没有返回文字 / The speech service returned no text"
+                    crate::tr!("语音服务没有返回文字 / The speech service returned no text")
                 );
                 Ok(())
             },
@@ -678,7 +688,7 @@ struct ApiTarget<'a> {
 fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<Option<String>> {
     use base64::Engine as _;
     cut_wav(wav, seg.cut_start, seg.cut_end, chunk)
-        .context("无法切分音频 / Could not split audio")?;
+        .context(crate::tr!("无法切分音频 / Could not split audio"))?;
     let bytes = std::fs::read(chunk)
         .with_context(|| format!("读取音频片段 / Reading audio segment: {}", chunk.display()))?;
     let identity = serde_json::json!({"model":t.model,"mode":t.mode,"audio_sha256":crate::execution::digest(&bytes),"segment_start":seg.start,"segment_end":seg.end,"cut_start":seg.cut_start,"cut_end":seg.cut_end});
@@ -769,7 +779,7 @@ pub fn gpu_devices(bin: &Path) -> Result<Vec<String>> {
     let mut cmd = Command::new(bin);
     cmd.arg("--list-devices");
     let out = crate::runtime::run_bounded("llama-server", &mut cmd, GPU_PROBE_TIMEOUT)
-        .with_context(|| format!("无法检测显卡 / Could not detect the GPU. {GPU_SETUP_HINT}"))?;
+        .with_context(|| crate::tr!("无法检测显卡：{}", GPU_SETUP_HINT))?;
     anyhow::ensure!(
         out.status.success(),
         "无法检测显卡，请更新 llama.cpp 和显卡驱动 / Could not detect the GPU; update llama.cpp and the GPU driver. {GPU_SETUP_HINT}"
@@ -786,9 +796,9 @@ pub fn is_gpu_device_id(id: &str) -> bool {
 }
 
 fn parse_gpu_devices(output: &str) -> Result<Vec<String>> {
-    let (_, rows) = output.split_once("Available devices:").context(
-        "无法读取显卡列表，请更新 llama.cpp / Could not read the GPU list; update llama.cpp",
-    )?;
+    let (_, rows) = output.split_once("Available devices:").context(crate::tr!(
+        "无法读取显卡列表，请更新 llama.cpp / Could not read the GPU list; update llama.cpp"
+    ))?;
     Ok(rows
         .lines()
         .map(str::trim)
@@ -802,8 +812,9 @@ fn parse_gpu_devices(output: &str) -> Result<Vec<String>> {
 }
 
 fn find_llama_server() -> Result<PathBuf> {
-    crate::runtime::which("llama-server")
-        .context("未找到 llama-server / llama-server not found. 安装 llama.cpp 并加入 PATH / Install llama.cpp and add it to PATH.")
+    crate::runtime::which("llama-server").context(crate::tr!(
+        "未找到 llama-server。请安装 llama.cpp 并加入 PATH"
+    ))
 }
 
 /// llama-server 对 offload 相关新 flag 的支持情况。
@@ -961,12 +972,15 @@ fn transcribe_file(client: &ureq::Agent, base: &str, wav: &Path) -> Result<Strin
             ]
         }]
     });
-    let v = post_local_json(client, &format!("{base}/v1/chat/completions"), &body)
-        .context("本地语音识别请求失败 / Local transcription request failed")?;
+    let v = post_local_json(client, &format!("{base}/v1/chat/completions"), &body).context(
+        crate::tr!("本地语音识别请求失败 / Local transcription request failed"),
+    )?;
     let choice = &v["choices"][0];
     anyhow::ensure!(
         !choice.is_null(),
-        "本机识别服务返回的内容无法读取 / The local speech service response could not be read"
+        crate::tr!(
+            "本机识别服务返回的内容无法读取 / The local speech service response could not be read"
+        )
     );
     // 空文本按无语音处理（与云端 transcribe_api 的 Ok(None) 同语义）：
     // VAD 切出的近静音段在 llama-server 上常返回空，不该把整次 ASR 判死
@@ -998,7 +1012,9 @@ pub(crate) fn ffmpeg_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
     let dur = ffmpeg_input_duration(log)
         .or_else(|| crate::media::probe_duration_blocking(wav))
         .filter(|d| d.is_finite() && *d > 0.0)
-        .context("无法读取音频时长 / Could not read the audio duration")?;
+        .context(crate::tr!(
+            "无法读取音频时长 / Could not read the audio duration"
+        ))?;
     let mut silences: Vec<(f64, f64)> = vec![];
     let mut start: Option<f64> = None;
     for line in log.lines() {
@@ -1065,11 +1081,17 @@ impl Energy {
             .read_exact(&mut header)
             .ok()
             .filter(|_| &header[0..4] == b"RIFF" && &header[8..12] == b"WAVE")
-            .ok_or_else(|| anyhow::anyhow!("无法解析 wav PCM 数据 / Cannot parse wav PCM data"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(crate::tr!(
+                    "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
+                ))
+            })?;
         let data_size = loop {
             let mut ch = [0u8; 8];
             if reader.read_exact(&mut ch).is_err() {
-                anyhow::bail!("无法解析 wav PCM 数据 / Cannot parse wav PCM data");
+                anyhow::bail!(crate::tr!(
+                    "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
+                ));
             }
             let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as u64;
             if &ch[0..4] == b"data" {
@@ -1294,7 +1316,7 @@ pub fn cut_wav(src: &Path, start: f64, end: f64, dest: &Path) -> Result<()> {
     .arg(dest);
     let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, CUT_TIMEOUT)?;
     if !out.status.success() {
-        anyhow::bail!("无法切分音频 / ffmpeg could not split audio");
+        anyhow::bail!(crate::tr!("无法切分音频 / ffmpeg could not split audio"));
     }
     Ok(())
 }

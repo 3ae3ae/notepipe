@@ -44,7 +44,7 @@ pub fn run() -> Result<()> {
         std::env::consts::ARCH
     )];
     let mut failures = 0;
-    out.push("\n必需工具 / Required tools".into());
+    out.push(crate::tr!("\n必需工具").into());
     for tool in ["ffmpeg", "ffprobe"] {
         match tool_version(tool, &["-version", "-hide_banner"]) {
             Some(version) => check(&mut out, true, tool, &format!("  {version}")),
@@ -54,12 +54,15 @@ pub fn run() -> Result<()> {
                     &mut out,
                     false,
                     tool,
-                    &format!("  缺失 / Missing: {}", crate::error::install_hint(tool)),
+                    &format!(
+                        "  {}",
+                        crate::tr!("缺失：{}", crate::error::install_hint(tool))
+                    ),
                 );
             }
         }
     }
-    out.push("\n按用途选装 / Optional tools by use".into());
+    out.push(crate::tr!("\n按用途选装").into());
     match crate::ytdlp::resolve() {
         Some(path) => match tool_version(&path, &["--version"]) {
             Some(version) => check(
@@ -72,10 +75,10 @@ pub fn run() -> Result<()> {
                 &mut out,
                 false,
                 "yt-dlp",
-                &format!("  找到但无法运行 / found but failed to run: {}", path.display()),
+                &format!("  {}", crate::tr!("找到但无法运行：{}", path.display())),
             ),
         },
-        None => out.push("- yt-dlp  远程视频需要，本地文件不需要 / Required for URLs, optional for local files: brew install yt-dlp (macOS); pipx install yt-dlp；重跑 install.sh 会安装随包版本 / rerun install.sh for the bundled build".into()),
+        None => out.push(crate::tr!("- yt-dlp  远程视频需要，本地文件不需要；macOS 可用 brew install yt-dlp，其他平台可用 pipx install yt-dlp；重跑 install.sh 会安装随包版本").into()),
     }
     #[cfg(apple_native)]
     {
@@ -85,14 +88,17 @@ pub fn run() -> Result<()> {
                 &mut out,
                 true,
                 "coreml",
-                "  Apple 原生后端可用 / Apple native backend available",
+                &format!(
+                    "  {}",
+                    crate::tr!("Apple 原生后端可用 / Apple native backend available")
+                ),
             );
         } else {
-            out.push("! coreml  缺少 Metal 着色器资源，请重新安装 / Metal shader resources missing; reinstall course2md".into());
+            out.push(crate::tr!("! coreml  缺少 Metal 着色器资源，请重新安装 / Metal shader resources missing; reinstall course2md").into());
         }
     }
     #[cfg(not(apple_native))]
-    out.push("- coreml  本构建不包含 Apple 原生后端 / Apple native backend is not included in this build".into());
+    out.push(crate::tr!("- coreml  本构建不包含 Apple 原生后端 / Apple native backend is not included in this build").into());
     match crate::runtime::which("llama-server") {
         Some(path) => {
             check(&mut out, true, "gpu/cpu", &format!("  {}", path.display()));
@@ -100,32 +106,38 @@ pub fn run() -> Result<()> {
                 Ok(devices) if !devices.is_empty() => {
                     check(&mut out, true, "GPU", &format!("  {}", devices.join(", ")))
                 }
-                Ok(_) => out.push(format!("- GPU  未检测到 GPU / No GPU detected. {}", crate::asr::GPU_SETUP_HINT)),
-                Err(error) => out.push(format!("! GPU  无法检查设备 / Device check failed: {error:#}")),
+                Ok(_) => out.push(crate::tr!(
+                    "- GPU  未检测到 GPU。{}",
+                    crate::asr::GPU_SETUP_HINT
+                )),
+                Err(error) => out.push(crate::tr!("! GPU  无法检查设备：{}", format!("{error:#}"))),
             }
         }
-        None => out.push(format!(
-            "- gpu/cpu  显卡/CPU 识别需要 llama.cpp / GPU and CPU transcription require llama.cpp: {}",
+        None => out.push(crate::tr!(
+            "- gpu/cpu  显卡/CPU 识别需要 llama.cpp：{}",
             crate::error::install_hint("llama.cpp")
         )),
     }
     if cfg!(target_os = "linux") {
         let device = Path::new(crate::npu::NPU_DEVICE_PATH).exists();
         out.push(if device {
-            "✓ npu  检测到 Intel NPU（首次使用会自动安装运行组件）/ Intel NPU detected (runtime components install on first use)"
+            crate::tr!("✓ npu  检测到 Intel NPU（首次使用会自动安装运行组件）/ Intel NPU detected (runtime components install on first use)")
         } else {
-            "- npu  未检测到 Intel NPU 设备 / No Intel NPU device detected"
+            crate::tr!("- npu  未检测到 Intel NPU 设备 / No Intel NPU device detected")
         }.into());
         if crate::runtime::which("uv").is_none()
             && crate::runtime::which("python3").is_none()
             && crate::runtime::which("python").is_none()
         {
             out.push(
-                "- npu  缺少 Python/uv / Python or uv is required for NPU transcription".into(),
+                crate::tr!(
+                    "- npu  缺少 Python/uv / Python or uv is required for NPU transcription"
+                )
+                .into(),
             );
         }
     }
-    out.push("\n配置与模型 / Configuration and models".into());
+    out.push(crate::tr!("\n配置与模型").into());
     let path = crate::settings::config_path();
     let loaded = crate::settings::load();
     match &loaded {
@@ -133,11 +145,11 @@ pub fn run() -> Result<()> {
             if path.is_file() {
                 check(&mut out, true, "config", &format!("  {}", path.display()));
             } else {
+                out.push(crate::tr!("- config  使用内置默认值：{}", path.display()));
                 out.push(format!(
-                    "- config  使用内置默认值 / Using built-in defaults: {}",
-                    path.display()
+                    "  {}",
+                    crate::tr!("可选配置：course2md config init")
                 ));
-                out.push("  可选配置 / Optional setup: course2md config init".into());
             }
             // Validate the same merged defaults as conversion, without requiring a source or network.
             match crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)
@@ -149,7 +161,7 @@ pub fn run() -> Result<()> {
                     check(
                         &mut out,
                         false,
-                        "配置值 / settings values",
+                        crate::tr!("配置值"),
                         &format!("  {error:#}"),
                     );
                 }
@@ -163,25 +175,26 @@ pub fn run() -> Result<()> {
                     &format!("  {}", root.display()),
                 );
             } else {
-                out.push(format!(
-                    "- gpu/cpu models  未下载或不完整 / Missing or incomplete: {}",
+                out.push(crate::tr!(
+                    "- gpu/cpu models  未下载或不完整：{}",
                     root.display()
                 ));
-                out.push(format!(
-                    "  仅 gpu/cpu 需要；下载约 2.4GB / Only needed for gpu/cpu (~2.4GB): course2md models download --dir \"{}\"",
+                out.push(crate::tr!(
+                    "  仅 gpu/cpu 需要；下载约 2.4GB：course2md models download --dir \"{}\"",
                     root.display()
                 ));
             }
             let key = !cfg.asr_api.api_key.trim().is_empty()
                 || crate::config::asr_api_key_from_env().is_some();
-            out.push(if key { "✓ api  已设置密钥（隐藏）/ API key set (hidden)" } else { "- api  未设置密钥；仅云端识别需要 / API key not set; only required for cloud transcription: COURSE2MD_ASR_API_KEY" }.into());
+            out.push(if key { crate::tr!("✓ api  已设置密钥（隐藏）/ API key set (hidden)") } else { crate::tr!("- api  未设置密钥；仅云端识别需要 / API key not set; only required for cloud transcription: COURSE2MD_ASR_API_KEY") }.into());
             let provider = cfg
                 .defaults
                 .provider
                 .unwrap_or_else(crate::config::default_provider_hint);
             let (zh, en) = provider.label();
             out.push(format!(
-                "\n当前识别方式 / Configured speech backend: {provider}（{zh} / {en}）"
+                "{}\n{provider}（{zh} / {en}）",
+                crate::tr!("\n当前识别方式")
             ));
         }
         Err(error) => {
@@ -189,15 +202,15 @@ pub fn run() -> Result<()> {
             check(&mut out, false, "config", &format!("  {error:#}"));
         }
     }
-    out.push("\n✓ 可用 / available · - 可选或未设置 / optional or unset · ! 需要检查 / needs attention · ✗ 必须修复 / must fix".into());
+    out.push(crate::tr!("\n✓ 可用 · - 可选或未设置 · ! 需要检查 · ✗ 必须修复").into());
     for line in out {
         println!("{line}");
     }
     anyhow::ensure!(
         failures == 0,
-        "发现 {failures} 项必需依赖或配置问题；请按上方提示修复 / Fix the {failures} required-tool or configuration issues listed above"
+        crate::tr!("发现 {} 项必需依赖或配置问题；请按上方提示修复", failures)
     );
-    println!(
+    crate::println_tr!(
         "基础检查通过；可选服务未进行联网测试 / Basic checks passed; optional services were not tested online."
     );
     Ok(())

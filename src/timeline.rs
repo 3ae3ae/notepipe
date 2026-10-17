@@ -252,7 +252,7 @@ fn append_text(paragraph: &mut String, next: &str) {
 /// 独立成条的纯语气词（剥掉标点后整条只剩这些字）。
 fn is_standalone_filler(text: &str) -> bool {
     let normalized = text.trim_matches(|c: char| {
-        c.is_whitespace() || "，。！？、,.!?：:；;“”‘’'\"（）()【】[]".contains(c)
+        c.is_whitespace() || " ，。！？、,.!?：:；;“”‘’'\"（）()【】[]".contains(c)
     });
     matches!(
         normalized,

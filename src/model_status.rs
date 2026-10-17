@@ -215,7 +215,7 @@ pub fn inspect_at(
                         && revision
                             .chars()
                             .all(|c| c.is_ascii_alphanumeric() || c == '-'),
-                    "NPU 缓存版本记录无效 / Invalid NPU cache version record"
+                    crate::tr!("NPU 缓存版本记录无效 / Invalid NPU cache version record")
                 );
                 root.join("snapshots").join(revision)
             } else {
@@ -228,7 +228,9 @@ pub fn inspect_at(
                 .collect::<Vec<_>>();
             let mut missing = Vec::new();
             if xml.is_empty() {
-                missing.push("OpenVINO 模型 XML 和权重 / OpenVINO model XML and weights".into());
+                missing.push(
+                    crate::tr!("OpenVINO 模型 XML 和权重 / OpenVINO model XML and weights").into(),
+                );
             }
             for file in xml {
                 if !nonempty(&file.with_extension("bin")) {
@@ -322,7 +324,11 @@ fn apple_part(
                 .is_some_and(|extension| extension == "bin" || extension == "mil")
                 && nonempty(path)
         }) {
-            missing.push(format!("{bundle} 的模型内容 / model content of {bundle}"));
+            missing.push(crate::tr!(
+                "{} 的模型内容 / model content of {}",
+                bundle,
+                bundle
+            ));
         }
     }
     if weights {
@@ -348,14 +354,18 @@ fn apple_part(
                         }
                     }
                 }
-                _ => missing.push("有效的模型分片索引 / a valid model shard index".into()),
+                _ => missing
+                    .push(crate::tr!("有效的模型分片索引 / a valid model shard index").into()),
             }
         } else if !files_under(&path)?.iter().any(|file| {
             file.extension()
                 .is_some_and(|extension| extension == "safetensors")
                 && safe_tensor(file)
         }) {
-            missing.push("完整的 safetensors 权重文件 / a complete safetensors weight file".into());
+            missing.push(
+                crate::tr!("完整的 safetensors 权重文件 / a complete safetensors weight file")
+                    .into(),
+            );
         }
     }
     cache_part(repo, path, missing)
@@ -406,14 +416,14 @@ fn safe_tensor(path: &Path) -> bool {
         let size = u64::from_le_bytes(header);
         ensure!(
             size > 0 && size < 16 * 1024 * 1024 && size + 8 < length,
-            "权重头不完整 / Incomplete weight header"
+            crate::tr!("权重头不完整 / Incomplete weight header")
         );
         let mut header = vec![0; size as usize];
         file.read_exact(&mut header)?;
         let value: serde_json::Value = serde_json::from_slice(&header)?;
         let tensors = value
             .as_object()
-            .context("权重索引无效 / Invalid weight index")?;
+            .context(crate::tr!("权重索引无效 / Invalid weight index"))?;
         let mut count = 0;
         for (key, tensor) in tensors {
             if key == "__metadata__" {
@@ -422,13 +432,13 @@ fn safe_tensor(path: &Path) -> bool {
             let offsets = tensor
                 .get("data_offsets")
                 .and_then(|value| value.as_array())
-                .context("权重偏移无效 / Invalid weight offsets")?;
+                .context(crate::tr!("权重偏移无效 / Invalid weight offsets"))?;
             ensure!(
                 offsets.len() == 2
                     && offsets[1]
                         .as_u64()
                         .is_some_and(|end| end <= length - size - 8),
-                "权重文件不完整 / Incomplete weight file"
+                crate::tr!("权重文件不完整 / Incomplete weight file")
             );
             count += 1;
         }
@@ -462,7 +472,9 @@ fn files_under(root: &Path) -> Result<Vec<PathBuf>> {
         }
         ensure!(
             seen.len() < 20_000,
-            "模型缓存包含过多文件，检查未完成 / Model cache contains too many files; check incomplete"
+            crate::tr!(
+                "模型缓存包含过多文件，检查未完成 / Model cache contains too many files; check incomplete"
+            )
         );
     }
     result.sort();

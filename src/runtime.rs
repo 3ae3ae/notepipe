@@ -35,7 +35,7 @@ impl ManagedChild {
     pub fn spawn(name: &'static str, cmd: &mut Command) -> Result<Self> {
         let child = cmd
             .spawn()
-            .with_context(|| format!("无法启动 {name} / Could not start {name}"))?;
+            .with_context(|| crate::tr!("无法启动 {} / Could not start {}", name, name))?;
         Ok(Self { child, name })
     }
 
@@ -333,7 +333,9 @@ impl TempWorkDir {
         let dir = tempfile::Builder::new()
             .prefix(&format!("course2md-{tag}-"))
             .tempdir()
-            .context("无法创建临时工作目录 / Could not create a temporary working directory")?;
+            .context(crate::tr!(
+                "无法创建临时工作目录 / Could not create a temporary working directory"
+            ))?;
         Ok(Self { dir })
     }
 

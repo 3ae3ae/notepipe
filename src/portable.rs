@@ -100,7 +100,7 @@ fn images(root: &Path, document: &Document) -> Result<BTreeMap<String, ImageAsse
         let sha256 = execution::digest(&bytes);
         let id = format!("image-{}", &sha256[..24]);
         let mime =
-            image_mime(&bytes).context("截图不是可识别的图片，原文件已保留 / Screenshot is not a recognized image; original file kept")?;
+            image_mime(&bytes).context(crate::tr!("截图不是可识别的图片，原文件已保留 / Screenshot is not a recognized image; original file kept"))?;
         let ext = match mime {
             "image/png" => "png",
             "image/gif" => "gif",

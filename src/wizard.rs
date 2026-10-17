@@ -21,7 +21,9 @@ pub fn is_first_run(opts_provider_is_none: bool, file: &crate::settings::ConfigF
 pub struct ExitWizard;
 impl std::fmt::Display for ExitWizard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("已退出首次使用向导 / Exited the first-run wizard")
+        f.write_str(crate::tr!(
+            "已退出首次使用向导 / Exited the first-run wizard"
+        ))
     }
 }
 impl std::error::Error for ExitWizard {}
@@ -55,28 +57,28 @@ fn select(prompt: &str, items: &[String], default: usize) -> Result<usize> {
 }
 
 fn selected_or_cancelled(choice: Option<usize>) -> Result<usize> {
-    choice.ok_or_else(|| anyhow::anyhow!("已取消设置，未保存配置。重新运行视频命令可再次设置。 / Setup cancelled; no configuration saved. Run your video command again to restart."))
+    choice.ok_or_else(|| anyhow::anyhow!(crate::tr!("已取消设置，未保存配置。重新运行视频命令可再次设置。 / Setup cancelled; no configuration saved. Run your video command again to restart.")))
 }
 
 fn run_wizard(
     mut cfg: crate::settings::ConfigFile,
     model_dir_override: Option<&std::path::Path>,
 ) -> Result<crate::settings::ConfigFile> {
-    println!(
+    crate::println_tr!(
         "欢迎使用 course2md！选择字幕不可用时的语音转写方式。 / Welcome! Choose how to transcribe when subtitles are unavailable."
     );
-    println!(
+    crate::println_tr!(
         "↑↓ 选择，Enter 确认，Esc 取消。 / Use ↑↓ to select, Enter to confirm, Esc to cancel."
     );
-    println!(
+    crate::println_tr!(
         "只想用视频自带字幕？按 Esc 退出，加 --transcript-source subtitle 重新运行。 / Subtitles only? Press Esc and rerun with --transcript-source subtitle."
     );
 
     let top = select(
-        "语音转写方式 / Transcription",
+        crate::tr!("语音转写方式 / Transcription"),
         &[
-            "本地识别（首次下载模型） / Local transcription (requires a model download)".to_string(),
-            "云端 API（需服务端点和 API Key，可能收费） / Cloud API (endpoint and API key required; charges may apply)".to_string(),
+            crate::tr!("本地识别（首次下载模型） / Local transcription (requires a model download)").to_string(),
+            crate::tr!("云端 API（需服务端点和 API Key，可能收费） / Cloud API (endpoint and API key required; charges may apply)").to_string(),
         ],
         0,
     )?;
@@ -88,7 +90,7 @@ fn run_wizard(
         match pick_local_provider()? {
             LocalPick::Provider(AsrProvider::Coreml) => {
                 // 不预下载：Swift 侧首次识别时才下载；模型三选一沿用首次识别时的交互
-                println!(
+                crate::println_tr!(
                     "首次识别时选择并下载 Apple 模型（约 1–2.3 GB）。 / Choose and download an Apple model at first transcription (about 1–2.3 GB)."
                 );
                 provider = Some(AsrProvider::Coreml);
@@ -110,9 +112,9 @@ fn run_wizard(
                             root.display()
                         ),
                         &[
-                            "现在下载 / Download now".to_string(),
-                            "改用云端 API / Use cloud API".to_string(),
-                            "退出，稍后下载 / Exit and download later".to_string(),
+                            crate::tr!("现在下载 / Download now").to_string(),
+                            crate::tr!("改用云端 API / Use cloud API").to_string(),
+                            crate::tr!("退出，稍后下载 / Exit and download later").to_string(),
                         ],
                         0,
                     )?;
@@ -123,7 +125,7 @@ fn run_wizard(
                         }
                         1 => use_cloud = true,
                         _ => {
-                            println!(
+                            crate::println_tr!(
                                 "稍后下载模型，再重新运行视频命令： / Download the model, then rerun your video command: course2md models download"
                             );
                             return Err(ExitWizard.into());
@@ -145,7 +147,7 @@ fn run_wizard(
     let path = crate::settings::save(&cfg)?;
     println!();
     println!("✓ 已保存配置 / Configuration saved: {}", path.display());
-    println!("开始处理视频… / Processing your video…");
+    crate::println_tr!("开始处理视频… / Processing your video…");
     Ok(cfg)
 }
 
@@ -172,14 +174,14 @@ fn pick_local_provider() -> Result<LocalPick> {
         cands.push(AsrProvider::Cpu);
     }
     if cands.is_empty() {
-        println!(
+        crate::println_tr!(
             "本机识别所需的组件尚未安装。可退出后运行 course2md doctor 查看，或改用云端识别。 / Local transcription is unavailable. Exit and run course2md doctor, or use a cloud service."
         );
         return select(
-            "下一步 / Next step",
+            crate::tr!("下一步 / Next step"),
             &[
-                "配置云端 API / Configure cloud API".into(),
-                "退出 / Exit".into(),
+                crate::tr!("配置云端 API / Configure cloud API").into(),
+                crate::tr!("退出 / Exit").into(),
             ],
             0,
         )
@@ -187,7 +189,9 @@ fn pick_local_provider() -> Result<LocalPick> {
             if i == 0 {
                 Ok(LocalPick::Cloud)
             } else {
-                anyhow::bail!("已取消设置，未保存配置。 / Setup cancelled; no configuration saved.")
+                anyhow::bail!(crate::tr!(
+                    "已取消设置，未保存配置。 / Setup cancelled; no configuration saved."
+                ))
             }
         });
     }
@@ -204,7 +208,7 @@ fn pick_local_provider() -> Result<LocalPick> {
         .iter()
         .map(|&p| {
             let tag = if p == rec {
-                "（推荐 / recommended）"
+                crate::tr!("（推荐 / recommended）")
             } else {
                 ""
             };
@@ -212,9 +216,13 @@ fn pick_local_provider() -> Result<LocalPick> {
             format!("{zh}{tag} / {en}")
         })
         .collect();
-    items.push("改用云端 API / Use cloud API".to_string());
+    items.push(crate::tr!("改用云端 API / Use cloud API").to_string());
 
-    let idx = select("本地识别方式 / Local transcription engine", &items, 0)?;
+    let idx = select(
+        crate::tr!("本地识别方式 / Local transcription engine"),
+        &items,
+        0,
+    )?;
     Ok(match cands.get(idx) {
         Some(&p) => LocalPick::Provider(p),
         None => LocalPick::Cloud,
@@ -225,15 +233,17 @@ fn pick_local_provider() -> Result<LocalPick> {
 fn configure_cloud(cfg: &mut crate::settings::ConfigFile) -> Result<()> {
     let defaults = crate::settings::AsrApi::default();
     cfg.asr_api.base_url = dialoguer::Input::new()
-        .with_prompt("服务地址（兼容 OpenAI 接口）/ Service URL (OpenAI-compatible)")
+        .with_prompt(crate::tr!(
+            "服务地址（兼容 OpenAI 接口）/ Service URL (OpenAI-compatible)"
+        ))
         .default(defaults.base_url)
         .interact_text()?;
     cfg.asr_api.api_key = dialoguer::Password::new()
-        .with_prompt("API 密钥（输入不显示）/ API key (hidden)")
+        .with_prompt(crate::tr!("API 密钥（输入不显示）/ API key (hidden)"))
         .allow_empty_password(true)
         .interact()?;
     cfg.asr_api.model = dialoguer::Input::new()
-        .with_prompt("模型名 / Model name")
+        .with_prompt(crate::tr!("模型名 / Model name"))
         .default(defaults.model)
         .interact_text()?;
     cfg.asr_api.base_url = cfg.asr_api.base_url.trim().to_string();
@@ -244,11 +254,13 @@ fn configure_cloud(cfg: &mut crate::settings::ConfigFile) -> Result<()> {
     let endpoint = url::Url::parse(&cfg.asr_api.base_url)?;
     anyhow::ensure!(
         matches!(endpoint.scheme(), "http" | "https") && endpoint.host_str().is_some(),
-        "请输入完整的 HTTP(S) 服务地址。 / Enter a valid HTTP(S) base URL."
+        crate::tr!("请输入完整的 HTTP(S) 服务地址。 / Enter a valid HTTP(S) base URL.")
     );
     anyhow::ensure!(
         !cfg.asr_api.api_key.trim().is_empty() || crate::config::asr_api_key_from_env().is_some(),
-        "未提供 API 密钥。请在向导中输入，或设置环境变量 COURSE2MD_ASR_API_KEY 后重试。 / No API key provided. Enter one in setup, or set COURSE2MD_ASR_API_KEY and retry."
+        crate::tr!(
+            "未提供 API 密钥。请在向导中输入，或设置环境变量 COURSE2MD_ASR_API_KEY 后重试。 / No API key provided. Enter one in setup, or set COURSE2MD_ASR_API_KEY and retry."
+        )
     );
     Ok(())
 }
