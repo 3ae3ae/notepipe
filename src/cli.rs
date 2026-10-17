@@ -86,7 +86,7 @@ pub struct RunOpts {
     #[arg(help_heading = "截图 / Slides")]
     pub cooldown: Option<f64>,
 
-    /// 下载视频最大高度 / Maximum download height (1080 recommended)
+    /// 下载视频最大高度（推荐 1080）/ Maximum download height (1080 recommended)
     #[arg(long)]
     #[arg(help_heading = "截图 / Slides")]
     pub max_height: Option<u32>,
@@ -111,7 +111,7 @@ pub struct RunOpts {
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub threads: Option<i32>,
 
-    /// 识别后端 / Speech backend: coreml (Apple Silicon), gpu, cpu, npu (Intel), api (cloud)
+    /// 识别后端：coreml（Apple 芯片）、gpu、cpu、npu（Intel）、api（云端）/ Speech backend: coreml (Apple Silicon), gpu, cpu, npu (Intel), api (cloud)
     #[arg(long, value_enum)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub provider: Option<crate::config::AsrProvider>,
@@ -127,7 +127,7 @@ pub struct RunOpts {
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub asr_api_base_url: Option<String>,
 
-    /// 云端识别密钥；建议用 COURSE2MD_ASR_API_KEY 环境变量 / Cloud API key; prefer the environment variable to avoid shell history
+    /// 云端识别密钥；建议改用 COURSE2MD_ASR_API_KEY 环境变量，避免留在命令历史 / Cloud API key; prefer COURSE2MD_ASR_API_KEY to keep it out of shell history
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub asr_api_key: Option<String>,
@@ -172,7 +172,7 @@ pub struct RunOpts {
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub formats: Option<Vec<crate::config::OutputFormat>>,
 
-    /// 本地模型目录 / Local model directory (default: platform cache)
+    /// 本地模型目录（默认使用系统缓存）/ Local model directory (default: platform cache)
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub model_dir: Option<PathBuf>,
@@ -207,7 +207,7 @@ pub struct RunOpts {
     #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm_base_url: Option<String>,
 
-    /// AI 校对密钥（建议通过 llm setup 设置，避免命令历史记录）/ AI API key (prefer llm setup)
+    /// AI 校对密钥（建议用 llm setup 设置，避免留在命令历史）/ AI proofreading key (prefer llm setup to keep it out of shell history)
     #[arg(long)]
     #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm_api_key: Option<String>,
@@ -237,7 +237,7 @@ pub struct RunOpts {
     #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub no_llm_hint: bool,
 
-    /// 本次生成视频摘要并写入笔记 / Generate video summary (TL;DR, key points, outline)
+    /// 本次生成视频摘要并写入笔记 / Generate a video summary and add it to the notes
     #[arg(long)]
     #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub summarize: bool,

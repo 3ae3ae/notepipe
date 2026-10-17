@@ -78,7 +78,11 @@ pub fn run() -> Result<()> {
                 &format!("  {}", crate::tr!("找到但无法运行：{}", path.display())),
             ),
         },
-        None => out.push(crate::tr!("- yt-dlp  远程视频需要，本地文件不需要；macOS 可用 brew install yt-dlp，其他平台可用 pipx install yt-dlp；重跑 install.sh 会安装随包版本").into()),
+        None => out.push(format!(
+            "- yt-dlp  {}；{}",
+            crate::error::install_hint("yt-dlp"),
+            crate::tr!("重跑 install.sh 可安装随包版本")
+        )),
     }
     #[cfg(apple_native)]
     {

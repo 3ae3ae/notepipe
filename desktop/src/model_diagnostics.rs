@@ -9,6 +9,17 @@ use course2md::{
 use gpui_component::button::*;
 use std::path::Path;
 
+/// One vocabulary for cache states across settings, setup and diagnostics.
+pub(crate) fn cache_state_label(state: CacheState) -> (BadgeKind, &'static str) {
+    match state {
+        CacheState::Loaded => (BadgeKind::Success, course2md::tr!("已就绪")),
+        CacheState::Cached => (BadgeKind::Success, course2md::tr!("已下载")),
+        CacheState::Partial => (BadgeKind::Warning, course2md::tr!("未下载完整")),
+        CacheState::Missing => (BadgeKind::Neutral, course2md::tr!("未下载")),
+        CacheState::Unsupported => (BadgeKind::Warning, course2md::tr!("不支持")),
+    }
+}
+
 fn model_status_row(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -680,17 +691,10 @@ impl Desktop {
             let (kind, label, description) = if self.is_preparing(&key) {
                 (BadgeKind::Progress, course2md::tr!("准备中"), None)
             } else {
-                match status.state {
-                    CacheState::Missing => (BadgeKind::Neutral, course2md::tr!("待下载"), None),
-                    CacheState::Partial => (BadgeKind::Warning, course2md::tr!("未下载完整"), None),
-                    CacheState::Cached => (BadgeKind::Success, course2md::tr!("已下载"), None),
-                    CacheState::Loaded => (BadgeKind::Success, course2md::tr!("已确认可用"), None),
-                    CacheState::Unsupported => (
-                        BadgeKind::Warning,
-                        course2md::tr!("不支持"),
-                        Some(course2md::tr!("请选择这种识别方式支持的模型")),
-                    ),
-                }
+                let (kind, label) = cache_state_label(status.state);
+                let description = (status.state == CacheState::Unsupported)
+                    .then(|| course2md::tr!("请选择这种识别方式支持的模型"));
+                (kind, label, description)
             };
             view = view.child(model_status_row(
                 SharedString::from(format!("model-state-label-{key}")),
@@ -1235,8 +1239,9 @@ impl Desktop {
             .and_then(|result| result.as_ref().ok())
             .map(|status| &status.state)
         {
-            Some(CacheState::Loaded) => (true, course2md::tr!("识别模型已就绪").into()),
-            Some(CacheState::Cached) => (true, course2md::tr!("模型已下载").into()),
+            Some(state @ (CacheState::Loaded | CacheState::Cached)) => {
+                (true, cache_state_label(*state).1.into())
+            }
             Some(CacheState::Missing | CacheState::Partial) => {
                 (true, course2md::tr!("首次识别时会自动下载所选模型").into())
             }

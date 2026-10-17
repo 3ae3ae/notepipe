@@ -1202,11 +1202,9 @@ impl Desktop {
                 .and_then(|result| result.as_ref().ok())
                 .map(|status| &status.state)
             {
-                Some(CacheState::Loaded) => course2md::tr!("已就绪").into(),
-                Some(CacheState::Cached) => course2md::tr!("已下载").into(),
-                Some(CacheState::Partial) => course2md::tr!("未下载完整").into(),
-                Some(CacheState::Missing) => course2md::tr!("未下载").into(),
-                Some(CacheState::Unsupported) => unsupported_model().into(),
+                Some(state) => crate::settings_ui::model_diagnostics::cache_state_label(*state)
+                    .1
+                    .into(),
                 None => course2md::tr!("检查未完成").into(),
             }
         };
@@ -1727,10 +1725,15 @@ impl Desktop {
             )
         } else {
             match status.map(|status| &status.state) {
-                Some(CacheState::Loaded) => (course2md::tr!("模型已就绪"), ""),
-                Some(CacheState::Cached) => (course2md::tr!("模型文件已下载"), ""),
-                Some(CacheState::Missing) => (course2md::tr!("模型尚未下载"), ""),
-                Some(CacheState::Partial) => (course2md::tr!("未下载完整"), ""),
+                Some(
+                    state @ (CacheState::Loaded
+                    | CacheState::Cached
+                    | CacheState::Missing
+                    | CacheState::Partial),
+                ) => (
+                    crate::settings_ui::model_diagnostics::cache_state_label(*state).1,
+                    "",
+                ),
                 Some(CacheState::Unsupported) => {
                     (unsupported_model(), course2md::tr!("可返回第一步更换模型"))
                 }
@@ -1925,7 +1928,7 @@ impl Desktop {
             if status.bytes > 0 {
                 details = details.child(settings_detail_row(
                     "setup-model-size-label",
-                    course2md::tr!("已下载"),
+                    course2md::tr!("占用空间"),
                     settings_value("setup-model-size", crate::activity::bytes(status.bytes)),
                 ));
             }

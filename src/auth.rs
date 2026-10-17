@@ -24,16 +24,34 @@ type Cookies = BTreeMap<String, String>;
 
 pub const BILIBILI_SETUP_TIP: &str = "使用 Bilibili 视频时，推荐先运行 course2md --login bilibili 扫码登录，可下载账号权限范围内更高清晰度的视频。 / For Bilibili videos, run course2md --login bilibili first to scan a QR code; downloads can then use higher resolutions available to your account.";
 
+#[derive(Debug)]
+struct LoginTip {
+    error: anyhow::Error,
+    hint: &'static str,
+}
+
+impl std::fmt::Display for LoginTip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.hint)
+    }
+}
+impl std::error::Error for LoginTip {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.error.as_ref())
+    }
+}
+
 /// Keep the original failure visible; login is a suggested next step, not a diagnosis.
 pub fn with_bilibili_login_tip(url: &str, error: anyhow::Error) -> anyhow::Error {
-    let message = format!("{error:#}");
-    if is_bilibili_url(url) && !message.contains("--login bilibili") {
-        anyhow::anyhow!(
-            "{message}\n提示：可运行 course2md --login bilibili 扫码登录后重试；已登录时可重新登录。 / Hint: run course2md --login bilibili and scan the QR code to retry; if already logged in, log in again."
-        )
-    } else {
-        error
+    if !is_bilibili_url(url) || error.downcast_ref::<LoginTip>().is_some() {
+        return error;
     }
+    let hint = if crate::progress::is_json() {
+        "提示：请在设置的账号中重新登录 B 站后重试。 / Hint: sign in to Bilibili again in Settings and retry."
+    } else {
+        "提示：可运行 course2md --login bilibili 扫码登录后重试；已登录时可重新登录。 / Hint: run course2md --login bilibili and scan the QR code to retry; if already logged in, log in again."
+    };
+    anyhow::Error::new(LoginTip { error, hint })
 }
 
 pub fn cookie_path() -> PathBuf {
@@ -498,7 +516,7 @@ mod tests {
         let error = anyhow::anyhow!("HTTP Error 403").context("无法读取视频");
         let error = with_bilibili_login_tip("https://b23.tv/example", error);
         let error = with_bilibili_login_tip("https://b23.tv/example", error);
-        let message = error.to_string();
+        let message = format!("{error:#}");
         assert!(message.contains("无法读取视频: HTTP Error 403"));
         assert_eq!(message.matches("--login bilibili").count(), 2);
         let error = with_bilibili_login_tip(

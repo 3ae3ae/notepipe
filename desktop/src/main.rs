@@ -1354,8 +1354,8 @@ fn carry_repaired_reading_positions(
         return;
     }
     for tab in 0..=1 {
-        let previous_key = format!("{}:{}:{tab}", previous.0, previous.1);
-        let next_key = format!("{}:{}:{tab}", next.0, next.1);
+        let previous_key = crate::reader_ui::manifest_reading_key(previous.0, previous.1, tab);
+        let next_key = crate::reader_ui::manifest_reading_key(next.0, next.1, tab);
         if let Some(position) = positions.get(&previous_key).cloned() {
             positions.entry(next_key).or_insert(position);
         }

@@ -2267,6 +2267,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 重试补做	重试补做	Try again and make up	重試補做	もう一度やり直して補ってください
 重试转换	重试转换	Retry conversion	重試轉換	変換を再試行する
 重试预览	重试预览	Retry preview	重試預覽	プレビューを再試行する
+重跑 install.sh 可安装随包版本	重跑 install.sh 可安装随包版本	Rerun install.sh for the bundled build	重跑 install.sh 可安裝隨包版本	install.sh を再実行すると同梱版をインストールできます
 鉴权失败	鉴权失败	Authentication failed	鑑權失敗	認証に失敗しました
 钥匙串中找不到此服务的凭据，请重新保存 API Key	钥匙串中找不到此服务的凭据，请重新保存 API Key	The credentials for this service were not found in the keychain, please save the API Key again	鑰匙串中找不到此服務的憑據，請重新儲存 API Key	このサービスの認証情報がキーチェーンに見つかりませんでした。API キーを再度保存してください。
 链接无效；请提供完整的视频链接 / Invalid URL; provide a complete video URL	链接无效；请提供完整的视频链接	Invalid URL; provide a complete video URL	連結無效；請提供完整的影片連結	無効なリンクです。完全な動画リンクを提供してください
