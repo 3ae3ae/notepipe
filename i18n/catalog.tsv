@@ -208,6 +208,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 {} 暂时无法访问	{} 暂时无法访问	{} is temporarily inaccessible	{} 暫時無法訪問	{} は一時的にアクセスできません
 {} 的任务参数仍无法读取，材料已保留	{} 的任务参数仍无法读取，材料已保留	The task parameters of {} still cannot be read, and the material has been reserved.	{} 的任務引數仍無法讀取，材料已保留	{} のタスク パラメータはまだ読み取れず、マテリアルは予約されています。
 {} 的准备已停止	{} 的准备已停止	Preparation for {} has stopped	{} 的準備已停止	{} の準備が停止しました
+{} 的准备已暂停	{} 的准备已暂停	{} preparation is paused	{} 的準備已暫停	{} の準備は一時停止中です
 {} 的准备未完成：{}	{} 的准备未完成：{}	Preparation for {} is not complete: {}	{} 的準備未完成：{}	{} の準備が完了していません: {}
 {} 的截图	{} 的截图	Screenshot of {}	{} 的截圖	{} のスクリーンショット
 {} 的截图无法读取	{} 的截图无法读取	The screenshot of {} cannot be read	{} 的截圖無法讀取	{} のスクリーンショットを読み取ることができません
@@ -435,6 +436,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 保存	保存	Save	儲存	保存
 保存 Bilibili 登录状态失败 / Failed to save Bilibili login state	保存 Bilibili 登录状态失败	Failed to save Bilibili login state	儲存 Bilibili 登入狀態失敗	Bilibili のログイン状態を保存できませんでした
 保存 Codex 登录状态失败 / Failed to save Codex login state	保存 Codex 登录状态失败	Failed to save Codex login state	儲存 Codex 登入狀態失敗	Codex のログイン状態を保存できませんでした
+保存与导出	保存与导出	Save & export	儲存與匯出	保存と書き出し
 保存位置	保存位置	Save location	儲存位置	保存先
 保存位置不可访问，请连接对应磁盘	保存位置不可访问，请连接对应磁盘	The save location is inaccessible, please connect the corresponding disk.	儲存位置不可訪問，請連線對應磁碟	保存場所にアクセスできません。対応するディスクを接続してください。
 保存位置不可访问，请连接磁盘或选择其他位置	保存位置不可访问，请连接磁盘或选择其他位置	Save location unavailable. Connect the disk or choose another location.	儲存位置無法存取，請連接磁碟或選擇其他位置	保存先にアクセスできません。ディスクを接続するか、別の場所を選択してください
@@ -467,6 +469,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 保留下载的视频	保留下载的视频	Keep downloaded videos	保留下載的影片	ダウンロードした動画を保存しておく
 保留下载的视频 / Keep the downloaded video	保留下载的视频	Keep the downloaded video	保留下載的影片	ダウンロードした動画を保存しておく
 保留原文件并重置此组	保留原文件并重置此组	Keep original files and reset this group	保留原檔案並重置此組	元のファイルを保持し、このグループをリセットします
+保留原文件并重置这些设置	保留原文件并重置这些设置	Keep the original file and reset these settings	保留原檔案並重設這些設定	元のファイルを保持してこれらの設定をリセット
 保留原视频	保留原视频	Keep original video	保留原影片	元の動画を保存する
 保留原默认	保留原默认	Keep the original default	保留原預設	元のデフォルトのままにする
 保留备份	保留备份	Keep backups	保留備份	バックアップを保持する
@@ -571,6 +574,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 原始记录备份未完成，尚未重建	原始记录备份未完成，尚未重建	The original record backup is not completed and has not been rebuilt.	原始記錄備份未完成，尚未重建	元のレコードのバックアップは完了しておらず、再構築されていません。
 原字幕无法重新读取	原字幕无法重新读取	The original subtitles cannot be reread	原字幕無法重新讀取	オリジナルの字幕は再読できません
 原文件已保留，此组设置已重置	原文件已保留，此组设置已重置	The original file has been retained and this group of settings has been reset.	原檔案已保留，此組設定已重置	元のファイルは保持され、この設定グループはリセットされました。
+原文件已保留，这些设置已重置	原文件已保留，这些设置已重置	The original file was kept; these settings were reset.	原檔案已保留，這些設定已重設	元のファイルは保持され、これらの設定はリセットされました
 原文进 raw 溯源	原文进 raw 溯源	Original text into raw traceability	原文進 raw 溯源	元のテキストを生のトレーサビリティに変換
 原来选择的字幕无法读取，请重新选择文字来源	原来选择的字幕无法读取，请重新选择文字来源	The originally selected subtitles cannot be read, please select a new text source.	原來選擇的字幕無法讀取，請重新選擇文字來源	元々選択されていた字幕は読めません。新しいテキスト ソースを選択してください。
 原生运行于 Apple 芯片	原生运行于 Apple 芯片	Runs natively on Apple silicon	原生執行於 Apple 晶片	Appleシリコン上でネイティブに動作
@@ -775,9 +779,11 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已保留正文	已保留正文	Text has been retained	已保留正文	テキストは保持されています
 已修改：{}	已修改：{}	Modified: {}	已修改：{}	変更日: {}
 已停止	已停止	Stopped	已停止	停止しました
+已停止使用此服务，但删除尚未完整保存	已停止使用此服务，但删除尚未完整保存	The service is no longer used, but the deletion was not fully saved.	已停止使用此服務，但刪除尚未完整儲存	このサービスの使用を停止しましたが、削除は完全には保存されていません
 已停止派发，删除记录尚未完整保存	已停止派发，删除记录尚未完整保存	Dispatch stopped; the deletion record was not fully saved	已停止派送，刪除記錄尚未完整儲存	配信が停止されており、削除記録が完全に保存されていません。
 已关闭 AI 校对并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset.	已关闭 AI 校对并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset.	AI proofreading turned off and LLM configuration reset. / AI proofreading disabled and LLM settings reset.	已關閉 AI 校對並重置 LLM 配置。/ AI proofreading disabled and LLM settings reset.	AI 校正がオフになり、LLM 構成がリセットされました。 / AI 校正が無効になり、LLM 設定がリセットされます。
 已关闭截图辅助校对（本地模型通常不支持图片输入）。/ Image-assisted proofreading disabled (local models usually do not accept images).	已关闭截图辅助校对（本地模型通常不支持图片输入）。/ Image-assisted proofreading disabled (local models usually do not accept images).	Screenshot-assisted proofing has been turned off (local models usually do not support image input). / Image-assisted proofreading disabled (local models usually do not accept images).	已關閉截圖輔助校對（本地模型通常不支援圖片輸入）。/ Image-assisted proofreading disabled (local models usually do not accept images).	スクリーンショットによる校正はオフになっています (ローカル モデルは通常、画像入力をサポートしていません)。 / 画像支援校正は無効です (ローカル モデルは通常、画像を受け入れません)。
+已准备完成	已准备完成	Ready	已準備完成	準備が完了しました
 已删除此服务	已删除此服务	This service has been deleted	已刪除此服務	このサービスは削除されました
 已删除的文件夹	已删除的文件夹	Deleted folder	已刪除的資料夾	削除されたフォルダー
 已发布笔记与任务身份不匹配，原文件已保留	已发布笔记与任务身份不匹配，原文件已保留	The published notes do not match the task identity, and the original file has been retained.	已釋出筆記與任務身份不匹配，原檔案已保留	公開されたノートはタスク ID と一致せず、元のファイルは保持されています。
@@ -821,6 +827,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已把 {} 个视频加入队列	已把 {} 个视频加入队列	{} videos have been queued	已把 {} 個影片加入佇列	{} 動画がキューに追加されました
 已收到回应，但服务未接受这项测试请求	已收到回应，但服务未接受这项测试请求	Response received, but the test request was not accepted by the service	已收到回應，但服務未接受這項測試請求	応答を受信しましたが、テスト要求はサービスによって受け入れられませんでした
 已暂停	已暂停	Paused	已暫停	一時停止中
+已暂存，点击「应用」后生效	已暂存，点击「应用」后生效	Staged. Applies after you click Apply.	已暫存，點擊「套用」後生效	一時保存しました。「適用」をクリックすると反映されます
 已更新默认服务	已更新默认服务	Default services updated	已更新預設服務	デフォルトのサービスが更新されました
 已有同名文件夹	已有同名文件夹	There is already a folder with the same name	已有同名資料夾	同名のフォルダーが既に存在します
 已有后续处理任务	已有后续处理任务	There are follow-up processing tasks	已有後續處理任務	フォローアップ処理タスクがあります
@@ -837,6 +844,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已检测到设备	已检测到设备	Device detected	已檢測到裝置	デバイスが検出されました
 已添加	已添加	Added	已新增	追加されました
 已添加存储位置	已添加存储位置	Storage location added	已新增儲存位置	保存場所が追加されました
+已添加笔记库位置	已添加笔记库位置	Note library location added	已新增筆記庫位置	ノートライブラリの場所を追加しました
 已清除 Bilibili 本地登录状态。/ Bilibili login removed.	已清除 Bilibili 本地登录状态。/ Bilibili login removed.	Bilibili local login status has been cleared. /Bilibili login removed.	已清除 Bilibili 本地登入狀態。/ Bilibili login removed.	Bilibili ローカル ログイン ステータスがクリアされました。 /Bilibili ログインが削除されました。
 已清除 Codex 登录状态。/ Codex login removed.	已清除 Codex 登录状态。/ Codex login removed.	Codex login status cleared. / Codex login removed.	已清除 Codex 登入狀態。/ Codex login removed.	Codexのログインステータスがクリアされました。 / Codex ログインが削除されました。
 已清除 Ollama 登录配置并关闭 AI 校对。/ Ollama login removed and AI proofreading disabled.	已清除 Ollama 登录配置并关闭 AI 校对。/ Ollama login removed and AI proofreading disabled.	Cleared Ollama login configuration and turned off AI proofing. / Ollama login removed and AI proofreading disabled.	已清除 Ollama 登入配置並關閉 AI 校對。/ Ollama login removed and AI proofreading disabled.	Ollama のログイン構成をクリアし、AI 校正をオフにしました。 / Ollama ログインが削除され、AI 校正が無効になりました。
@@ -976,6 +984,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 所选服务不支持 AI 校对或摘要	所选服务不支持 AI 校对或摘要	The selected service does not support AI proofreading or summarization	所選服務不支援 AI 校對或摘要	選択したサービスは AI 校正または要約をサポートしていません
 所选服务不支持语音识别	所选服务不支持语音识别	The selected service does not support speech recognition	所選服務不支援語音識別	選択したサービスは音声認識をサポートしていません
 所选服务不支持这项测试，尚未发送请求	所选服务不支持这项测试，尚未发送请求	The selected service does not support this test and the request has not been sent yet	所選服務不支援這項測試，尚未傳送請求	選択したサービスはこのテストをサポートしておらず、リクエストはまだ送信されていません
+所选服务类型不支持这项测试，尚未发送请求	所选服务类型不支持这项测试，尚未发送请求	The selected service type does not support this test; no request was sent.	所選服務類型不支援這項測試，尚未傳送請求	選択したサービスの種類はこのテストに対応していません。リクエストは送信されていません
 所选识别方式不支持这个模型，请换一个	所选识别方式不支持这个模型，请换一个	The selected recognition method does not support this model, please change it.	所選識別方式不支援這個模型，請換一個	選択した認識方法はこのモデルをサポートしていません。変更してください。
 所选识别方式暂不可用，可在模型管理中查看原因	所选识别方式暂不可用，可在模型管理中查看原因	The selected identification method is temporarily unavailable. You can check the reason in model management.	所選識別方式暫不可用，可在模型管理中檢視原因	選択した識別方法は一時的に利用できません。理由はモデル管理で確認できます。
 所需程序	所需程序	required procedures	所需程式	必要な手続き
@@ -1295,6 +1304,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 最近笔记	最近笔记	Recent notes	最近筆記	最近のノート
 有 {affected} 个未完成任务引用此服务；相关后续请求会停止派发	有 {affected} 个未完成任务引用此服务；相关后续请求会停止派发	There are {affected} unfinished tasks referencing this service; related subsequent requests will stop being dispatched	有 {affected} 個未完成任務引用此服務；相關後續請求會停止派發	このサービスを参照している未完了のタスクが {affected} 個あります。関連する後続のリクエストのディスパッチが停止されます
 有 {} 个未完成任务引用此服务；相关后续请求会停止派发	有 {} 个未完成任务引用此服务；相关后续请求会停止派发	There are {} unfinished tasks referencing this service; related subsequent requests will stop being dispatched	有 {} 個未完成任務引用此服務；相關後續請求會停止派發	このサービスを参照している未完了のタスクが {} 個あります。関連する後続のリクエストのディスパッチが停止されます
+有 {} 个未完成任务引用此服务；这些任务中用到此服务的步骤将不再继续	有 {} 个未完成任务引用此服务；这些任务中用到此服务的步骤将不再继续	{} unfinished tasks use this service; their steps that need it will not continue.	有 {} 個未完成任務引用此服務；這些任務中用到此服務的步驟將不再繼續	{} 件の未完了タスクがこのサービスを使用しています。このサービスが必要な手順は続行されません。
 有 {} 次未完成的移动记录已损坏，相关文件均已保留	有 {} 次未完成的移动记录已损坏，相关文件均已保留	{} unfinished move records are corrupted and related files have been retained	有 {} 次未完成的移動記錄已損壞，相關檔案均已保留	{} 未完了の移動レコードが破損しており、関連ファイルが保持されています
 有一个旧版本无法读取	有一个旧版本无法读取	There is an older version that cannot be read	有一箇舊版本無法讀取	読み込めない古いバージョンがあります
 有字幕时直接用字幕，没有字幕时识别视频声音	有字幕时直接用字幕，没有字幕时识别视频声音	Use subtitles directly when there are subtitles, and identify the video sound when there are no subtitles.	有字幕時直接用字幕，沒有字幕時識別影片聲音	字幕がある場合は字幕を直接使用し、字幕がない場合は動画音声を識別します。
@@ -1313,6 +1323,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 服务地址	服务地址	Service address	服務地址	サービスアドレス
 服务地址 / Base URL (OpenAI-compatible, e.g. https://api.deepseek.com/v1)	服务地址	Base URL (OpenAI-compatible, e.g. https://api.deepseek.com/v1)	服務地址	サービスアドレス
 服务地址与所选接口类型不一致 / Service endpoint and protocol do not match	服务地址与所选接口类型不一致	Service endpoint and protocol do not match	服務地址與所選介面型別不一致	サービス アドレスが、選択したインターフェイス タイプと一致しません。
+服务地址与所选服务类型不一致 / Service endpoint and protocol do not match	服务地址与所选服务类型不一致	Service endpoint and protocol do not match	服務位址與所選服務類型不一致	サービスのアドレスと選択した種類が一致しません
 服务地址已变更或不正确，请核对	服务地址已变更或不正确，请核对	The service address has changed or is incorrect, please check	服務地址已變更或不正確，請核對	サービスアドレスが変更されているか、間違っています。確認してください。
 服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL.	服务地址无效，请使用完整的 HTTP(S) URL。	Invalid service URL; use a complete HTTP(S) URL.	服務地址無效，請使用完整的 HTTP(S) URL。	サービス アドレスが無効です。完全な HTTP(S) URL を使用してください。
 服务地址（兼容 OpenAI 接口）/ Service URL (OpenAI-compatible)	服务地址（兼容 OpenAI 接口）/ Service URL (OpenAI-compatible)	Service address (compatible with OpenAI interface) / Service URL (OpenAI-compatible)	服務地址（相容 OpenAI 介面）/ Service URL (OpenAI-compatible)	サービスアドレス（OpenAIインターフェース互換）／サービスURL（OpenAI互換）
@@ -1350,6 +1361,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 服务返回的内容异常，请核对服务地址	服务返回的内容异常，请核对服务地址	The content returned by the service is abnormal. Please check the service address.	服務返回的內容異常，請核對服務地址	サービスから返されたコンテンツが異常です。サービスアドレスをご確認ください。
 服务返回的内容无法读取 / The service response could not be read	服务返回的内容无法读取	The service response could not be read	服務返回的內容無法讀取	The content returned by the service cannot be read
 服务返回的内容格式不对，请确认接口类型和地址	服务返回的内容格式不对，请确认接口类型和地址	The format of the content returned by the service is incorrect. Please confirm the interface type and address.	服務返回的內容格式不對，請確認介面型別和地址	The format of the content returned by the service is incorrect.インターフェースの種類とアドレスを確認してください。
+服务返回的内容格式不对，请确认服务类型和地址	服务返回的内容格式不对，请确认服务类型和地址	The service returned an unexpected format. Check the service type and address.	服務傳回的內容格式不正確，請確認服務類型與位址	サービスの応答形式が正しくありません。サービスの種類とアドレスを確認してください
 服务返回的摘要结构无效 / Invalid summary response	服务返回的摘要结构无效	Invalid summary response	服務返回的摘要結構無效	The summary structure returned by the service is invalid
 服务返回的摘要结构无效 / Invalid summary structure	服务返回的摘要结构无效	Invalid summary structure	服務返回的摘要結構無效	The summary structure returned by the service is invalid
 服务返回的校对结构无效 / Invalid proofreading structure	服务返回的校对结构无效	Invalid proofreading structure	服務返回的校對結構無效	サービスから返された照合構造が無効です
@@ -1794,6 +1806,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 笔记已生成 / Notes ready	笔记已生成	Notes ready	筆記已生成	ノートが生成されました
 笔记库	笔记库	Note library	筆記庫	ノートライブラリ
 笔记库位置	笔记库位置	Note library location	筆記庫位置	ライブラリの場所に注意してください
+笔记库位置尚未添加：{}	笔记库位置尚未添加：{}	Note library location not added yet: {}	筆記庫位置尚未新增：{}	ノートライブラリの場所はまだ追加されていません：{}
 笔记库列表暂时无法读取，请重启应用后重试	笔记库列表暂时无法读取，请重启应用后重试	The note library list can't be read. Restart the app and try again.	暫時無法讀取筆記庫清單，請重新啟動應用程式後再試	ノートライブラリの一覧を読み込めません。アプリを再起動して再試行してください
 笔记库包含无法复制的特殊文件：{}	笔记库包含无法复制的特殊文件：{}	The note library contains special files that cannot be copied: {}	筆記庫包含無法複製的特殊檔案：{}	ノート ライブラリにはコピーできない特殊なファイルが含まれています: {}
 笔记库包含符号链接，尚未移动：{}。请先把需要的实际文件放入笔记库。	笔记库包含符号链接，尚未移动：{}。请先把需要的实际文件放入笔记库。	The notes library contains a symbolic link that has not been moved: {}. Please put the actual files you need into the note library first.	筆記庫包含符號連結，尚未移動：{}。請先把需要的實際檔案放入筆記庫。	ノート ライブラリには、移動されていないシンボリック リンク {} が含まれています。最初に必要な実際のファイルをノート ライブラリに配置してください。
@@ -1994,6 +2007,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 语音接口类型	语音接口类型	Voice interface type	語音介面型別	音声インターフェースの種類
 语音服务	语音服务	Speech service	語音服務	音声サービス
 语音服务没有返回文字 / The speech service returned no text	语音服务没有返回文字	The speech service returned no text	語音服務沒有返回文字	音声サービスがテキストを返さない
+语音服务类型	语音服务类型	Speech service type	語音服務類型	音声サービスの種類
 语音服务返回了错误 / The speech service returned an error	语音服务返回了错误	The speech service returned an error	語音服務返回了錯誤	音声サービスがエラーを返しました
 语音检测返回了空结果指针 / Speech detection returned null result pointers	语音检测返回了空结果指针	Speech detection returned null result pointers	語音檢測返回了空結果指標	音声検出により null 結果ポインタが返されました
 语音识别	语音识别	Speech recognition	語音辨識	音声認識
@@ -2105,10 +2119,12 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 还没读取到视频信息，请重新预览	还没读取到视频信息，请重新预览	The video information has not been read yet, please preview again	還沒讀取到影片資訊，請重新預覽	動画情報がまだ読み込まれていません。もう一度プレビューしてください。
 这个位置仍被笔记库使用，不能作为备份清理	这个位置仍被笔记库使用，不能作为备份清理	This location is still used by the note library and cannot be cleaned as a backup.	這個位置仍被筆記庫使用，不能作為備份清理	この場所はノート ライブラリによって引き続き使用されているため、バックアップとして消去することはできません。
 这个地址和所选接口类型不匹配，请更换其中之一	这个地址和所选接口类型不匹配，请更换其中之一	This address does not match the selected interface type. Please replace one of them.	這個地址和所選介面型別不匹配，請更換其中之一	このアドレスは、選択したインターフェイス タイプと一致しません。どちらかを交換してください。
+这个地址和所选服务类型不匹配，请更换其中之一	这个地址和所选服务类型不匹配，请更换其中之一	This address and the selected service type do not match. Change one of them.	這個位址與所選服務類型不符，請更換其中之一	このアドレスと選択したサービスの種類が一致しません。どちらかを変更してください
 这个存储位置已经在笔记库中	这个存储位置已经在笔记库中	This storage location is already in the note library	這個儲存位置已經在筆記庫中	この保存場所はすでにノート ライブラリにあります
 这个库已经登记在另一个位置，请使用移动笔记库操作	这个库已经登记在另一个位置，请使用移动笔记库操作	This library has been registered in another location, please use the mobile note library operation	這個庫已經登記在另一個位置，請使用移動筆記庫操作	このライブラリは別の場所に登録されています。モバイル ノート ライブラリ操作を使用してください。
 这个文件与生成笔记时的视频内容不同，请选择同一个原视频	这个文件与生成笔记时的视频内容不同，请选择同一个原视频	This file is different from the video content when generating notes. Please select the same original video.	這個檔案與生成筆記時的影片內容不同，請選擇同一個原影片	このファイルは、ノートを生成するときの動画 コンテンツとは異なります。同じ元の動画を選択してください。
 这个文件夹属于另一个笔记库，请用“重新定位…”选择正确的文件夹	这个文件夹属于另一个笔记库，请用“重新定位…”选择正确的文件夹	This folder belongs to another note library, please use "Relocate..." to select the correct folder	這個資料夾屬於另一個筆記庫，請用“重新定位…”選擇正確的資料夾	このフォルダーは別のノート ライブラリに属しています。「再配置...」を使用して正しいフォルダーを選択してください。
+这个文件夹已是笔记库位置	这个文件夹已是笔记库位置	This folder is already a note library location	這個資料夾已是筆記庫位置	このフォルダはすでにノートライブラリの場所です
 这个文件夹暂时不能写入，请重新连接磁盘或检查访问权限	这个文件夹暂时不能写入，请重新连接磁盘或检查访问权限	This folder cannot be written to temporarily, please reconnect the disk or check access permissions	這個資料夾暫時不能寫入，請重新連線磁碟或檢查訪問許可權	このフォルダーには一時的に書き込むことができません。ディスクを再接続するか、アクセス許可を確認してください。
 这个文件夹还没有笔记	这个文件夹还没有笔记	There are no notes in this folder yet	這個資料夾還沒有筆記	このフォルダーにはまだノートがありません
 这个版本暂时无法打开：{}	这个版本暂时无法打开：{}	This version cannot be opened temporarily: {}	這個版本暫時無法開啟：{}	このバージョンは一時的に開けません: {}
@@ -2235,6 +2251,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 重新登录 Bilibili	重新登录 Bilibili	Sign in to Bilibili again	重新登入 Bilibili	Bilibili に再ログイン
 重新读取	重新读取	Read again	重新讀取	再読み込み
 重新读取字幕	重新读取字幕	Reread subtitles	重新讀取字幕	字幕を読み直す
+重新运行	重新运行	Run again	重新執行	再実行
 重新运行首次设置	重新运行首次设置	Rerun first time setup	重新執行首次設定	初回セットアップを再実行する
 重新选择文件夹…	重新选择文件夹…	Reselect folder…	重新選擇資料夾…	フォルダを再選択してください…
 重新预览	重新预览	Re-preview	重新預覽	再プレビュー
