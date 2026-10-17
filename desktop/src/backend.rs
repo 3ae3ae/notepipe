@@ -434,7 +434,11 @@ impl Environment {
                 ("ffmpeg", PathBuf::from("ffmpeg"), "-version"),
                 ("ffprobe", PathBuf::from("ffprobe"), "-version"),
                 ("ytdlp", ytdlp, "--version"),
-                ("llama-devices", PathBuf::from("llama-server"), "--list-devices"),
+                (
+                    "llama-devices",
+                    PathBuf::from("llama-server"),
+                    "--list-devices",
+                ),
             ];
             let handles: Vec<_> = commands
                 .into_iter()
@@ -469,16 +473,11 @@ impl Environment {
         });
         let apple = course2md::config::apple_native_available()
             && cli
-                .as_ref()
-                .and_then(|path| path.parent())
-                .is_some_and(|dir| {
-                    ["mlx.metallib", "default.metallib"]
-                        .iter()
-                        .any(|name| dir.join(name).is_file())
-                });
+                .as_deref()
+                .and_then(course2md::config::find_metallib)
+                .is_some();
         let npu_device = if cfg!(target_os = "linux") {
-            std::fs::read_to_string("/sys/class/accel/accel0/device/vendor")
-                .is_ok_and(|vendor| vendor.trim() == "0x8086")
+            Path::new(course2md::npu::NPU_DEVICE_PATH).exists()
         } else if cfg!(target_os = "windows") {
             probe(Path::new("powershell.exe"), &["-NoProfile", "-NonInteractive", "-Command",
                 "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match 'Intel.*(AI Boost|NPU)' -and $_.Status -eq 'OK' } | Select-Object -ExpandProperty Name"], Duration::from_secs(10))
@@ -529,9 +528,7 @@ fn probe(bin: &Path, args: &[&str], timeout: Duration) -> Option<String> {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => break,
             Ok(Some(_)) => return None,
-            Ok(None) if started.elapsed() < timeout => {
-                thread::sleep(Duration::from_millis(25))
-            }
+            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(25)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -547,23 +544,29 @@ fn probe(bin: &Path, args: &[&str], timeout: Duration) -> Option<String> {
 
 pub use crate::notes::{Course, Preview, read_preview, scan_library};
 
-/// macOS「始终显示滚动条」系统偏好：探测一次并缓存（states-and-motion 滚动条契约要求尊重该偏好）。
-/// 非 macOS 或读取失败按 Automatic（滚动时显示）。
+/// macOS「始终显示滚动条」系统偏好（states-and-motion 滚动条契约要求尊重该偏好）。
+/// 首次调用在后台线程读取 `defaults`，渲染期只读缓存值；读到之前与非 macOS 均按
+/// Automatic（滚动时显示）。
 pub fn scrollbars_always_visible() -> bool {
-    static ALWAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ALWAYS.get_or_init(|| {
-        if !cfg!(target_os = "macos") {
-            return false;
-        }
-        std::process::Command::new("defaults")
-            .args(["read", "-g", "AppleShowScrollBars"])
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .is_some_and(|out| String::from_utf8_lossy(&out.stdout).trim() == "Always")
-    })
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ALWAYS: AtomicBool = AtomicBool::new(false);
+    static PROBE: std::sync::Once = std::sync::Once::new();
+    if cfg!(target_os = "macos") {
+        PROBE.call_once(|| {
+            thread::spawn(|| {
+                let always = Command::new("defaults")
+                    .args(["read", "-g", "AppleShowScrollBars"])
+                    .stdin(Stdio::null())
+                    .stderr(Stdio::null())
+                    .output()
+                    .ok()
+                    .filter(|out| out.status.success())
+                    .is_some_and(|out| String::from_utf8_lossy(&out.stdout).trim() == "Always");
+                ALWAYS.store(always, Ordering::Relaxed);
+            });
+        });
+    }
+    ALWAYS.load(Ordering::Relaxed)
 }
 
 /// 滚动条模式：常显偏好→Always；其余滚动时显示、闲置淡出。
@@ -805,10 +808,10 @@ mod tests {
             Event::Log { .. }
         ));
         job.cancel();
-        // Exit is emitted only after both inherited child pipes close, so this
-        // also checks that the descendant (sleep) was terminated.
+        // Exit waits up to 3s for both inherited pipes to close; arriving sooner
+        // means the descendant (sleep) released them, i.e. it was terminated too.
         assert!(matches!(
-            job.events.recv_timeout(Duration::from_secs(5)).unwrap(),
+            job.events.recv_timeout(Duration::from_secs(2)).unwrap(),
             Event::Exit {
                 cancelled: true,
                 ..
