@@ -1271,7 +1271,7 @@ impl FailureRecord<'_> {
     /// A failed write only warns: the original error is the outcome.
     fn write_run_json(&self, err: &anyhow::Error) {
         let cfg = self.cfg;
-        let mut info = serde_json::json!({
+        let info = serde_json::json!({
             "success": false,
             "course2md_version": env!("CARGO_PKG_VERSION"),
             "source": {

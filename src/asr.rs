@@ -885,8 +885,6 @@ pub(crate) struct OffloadOpts {
 }
 
 /// 最近一次 llama-server spawn 的完整参数（诊断用：失败 run.json 附带）。
-/// 单进程同一时刻只有一个 llama-server 实例，静态足够。
-
 /// 组装 llama-server 启动参数（纯函数，便于单测）：
 /// - gpu 后端：`-ngl <gpu_layers>`；mmproj_offload=false 且 llama.cpp 支持时
 ///   追加 `--no-mmproj-offload`
