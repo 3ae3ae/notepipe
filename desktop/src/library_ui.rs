@@ -9,10 +9,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+const FOLDERS_UNAVAILABLE: &str = "文件夹暂不可用，请重新扫描笔记库。";
+
 #[derive(Clone)]
 pub struct FolderOrigin {
     pub root: PathBuf,
     pub draft_id: Option<String>,
+    /// A rename or create is being written; further saves wait for it.
+    pub saving: bool,
 }
 
 /// Resolved picker state shared by the full picker and the compact chip.
@@ -152,20 +156,19 @@ impl Desktop {
         let cancel = Arc::new(AtomicBool::new(false));
         self.preview_cancel = Some(cancel.clone());
         let online = self.online;
-        // 用发起探测的窗口而不是“第一个窗口”：回调只可能落回正确的窗口
-        let handle = Some(window.window_handle());
+        let handle = window.window_handle();
         // probe 是同步网络/子进程工作；见 crate::spawn_blocking_io 的说明
         let task = crate::spawn_blocking_io(move || source::probe(input, online, cancel));
         cx.spawn(async move |this, cx| {
             let result = task
                 .recv()
                 .await
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("识别工作线程意外结束")));
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
             // worker 计数无论窗口存亡都必须归还（request_close 等待它归零）
             let _ = this.update(cx, |this, _| {
                 this.preview_workers = this.preview_workers.saturating_sub(1);
             });
-            if let Some(handle) = handle {
+            {
                 let _ = cx.update_window(handle, |_, window, cx| this.update(cx, |this, cx| {
                     if this.preview_generation != generation || this.value(Field::Source, cx) != request_input { return; }
                     if let Some((id, revision)) = &token {
@@ -196,7 +199,7 @@ impl Desktop {
                             }
                             this.source_preview = Some(source);
                             this.save_current_draft(cx);
-                            if this.task_options.source_mode != 2 && let Some(track) = default_track {
+                            if this.task_options.source_mode != course2md::config::TranscriptSource::Asr && let Some(track) = default_track {
                                 this.confirm_subtitle(track, false, cx);
                             }
                         }
@@ -251,33 +254,36 @@ impl Desktop {
         }
         let cancel = Arc::new(AtomicBool::new(false));
         self.source_covers_cancel = Some(cancel.clone());
+        let workers = groups.len().min(4);
         let queue = Arc::new(std::sync::Mutex::new(
-            groups.into_iter().collect::<std::collections::VecDeque<_>>(),
+            groups
+                .into_iter()
+                .collect::<std::collections::VecDeque<_>>(),
         ));
         let (tx, rx) = smol::channel::unbounded::<(Arc<Vec<String>>, PathBuf)>();
-        let workers = queue.lock().map(|queue| queue.len()).unwrap_or(1).min(4);
-        for _ in 0..workers.max(1) {
+        for _ in 0..workers {
             let queue = queue.clone();
             let tx = tx.clone();
             let cancel = cancel.clone();
             // 阻塞网络下载不进 GPUI 执行器；见 crate::spawn_blocking_io 的说明
-            std::thread::spawn(move || loop {
-                let next = queue.lock().unwrap_or_else(|p| p.into_inner()).pop_front();
-                let Some((url, inputs)) = next else { break };
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                if let Ok(path) = source::cache_remote_cover(&url, &cancel) {
-                    let _ = tx.send_blocking((inputs, path));
+            std::thread::spawn(move || {
+                loop {
+                    let next = queue.lock().unwrap_or_else(|p| p.into_inner()).pop_front();
+                    let Some((url, inputs)) = next else { break };
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if let Ok(path) = source::cache_remote_cover(&url, &cancel) {
+                        let _ = tx.send_blocking((inputs, path));
+                    }
                 }
             });
         }
         drop(tx);
-        let handle = Some(window.window_handle());
+        let handle = window.window_handle();
         cx.spawn(async move |this, cx| {
             // 通道在所有工作线程结束后关闭，循环自然退出
             while let Ok((inputs, path)) = rx.recv().await {
-                let Some(handle) = handle else { break };
                 let keep = cx
                     .update_window(handle, |_, _window, cx| {
                         this.update(cx, |this, cx| {
@@ -321,6 +327,7 @@ impl Desktop {
                         return FolderOrigin {
                             root: library.root.clone(),
                             draft_id: Some(draft.id.clone()),
+                            saving: false,
                         };
                     }
                 }
@@ -329,6 +336,7 @@ impl Desktop {
         FolderOrigin {
             root: self.library_root.clone(),
             draft_id: None,
+            saving: false,
         }
     }
 
@@ -337,13 +345,10 @@ impl Desktop {
             self.navigate(Page::Library, cx);
         }
         let origin = self.current_folder_origin();
-        let library = match organize::Library::load(&origin.root) {
-            Ok(library) => library,
-            Err(error) => {
-                self.folder_error = Some(format!("无法读取这个保存位置的文件夹：{error:#}"));
-                cx.notify();
-                return;
-            }
+        let Some(library) = self.library_indexes.get(&origin.root) else {
+            self.message = Some(FOLDERS_UNAVAILABLE.into());
+            cx.notify();
+            return;
         };
         let name = id
             .and_then(|id| library.folders.get(&id))
@@ -352,7 +357,6 @@ impl Desktop {
         self.folder_origin = Some(origin);
         self.folder_editor = Some(id);
         self.folder_error = None;
-        self.delete_folder = None;
         self.inputs[&Field::FolderName].update(cx, |state, cx| {
             state.set_value(name, window, cx);
         });
@@ -392,62 +396,117 @@ impl Desktop {
         cx.notify();
     }
 
+    /// Writes the folder record on a blocking thread, then stores the result in
+    /// the folder cache before `done` sees the outcome.
+    pub(crate) fn edit_folders<T: Send + 'static>(
+        &mut self,
+        root: PathBuf,
+        change: impl FnOnce(&mut organize::Library) -> anyhow::Result<T> + Send + 'static,
+        done: impl FnOnce(&mut Self, anyhow::Result<T>, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        let worker_root = root.clone();
+        let task = crate::spawn_blocking_io(move || {
+            let mut value = None;
+            let library = organize::Library::edit(&worker_root, |library| {
+                value = Some(change(library)?);
+                Ok(())
+            })?;
+            Ok((
+                library,
+                anyhow::Context::context(value, "文件夹记录未更新")?,
+            ))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
+            let _ = this.update(cx, |this, cx| {
+                let result = result.map(|(library, value)| {
+                    this.store_folders(&root, library);
+                    value
+                });
+                done(this, result, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn store_folders(&mut self, root: &std::path::Path, library: organize::Library) {
+        if self.library_root == root {
+            self.library = library.clone();
+            self.library_error = None;
+        }
+        self.library_indexes.insert(root.to_owned(), library);
+    }
+
     pub fn save_folder(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.folder_editor else {
             return;
         };
-        let origin = self
-            .folder_origin
-            .clone()
-            .unwrap_or_else(|| self.current_folder_origin());
+        if self.folder_origin.is_none() {
+            self.folder_origin = Some(self.current_folder_origin());
+        }
+        let Some(origin) = self.folder_origin.as_mut().filter(|origin| !origin.saving) else {
+            return;
+        };
+        origin.saving = true;
+        let root = origin.root.clone();
         let name = self.value(Field::FolderName, cx);
-        let mut saved = None;
-        match organize::Library::edit(&origin.root, |library| {
-            saved = Some(library.rename(id, &name)?);
-            Ok(())
-        }) {
-            Ok(library) => {
-                if self.library_root == origin.root {
-                    self.library = library.clone();
+        self.edit_folders(
+            root,
+            move |library| library.rename(id, &name),
+            |this, result, cx| {
+                // A closed dialog keeps the saved folder but no longer navigates.
+                let Some(origin) = this.folder_origin.as_mut() else {
+                    return;
+                };
+                origin.saving = false;
+                let origin = origin.clone();
+                match result {
+                    Ok(saved) => this.folder_saved(origin, saved, cx),
+                    Err(error) => this.folder_error = Some(format!("{error:#}")),
                 }
-                self.library_indexes.insert(origin.root.clone(), library);
-                if let Some(draft_id) = &origin.draft_id {
-                    if let Some(workspace) = &mut self.workspace {
-                        if let Err(error) = workspace.transaction(|state| {
-                            if let Some(draft) =
-                                state.drafts.iter_mut().find(|draft| &draft.id == draft_id)
-                            {
-                                draft.folder = saved;
-                            }
-                            Ok(())
-                        }) {
-                            self.folder_error =
-                                Some(format!("文件夹已创建，保存位置尚未更新：{error:#}"));
-                            self.folder_editor = Some(saved);
-                            cx.notify();
-                            return;
-                        }
-                        if workspace.state.current_draft == *draft_id {
-                            self.target_folder = saved;
-                        }
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
+    fn folder_saved(&mut self, origin: FolderOrigin, saved: u64, cx: &mut Context<Self>) {
+        if let Some(draft_id) = &origin.draft_id {
+            if let Some(workspace) = &mut self.workspace {
+                if let Err(error) = workspace.transaction(|state| {
+                    if let Some(draft) = state.drafts.iter_mut().find(|draft| &draft.id == draft_id)
+                    {
+                        draft.folder = Some(saved);
                     }
-                } else {
-                    self.library_root = origin.root;
-                    self.folder_filter = saved;
-                    self.page = Page::Library;
+                    Ok(())
+                }) {
+                    self.folder_error = Some(format!("文件夹已创建，保存位置尚未更新：{error:#}"));
+                    self.folder_editor = Some(Some(saved));
+                    return;
                 }
-                self.folder_editor = None;
-                self.folder_origin = None;
-                self.folder_error = None;
-                if let Some(handle) = cx.windows().first().copied() {
-                    cx.defer(move |cx| {
-                        let _ = cx.update_window(handle, |_, window, cx| window.close_dialog(cx));
-                    });
+                if workspace.state.current_draft == *draft_id {
+                    self.target_folder = Some(saved);
                 }
             }
-            Err(error) => self.folder_error = Some(format!("{error:#}")),
+        } else {
+            self.library_root = origin.root;
+            self.folder_filter = Some(saved);
+            if self.page != Page::Library {
+                self.navigate(Page::Library, cx);
+            }
         }
-        cx.notify();
+        self.folder_editor = None;
+        self.folder_origin = None;
+        self.folder_error = None;
+        let handle = self.window;
+        cx.defer(move |cx| {
+            let _ = cx.update_window(handle, |_, window, cx| window.close_dialog(cx));
+        });
     }
 
     pub fn folder_editor_view(&self, cx: &mut Context<Self>) -> Div {
@@ -510,79 +569,6 @@ impl Desktop {
                         ),
                 );
         }
-        if let Some(id) = self.delete_folder {
-            let origin = self
-                .folder_origin
-                .clone()
-                .unwrap_or_else(|| self.current_folder_origin());
-            let name = self
-                .library_indexes
-                .get(&origin.root)
-                .and_then(|library| library.folders.get(&id))
-                .cloned()
-                .unwrap_or_else(|| self.folder_name(Some(id)));
-            view =
-                view.p_4()
-                    .rounded_lg()
-                    .bg(color(SURFACE))
-                    .border_1()
-                    .border_color(color(HAIRLINE))
-                    .child(accessible_text(
-                        "folder-delete-title",
-                        format!("删除「{name}」文件夹？"),
-                    ))
-                    .child(
-                        accessible_text(
-                            "folder-delete-description",
-                            "其中的笔记会移到未分类",
-                        )
-                        .text_color(color(GRAY)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_end()
-                            .child(control("keep-folder").label("保留文件夹").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.delete_folder = None;
-                                    this.folder_origin = None;
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(
-                                control("delete-folder")
-                                    .label("删除文件夹")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        match organize::Library::edit(&origin.root, |library| {
-                                            library.remove(id);
-                                            Ok(())
-                                        }) {
-                                            Ok(library) => {
-                                                if this.library_root == origin.root {
-                                                    this.library = library.clone();
-                                                }
-                                                this.library_indexes
-                                                    .insert(origin.root.clone(), library);
-                                                this.delete_folder = None;
-                                                this.folder_origin = None;
-                                                if this.library_root == origin.root
-                                                    && this.folder_filter == Some(id)
-                                                {
-                                                    this.folder_filter = Some(0);
-                                                }
-                                                // Drafts keep the deleted folder reference so the
-                                                // next submission asks for a deliberate new destination.
-                                            }
-                                            Err(e) => {
-                                                this.message =
-                                                    Some(format!("无法删除文件夹：{e:#}"))
-                                            }
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
-                    );
-        }
         view
     }
 
@@ -605,23 +591,25 @@ impl Desktop {
             if answer.await.ok() != Some(0) {
                 return;
             }
-            let _ = this.update_in(cx, |this, _, cx| {
-                match organize::Library::edit(&origin.root, |library| {
-                    library.remove(id);
-                    Ok(())
-                }) {
-                    Ok(library) => {
-                        if this.library_root == origin.root {
-                            this.library = library.clone();
-                            if this.folder_filter == Some(id) {
+            let _ = this.update(cx, |this, cx| {
+                this.edit_folders(
+                    origin.root.clone(),
+                    move |library| {
+                        library.remove(id);
+                        Ok(())
+                    },
+                    move |this, result, _| match result {
+                        // Drafts keep the deleted folder so their next submission
+                        // asks for a deliberate destination.
+                        Ok(()) => {
+                            if this.library_root == origin.root && this.folder_filter == Some(id) {
                                 this.folder_filter = Some(0);
                             }
                         }
-                        this.library_indexes.insert(origin.root, library);
-                    }
-                    Err(error) => this.message = Some(format!("无法删除文件夹：{error:#}")),
-                }
-                cx.notify();
+                        Err(error) => this.message = Some(format!("无法删除文件夹：{error:#}")),
+                    },
+                    cx,
+                );
             });
         })
         .detach();
@@ -645,14 +633,14 @@ impl Desktop {
             FolderOrigin {
                 root,
                 draft_id: None,
+                saving: false,
             }
         } else {
             self.current_folder_origin()
         };
         let loaded = self.library_indexes.get(&origin.root);
         let checking = loaded.is_none() && self.loading;
-        let load_error =
-            (loaded.is_none() && !checking).then(|| "文件夹暂不可用，请刷新课程库。".to_owned());
+        let load_error = (loaded.is_none() && !checking).then(|| FOLDERS_UNAVAILABLE.to_owned());
         let folder = storage
             .as_ref()
             .and_then(|path| self.library_view_cache.locations.get(path))
@@ -709,21 +697,19 @@ impl Desktop {
                         .checked(id == current)
                         .on_click(move |_, _, cx| {
                             let _ = entity.update(cx, |this, cx| {
-                                if let Some(path) = &storage {
-                                    match organize::Library::edit(&origin.root, |library| {
-                                        library.assign(&origin.root, path, id)
-                                    }) {
-                                        Ok(library) => {
-                                            if this.library_root == origin.root {
-                                                this.library = library.clone();
+                                if let Some(path) = storage.clone() {
+                                    let root = origin.root.clone();
+                                    this.edit_folders(
+                                        origin.root.clone(),
+                                        move |library| library.assign(&root, &path, id),
+                                        |this, result, _| {
+                                            if let Err(error) = result {
+                                                this.message =
+                                                    Some(format!("无法移动笔记：{error:#}"))
                                             }
-                                            this.library_indexes
-                                                .insert(origin.root.clone(), library);
-                                        }
-                                        Err(error) => {
-                                            this.message = Some(format!("无法移动笔记：{error:#}"))
-                                        }
-                                    }
+                                        },
+                                        cx,
+                                    );
                                 } else if this
                                     .workspace
                                     .as_ref()
@@ -759,7 +745,9 @@ impl Desktop {
             .when(has_course, |button| button.ghost())
             .h_auto()
             .min_h(rems(2.6))
-            .when(!has_course, |button| button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL))
+            .when(!has_course, |button| {
+                button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL)
+            })
             .py_2()
             .disabled(self.loading || load_error.is_some())
             .icon(crate::icons::folder())

@@ -76,6 +76,9 @@ const PROVIDERS: [(&str, &str); 6] = [
     ("api", "云端服务"),
 ];
 
+/// Shown when a blocking worker ends without a result.
+pub(crate) const INTERRUPTED: &str = "操作意外中断，请重试";
+
 /// Runs blocking IO on a dedicated OS thread and delivers the result through a channel.
 ///
 /// GPUI's background executor dispatches to GCD global queues, and macOS may run those
@@ -251,7 +254,8 @@ struct Desktop {
     folder_editor: Option<Option<u64>>,
     folder_origin: Option<library_ui::FolderOrigin>,
     folder_error: Option<String>,
-    delete_folder: Option<u64>,
+    /// The window this view lives in; deferred work returns to it.
+    window: AnyWindowHandle,
     page: Page,
     result_origin: Page,
     settings_origin: Option<Page>,
@@ -587,7 +591,7 @@ impl Desktop {
             folder_editor: None,
             folder_origin: None,
             folder_error: None,
-            delete_folder: None,
+            window: window.window_handle(),
             result_origin: Page::Library,
             settings_origin: None,
             settings_return_focus: None,
