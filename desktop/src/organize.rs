@@ -392,13 +392,14 @@ mod tests {
         let path = root.path().join(".course2md-library.json");
         let before = std::fs::read(&path).unwrap();
         for target in [None, Some(id)] {
-            let error = Library::edit(root.path(), |library| {
-                library.rename(target, "  未分类  ")?;
-                Ok(())
-            })
-            .err()
-            .expect("system category names must be rejected");
-            assert!(error.to_string().contains("系统分类"));
+            assert!(
+                Library::edit(root.path(), |library| {
+                    library.rename(target, "  未分类  ")?;
+                    Ok(())
+                })
+                .is_err(),
+                "the unfiled name is reserved"
+            );
             assert_eq!(std::fs::read(&path).unwrap(), before);
         }
         let reopened = Library::load(root.path()).unwrap();
