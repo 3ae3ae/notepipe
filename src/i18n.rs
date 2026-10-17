@@ -43,9 +43,9 @@ impl Lang {
     pub fn native_name(self) -> &'static str {
         match self {
             Self::En => "English",
-            Self::ZhHans => "简体中文",
-            Self::ZhHant => "繁體中文",
-            Self::Ja => "日本語",
+            Self::ZhHans => crate::tr!("简体中文"),
+            Self::ZhHant => crate::tr!("繁體中文"),
+            Self::Ja => crate::tr!("日本語"),
         }
     }
 
@@ -292,10 +292,41 @@ macro_rules! tr {
         $crate::i18n::t($text)
     };
     ($text:expr, $($arg:expr),+ $(,)?) => {{
-        let args: &[&dyn ::std::fmt::Display] =
-            &[$(&$arg as &dyn ::std::fmt::Display),+];
-        $crate::i18n::template($text, args)
+        // Build the slice inside the call so temporaries live until formatting ends.
+        $crate::i18n::template($text, &[$(&$arg as &dyn ::std::fmt::Display),+])
     }};
+}
+
+/// Localized `println!`; placeholders use the same subset as [`tr!`].
+#[macro_export]
+macro_rules! println_tr {
+    ($($arg:tt)*) => {
+        println!("{}", $crate::tr!($($arg)*))
+    };
+}
+
+/// Localized `eprintln!`.
+#[macro_export]
+macro_rules! eprintln_tr {
+    ($($arg:tt)*) => {
+        eprintln!("{}", $crate::tr!($($arg)*))
+    };
+}
+
+/// Localized `print!`.
+#[macro_export]
+macro_rules! print_tr {
+    ($($arg:tt)*) => {
+        print!("{}", $crate::tr!($($arg)*))
+    };
+}
+
+/// Localized `eprint!`.
+#[macro_export]
+macro_rules! eprint_tr {
+    ($($arg:tt)*) => {
+        eprint!("{}", $crate::tr!($($arg)*))
+    };
 }
 
 /// Fills `{}` placeholders in an already translated template.
