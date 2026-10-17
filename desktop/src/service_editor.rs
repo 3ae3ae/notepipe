@@ -1569,6 +1569,7 @@ impl Desktop {
             // 只补充候选：自动填充仅落到空输入，不改变已保存配置与测试证据
             editor.models.prime(models);
             crate::codex_ui::autofill_input(
+                self.window,
                 self.settings_ui.inputs[&EditField::Model].clone(),
                 suggested,
                 cx,

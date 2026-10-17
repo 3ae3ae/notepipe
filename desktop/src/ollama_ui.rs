@@ -28,11 +28,16 @@ impl Desktop {
         self.ollama.working = true;
         self.ollama.generation = self.ollama.generation.wrapping_add(1);
         let generation = self.ollama.generation;
+        // The engine error names `ollama serve`; the page offers its own action.
         let task = crate::spawn_blocking_io(|| {
-            course2md::login::ollama::discover_for_desktop().map_err(|error| format!("{error:#}"))
+            course2md::login::ollama::discover_for_desktop()
+                .map_err(|_| "未检测到 Ollama，请安装并打开 Ollama 后重新检查".to_owned())
         });
         cx.spawn(async move |this, cx| {
-            let Ok(result) = task.recv().await else { return };
+            let result = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(crate::INTERRUPTED.to_owned()));
             let _ = this.update(cx, |this, cx| {
                 if this.ollama.generation != generation {
                     return;
@@ -107,13 +112,14 @@ impl Desktop {
         };
         let detail = match &self.ollama.status {
             Some(Ok((host, models))) => {
-                let preview: Vec<&str> = models
-                    .iter()
-                    .take(3)
-                    .map(|model| model.as_str())
-                    .collect();
+                let preview: Vec<&str> =
+                    models.iter().take(3).map(|model| model.as_str()).collect();
                 Some(if models.len() > preview.len() {
-                    format!("{host} · {} 个模型：{} 等", models.len(), preview.join("、"))
+                    format!(
+                        "{host} · {} 个模型：{} 等",
+                        models.len(),
+                        preview.join("、")
+                    )
                 } else if preview.is_empty() {
                     format!("{host} · 还没有已下载的模型")
                 } else {
@@ -130,7 +136,8 @@ impl Desktop {
         // 已有对应服务条目时不再邀请重复添加：给直达入口，服务列表仍是唯一管理面（review#1）
         match added_version {
             Some(version_id) => actions.push(
-                quiet(SharedString::from(format!("{id}-open-added"))).when(self.page == Page::Settings, SettingsText::settings_text)
+                quiet(SharedString::from(format!("{id}-open-added")))
+                    .when(self.page == Page::Settings, SettingsText::settings_text)
                     .icon(icons::edit())
                     .label("查看服务")
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -144,7 +151,8 @@ impl Desktop {
                     .into_any_element(),
             ),
             None => actions.push(
-                outline_pill(SharedString::from(format!("{id}-add"))).when(self.page == Page::Settings, SettingsText::settings_text)
+                outline_pill(SharedString::from(format!("{id}-add")))
+                    .when(self.page == Page::Settings, SettingsText::settings_text)
                     .icon(icons::plus())
                     .label("添加 Ollama 服务")
                     .disabled(working)
@@ -154,11 +162,17 @@ impl Desktop {
                     .into_any_element(),
             ),
         }
-        actions.insert(0,
-            quiet(SharedString::from(format!("{id}-recheck"))).when(self.page == Page::Settings, SettingsText::settings_text)
-                .w(CONTROL_HEIGHT).min_w(CONTROL_HEIGHT).px_0().flex_shrink_0()
+        actions.insert(
+            0,
+            quiet(SharedString::from(format!("{id}-recheck")))
+                .when(self.page == Page::Settings, SettingsText::settings_text)
+                .w(CONTROL_HEIGHT)
+                .min_w(CONTROL_HEIGHT)
+                .px_0()
+                .flex_shrink_0()
                 .icon(icons::refresh())
-                .accessibility_label("重新检查 Ollama").tooltip("重新检查")
+                .accessibility_label("重新检查 Ollama")
+                .tooltip("重新检查")
                 .disabled(working)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.ollama_refresh(cx);

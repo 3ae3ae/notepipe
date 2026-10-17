@@ -192,10 +192,14 @@ impl Desktop {
             (saved, status)
         });
         cx.spawn(async move |this, cx| {
-            let Ok((saved, result)) = task.recv().await else {
-                return;
-            };
+            let received = task.recv().await;
             let _ = this.update(cx, |this, cx| {
+                let (saved, result) = received.unwrap_or_else(|_| {
+                    (
+                        this.account.has_saved_login,
+                        Err(crate::INTERRUPTED.to_owned()),
+                    )
+                });
                 if this.account.apply_status(generation, saved, result) {
                     cx.notify();
                 }
@@ -210,132 +214,95 @@ impl Desktop {
     }
 
     /// Shared account state and actions only; the guide owns its heading and footer.
-    pub(crate) fn account_onboarding_page(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    pub(crate) fn account_onboarding_page(&self, cx: &mut Context<Self>) -> Div {
         self.account_summary(true, cx)
     }
 
     fn account_summary(&self, onboarding: bool, cx: &mut Context<Self>) -> Div {
-        let in_settings = self.page == Page::Settings;
-        let support_size = if in_settings { TEXT_SETTINGS_AUX } else { TEXT_AUX };
-        let status = self.account_status_text();
         let saved = self.account.has_saved_login;
-        let expired = matches!(self.account.status, Some(AccountStatus::Expired));
-        let login_action = self.account.login_action();
-        let connected = matches!(self.account.status, Some(AccountStatus::Connected(_)));
         let (kind, label) = if self.account.checking {
             (BadgeKind::Progress, "验证中")
         } else if self.account.status_error.is_some() {
             (BadgeKind::Warning, "暂时无法验证")
-        } else if expired {
-            (BadgeKind::Warning, "登录已失效")
-        } else if connected {
-            (BadgeKind::Success, "已登录")
-        } else if saved {
-            (BadgeKind::Neutral, "已保留登录")
         } else {
-            (BadgeKind::Neutral, "未登录")
+            match &self.account.status {
+                Some(AccountStatus::Expired) => (BadgeKind::Warning, "登录已失效"),
+                Some(AccountStatus::Connected(_)) => (BadgeKind::Success, "已登录"),
+                _ if saved => (BadgeKind::Neutral, "已保存登录信息"),
+                _ => (BadgeKind::Neutral, "未登录"),
+            }
         };
-        // 徽章已给出状态，副行只补充徽章没有的信息
-        let detail = if self.account.logout_failed {
-            status
-        } else if self.account.status_error.is_some() && saved {
-            "已保留登录".into()
-        } else if self.account.status.is_none() && saved {
-            "尚未验证".into()
+        // The badge carries the state; the line adds only what it does not say.
+        let detail = if self.account.checking {
+            None
+        } else if self.account.logout_failed {
+            Some("退出登录尚未完成，原登录状态已保留".to_owned())
+        } else if self.account.status_error.is_some() {
+            saved.then(|| "已保存登录信息".to_owned())
         } else {
-            status.trim_start_matches("已登录 · ").to_owned()
+            match &self.account.status {
+                Some(AccountStatus::Connected(profile)) if !profile.name.trim().is_empty() => {
+                    Some(profile.name.clone())
+                }
+                None if saved => Some("尚未验证".to_owned()),
+                _ => None,
+            }
         };
-        let show_detail = !self.account.checking && detail != label;
-        // 与 Codex/Ollama 同一组合：标题行尾部一个槽位放状态徽章与动作，窄时整体换行
-        let trailing = h_flex()
-            .gap_2()
-            .items_center()
-            .flex_wrap()
-            .when_some(login_action, |view, label| {
-                view.child(
-                    outline_pill("account-login").when(in_settings, SettingsText::settings_text)
-                        .icon(icons::bilibili())
-                        .label(label)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.open_account_dialog(window, cx)),
-                        ),
-                )
-            })
-            // Only a saved login has anything to re-verify.
-            .when(saved, |view| {
-                view.child(
-                    quiet("account-refresh").when(in_settings, SettingsText::settings_text)
-                        .icon(icons::refresh())
-                        .label("重新检查")
-                        .disabled(self.account.checking)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx))),
-                )
-                .child(
-                    quiet("account-logout").when(in_settings, SettingsText::settings_text)
-                        .icon(icons::logout())
-                        .label("退出登录")
-                        .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx))),
-                )
-            });
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .gap(px(16.))
-            .items_center()
-            .child(crate::settings_ui::settings_resource_icon(icons::tv()))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .flex_wrap()
-                            .child(
-                                accessible_text(
-                                    "bilibili-account-identity",
-                                    if onboarding {
-                                        "账号状态"
-                                    } else {
-                                        "Bilibili 账号"
-                                    },
-                                )
-                                .font_weight(FontWeight::SEMIBOLD),
-                            )
-                            .when(self.account.checking, |row| {
-                                row.child(crate::motion::spinner("account-checking", cx))
-                            })
-                            .child(badge(kind).child(label).when(in_settings, |tag| tag.text_size(support_size))),
+        let mut actions = Vec::new();
+        if let Some(login) = self.account.login_action() {
+            actions.push(
+                outline_pill("account-login")
+                    .settings_text()
+                    .icon(icons::bilibili())
+                    .label(login)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_account_dialog(window, cx)),
                     )
-                    .when(show_detail, |view| {
-                        view.child(
-                            accessible_text("bilibili-account-status", detail)
-                                .text_size(support_size)
-                                .text_color(color(GRAY)),
-                        )
-                    })
-                    .map(|view| {
-                        view.child(
-                            accessible_text(
-                                "bilibili-account-policy",
-                                if saved {
-                                    "退出登录不会删除课程和笔记"
-                                } else {
-                                    "登录后可读取账号有权访问的视频与字幕"
-                                },
-                            )
-                            .text_size(support_size)
-                            .text_color(color(GRAY)),
-                        )
-                    }),
-            )
-            .child(trailing.max_w(relative(0.5)))
+                    .into_any_element(),
+            );
+        }
+        // Only a saved login has anything to re-verify.
+        if saved {
+            actions.push(
+                quiet("account-refresh")
+                    .settings_text()
+                    .icon(icons::refresh())
+                    .label("重新检查")
+                    .disabled(self.account.checking)
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx)))
+                    .into_any_element(),
+            );
+            actions.push(
+                quiet("account-logout")
+                    .settings_text()
+                    .icon(icons::logout())
+                    .label("退出登录")
+                    .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx)))
+                    .into_any_element(),
+            );
+        }
+        crate::settings_ui::account_card(
+            "bilibili-account",
+            icons::tv(),
+            if onboarding {
+                "账号状态"
+            } else {
+                "Bilibili 账号"
+            },
+            kind,
+            label,
+            detail,
+            self.account.checking,
+            Some(if saved {
+                "退出登录不会删除笔记"
+            } else {
+                "登录后可读取账号有权访问的视频与字幕"
+            }),
+            None,
+            None,
+            cx,
+            actions,
+        )
     }
 
     /// Status text without the「Bilibili：」prefix and the「已登录 · 」name
@@ -350,7 +317,7 @@ impl Desktop {
         }
         if self.account.status_error.is_some() {
             return if self.account.has_saved_login {
-                "暂时无法验证，已保留登录".into()
+                "暂时无法验证，已保存登录信息".into()
             } else {
                 "暂时无法检查登录状态".into()
             };
@@ -362,7 +329,7 @@ impl Desktop {
             Some(AccountStatus::Connected(_)) => "已登录".into(),
             Some(AccountStatus::Expired) => "登录已失效".into(),
             Some(AccountStatus::Disconnected) => "未登录".into(),
-            None if self.account.has_saved_login => "已保留登录，尚未验证".into(),
+            None if self.account.has_saved_login => "已保存登录信息，尚未验证".into(),
             None => "未登录".into(),
         }
     }
@@ -512,12 +479,10 @@ impl Desktop {
         let generation = self.account.generation;
         let task = crate::spawn_blocking_io(QrSession::generate);
         cx.spawn(async move |this, cx| {
-            let Ok(result) = task.recv().await else {
-                return;
-            };
+            let result = task.recv().await;
             let mut session = match result {
-                Ok(session) => session,
-                Err(_) => {
+                Ok(Ok(session)) => session,
+                _ => {
                     let _ = this.update(cx, |this, cx| {
                         if this.account.current(generation) {
                             this.account.dialog = Some(QrDialogState::Error("获取二维码失败，请检查网络后重试".into()));
@@ -543,7 +508,15 @@ impl Desktop {
                     let result = session.poll();
                     (session, result)
                 });
-                let Ok((next, result)) = task.recv().await else { break; };
+                let Ok((next, result)) = task.recv().await else {
+                    let _ = this.update(cx, |this, cx| {
+                        if this.account.current(generation) {
+                            this.account.dialog = Some(QrDialogState::Error(crate::INTERRUPTED.into()));
+                            cx.notify();
+                        }
+                    });
+                    break;
+                };
                 session = next;
                 let remaining = session.remaining().as_secs();
                 let keep_polling = this.update(cx, |this, cx| {
@@ -595,7 +568,7 @@ impl Desktop {
         let (message, hint): (String, String) = match &state {
             QrDialogState::Generating => ("正在获取二维码".into(), String::new()),
             QrDialogState::Waiting(seconds) => (
-                "请使用哔哩哔哩 App 扫码".into(),
+                "请使用 Bilibili App 扫码".into(),
                 format!("二维码约 {seconds} 秒后过期"),
             ),
             QrDialogState::Confirming(seconds) => (

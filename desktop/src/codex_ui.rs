@@ -8,9 +8,11 @@ use course2md::login::codex::LoginStatus;
 
 /// 识别根 crate 的登录缺失/失效标记，替换为界面内的连接引导。
 fn login_required(error: &anyhow::Error) -> bool {
-    error
-        .chain()
-        .any(|cause| cause.downcast_ref::<course2md::login::codex::CodexLoginRequired>().is_some())
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<course2md::login::codex::CodexLoginRequired>()
+            .is_some()
+    })
 }
 
 /// Codex 动作的归属界面：异步结果只落回发起时的界面。
@@ -46,7 +48,10 @@ impl CodexUi {
         self.generation = self.generation.wrapping_add(1);
         self.surface = Some(surface);
         self.working = Some(work);
-        self.notice = None;
+        // A status check follows other actions and must not hide their result.
+        if work != CodexWork::Checking {
+            self.notice = None;
+        }
         self.generation
     }
     fn current(&self, generation: u64, work: CodexWork) -> bool {
@@ -66,6 +71,7 @@ impl CodexUi {
 /// 目录到达时为空的模型输入填入首个候选（受支持默认值，仍可修改）。
 /// set_value 需要 Window：经共享的 defer + update_window 途径回到窗口上下文。
 pub(crate) fn autofill_input(
+    handle: AnyWindowHandle,
     input: Entity<InputState>,
     value: Option<String>,
     cx: &mut Context<Desktop>,
@@ -74,9 +80,6 @@ pub(crate) fn autofill_input(
     if !input.read(cx).value().trim().is_empty() {
         return;
     }
-    let Some(handle) = cx.windows().first().copied() else {
-        return;
-    };
     cx.defer(move |cx| {
         let _ = cx.update_window(handle, |_, window, cx| {
             input.update(cx, |input, cx| {
@@ -100,7 +103,10 @@ impl Desktop {
             course2md::login::codex::status().map_err(|error| error.to_string())
         });
         cx.spawn(async move |this, cx| {
-            let Ok(result) = task.recv().await else { return };
+            let result = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(crate::INTERRUPTED.into()));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, CodexWork::Checking) {
                     return;
@@ -108,9 +114,9 @@ impl Desktop {
                 this.codex.working = None;
                 match result {
                     Ok(status) => this.codex.status = Some(status),
-                    Err(error) => {
-                        this.codex.fail(format!("暂时无法读取 Codex 登录状态：{error}"))
-                    }
+                    Err(error) => this
+                        .codex
+                        .fail(format!("暂时无法读取 Codex 登录状态：{error}")),
                 }
                 // 已连接的 Codex 界面没有目录时，顺接拉取账号目录（空模型输入自动填首个候选）
                 let needs_catalog = matches!(this.codex.status, Some(LoginStatus::Connected(_)))
@@ -161,7 +167,10 @@ impl Desktop {
         let generation = self.codex.begin(surface, work);
         let task = crate::spawn_blocking_io(action);
         cx.spawn(async move |this, cx| {
-            let Ok(result) = task.recv().await else { return };
+            let result = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, work) {
                     return;
@@ -184,7 +193,7 @@ impl Desktop {
                             // 登录缺失/失效：引导使用界面内的连接动作，而非 CLI 命令
                             match work {
                                 CodexWork::Importing => {
-                                    "codex CLI 的登录已失效：请在 codex CLI 重新登录后再导入，或改用浏览器授权"
+                                    "命令行 Codex 的登录已失效，请先在 Codex 中重新登录再导入，或改用浏览器授权"
                                         .into()
                                 }
                                 _ => "Codex 登录已失效，请重新连接".into(),
@@ -230,7 +239,10 @@ impl Desktop {
         let generation = self.codex.begin(surface, CodexWork::Models);
         let task = crate::spawn_blocking_io(course2md::login::codex::refresh_models_for_desktop);
         cx.spawn(async move |this, cx| {
-            let Ok(result) = task.recv().await else { return };
+            let result = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, CodexWork::Models) {
                     return;
@@ -271,7 +283,10 @@ impl Desktop {
         let generation = self.codex.begin(surface, CodexWork::LoggingOut);
         let task = crate::spawn_blocking_io(course2md::login::codex::remove_credentials);
         cx.spawn(async move |this, cx| {
-            let Ok(result) = task.recv().await else { return };
+            let result = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::INTERRUPTED)));
             let _ = this.update(cx, |this, cx| {
                 if !this.codex.current(generation, CodexWork::LoggingOut) {
                     return;
@@ -280,11 +295,9 @@ impl Desktop {
                 match result {
                     Ok(_) => {
                         this.codex.status = Some(LoginStatus::Disconnected);
-                        let detached = this.codex_detach_default_service();
-                        if detached {
-                            this.codex.inform("已退出 Codex 登录；默认 AI 服务已解除绑定".into());
-                        } else {
-                            this.codex.notice = None;
+                        if this.codex_detach_default_service() {
+                            this.codex
+                                .inform("已退出 Codex 登录；默认 AI 服务已解除绑定".into());
                         }
                         this.editor_codex_logged_out();
                         this.onboarding_codex_logged_out();
@@ -309,7 +322,21 @@ impl Desktop {
             .as_deref()
             .and_then(|id| self.preferences.version(id))
             .is_some_and(|version| version.config.protocol == ServiceProtocol::CodexResponses);
-        is_codex && self.preferences.set_default_service(ServicePurpose::Ai, None).is_ok()
+        if !is_codex {
+            return false;
+        }
+        match self
+            .preferences
+            .set_default_service(ServicePurpose::Ai, None)
+        {
+            Ok(_) => true,
+            Err(error) => {
+                self.codex.fail(format!(
+                    "已退出 Codex 登录，默认 AI 服务尚未解除绑定：{error:#}"
+                ));
+                false
+            }
+        }
     }
 
     /// 账号目录只落到仍在编辑 Codex 服务的发起界面。
@@ -351,7 +378,9 @@ impl Desktop {
             _ => (BadgeKind::Neutral, "未连接"),
         };
         let detail = match &self.codex.status {
-            Some(LoginStatus::Connected(detail)) if !detail.trim().is_empty() => Some(detail.clone()),
+            Some(LoginStatus::Connected(detail)) if !detail.trim().is_empty() => {
+                Some(detail.clone())
+            }
             _ => None,
         };
         let connected = matches!(self.codex.status, Some(LoginStatus::Connected(_)))
@@ -367,23 +396,28 @@ impl Desktop {
             detail,
             busy,
             Some("使用你的 ChatGPT 订阅"),
-            authorizing.then_some((
-                "authorizing",
-                "请在浏览器中完成授权（约 3 分钟内）",
-            )),
+            authorizing.then_some(("authorizing", "请在浏览器中完成授权（约 3 分钟内）")),
             notice.map(|(message, is_error)| ("notice", message, is_error)),
             cx,
             if !connected {
                 vec![
-                    quiet(SharedString::from(format!("{id}-authorize"))).when(surface == CodexSurface::Settings, SettingsText::settings_text)
+                    quiet(SharedString::from(format!("{id}-authorize")))
+                        .when(
+                            surface == CodexSurface::Settings,
+                            SettingsText::settings_text,
+                        )
                         .icon(icons::external_link())
                         .label("浏览器授权")
                         .disabled(disabled || busy)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.codex_authorize(surface, cx)
-                        }))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.codex_authorize(surface, cx)),
+                        )
                         .into_any_element(),
-                    tonal_pill(SharedString::from(format!("{id}-import")), cx).when(surface == CodexSurface::Settings, SettingsText::settings_text)
+                    tonal_pill(SharedString::from(format!("{id}-import")), cx)
+                        .when(
+                            surface == CodexSurface::Settings,
+                            SettingsText::settings_text,
+                        )
                         .icon(icons::login())
                         .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
                             "重新导入 Codex 登录"
@@ -391,29 +425,35 @@ impl Desktop {
                             "导入 Codex 登录"
                         })
                         .disabled(disabled || busy)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.codex_import(surface, cx)
-                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| this.codex_import(surface, cx)))
                         .into_any_element(),
                 ]
             } else {
                 // 与 Bilibili 账号同序：重新检查在前、退出登录在后
                 vec![
-                    quiet(SharedString::from(format!("{id}-recheck"))).when(surface == CodexSurface::Settings, SettingsText::settings_text)
+                    quiet(SharedString::from(format!("{id}-recheck")))
+                        .when(
+                            surface == CodexSurface::Settings,
+                            SettingsText::settings_text,
+                        )
                         .icon(icons::refresh())
                         .label("重新检查")
                         .disabled(disabled || busy)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.codex_refresh_status(surface, cx)
-                        }))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                this.codex_refresh_status(surface, cx)
+                            }),
+                        )
                         .into_any_element(),
-                    quiet(SharedString::from(format!("{id}-logout"))).when(surface == CodexSurface::Settings, SettingsText::settings_text)
+                    quiet(SharedString::from(format!("{id}-logout")))
+                        .when(
+                            surface == CodexSurface::Settings,
+                            SettingsText::settings_text,
+                        )
                         .icon(icons::logout())
                         .label("退出登录")
                         .disabled(disabled || busy)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.codex_logout(surface, cx)
-                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| this.codex_logout(surface, cx)))
                         .into_any_element(),
                 ]
             },

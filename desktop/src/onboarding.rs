@@ -1011,7 +1011,7 @@ impl Desktop {
         let content = match step {
             Step::Engine => self.setup_engine_content(window, cx),
             Step::Ai => self.setup_service_content(ServicePurpose::Ai, cx),
-            Step::Account => self.account_onboarding_page(window, cx),
+            Step::Account => self.account_onboarding_page(cx),
             Step::Model => self.setup_model_content(window, cx),
         };
         let scale = f32::from(window.rem_size()) / 14.;
@@ -1583,7 +1583,7 @@ impl Desktop {
         }
         service.models.prime(models);
         let input = service.inputs[&InputField::Model].clone();
-        crate::codex_ui::autofill_input(input, suggested, cx);
+        crate::codex_ui::autofill_input(self.window, input, suggested, cx);
     }
     pub(super) fn onboarding_codex_logged_out(&mut self) {
         let service = self.onboarding.service_mut(ServicePurpose::Ai);
