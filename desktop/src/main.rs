@@ -495,6 +495,7 @@ impl Desktop {
                     }
                     if matches!(field, Field::Source | Field::Title) {
                         this.draft_deadline = Some(Instant::now() + Duration::from_millis(350));
+                        this.schedule_wake(Duration::from_millis(350));
                     }
                     if field == Field::Title
                         && !this.value(Field::Title, cx).is_empty()
@@ -546,7 +547,7 @@ impl Desktop {
                     let _ = wake.recv().await;
                 };
                 smol::future::or(wait, async {
-                    smol::Timer::after(Duration::from_millis(500)).await;
+                    smol::Timer::after(Duration::from_secs(2)).await;
                 })
                 .await;
                 match this.update_in(cx, |this, _, cx| {
@@ -909,6 +910,13 @@ impl Desktop {
             }
         }
         cx.notify();
+    }
+    fn schedule_wake(&self, after: Duration) {
+        let wake = self.event_wake_tx.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(after);
+            let _ = wake.try_send(());
+        });
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
         if self

@@ -2426,6 +2426,7 @@ impl Desktop {
                 }
                 self.task_status = task.status_label().into();
                 self.transient_task_result = Some((id.to_owned(), std::time::Instant::now()));
+                self.schedule_wake(std::time::Duration::from_secs(8));
             }
             Err(error) => {
                 self.workspace_error = Some(course2md::tr!(

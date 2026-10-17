@@ -560,13 +560,7 @@ impl Desktop {
             }
             // A second action must not reuse the previous editor's endpoint or scope.
             // Switching forms cancels the earlier edit; only Save can publish it.
-            if !self.close_service_editor(window, cx) {
-                self.settings_tab = SettingsTab::Services;
-                self.navigate(Page::Settings, cx);
-                self.prepare_settings_view(window, cx);
-                self.scrolls[Page::Settings as usize].set_offset(point(px(0.), px(0.)));
-                return false;
-            }
+            self.close_service_editor(window, cx);
         }
         let title = if repair_task.is_some() {
             course2md::tr!("修复服务并补做")
@@ -669,9 +663,8 @@ impl Desktop {
                     false
                 })
                 .on_cancel(move |_, window, cx| {
-                    cancel
-                        .update(cx, |this, cx| this.close_service_editor(window, cx))
-                        .unwrap_or(true)
+                    let _ = cancel.update(cx, |this, cx| this.close_service_editor(window, cx));
+                    false
                 })
                 .on_close(move |_, window, cx| {
                     let _ = closed.update(cx, |this, cx| this.restore_service_focus(window, cx));
@@ -979,7 +972,8 @@ impl Desktop {
                         course2md::tr!("取消")
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if this.close_service_editor(window, cx) && !inline {
+                        this.close_service_editor(window, cx);
+                        if !inline {
                             window.close_dialog(cx);
                         }
                     })),
@@ -1615,11 +1609,7 @@ impl Desktop {
         }
         cx.notify();
     }
-    pub(crate) fn close_service_editor(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    pub(crate) fn close_service_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = &self.settings_ui.editor {
             // Tests can stage a private edit, but cancelling never publishes
             // it. A cleanup failure cannot make these hidden records active.
@@ -1628,7 +1618,6 @@ impl Desktop {
                 .discard_service_draft(&editor.form.draft.id);
         }
         self.restore_service_focus(window, cx);
-        true
     }
     fn restore_service_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.settings_ui.editor.take() {

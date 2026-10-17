@@ -425,6 +425,7 @@ pub(crate) struct State {
     missing_by_block: Rc<HashMap<usize, Vec<usize>>>,
     /// Screenshots matching the gallery search, in note order.
     gallery_matches: Rc<Vec<usize>>,
+    gallery_excerpts: Rc<HashMap<usize, String>>,
     /// The note's contents rail and the chapter titles its headings open.
     outline: Rc<Vec<(usize, String, Option<f64>)>>,
     chapter_starts: Rc<HashMap<usize, String>>,
@@ -565,6 +566,7 @@ impl State {
             frame_by_path: Rc::default(),
             missing_by_block: Rc::default(),
             gallery_matches: Rc::default(),
+            gallery_excerpts: Rc::default(),
             outline: Rc::default(),
             chapter_starts: Rc::default(),
             versions: Vec::new(),
@@ -1898,7 +1900,19 @@ impl Desktop {
 
     fn update_gallery_matches(&mut self, cx: &App) {
         let query = self.reader_ui.gallery_find.read(cx).value();
-        self.reader_ui.gallery_matches = Rc::new(matching_frames(&self.reader_ui.frames, &query));
+        let matches = matching_frames(&self.reader_ui.frames, &query);
+        self.reader_ui.gallery_excerpts = Rc::new(
+            matches
+                .iter()
+                .map(|index| {
+                    (
+                        *index,
+                        frame_excerpt(&self.reader_ui.frames[*index], &query),
+                    )
+                })
+                .collect(),
+        );
+        self.reader_ui.gallery_matches = Rc::new(matches);
     }
     fn refresh_reader_data(&mut self, cx: &mut Context<Self>) {
         // The blocking closure below needs an owned, Send preview; data loads
@@ -4344,7 +4358,12 @@ impl Desktop {
                         )
                     }),
             );
-            let excerpt = frame_excerpt(frame, query);
+            let excerpt = self
+                .reader_ui
+                .gallery_excerpts
+                .get(&index)
+                .cloned()
+                .unwrap_or_else(|| frame_excerpt(frame, query));
             let excerpt_marks = nav::text_matches(&excerpt, query)
                 .into_iter()
                 .map(|range| {
