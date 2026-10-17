@@ -130,7 +130,15 @@ fn model_listing_uses_configured_directory_and_rejects_partial_files() {
 fn model_inspection_accepts_aliases_and_uses_the_configured_directory() {
     let cli = CliTest::new();
     cli.config("[defaults]\nmodel_dir = 'custom models'\n");
-    let result = cli.run(&["models", "inspect", "--provider", "gpu", "--model", "qwen3", "--json"]);
+    let result = cli.run(&[
+        "models",
+        "inspect",
+        "--provider",
+        "gpu",
+        "--model",
+        "qwen3",
+        "--json",
+    ]);
     assert!(result.status.success(), "{}", stderr(&result));
     let status: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(status["model"], "qwen3-1.7b");

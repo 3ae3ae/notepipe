@@ -225,7 +225,10 @@ impl RenderOnce for SingleChoiceGroup {
             values: if disabled {
                 Vec::new()
             } else {
-                self.options.iter().map(|option| option.value.clone()).collect()
+                self.options
+                    .iter()
+                    .map(|option| option.value.clone())
+                    .collect()
             },
             focus: handles.clone(),
             selected,
@@ -254,7 +257,10 @@ impl RenderOnce for SingleChoiceGroup {
         let content_width = (!self.full_width).then(|| {
             let mut font = window.text_style().font();
             font.weight = FontWeight::MEDIUM;
-            let size = self.label_text_size.unwrap_or(super::TEXT_BODY).to_pixels(window.rem_size());
+            let size = self
+                .label_text_size
+                .unwrap_or(super::TEXT_BODY)
+                .to_pixels(window.rem_size());
             let label_width = self
                 .options
                 .iter()
@@ -267,12 +273,17 @@ impl RenderOnce for SingleChoiceGroup {
                         underline: None,
                         strikethrough: None,
                     };
-                    let shaped = window.text_system().shape_line(option.label.clone(), size, &[run], None);
+                    let shaped =
+                        window
+                            .text_system()
+                            .shape_line(option.label.clone(), size, &[run], None);
                     f32::from(shaped.width.ceil())
                 })
                 .fold(0_f32, f32::max);
             let icon_and_gap = f32::from(rems(26. / 14.).to_pixels(window.rem_size()));
-            let padding = f32::from(rems(if segmented { 8. / 14. } else { 12. / 14. }).to_pixels(window.rem_size())) * 2.;
+            let padding = f32::from(
+                rems(if segmented { 8. / 14. } else { 12. / 14. }).to_pixels(window.rem_size()),
+            ) * 2.;
             // The 2px focus border on each side belongs to the slot.
             ((label_width + icon_and_gap + padding + 4.).ceil()) * count as f32 + inset * 2. + 2.
         });
@@ -296,8 +307,10 @@ impl RenderOnce for SingleChoiceGroup {
                     .when(segmented, |fill| {
                         let radius = f32::from(item_height) / 2.;
                         let left = (1. - position).clamp(0., 1.);
-                        let right = (1. - (count.saturating_sub(1) as f32 - position)).clamp(0., 1.);
-                        fill.rounded_l(px(radius * left)).rounded_r(px(radius * right))
+                        let right =
+                            (1. - (count.saturating_sub(1) as f32 - position)).clamp(0., 1.);
+                        fill.rounded_l(px(radius * left))
+                            .rounded_r(px(radius * right))
                     })
                     // M3 segmented buttons and navigation share the tonal
                     // secondary container as the selected surface.
@@ -313,9 +326,15 @@ impl RenderOnce for SingleChoiceGroup {
         }
         if segmented && count > 1 {
             for index in 1..count {
-                lane = lane.child(div().absolute().top_0().bottom_0()
-                    .left(relative(index as f32 / count as f32)).w(px(1.))
-                    .bg(super::color(super::CONTROL)));
+                lane = lane.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(relative(index as f32 / count as f32))
+                        .w(px(1.))
+                        .bg(super::color(super::CONTROL)),
+                );
             }
         }
         for (index, option) in self.options.into_iter().enumerate() {
@@ -341,11 +360,16 @@ impl RenderOnce for SingleChoiceGroup {
                 .gap(rems(8. / 14.))
                 .items_center()
                 .child(
-                    div().w(icon_size).h(icon_size).flex_shrink_0()
-                        .flex().items_center().justify_center()
-                        .when(cfg!(test), |icon| icon.debug_selector(move || {
-                            format!("{debug_kind}-choice-icon-{index}")
-                        }))
+                    div()
+                        .w(icon_size)
+                        .h(icon_size)
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(cfg!(test), |icon| {
+                            icon.debug_selector(move || format!("{debug_kind}-choice-icon-{index}"))
+                        })
                         .when_some(self.icons.get(&value).cloned(), |slot, icon| {
                             slot.child(icon.size(icon_size))
                         }),
@@ -366,9 +390,12 @@ impl RenderOnce for SingleChoiceGroup {
                 let click_focus = focus.clone();
                 let tab = item_style(gpui_base::Tab::new(value.clone()), item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
-                    .when(segmented, |item| item.px(rems(8. / 14.)).rounded_none()
-                        .when(index == 0, |item| item.rounded_l_full())
-                        .when(index + 1 == count, |item| item.rounded_r_full()))
+                    .when(segmented, |item| {
+                        item.px(rems(8. / 14.))
+                            .rounded_none()
+                            .when(index == 0, |item| item.rounded_l_full())
+                            .when(index + 1 == count, |item| item.rounded_r_full())
+                    })
                     .selected(checked)
                     .disabled(disabled)
                     .accessibility_label(label)
@@ -378,8 +405,7 @@ impl RenderOnce for SingleChoiceGroup {
                     .child(content)
                     .on_click(move |_, window, cx| {
                         click_focus.focus(window, cx);
-                        if !checked && let Some(callback) = &callback
-                        {
+                        if !checked && let Some(callback) = &callback {
                             callback(&value, window, cx);
                         }
                     });
@@ -387,9 +413,12 @@ impl RenderOnce for SingleChoiceGroup {
             } else {
                 let radio = item_style(gpui_base::Radio::new(value.clone()), item_height)
                     .when_some(self.label_text_size, |item, size| item.text_size(size))
-                    .when(segmented, |item| item.px(rems(8. / 14.)).rounded_none()
-                        .when(index == 0, |item| item.rounded_l_full())
-                        .when(index + 1 == count, |item| item.rounded_r_full()))
+                    .when(segmented, |item| {
+                        item.px(rems(8. / 14.))
+                            .rounded_none()
+                            .when(index == 0, |item| item.rounded_l_full())
+                            .when(index + 1 == count, |item| item.rounded_r_full())
+                    })
                     .checked(checked)
                     .disabled(disabled)
                     .accessibility_label(label)
@@ -399,9 +428,7 @@ impl RenderOnce for SingleChoiceGroup {
                     .when(disabled, |radio| radio.opacity(0.5))
                     .child(content)
                     .when(cfg!(test), |radio| {
-                        radio.debug_selector(move || {
-                            format!("{debug_kind}-choice-option-{index}")
-                        })
+                        radio.debug_selector(move || format!("{debug_kind}-choice-option-{index}"))
                     })
                     .on_change(move |_, _, window, cx| {
                         focus.focus(window, cx);
@@ -427,7 +454,11 @@ impl RenderOnce for SingleChoiceGroup {
             .p(px(inset))
             .rounded_full()
             .border_1()
-            .border_color(super::color(if segmented { super::CONTROL } else { super::HAIRLINE }))
+            .border_color(super::color(if segmented {
+                super::CONTROL
+            } else {
+                super::HAIRLINE
+            }))
             .map(|group| match content_width {
                 Some(width) => group.w(px(width)),
                 None => group.w_full(),
@@ -542,7 +573,10 @@ mod tests {
         }
     }
 
-    struct SegmentedHarness { selected: usize, changes: usize }
+    struct SegmentedHarness {
+        selected: usize,
+        changes: usize,
+    }
 
     impl Render for SegmentedHarness {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -567,15 +601,30 @@ mod tests {
     #[gpui::test]
     fn connected_segments_fill_track_and_keep_labels_still_on_selection(cx: &mut TestAppContext) {
         cx.update(|cx| cx.set_reduce_motion(true));
-        let (view, cx) = cx.add_window_view(|_, _| SegmentedHarness { selected: 0, changes: 0 });
+        let (view, cx) = cx.add_window_view(|_, _| SegmentedHarness {
+            selected: 0,
+            changes: 0,
+        });
         draw_choice(cx);
         let lane = choice_bounds(cx, "full-choice-lane");
-        let labels = ["full-choice-label-0", "full-choice-label-1", "full-choice-label-2"];
+        let labels = [
+            "full-choice-label-0",
+            "full-choice-label-1",
+            "full-choice-label-2",
+        ];
         let before = labels.map(|selector| choice_bounds(cx, selector));
-        let icons = ["full-choice-icon-0", "full-choice-icon-1", "full-choice-icon-2"];
+        let icons = [
+            "full-choice-icon-0",
+            "full-choice-icon-1",
+            "full-choice-icon-2",
+        ];
         let icon_before = icons.map(|selector| choice_bounds(cx, selector));
-        let options = ["full-choice-option-0", "full-choice-option-1", "full-choice-option-2"]
-            .map(|selector| choice_bounds(cx, selector));
+        let options = [
+            "full-choice-option-0",
+            "full-choice-option-1",
+            "full-choice-option-2",
+        ]
+        .map(|selector| choice_bounds(cx, selector));
         for index in 0..3 {
             let content_center = (icon_before[index].left() + before[index].right()) / 2.;
             assert!((content_center - options[index].center().x).abs() <= px(0.5));
@@ -587,18 +636,39 @@ mod tests {
         let required = cx.update(|window, _| {
             let mut font = window.text_style().font();
             font.weight = FontWeight::MEDIUM;
-            window.text_system().shape_line("语音识别".into(), px(14.), &[TextRun {
-                len: "语音识别".len(), font, color: gpui::black(),
-                background_color: None, underline: None, strikethrough: None,
-            }], None).width.ceil()
+            window
+                .text_system()
+                .shape_line(
+                    "语音识别".into(),
+                    px(14.),
+                    &[TextRun {
+                        len: "语音识别".len(),
+                        font,
+                        color: gpui::black(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    }],
+                    None,
+                )
+                .width
+                .ceil()
         });
-        assert!(before[2].size.width >= required, "label bounds: {:?}, needed: {:?}", before[2], required);
+        assert!(
+            before[2].size.width >= required,
+            "label bounds: {:?}, needed: {:?}",
+            before[2],
+            required
+        );
         let last = choice_bounds(cx, "full-choice-option-2");
         let first = choice_bounds(cx, "full-choice-option-0");
         assert!((first.size.width - last.size.width).abs() < px(0.5));
         cx.simulate_click(last.center(), Modifiers::default());
         draw_choice(cx);
-        cx.update(|_, cx| { assert_eq!(view.read(cx).selected, 2); assert_eq!(view.read(cx).changes, 1); });
+        cx.update(|_, cx| {
+            assert_eq!(view.read(cx).selected, 2);
+            assert_eq!(view.read(cx).changes, 1);
+        });
         let fill = choice_bounds(cx, "full-choice-indicator");
         assert!((fill.left() - last.left()).abs() < px(0.5));
         assert_eq!(fill.top(), lane.top());

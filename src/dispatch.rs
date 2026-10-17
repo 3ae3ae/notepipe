@@ -361,7 +361,9 @@ impl Ledger {
                 .collect();
             *index = Some(loaded);
         }
-        Ok(index.as_ref().map_or_else(Vec::new, |index| index.values().cloned().collect()))
+        Ok(index
+            .as_ref()
+            .map_or_else(Vec::new, |index| index.values().cloned().collect()))
     }
     #[cfg(test)]
     fn send(

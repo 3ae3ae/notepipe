@@ -55,7 +55,11 @@ async fn extract_frame(media: &Path, t: f64, dest: &Path) -> Result<()> {
         "ffmpeg",
     )
     .await?;
-    anyhow::ensure!(dest.is_file(), "ffmpeg 未生成截图 {0} / ffmpeg did not produce screenshot {0}", dest.display());
+    anyhow::ensure!(
+        dest.is_file(),
+        "ffmpeg 未生成截图 {0} / ffmpeg did not produce screenshot {0}",
+        dest.display()
+    );
     Ok(())
 }
 
@@ -151,8 +155,9 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
         pb.inc(1);
         // 帧缓冲复用：move 进 GrayImage 计算，结束时 into_raw 收回供下一帧
         // （取消每帧 230KB 的 buf.clone()；仅物化 candidate 时才产生拥有所有权的拷贝）
-        let gray = GrayImage::from_raw(tw, th, std::mem::take(&mut buf))
-            .ok_or_else(|| anyhow::anyhow!("灰度帧尺寸不匹配 {tw}x{th} / Grayscale frame size mismatch {tw}x{th}"))?;
+        let gray = GrayImage::from_raw(tw, th, std::mem::take(&mut buf)).ok_or_else(|| {
+            anyhow::anyhow!("灰度帧尺寸不匹配 {tw}x{th} / Grayscale frame size mismatch {tw}x{th}")
+        })?;
         {
             let cmp = crop_roi(&gray, cfg.roi);
 
@@ -193,7 +198,10 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
                     candidate_first_t = None;
                     candidate_last_t = None;
                     last_emit_t = t;
-                    pb.set_message(format!("已找到 {0} 张候选截图 / Found {0} candidate slides", times.len()));
+                    pb.set_message(format!(
+                        "已找到 {0} 张候选截图 / Found {0} candidate slides",
+                        times.len()
+                    ));
                 }
             }
         }

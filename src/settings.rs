@@ -169,7 +169,10 @@ pub fn template() -> String {
     [
         ("{OUT}", c::DEFAULT_OUT_DIR.to_string()),
         ("{SIMILARITY}", c::DEFAULT_SIMILARITY.to_string()),
-        ("{SAMPLE_INTERVAL}", format!("{:?}", c::DEFAULT_SAMPLE_INTERVAL)),
+        (
+            "{SAMPLE_INTERVAL}",
+            format!("{:?}", c::DEFAULT_SAMPLE_INTERVAL),
+        ),
         ("{COOLDOWN}", format!("{:?}", c::DEFAULT_COOLDOWN)),
         ("{MAX_HEIGHT}", c::DEFAULT_MAX_HEIGHT.to_string()),
         ("{STABLE_SECS}", format!("{:?}", c::DEFAULT_STABLE_SECS)),
@@ -182,7 +185,9 @@ pub fn template() -> String {
         ("{API_MODEL}", api.model),
     ]
     .into_iter()
-    .fold(TEMPLATE.to_string(), |text, (key, value)| text.replace(key, &value))
+    .fold(TEMPLATE.to_string(), |text, (key, value)| {
+        text.replace(key, &value)
+    })
 }
 
 const TEMPLATE: &str = r#"# course2md 配置 / Configuration
@@ -289,7 +294,10 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         ),
         ("slide_mode", r.slide_mode.to_string()),
         ("stable_secs", r.stable_secs.to_string()),
-        ("asr_model", r.asr_model.clone().unwrap_or_else(|| "-".into())),
+        (
+            "asr_model",
+            r.asr_model.clone().unwrap_or_else(|| "-".into()),
+        ),
         (
             "transcript_source",
             format!("{:?}", r.transcript_source).to_ascii_lowercase(),
@@ -297,7 +305,11 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         ("max_speech", r.max_speech.to_string()),
         (
             "formats",
-            r.formats.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","),
+            r.formats
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
         ),
         ("model_dir", r.model_dir.display().to_string()),
         ("keep_video", r.keep_video.to_string()),
@@ -324,7 +336,11 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     println!("  {:<17}: {}", "api_key", hidden(&cfg.asr_api.api_key));
     println!("[llm]");
     println!("  {:<17}: {}", "enabled", cfg.llm.enabled);
-    let model = if cfg.llm.model.is_empty() { "-" } else { &cfg.llm.model };
+    let model = if cfg.llm.model.is_empty() {
+        "-"
+    } else {
+        &cfg.llm.model
+    };
     println!("  {:<17}: {model}", "model");
     println!("  {:<17}: {}", "vision", cfg.llm.vision);
     println!("  {:<17}: {}", "concurrency", cfg.llm.concurrency);
@@ -340,7 +356,9 @@ mod tests {
             .lines()
             .map(|line| {
                 line.strip_prefix('#')
-                    .filter(|l| l.starts_with(|c: char| c.is_ascii_lowercase()) && l.contains(" = "))
+                    .filter(|l| {
+                        l.starts_with(|c: char| c.is_ascii_lowercase()) && l.contains(" = ")
+                    })
                     .unwrap_or(line)
             })
             .collect::<Vec<_>>()

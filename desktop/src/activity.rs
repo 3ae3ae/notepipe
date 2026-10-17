@@ -344,7 +344,8 @@ pub(crate) fn model_transfer_phase(stage: &str, message: &str) -> String {
     title(stage)
 }
 
-pub(crate) fn bytes(value: u64) -> String {    if value >= 1024 * 1024 * 1024 {
+pub(crate) fn bytes(value: u64) -> String {
+    if value >= 1024 * 1024 * 1024 {
         format!("{:.2} GB", value as f64 / (1024. * 1024. * 1024.))
     } else if value >= 1024 * 1024 {
         format!("{:.1} MB", value as f64 / (1024. * 1024.))
@@ -539,12 +540,18 @@ mod tests {
         item.update(8 * 1024 * 1024, 16 * 1024 * 1024, None);
         let detail = item.detail("download", true);
         assert!(detail.contains("8.0 MB / 16.0 MB"), "{detail}");
-        assert!(detail.contains("速度") && detail.contains("预计剩余"), "{detail}");
+        assert!(
+            detail.contains("速度") && detail.contains("预计剩余"),
+            "{detail}"
+        );
         assert!(item.fraction().is_some_and(|f| (f - 0.5).abs() < 0.01));
         // 总字节未知：只有实时字节与速度，不编造 ETA
         let mut unknown = Activity::new();
         unknown.update(3 * 1024 * 1024, 0, None);
         let detail = unknown.detail("download", true);
-        assert!(detail.contains("3.0 MB") && !detail.contains("预计剩余"), "{detail}");
+        assert!(
+            detail.contains("3.0 MB") && !detail.contains("预计剩余"),
+            "{detail}"
+        );
     }
 }

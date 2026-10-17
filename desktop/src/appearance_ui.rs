@@ -181,7 +181,11 @@ fn palette_choice(palette: PaletteId, selected: bool, amount: f32) -> gpui_base:
                         .gap(px(8.))
                         .p(px(12.))
                         .items_center()
-                        .bg(theme::blend(color(SURFACE), color(SECONDARY_CONTAINER), amount))
+                        .bg(theme::blend(
+                            color(SURFACE),
+                            color(SECONDARY_CONTAINER),
+                            amount,
+                        ))
                         .child(
                             div()
                                 .flex_1()
@@ -292,7 +296,8 @@ impl Desktop {
             .settings_group_notice(PreferenceGroup::Application)
             .is_some_and(|(_, error)| error);
         let finish = if save_failed {
-            outline_pill("finish-palette-picker").settings_text()
+            outline_pill("finish-palette-picker")
+                .settings_text()
                 .icon(icons::close())
                 .label("关闭")
         } else {
@@ -383,8 +388,10 @@ impl Desktop {
             )
             .child(outlined_field_label(
                 ("palette-preset-field", usize::from(dark)),
-                "主题", TEXT_SETTINGS_AUX,
-                control(("palette-preset", usize::from(dark))).settings_text()
+                "主题",
+                TEXT_SETTINGS_AUX,
+                control(("palette-preset", usize::from(dark)))
+                    .settings_text()
                     .w_full()
                     .h(px(56.))
                     .rounded(RADIUS_SMALL)
@@ -396,7 +403,8 @@ impl Desktop {
                     .child(icons::chevron_down().size(px(18.)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_palette_picker(dark, window, cx);
-                    }))))
+                    })),
+            ))
     }
 
     pub(crate) fn appearance_page(
@@ -459,16 +467,17 @@ impl Desktop {
                         crate::settings_ui::setting_surface()
                             .pt(rems(11. / 14.))
                             .pb(rems(24. / 14.))
-                            .gap(px(12.)).child(
-                            div()
-                                .grid()
-                                .grid_cols(columns)
-                                .w_full()
-                                .min_w_0()
-                                .gap(px(PALETTE_GAP))
-                                .child(self.palette_preset(false, preference.light, cx))
-                                .child(self.palette_preset(true, preference.dark, cx)),
-                        ),
+                            .gap(px(12.))
+                            .child(
+                                div()
+                                    .grid()
+                                    .grid_cols(columns)
+                                    .w_full()
+                                    .min_w_0()
+                                    .gap(px(PALETTE_GAP))
+                                    .child(self.palette_preset(false, preference.light, cx))
+                                    .child(self.palette_preset(true, preference.dark, cx)),
+                            ),
                     ),
             )
             .child(self.appearance_controls(cx))

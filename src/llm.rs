@@ -263,7 +263,10 @@ pub fn polish_sections_report(
             }
         }
     } else {
-        let mut refs: Vec<_> = sections.iter_mut().flat_map(|sec| sec.speech.iter_mut()).collect();
+        let mut refs: Vec<_> = sections
+            .iter_mut()
+            .flat_map(|sec| sec.speech.iter_mut())
+            .collect();
         while !refs.is_empty() {
             let rest = refs.split_off(refs.len().min(BATCH));
             chunks.push((None, std::mem::replace(&mut refs, rest)));
@@ -382,7 +385,9 @@ fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
 /// 调用前 id 集已由请求账本校验为恰好覆盖本批（[`segment_ids_match`]）。
 fn apply_polish(chunk: &mut [&mut TranscriptEvent], polished: &[(usize, String)]) {
     for (id, new) in polished {
-        let Some(ev) = chunk.get_mut(*id) else { continue };
+        let Some(ev) = chunk.get_mut(*id) else {
+            continue;
+        };
         if *new != ev.text {
             ev.raw.get_or_insert_with(|| ev.text.clone());
             ev.text = new.clone();
@@ -411,15 +416,22 @@ fn chat(
 ) -> Result<Vec<(usize, String)>> {
     let body = build_chat_body(s, items, image_b64)?;
     let expected = items.len();
-    let content = send_chat_described(agent, s, &body, Purpose::Proofreading, description, &|content| {
-        let parsed = parse_segments(content)
-            .context("服务返回的校对结构无效 / Invalid proofreading structure")?;
-        anyhow::ensure!(
-            segment_ids_match(&parsed, expected),
-            "校对结果与原文段落不对应，已保留原文 / Proofread segments do not match the input"
-        );
-        Ok(())
-    })?;
+    let content = send_chat_described(
+        agent,
+        s,
+        &body,
+        Purpose::Proofreading,
+        description,
+        &|content| {
+            let parsed = parse_segments(content)
+                .context("服务返回的校对结构无效 / Invalid proofreading structure")?;
+            anyhow::ensure!(
+                segment_ids_match(&parsed, expected),
+                "校对结果与原文段落不对应，已保留原文 / Proofread segments do not match the input"
+            );
+            Ok(())
+        },
+    )?;
     parse_segments(&content).context("服务返回的校对结构无效 / Invalid proofreading structure")
 }
 
@@ -792,7 +804,8 @@ pub fn test_connection(s: &LlmSettings) -> Result<()> {
             .context("服务响应接收中断 / Service response was interrupted")?;
         crate::provider::sse_to_chat_json(&bytes)?
     } else {
-        resp.into_json().context("无法解析响应 / Cannot parse response")?
+        resp.into_json()
+            .context("无法解析响应 / Cannot parse response")?
     };
     let text = v["choices"][0]["message"]["content"]
         .as_str()
@@ -1026,11 +1039,7 @@ mod tests {
             "[{\"id\":0,\"text\":\"a\"},{\"id\":\"oops\"},{\"id\":2,\"text\":\"c\"}]",
         )
         .unwrap();
-        assert_eq!(
-            got,
-            vec![(0, "a".into()), (2, "c".into())],
-            "坏项应被跳过"
-        );
+        assert_eq!(got, vec![(0, "a".into()), (2, "c".into())], "坏项应被跳过");
     }
 
     #[test]

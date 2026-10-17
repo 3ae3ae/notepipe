@@ -380,7 +380,10 @@ fn collect_targets(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, dep
         Ok(Some(version)) => return out.push(version),
         Ok(None) => {}
         Err(error) => {
-            tracing::warn!("跳过无法读取的笔记 / Skipped unreadable note {}: {error:#}", dir.display());
+            tracing::warn!(
+                "跳过无法读取的笔记 / Skipped unreadable note {}: {error:#}",
+                dir.display()
+            );
             return;
         }
     }

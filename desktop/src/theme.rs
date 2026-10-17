@@ -61,7 +61,11 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
     std::array::from_fn(|index| match ALL_TOKENS[index] {
         CANVAS => rgb(p.canvas),
         SURFACE => rgb(p.surface),
-        SURFACE_HIGH => blend(rgb(p.canvas), rgb(p.text), if id.is_dark() { 0.07 } else { 0.05 }),
+        SURFACE_HIGH => blend(
+            rgb(p.canvas),
+            rgb(p.text),
+            if id.is_dark() { 0.07 } else { 0.05 },
+        ),
         INSET => rgb(p.inset),
         INK => rgb(p.text),
         GRAY => rgb(p.muted),
@@ -75,7 +79,11 @@ fn palette_colors(id: PaletteId) -> [Rgba; COLOR_COUNT] {
         // M3 container roles derived from each palette's own accent and text, so
         // every preset keeps its identity (assets/themes/SOURCES.md).
         SECONDARY_CONTAINER => tint(p.accent, if id.is_dark() { 0.26 } else { 0.24 }),
-        ON_SECONDARY_CONTAINER => blend(rgb(p.text), rgb(p.accent), if id.is_dark() { 0.30 } else { 0.40 }),
+        ON_SECONDARY_CONTAINER => blend(
+            rgb(p.text),
+            rgb(p.accent),
+            if id.is_dark() { 0.30 } else { 0.40 },
+        ),
         SUCCESS => rgb(p.success),
         SUCCESS_BG => tint(p.success, 0.12),
         WARNING => rgb(p.warning),
@@ -557,7 +565,10 @@ pub fn search_field(
         .border_color(if focused {
             color(ACCENT)
         } else {
-            gpui::Rgba { a: 0., ..color(SURFACE_HIGH) }
+            gpui::Rgba {
+                a: 0.,
+                ..color(SURFACE_HIGH)
+            }
         })
         .child(
             crate::icons::search()
@@ -766,7 +777,13 @@ fn custom_fill(
 ) -> gpui_component::button::Button {
     use gpui::Styled;
     use gpui_component::button::{ButtonCustomVariant, ButtonVariants};
-    let layer = |amount| if state_layers { blend(bg, gpui::Rgba { a: 1., ..fg }, amount) } else { bg };
+    let layer = |amount| {
+        if state_layers {
+            blend(bg, gpui::Rgba { a: 1., ..fg }, amount)
+        } else {
+            bg
+        }
+    };
     button
         .custom(
             ButtonCustomVariant::new(cx)
@@ -790,18 +807,32 @@ pub fn nav_action(
     let (bg, fg) = if selected {
         (color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER))
     } else {
-        (gpui::Rgba { a: 0., ..color(CANVAS) }, color(GRAY))
+        (
+            gpui::Rgba {
+                a: 0.,
+                ..color(CANVAS)
+            },
+            color(GRAY),
+        )
     };
-    custom_fill(control(id), bg, fg, true, cx).px(rems(1.)).gap(ICON_GAP)
+    custom_fill(control(id), bg, fg, true, cx)
+        .px(rems(1.))
+        .gap(ICON_GAP)
 }
 
 /// M3 filled tonal button: a secondary action that still carries weight,
 /// e.g. opening a finished note from a list row.
 pub fn tonal_pill(id: impl Into<gpui::ElementId>, cx: &App) -> gpui_component::button::Button {
     use gpui::Styled;
-    custom_fill(control(id), color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER), true, cx)
-        .px(rems(16. / 14.))
-        .gap(ICON_GAP)
+    custom_fill(
+        control(id),
+        color(SECONDARY_CONTAINER),
+        color(ON_SECONDARY_CONTAINER),
+        true,
+        cx,
+    )
+    .px(rems(16. / 14.))
+    .gap(ICON_GAP)
 }
 
 /// M3 disabled filled button: on-surface at 12% with 38% content, so an
@@ -815,7 +846,13 @@ pub fn disabled_when(
         return button;
     }
     let ink = color(INK);
-    custom_fill(button, gpui::Rgba { a: 0.12, ..ink }, gpui::Rgba { a: 0.38, ..ink }, false, cx)
+    custom_fill(
+        button,
+        gpui::Rgba { a: 0.12, ..ink },
+        gpui::Rgba { a: 0.38, ..ink },
+        false,
+        cx,
+    )
 }
 
 /// M3 filter chip: 32px, 8px corners. Selected chips sit on the secondary
@@ -830,7 +867,13 @@ pub fn filter_chip(
     let (bg, fg) = if selected {
         (color(SECONDARY_CONTAINER), color(ON_SECONDARY_CONTAINER))
     } else {
-        (gpui::Rgba { a: 0., ..color(CANVAS) }, color(INK))
+        (
+            gpui::Rgba {
+                a: 0.,
+                ..color(CANVAS)
+            },
+            color(INK),
+        )
     };
     let chip = custom_fill(gpui_component::button::Button::new(id), bg, fg, true, cx)
         .h(size)
@@ -841,7 +884,11 @@ pub fn filter_chip(
         .flex_shrink_0()
         .font_weight(gpui::FontWeight::MEDIUM)
         .border_1()
-        .border_color(if selected { color(SECONDARY_CONTAINER) } else { color(CONTROL) });
+        .border_color(if selected {
+            color(SECONDARY_CONTAINER)
+        } else {
+            color(CONTROL)
+        });
     if selected {
         chip.icon(crate::icons::check())
     } else {
@@ -925,7 +972,12 @@ pub fn notice_banner(
 ) -> gpui::Div {
     use gpui::{prelude::*, *};
     let (bg, tone, icon, role) = match kind {
-        NoticeKind::Info => (SECONDARY_CONTAINER, ACCENT, crate::icons::info(), Role::Status),
+        NoticeKind::Info => (
+            SECONDARY_CONTAINER,
+            ACCENT,
+            crate::icons::info(),
+            Role::Status,
+        ),
         NoticeKind::Danger => (DANGER_BG, DANGER, crate::icons::error(), Role::Alert),
     };
     div()
@@ -999,26 +1051,36 @@ pub fn outlined_field_label(
     content: impl gpui::IntoElement,
 ) -> gpui::Div {
     use gpui::{prelude::*, *};
-    div().relative().w_full().min_w_0().mt(rems(8. / 14.))
+    div()
+        .relative()
+        .w_full()
+        .min_w_0()
+        .mt(rems(8. / 14.))
         .child(content)
-        .child(accessible_text(id, label)
-            .absolute().top(rems(-8. / 14.)).left(rems(12. / 14.))
-            .px(rems(4. / 14.))
-            .bg(color(SURFACE)).text_color(color(GRAY))
-            .text_size(label_size).line_height(rems(16. / 14.))
-            .font_weight(FontWeight::NORMAL))
+        .child(
+            accessible_text(id, label)
+                .absolute()
+                .top(rems(-8. / 14.))
+                .left(rems(12. / 14.))
+                .px(rems(4. / 14.))
+                .bg(color(SURFACE))
+                .text_color(color(GRAY))
+                .text_size(label_size)
+                .line_height(rems(16. / 14.))
+                .font_weight(FontWeight::NORMAL),
+        )
 }
 
 /// Preference switches share the accent and scale their geometry with UI text.
 pub fn preference_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
-    switch
-        .color(color(ACCENT))
-        .track_height(rems(20. / 14.))
+    switch.color(color(ACCENT)).track_height(rems(20. / 14.))
 }
 
 /// Larger switches for a full-width processing panel's preference rows.
 pub fn processing_switch(switch: gpui_component::switch::Switch) -> gpui_component::switch::Switch {
-    preference_switch(switch).reference_geometry().track_height(rems(32. / 14.))
+    preference_switch(switch)
+        .reference_geometry()
+        .track_height(rems(32. / 14.))
 }
 
 /// GPUI Component's Root resets rem size from Theme on every render. Update that

@@ -176,7 +176,11 @@ pub async fn run_task(request: &execution::Request, cfg: &PipelineConfig) -> Res
         id: &request.source_id,
         started,
     };
-    record.around(run_task_inner(request, cfg, &target, meta, is_local, started)).await
+    record
+        .around(run_task_inner(
+            request, cfg, &target, meta, is_local, started,
+        ))
+        .await
 }
 
 async fn run_task_inner(
@@ -270,7 +274,9 @@ async fn reprocess(
             .and_then(|path| execution::file_digest(&path))
             .is_ok_and(|digest| digest == markdown.sha256);
         if !unchanged {
-            tracing::info!("笔记文件已被手动修改；这次补做以原始记录为准，你修改的文件不会被覆盖 / The note file was edited by hand; this run uses the original record and leaves your edited file untouched");
+            tracing::info!(
+                "笔记文件已被手动修改；这次补做以原始记录为准，你修改的文件不会被覆盖 / The note file was edited by hand; this run uses the original record and leaves your edited file untouched"
+            );
         }
     }
     anyhow::ensure!(
@@ -281,7 +287,10 @@ async fn reprocess(
     let has = |component: Component| components.contains(&component);
     let mut document: artifact::Document =
         serde_json::from_slice(&std::fs::read(base_dir.join(&base.document))?)?;
-    if components.iter().all(|&component| component == Component::Exports) {
+    if components
+        .iter()
+        .all(|&component| component == Component::Exports)
+    {
         return export_only(request, cfg, target, base_dir, &base, &document, started);
     }
     if let Some(existing) = artifact::published(target)? {
@@ -307,8 +316,9 @@ async fn reprocess(
         let ledger_dir = cfg.out_dir.join("requests");
         std::fs::create_dir_all(&ledger_dir)?;
         for mut receipt in crate::dispatch::receipts(prior)? {
-            let needed = Component::parse(&receipt.purpose)
-                .is_some_and(|c| matches!(c, Component::Proofreading | Component::Summary) && has(c));
+            let needed = Component::parse(&receipt.purpose).is_some_and(|c| {
+                matches!(c, Component::Proofreading | Component::Summary) && has(c)
+            });
             let matching_service = request.service_versions.get("llm").map_or(
                 receipt.service_version.starts_with("snapshot:"),
                 |version| version == &receipt.service_version,
@@ -616,7 +626,8 @@ async fn subtitles(
     let found = if local {
         fetch::sidecar_subtitle(Path::new(&cfg.url))
     } else {
-        let video = probed.context("缺少视频信息，请重新读取 / Missing video info; please probe again")?;
+        let video =
+            probed.context("缺少视频信息，请重新读取 / Missing video info; please probe again")?;
         fetch::fetch_subtitle(&video, &cfg.out_dir)
             .await
             .context("读取视频字幕失败 / Could not read video subtitles")?
@@ -697,7 +708,9 @@ async fn run_prepared(
     if selected.is_none() {
         let (require_key, allow_environment) = match credentials {
             Credentials::Cli => (true, true),
-            Credentials::Task { allow_unauthenticated_asr } => (!allow_unauthenticated_asr, false),
+            Credentials::Task {
+                allow_unauthenticated_asr,
+            } => (!allow_unauthenticated_asr, false),
         };
         cfg.validate_asr_with_auth(require_key, allow_environment)?;
         if !matches!(
@@ -716,7 +729,9 @@ async fn run_prepared(
         progress::stage("model/prepare", "start");
         crate::models::ensure_cache(
             cfg.provider,
-            cfg.asr_model.as_deref().unwrap_or(config::DEFAULT_ASR_MODEL),
+            cfg.asr_model
+                .as_deref()
+                .unwrap_or(config::DEFAULT_ASR_MODEL),
             &cfg.model_dir,
         )
         .await?;
@@ -760,9 +775,9 @@ async fn run_prepared(
         async {
             let transcript_work = async {
                 let cache_path = cfg.out_dir.join("transcript.json");
-                let cache = match cached_transcript(&cache_path)?.or_else(|| {
-                    selected.map(|(events, source)| TranscriptCache { source, events })
-                }) {
+                let cache = match cached_transcript(&cache_path)?
+                    .or_else(|| selected.map(|(events, source)| TranscriptCache { source, events }))
+                {
                     Some(cache) => cache,
                     None => {
                         progress::stage("audio", "start");
@@ -801,7 +816,8 @@ async fn run_prepared(
                 r = transcript_work => r,
                 e = crate::dispatch::watch_control() => Err(e),
             }
-        });
+        }
+    );
     let frames = match frames_result {
         Ok(frames) if !frames.is_empty() => {
             outcomes.screenshots = Outcome::succeeded();
@@ -1207,7 +1223,14 @@ impl FailureRecord<'_> {
     async fn around(&self, work: impl std::future::Future<Output = Result<()>>) -> Result<()> {
         let result = work.await;
         if let Err(error) = &result {
-            write_failure_run_json(self.cfg, self.is_local, self.platform, self.id, error, self.started);
+            write_failure_run_json(
+                self.cfg,
+                self.is_local,
+                self.platform,
+                self.id,
+                error,
+                self.started,
+            );
         }
         result
     }
@@ -1246,10 +1269,14 @@ fn write_failure_run_json(
             if let Err(e) =
                 crate::checkpoint::atomic_write(&cfg.out_dir.join("run.json"), s.as_bytes())
             {
-                tracing::warn!("写失败诊断 run.json 失败 / Failed to write failure diagnostics run.json: {e:#}");
+                tracing::warn!(
+                    "写失败诊断 run.json 失败 / Failed to write failure diagnostics run.json: {e:#}"
+                );
             }
         }
-        Err(e) => tracing::warn!("序列化失败诊断 run.json 失败 / Failed to serialize failure diagnostics run.json: {e:#}"),
+        Err(e) => tracing::warn!(
+            "序列化失败诊断 run.json 失败 / Failed to serialize failure diagnostics run.json: {e:#}"
+        ),
     }
 }
 
@@ -1295,7 +1322,11 @@ mod tests {
         cfg.transcript_source = crate::config::TranscriptSource::Asr;
         assert!(!super::discovers_subtitles_at_runtime(&None, &cfg, false));
         cfg.transcript_source = crate::config::TranscriptSource::Auto;
-        assert!(!super::discovers_subtitles_at_runtime(&Some(Vec::new()), &cfg, false));
+        assert!(!super::discovers_subtitles_at_runtime(
+            &Some(Vec::new()),
+            &cfg,
+            false
+        ));
         assert!(!super::discovers_subtitles_at_runtime(&None, &cfg, true));
     }
 

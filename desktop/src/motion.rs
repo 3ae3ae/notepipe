@@ -1,8 +1,7 @@
 //! Small, shared motion vocabulary: entrances, retargetable values and live work.
 use crate::activity::{TransferEta, TransferMetrics};
 use crate::theme::{
-    ACCENT, GRAY, INK, SECONDARY_CONTAINER, TEXT_AUX, TEXT_BODY, accessible_text,
-    color,
+    ACCENT, GRAY, INK, SECONDARY_CONTAINER, TEXT_AUX, TEXT_BODY, accessible_text, color,
 };
 use gpui::{prelude::*, *};
 use gpui_component::{Sizable, h_flex, v_flex};
@@ -77,15 +76,34 @@ pub fn spinner(id: impl Into<ElementId>, cx: &App) -> AnyElement {
 
 /// Unmeasured work uses motion, never a fabricated completion percentage.
 pub fn indeterminate_progress(id: impl Into<ElementId>, cx: &App) -> AnyElement {
-    let segment = div().absolute().h_full().w(relative(0.3)).rounded_full().bg(color(ACCENT));
+    let segment = div()
+        .absolute()
+        .h_full()
+        .w(relative(0.3))
+        .rounded_full()
+        .bg(color(ACCENT));
     let segment = if cx.reduce_motion() {
         segment.left(relative(0.35)).into_any_element()
     } else {
-        segment.with_animation(id, Animation::new(Duration::from_millis(INDETERMINATE_SWEEP_MS)).repeat().with_max_fps(60.),
-            |segment, t| segment.left(relative(t * 1.3 - 0.3))).into_any_element()
+        segment
+            .with_animation(
+                id,
+                Animation::new(Duration::from_millis(INDETERMINATE_SWEEP_MS))
+                    .repeat()
+                    .with_max_fps(60.),
+                |segment, t| segment.left(relative(t * 1.3 - 0.3)),
+            )
+            .into_any_element()
     };
-    div().relative().w_full().h(px(3.)).rounded_full().overflow_hidden()
-        .bg(color(SECONDARY_CONTAINER)).child(segment).into_any_element()
+    div()
+        .relative()
+        .w_full()
+        .h(px(3.))
+        .rounded_full()
+        .overflow_hidden()
+        .bg(color(SECONDARY_CONTAINER))
+        .child(segment)
+        .into_any_element()
 }
 
 pub fn value(id: impl Into<ElementId>, target: f32, window: &mut Window, cx: &mut App) -> f32 {
@@ -117,7 +135,8 @@ pub fn selection_value(
     let amount = gpui_base::transition(
         id,
         target,
-        gpui_base::Transition::new(Duration::from_millis(SELECTION_MS)).ease(|t| t * t * (3. - 2. * t)),
+        gpui_base::Transition::new(Duration::from_millis(SELECTION_MS))
+            .ease(|t| t * t * (3. - 2. * t)),
         window,
         cx,
     );

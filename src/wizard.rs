@@ -32,10 +32,9 @@ pub fn maybe_run(
     file: &crate::settings::ConfigFile,
 ) -> Result<crate::settings::ConfigFile> {
     if matches!(
-            opts.transcript_source.or(file.defaults.transcript_source),
-            Some(crate::config::TranscriptSource::Subtitle)
-        )
-        || !is_first_run(opts.provider.is_none(), file)
+        opts.transcript_source.or(file.defaults.transcript_source),
+        Some(crate::config::TranscriptSource::Subtitle)
+    ) || !is_first_run(opts.provider.is_none(), file)
     {
         return Ok(file.clone());
     }

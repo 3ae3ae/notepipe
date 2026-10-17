@@ -29,25 +29,47 @@ fn shell_column_width(page: Page) -> AbsoluteLength {
 /// The max width includes both gutters; layout calculations use the same box.
 pub(super) fn shell_content_width(page: Page, window: &Window) -> f32 {
     let width = f32::from(window.bounds().size.width);
-    let gutter = if matches!(page, Page::New | Page::Settings) && is_compact(window) { 16. } else { SHELL_GUTTER };
-    (width.min(f32::from(shell_column_width(page).to_pixels(window.rem_size()))) - gutter * 2.).max(0.)
+    let gutter = if matches!(page, Page::New | Page::Settings) && is_compact(window) {
+        16.
+    } else {
+        SHELL_GUTTER
+    };
+    (width.min(f32::from(
+        shell_column_width(page).to_pixels(window.rem_size()),
+    )) - gutter * 2.)
+        .max(0.)
 }
 
 pub(super) fn settings_sidebar_width(window: &Window) -> f32 {
     let scale = f32::from(window.rem_size()) / 14.;
     let width = f32::from(window.bounds().size.width) / scale;
-    (if width >= 1200. { 260. } else if width >= 960. { 220. } else { 64. }) * scale
+    (if width >= 1200. {
+        260.
+    } else if width >= 960. {
+        220.
+    } else {
+        64.
+    }) * scale
 }
 
 pub(super) fn settings_column_gap(window: &Window) -> f32 {
     let scale = f32::from(window.rem_size()) / 14.;
     let width = f32::from(window.bounds().size.width) / scale;
-    (if width >= 1200. { 40. } else if width >= 960. { 24. } else { 8. }) * scale
+    (if width >= 1200. {
+        40.
+    } else if width >= 960. {
+        24.
+    } else {
+        8.
+    }) * scale
 }
 
 /// Shared by settings panels and grids; use the same sidebar, gap and gutters.
 pub(super) fn settings_content_width(window: &Window) -> f32 {
-    (shell_content_width(Page::Settings, window) - settings_sidebar_width(window) - settings_column_gap(window)).max(0.)
+    (shell_content_width(Page::Settings, window)
+        - settings_sidebar_width(window)
+        - settings_column_gap(window))
+    .max(0.)
 }
 
 /// Entrance motion replays when the notice text changes, not on every frame.
@@ -114,23 +136,39 @@ impl Desktop {
                     this.navigate(Page::New, cx);
                 }
             }));
-        let library = nav_action("nav-library", matches!(page, Page::Library | Page::Result), cx)
-            .icon(icons::book_open())
-            .when(!is_compact(window), |button| button.label("笔记库"))
-            .accessibility_label("笔记库")
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.folder_filter = None;
-                this.navigate(Page::Library, cx);
-            }));
+        let library = nav_action(
+            "nav-library",
+            matches!(page, Page::Library | Page::Result),
+            cx,
+        )
+        .icon(icons::book_open())
+        .when(!is_compact(window), |button| button.label("笔记库"))
+        .accessibility_label("笔记库")
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.folder_filter = None;
+            this.navigate(Page::Library, cx);
+        }));
         // Tasks stay reachable, but only claim space once there is work to show.
         let tasks = (task_count > 0 || tasks_need_attention || page == Page::Task).then(|| {
             nav_action("nav-tasks", page == Page::Task, cx)
-                .icon(if tasks_need_attention { icons::warning() } else { icons::task() })
-                .label(if task_count > 0 { format!("任务 · {task_count}") } else { "任务".to_owned() })
+                .icon(if tasks_need_attention {
+                    icons::warning()
+                } else {
+                    icons::task()
+                })
+                .label(if task_count > 0 {
+                    format!("任务 · {task_count}")
+                } else {
+                    "任务".to_owned()
+                })
                 .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Task, cx)))
         });
         let settings = nav_action("nav-settings", page == Page::Settings, cx)
-            .icon(if self.settings_have_problem() { icons::warning() } else { icons::settings() })
+            .icon(if self.settings_have_problem() {
+                icons::warning()
+            } else {
+                icons::settings()
+            })
             .accessibility_label("设置")
             .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)));
         apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window))).child(
@@ -212,46 +250,51 @@ impl Desktop {
                     format!(
                         "《{}》：{}",
                         task.plan.title,
-                        if exports_only { "文件已导出" } else { task.state.label() },
+                        if exports_only {
+                            "文件已导出"
+                        } else {
+                            task.state.label()
+                        },
                     ),
                 )
-                    .child(
-                        control("open-task-result")
-                            .icon(icons::arrow_forward())
-                            .label(action)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if exports_only {
-                                    this.open_task_export_location(id.clone(), cx);
-                                } else if let Some(done) = &result {
-                                    this.open_course(Course::from_completed(done), cx);
-                                } else {
-                                    this.select_task(&id, cx);
-                                    this.navigate(Page::Task, cx);
-                                }
-                            })),
-                    )
-                    .child(
-                        control("dismiss-task-result")
-                            .ghost()
-                            .icon(crate::icons::close())
-                            .accessibility_label("关闭提示")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.transient_task_result = None;
-                                if let Some(workspace) = &mut this.workspace
-                                    && let Err(error) = workspace.transaction(|state| {
-                                        if let Some(task) = state.task_mut(&dismiss_id) {
-                                            task.unread = false;
-                                        }
-                                        Ok(())
-                                    })
-                                {
-                                    this.workspace_error =
-                                        Some(format!("提示关闭状态未能保存：{error:#}"));
-                                }
-                                cx.notify();
-                            })),
-                    ),
-            )))
+                .child(
+                    control("open-task-result")
+                        .icon(icons::arrow_forward())
+                        .label(action)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if exports_only {
+                                this.open_task_export_location(id.clone(), cx);
+                            } else if let Some(done) = &result {
+                                this.open_course(Course::from_completed(done), cx);
+                            } else {
+                                this.select_task(&id, cx);
+                                this.navigate(Page::Task, cx);
+                            }
+                        })),
+                )
+                .child(
+                    control("dismiss-task-result")
+                        .ghost()
+                        .icon(crate::icons::close())
+                        .accessibility_label("关闭提示")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.transient_task_result = None;
+                            if let Some(workspace) = &mut this.workspace
+                                && let Err(error) = workspace.transaction(|state| {
+                                    if let Some(task) = state.task_mut(&dismiss_id) {
+                                        task.unread = false;
+                                    }
+                                    Ok(())
+                                })
+                            {
+                                this.workspace_error =
+                                    Some(format!("提示关闭状态未能保存：{error:#}"));
+                            }
+                            cx.notify();
+                        })),
+                ),
+            ),
+        ))
     }
     fn page_title(&self) -> String {
         match self.page {
@@ -277,26 +320,31 @@ impl Desktop {
             .items_center()
             .justify_between()
             .child(
-                theme::page_heading(
-                    "page-title",
-                    self.page_title(),
-                )
-                .flex_1()
-                .min_w_0(),
+                theme::page_heading("page-title", self.page_title())
+                    .flex_1()
+                    .min_w_0(),
             )
             .when(self.library_controls_visible(cx), |row| {
                 let available = shell_content_width(Page::Library, window);
                 let scale = f32::from(window.rem_size()) / 14.;
-                row.child(self.library_search(window, cx).w(px(
-                    if available < 600. * scale { available } else { 360. * scale },
-                )))
-                .child(primary_pill("library-new-note")
-                    .icon(icons::plus()).label("新笔记")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if this.prepare_workbench_input(window, cx) {
-                            this.navigate(Page::New, cx);
-                        }
-                    })))
+                row.child(
+                    self.library_search(window, cx)
+                        .w(px(if available < 600. * scale {
+                            available
+                        } else {
+                            360. * scale
+                        })),
+                )
+                .child(
+                    primary_pill("library-new-note")
+                        .icon(icons::plus())
+                        .label("新笔记")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if this.prepare_workbench_input(window, cx) {
+                                this.navigate(Page::New, cx);
+                            }
+                        })),
+                )
             });
         v_flex().pt(px(40.)).pb(px(16.)).child(row)
     }
@@ -427,44 +475,45 @@ impl Render for Desktop {
                     ("workspace-error", notice_key(&message)),
                     shell_column_for(self.page).pb_3().child(
                         notice_banner("workspace-error", NoticeKind::Danger, message)
-                                .child(
-                                    control("retry-workspace-records")
-                                        .icon(icons::refresh())
-                                        .label("重试")
+                            .child(
+                                control("retry-workspace-records")
+                                    .icon(icons::refresh())
+                                    .label("重试")
+                                    .disabled(self.job.is_some() || self.storage_ui.busy)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.retry_workspace_records(window, cx)
+                                    })),
+                            )
+                            .when(self.workspace.is_none(), |row| {
+                                row.child(
+                                    control("rebuild-workspace-records")
+                                        .icon(icons::restart())
+                                        .label("备份并重建任务记录")
                                         .disabled(self.job.is_some() || self.storage_ui.busy)
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.retry_workspace_records(window, cx)
+                                            this.rebuild_workspace_records(window, cx)
                                         })),
                                 )
-                                .when(self.workspace.is_none(), |row| {
-                                    row.child(
-                                        control("rebuild-workspace-records")
-                                            .icon(icons::restart())
-                                            .label("备份并重建任务记录")
-                                            .disabled(self.job.is_some() || self.storage_ui.busy)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.rebuild_workspace_records(window, cx)
-                                            })),
-                                    )
-                                }),
-                    )))
+                            }),
+                    ),
+                ))
             })
             .when_some(self.message.clone(), |v, message| {
                 v.child(crate::motion::state_enter(
                     ("app-message", notice_key(&message)),
                     shell_column_for(self.page).pb_3().child(
-                        notice_banner("app-message", NoticeKind::Info, message)
-                            .child(
-                                control("dismiss-message")
-                                    .ghost()
-                                    .icon(crate::icons::close())
-                                    .accessibility_label("关闭提示")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.message = None;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )))
+                        notice_banner("app-message", NoticeKind::Info, message).child(
+                            control("dismiss-message")
+                                .ghost()
+                                .icon(crate::icons::close())
+                                .accessibility_label("关闭提示")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.message = None;
+                                    cx.notify();
+                                })),
+                        ),
+                    ),
+                ))
             })
             .child(
                 div()
@@ -483,7 +532,11 @@ impl Render for Desktop {
                     .child(
                         shell_column_for(self.page)
                             .when(self.page == Page::Settings, |v| v.max_w_full())
-                            .when(matches!(self.page, Page::New | Page::Settings) && is_compact(window), |v| v.px(px(16.)))
+                            .when(
+                                matches!(self.page, Page::New | Page::Settings)
+                                    && is_compact(window),
+                                |v| v.px(px(16.)),
+                            )
                             .when(
                                 matches!(self.page, Page::Result | Page::Settings)
                                     || self_scrolling,
@@ -531,9 +584,10 @@ impl Render for Desktop {
                 background,
                 window.has_active_dialog(cx),
             ))
-            .when(self.page == Page::New, |view| view.child(self.workbench_drop_overlay(cx)))
+            .when(self.page == Page::New, |view| {
+                view.child(self.workbench_drop_overlay(cx))
+            })
             .children(Root::render_dialog_layer(window, cx))
             .into_any_element()
     }
 }
-

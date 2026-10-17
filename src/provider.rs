@@ -18,7 +18,9 @@ pub const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/res
 ///（大小写敏感；instructions 中出现不算数）。润色的首个文本块是纯 segments
 /// JSON，不能污染，因此在末尾追加独立的约束块。
 fn ensure_json_marker(content: &mut Value) {
-    let Some(parts) = content.as_array_mut() else { return };
+    let Some(parts) = content.as_array_mut() else {
+        return;
+    };
     let mentioned = parts
         .iter()
         .any(|p| p["text"].as_str().is_some_and(|t| t.contains("json")));
@@ -40,7 +42,10 @@ pub(crate) fn auth_headers(s: &LlmSettings) -> Result<Vec<(String, String)>> {
     match s.provider {
         LlmProvider::Codex => crate::login::codex::auth_headers(),
         _ if s.api_key.is_empty() => Ok(Vec::new()),
-        _ => Ok(vec![("Authorization".into(), format!("Bearer {}", s.api_key))]),
+        _ => Ok(vec![(
+            "Authorization".into(),
+            format!("Bearer {}", s.api_key),
+        )]),
     }
 }
 
@@ -50,7 +55,12 @@ pub(crate) fn is_sse(s: &LlmSettings) -> bool {
 }
 
 /// 构造请求体（结构化输出契约在两种方言中各自表达）。
-pub(crate) fn chat_body(s: &LlmSettings, system: &str, user: impl Into<Value>, max_tokens: u32) -> Value {
+pub(crate) fn chat_body(
+    s: &LlmSettings,
+    system: &str,
+    user: impl Into<Value>,
+    max_tokens: u32,
+) -> Value {
     match s.provider {
         LlmProvider::Codex => {
             let mut content = codex_content(user.into());
@@ -141,7 +151,9 @@ pub(crate) fn sse_to_chat_json(bytes: &[u8]) -> Result<Value> {
     let mut usage = serde_json::Value::Null;
     let mut failed: Option<String> = None;
     for line in text.lines() {
-        let Some(data) = line.strip_prefix("data:") else { continue };
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
         let data = data.trim();
         if data.is_empty() || data == "[DONE]" {
             continue;
@@ -271,7 +283,8 @@ data: [DONE]
         assert_eq!(value["usage"]["prompt_tokens"].as_u64(), Some(120));
         assert_eq!(value["usage"]["completion_tokens"].as_u64(), Some(36));
 
-        let failed = br#"data: {"type":"response.failed","response":{"error":{"message":"rate limited"}}}
+        let failed =
+            br#"data: {"type":"response.failed","response":{"error":{"message":"rate limited"}}}
 "#;
         assert!(sse_to_chat_json(failed).is_err());
         assert!(sse_to_chat_json(b"data: {\"type\":\"response.created\"}\n").is_err());

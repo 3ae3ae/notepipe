@@ -267,8 +267,12 @@ pub fn sort_tracks(
 pub fn read_subtitle_text(path: &Path) -> Result<String> {
     use std::io::Read;
     const MAX_BYTES: usize = 32 * 1024 * 1024;
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("无法读取字幕文件 {0} / Cannot read subtitle file {0}", path.display()))?;
+    let file = std::fs::File::open(path).with_context(|| {
+        format!(
+            "无法读取字幕文件 {0} / Cannot read subtitle file {0}",
+            path.display()
+        )
+    })?;
     let mut bytes = Vec::new();
     file.take((MAX_BYTES + 1) as u64).read_to_end(&mut bytes)?;
     ensure!(

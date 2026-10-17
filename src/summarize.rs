@@ -145,13 +145,20 @@ fn chat_once(
     description: &str,
 ) -> Result<String> {
     let body = crate::provider::chat_body(s, sys, user, llm::CHAT_MAX_TOKENS);
-    llm::send_chat_described(agent, s, &body, llm::Purpose::Summary, description, &|content| {
-        anyhow::ensure!(
-            parse_summary(content).is_some(),
-            "服务返回的摘要结构无效 / Invalid summary structure"
-        );
-        Ok(())
-    })
+    llm::send_chat_described(
+        agent,
+        s,
+        &body,
+        llm::Purpose::Summary,
+        description,
+        &|content| {
+            anyhow::ensure!(
+                parse_summary(content).is_some(),
+                "服务返回的摘要结构无效 / Invalid summary structure"
+            );
+            Ok(())
+        },
+    )
     .context("生成摘要请求失败 / Summary request failed")
 }
 
@@ -277,7 +284,10 @@ pub async fn summarize(
         let mut failure = None;
         // Join every started request so its confirmed result is saved, even if a peer failed.
         for handle in handles {
-            match handle.await.context("摘要工作进程中断 / Summary worker interrupted")? {
+            match handle
+                .await
+                .context("摘要工作进程中断 / Summary worker interrupted")?
+            {
                 Ok(summary) => partials.push(summary),
                 Err(error) => {
                     if failure.is_none() {
@@ -496,7 +506,10 @@ mod tests {
         );
         // 标题含「视频总结」不当作已有总结
         let titled = "# 视频总结速览课\n\n## [00:00](u)\n";
-        assert_eq!(insert_into_md(titled, &sm).matches(SUMMARY_BEGIN).count(), 1);
+        assert_eq!(
+            insert_into_md(titled, &sm).matches(SUMMARY_BEGIN).count(),
+            1
+        );
     }
 
     #[test]

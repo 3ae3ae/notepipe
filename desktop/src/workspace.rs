@@ -54,7 +54,10 @@ pub mod text_source_index {
     use course2md::config::TranscriptSource;
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S: Serializer>(value: &TranscriptSource, serializer: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(
+        value: &TranscriptSource,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
         serializer.serialize_u64(match value {
             TranscriptSource::Auto => 0,
             TranscriptSource::Subtitle => 1,
@@ -62,7 +65,9 @@ pub mod text_source_index {
         })
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<TranscriptSource, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<TranscriptSource, D::Error> {
         Ok(match u64::deserialize(deserializer)? {
             1 => TranscriptSource::Subtitle,
             2 => TranscriptSource::Asr,
@@ -380,7 +385,6 @@ impl TaskRecord {
             self.state.label()
         }
     }
-
 
     /// 是否有结果尚未确认的请求（BlockedRequest::is_uncertain 的任务级汇总）。
     pub fn has_uncertain(&self) -> bool {
@@ -826,8 +830,7 @@ impl State {
             "这项任务正在处理当前操作"
         );
         ensure!(
-            intent != Intent::Run
-                || !task.has_uncertain(),
+            intent != Intent::Run || !task.has_uncertain(),
             "仍有请求结果尚未确认，请查看请求范围后选择是否重新发送"
         );
         task.intent = intent;
@@ -995,7 +998,9 @@ impl State {
             plan.ai_service = Some(service);
             plan.config.llm = config.llm;
         }
-        let only_exports = parsed.iter().all(|component| *component == Component::Exports);
+        let only_exports = parsed
+            .iter()
+            .all(|component| *component == Component::Exports);
         plan.config.llm.enabled = parsed.contains(&Component::Proofreading);
         plan.config.llm.summarize = parsed.contains(&Component::Summary);
         plan.config.llm.vision &= plan.config.llm.enabled;
@@ -1164,13 +1169,9 @@ fn failed_outcome(value: &serde_json::Value) -> bool {
 }
 
 pub fn check_library(location: &LibraryLocation) -> Result<()> {
-    ensure!(
-        location.root.is_dir(),
-        "保存位置不可访问，请连接对应磁盘"
-    );
-    let identity = std::fs::read_to_string(location.root.join(".course2md-library-id")).context(
-        "保存位置需要重新关联",
-    )?;
+    ensure!(location.root.is_dir(), "保存位置不可访问，请连接对应磁盘");
+    let identity = std::fs::read_to_string(location.root.join(".course2md-library-id"))
+        .context("保存位置需要重新关联")?;
     ensure!(
         identity.trim() == location.id,
         "保存位置对应其他课程库，请恢复原位置或在存储设置中重新登记"
@@ -1227,7 +1228,9 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
         components,
         ..
     } = &task.plan.operation
-        && components.iter().all(|component| component == Component::Exports.as_str())
+        && components
+            .iter()
+            .all(|component| component == Component::Exports.as_str())
         && task.work_dir.join("export-result.json").is_file()
     {
         let value: serde_json::Value =
@@ -1287,24 +1290,21 @@ pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
             purpose: Some(receipt.purpose),
             description: receipt.description.clone(),
             message: if receipt.description.trim().is_empty() {
-                receipt.message.unwrap_or_else(|| {
-                    "请求已发送，结果未确认".into()
-                })
+                receipt
+                    .message
+                    .unwrap_or_else(|| "请求已发送，结果未确认".into())
             } else {
                 format!(
                     "{}：{}",
                     receipt.description,
-                    receipt.message.unwrap_or_else(|| {
-                        "请求结果未确认".into()
-                    })
+                    receipt
+                        .message
+                        .unwrap_or_else(|| { "请求结果未确认".into() })
                 )
             },
         });
     }
-    if !task.blocked.is_empty()
-        && task.has_uncertain()
-        && task.intent == Intent::Run
-    {
+    if !task.blocked.is_empty() && task.has_uncertain() && task.intent == Intent::Run {
         task.state = TaskState::Uncertain;
         task.unread = true;
     }
@@ -1429,7 +1429,11 @@ fn hydrate_draft_subtitles(state: &mut State, record: &Path) {
         .and_then(|bytes| {
             serde_json::from_slice::<course2md::subtitle::CachedSubtitle>(&bytes).ok()
         });
-    for source in state.drafts.iter_mut().filter_map(|draft| draft.source.as_mut()) {
+    for source in state
+        .drafts
+        .iter_mut()
+        .filter_map(|draft| draft.source.as_mut())
+    {
         let Some(selected) = &source.selected_subtitle else {
             continue;
         };
@@ -1623,8 +1627,7 @@ impl Workspace {
             if !task.state.finished() {
                 task.intent = Intent::Pause;
                 task.state = TaskState::Paused;
-                task.error =
-                    Some("任务记录已重建".into());
+                task.error = Some("任务记录已重建".into());
                 task.unread = true;
             }
             if let Some(library) = state.library(&task.plan.library_id)
@@ -1982,7 +1985,11 @@ impl Workspace {
 
 /// Apply a preview result the way the import page does, for tests.
 #[cfg(test)]
-pub(crate) fn accept_source(draft: &mut Draft, revision: u64, source: crate::source::Source) -> bool {
+pub(crate) fn accept_source(
+    draft: &mut Draft,
+    revision: u64,
+    source: crate::source::Source,
+) -> bool {
     if draft.revision != revision {
         return false;
     }
@@ -2546,7 +2553,8 @@ mod tests {
         assert!(ws.state.next_task().unwrap().plan == original);
         assert_eq!(ws.state.draft().unwrap(), &b);
         ws.state.set_intent(&id, Intent::Pause).unwrap();
-        ws.transaction(|state| state.adjust_task(&id, None)).unwrap();
+        ws.transaction(|state| state.adjust_task(&id, None))
+            .unwrap();
         let revised = ws.state.draft_mut().unwrap();
         let options = revised.options.clone();
         revised.inherit(&ConversionOptions::default());
@@ -2951,10 +2959,20 @@ mod tests {
             .0;
         ws.state.task_mut(&id).unwrap().state = TaskState::Uncertain;
         let first = write_unknown(ws.state.task(&id).unwrap(), 1);
-        ws.state.authorize_uncertain(&id, std::slice::from_ref(&first)).unwrap();
-        assert!(ws.state.authorize_uncertain(&id, std::slice::from_ref(&first)).is_err());
+        ws.state
+            .authorize_uncertain(&id, std::slice::from_ref(&first))
+            .unwrap();
+        assert!(
+            ws.state
+                .authorize_uncertain(&id, std::slice::from_ref(&first))
+                .is_err()
+        );
         ws.state.task_mut(&id).unwrap().state = TaskState::Uncertain;
-        assert!(ws.state.authorize_uncertain(&id, std::slice::from_ref(&first)).is_err());
+        assert!(
+            ws.state
+                .authorize_uncertain(&id, std::slice::from_ref(&first))
+                .is_err()
+        );
         let second = write_unknown(ws.state.task(&id).unwrap(), 2);
         assert!(ws.state.authorize_uncertain(&id, &[first]).is_err());
         ws.state.authorize_uncertain(&id, &[second]).unwrap();

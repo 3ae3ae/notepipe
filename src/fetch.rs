@@ -190,8 +190,8 @@ fn concrete_url(info: &ExtractorInfo) -> Option<String> {
 /// Parse one metadata response from a subtitle-enabled, flat-playlist extraction.
 /// Successful extraction can still contain explicit subtitle permission warnings.
 pub fn parse_online_probe(bytes: &[u8], input: &str, diagnostics: &str) -> Result<OnlineProbe> {
-    let info: ExtractorInfo =
-        serde_json::from_slice(bytes).context("无法读取视频信息，请重新读取 / Cannot read video info; probe again")?;
+    let info: ExtractorInfo = serde_json::from_slice(bytes)
+        .context("无法读取视频信息，请重新读取 / Cannot read video info; probe again")?;
     if info.kind == "multi_video" {
         return Ok(OnlineProbe::Unresolved {
             message: "这个视频被分成了多段，暂不支持。请下载完整视频后导入。 / This video is split into several parts and is not supported yet. Download the full video and import it."
@@ -398,7 +398,12 @@ fn apply_bilibili_view(candidates: &mut [SourceCandidate], bvid: &str, view: &Bi
                 .as_deref()
                 .map(str::trim)
                 .filter(|part| !part.is_empty())
-                .or_else(|| view.title.as_deref().map(str::trim).filter(|t| !t.is_empty()));
+                .or_else(|| {
+                    view.title
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                });
             if let Some(title) = title {
                 candidate.title = title.to_string();
             }
@@ -447,7 +452,11 @@ pub fn enrich_bilibili_candidates(candidates: &mut [SourceCandidate]) {
                 .map(|bvid| scope.spawn(|| bilibili_view(&agent, bvid)))
                 .collect::<Vec<_>>()
                 .into_iter()
-                .map(|handle| handle.join().unwrap_or_else(|_| anyhow::bail!("分集信息线程异常")))
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| anyhow::bail!("分集信息线程异常"))
+                })
                 .collect()
         });
         for (bvid, view) in batch.iter().zip(views) {
@@ -577,12 +586,19 @@ pub fn local_content_identity(
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<String> {
     let metadata = |path: &Path| {
-        std::fs::metadata(path)
-            .with_context(|| format!("无法读取视频文件 {0} / Cannot read video file {0}", path.display()))
+        std::fs::metadata(path).with_context(|| {
+            format!(
+                "无法读取视频文件 {0} / Cannot read video file {0}",
+                path.display()
+            )
+        })
     };
     let before = metadata(path)?;
     let digest = crate::execution::file_digest_cancellable(path, cancel)?;
-    ensure!(!cancel.load(std::sync::atomic::Ordering::Relaxed), "已取消读取文件 / File reading cancelled");
+    ensure!(
+        !cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "已取消读取文件 / File reading cancelled"
+    );
     let after = metadata(path)?;
     ensure!(
         before.len() == after.len() && before.modified().ok() == after.modified().ok(),
@@ -602,7 +618,9 @@ pub async fn probe_video(url: &str) -> Result<OnlineVideo> {
     match probe_online(url).await? {
         OnlineProbe::Video { video } => Ok(video),
         OnlineProbe::Collection { .. } => {
-            anyhow::bail!("这个链接包含多个视频，请选择具体单集后生成笔记 / This link contains multiple videos; choose a specific episode before generating notes")
+            anyhow::bail!(
+                "这个链接包含多个视频，请选择具体单集后生成笔记 / This link contains multiple videos; choose a specific episode before generating notes"
+            )
         }
         OnlineProbe::Unresolved { message } => anyhow::bail!("{message}"),
     }
@@ -650,7 +668,9 @@ pub async fn fetch_subtitle(video: &OnlineVideo, out_dir: &Path) -> Result<Optio
                 "zh",
                 video.original_language.as_deref(),
             );
-            let track = tracks.first().context("字幕列表为空，请重新读取字幕 / Subtitle list is empty; probe subtitles again")?;
+            let track = tracks.first().context(
+                "字幕列表为空，请重新读取字幕 / Subtitle list is empty; probe subtitles again",
+            )?;
             fetch_selected_subtitle(&video.meta.webpage_url, &video.identity, track, out_dir)
                 .await
                 .map(Some)
@@ -658,7 +678,9 @@ pub async fn fetch_subtitle(video: &OnlineVideo, out_dir: &Path) -> Result<Optio
         SubtitleEvidence::Failed { message } => {
             anyhow::bail!("读取字幕失败 / Could not read subtitles: {message}")
         }
-        SubtitleEvidence::Unchecked => anyhow::bail!("尚未检查字幕，请重新读取视频信息 / Subtitles not checked yet; probe the video info again"),
+        SubtitleEvidence::Unchecked => anyhow::bail!(
+            "尚未检查字幕，请重新读取视频信息 / Subtitles not checked yet; probe the video info again"
+        ),
         SubtitleEvidence::NoneFound | SubtitleEvidence::Unsupported { .. } => Ok(None),
     }
 }
@@ -742,7 +764,9 @@ pub async fn fetch_selected_subtitle(
                 video.identity == source_identity,
                 "视频来源发生变化，请重新读取并选择字幕 / The video source changed; probe again and reselect the subtitle"
             ),
-            _ => anyhow::bail!("无法确认字幕对应的视频，请重新读取 / Cannot confirm the video for the subtitle; probe again"),
+            _ => anyhow::bail!(
+                "无法确认字幕对应的视频，请重新读取 / Cannot confirm the video for the subtitle; probe again"
+            ),
         }
         let path = crate::subtitle::pick_subtitle_file(temp.path())
             .context("所选字幕下载失败，请重新读取字幕，或改用语音识别 / The selected subtitle could not be downloaded; read subtitles again or use speech recognition")?;
@@ -912,7 +936,10 @@ async fn run_output(cmd: &mut Command) -> Result<std::process::Output> {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if let Some(delay) = bilibili_retry_delay(&stderr, retries) {
             retries += 1;
-            tracing::warn!(retries, "B 站暂时限制了访问，稍后重试 / Bilibili is limiting requests; retrying shortly");
+            tracing::warn!(
+                retries,
+                "B 站暂时限制了访问，稍后重试 / Bilibili is limiting requests; retrying shortly"
+            );
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {}
                 e = crate::dispatch::watch_control() => return Err(e),
@@ -1053,14 +1080,17 @@ mod tests {
     #[test]
     fn bilibili_ids_come_from_video_paths_and_part_query() {
         assert_eq!(
-            crate::config::bilibili_bvid("https://www.bilibili.com/video/BV1CAxaeHEeH?p=3").as_deref(),
+            crate::config::bilibili_bvid("https://www.bilibili.com/video/BV1CAxaeHEeH?p=3")
+                .as_deref(),
             Some("BV1CAxaeHEeH")
         );
         assert_eq!(
             crate::config::bilibili_bvid("https://www.bilibili.com/video/BV1xx411c7mD/").as_deref(),
             Some("BV1xx411c7mD")
         );
-        assert!(crate::config::bilibili_bvid("https://www.bilibili.com/bangumi/play/ep123").is_none());
+        assert!(
+            crate::config::bilibili_bvid("https://www.bilibili.com/bangumi/play/ep123").is_none()
+        );
         assert!(crate::config::bilibili_bvid("https://example.com/video/BV1CAxaeHEeH").is_none());
         assert!(crate::config::bilibili_bvid("not a url").is_none());
         assert_eq!(

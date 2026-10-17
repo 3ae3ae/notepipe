@@ -10,7 +10,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 有界运行 ffprobe；超时或启动失败返回 None（探测失败均非致命）。
 async fn probe_output(cmd: &mut Command) -> Option<std::process::Output> {
-    let output = cmd.kill_on_drop(true).stdin(std::process::Stdio::null()).output();
+    let output = cmd
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .output();
     tokio::time::timeout(PROBE_TIMEOUT, output).await.ok()?.ok()
 }
 

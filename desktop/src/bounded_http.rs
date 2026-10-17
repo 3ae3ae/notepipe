@@ -45,7 +45,10 @@ pub(crate) enum BoundedReadError {
 }
 
 /// 按 max+1 读取；超过 max 报 TooLarge，IO 失败报 Network。
-pub(crate) fn read_bounded(response: ureq::Response, max: u64) -> Result<Vec<u8>, BoundedReadError> {
+pub(crate) fn read_bounded(
+    response: ureq::Response,
+    max: u64,
+) -> Result<Vec<u8>, BoundedReadError> {
     use std::io::Read;
     let mut body = Vec::new();
     response

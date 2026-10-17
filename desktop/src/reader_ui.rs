@@ -1618,11 +1618,12 @@ impl Desktop {
             && let Err(error) = workspace.transaction(|state| {
                 state.positions.insert(key.clone(), position.clone());
                 Ok(())
-            }) {
-                self.workspace_error = Some(format!("阅读位置尚未保存：{error:#}"));
-                cx.notify();
-                return;
-            }
+            })
+        {
+            self.workspace_error = Some(format!("阅读位置尚未保存：{error:#}"));
+            cx.notify();
+            return;
+        }
         self.reader_position_saved_at = Some(Instant::now());
         self.reader_ui.last_position = Some((key, position));
     }
@@ -3567,32 +3568,33 @@ impl Desktop {
                     .tasks
                     .iter()
                     .find(|task| task.id == manifest.task_id)
-            }) {
-                if let Some(subtitle) = &task.plan.source.selected_subtitle {
-                    details.push(("所选字幕", icons::subtitles(), subtitle.label.clone()));
+            })
+        {
+            if let Some(subtitle) = &task.plan.source.selected_subtitle {
+                details.push(("所选字幕", icons::subtitles(), subtitle.label.clone()));
+            }
+            if task.plan.config.defaults.transcript_source
+                == Some(course2md::config::TranscriptSource::Asr)
+            {
+                if let Some(model) = &task.plan.config.defaults.asr_model {
+                    details.push(("语音识别模型", icons::mic(), model.clone()));
                 }
-                if task.plan.config.defaults.transcript_source
-                    == Some(course2md::config::TranscriptSource::Asr)
-                {
-                    if let Some(model) = &task.plan.config.defaults.asr_model {
-                        details.push(("语音识别模型", icons::mic(), model.clone()));
-                    }
-                    if let Some(provider) = task.plan.config.defaults.provider {
-                        details.push((
-                            "识别设备",
-                            icons::computer(),
-                            crate::provider_label(Some(provider)).to_owned(),
-                        ));
-                    }
-                }
-                if task.plan.options.llm || task.plan.options.summarize {
+                if let Some(provider) = task.plan.config.defaults.provider {
                     details.push((
-                        "AI 模型",
-                        icons::auto_fix(),
-                        task.plan.config.llm.model.clone(),
+                        "识别设备",
+                        icons::computer(),
+                        crate::provider_label(Some(provider)).to_owned(),
                     ));
                 }
             }
+            if task.plan.options.llm || task.plan.options.summarize {
+                details.push((
+                    "AI 模型",
+                    icons::auto_fix(),
+                    task.plan.config.llm.model.clone(),
+                ));
+            }
+        }
         if !details.is_empty() || compact_metadata.is_some() {
             let information_scroll = self.reader_ui.information_scroll.clone();
             // The panel is at most 16rem tall; its scrolling viewport is what
@@ -3728,22 +3730,23 @@ impl Desktop {
                     })
                 })
                 .cloned()
-            {
-                notices.push(crate::motion::enter(
-                    "reader-new-version-notice",
-                    notice_banner("newer-note-version", NoticeKind::Info, "这份笔记已有新版。")
-                        .child(reveal(
-                            "reveal-open-newer-version",
-                            (outline_pill("open-newer-version")
-                                .icon(icons::history())
-                                .label("查看新版")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.open_reader_version(newer.clone(), cx)
-                                })))
-                            .into_any_element(),
-                        )),
-                ));
-            }
+        {
+            notices.push(crate::motion::enter(
+                "reader-new-version-notice",
+                notice_banner("newer-note-version", NoticeKind::Info, "这份笔记已有新版。").child(
+                    reveal(
+                        "reveal-open-newer-version",
+                        (outline_pill("open-newer-version")
+                            .icon(icons::history())
+                            .label("查看新版")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_reader_version(newer.clone(), cx)
+                            })))
+                        .into_any_element(),
+                    ),
+                ),
+            ));
+        }
         if let Some(notice) = processing_notice(&preview.processing_issues) {
             let mut problem = v_flex()
                 .gap_3()

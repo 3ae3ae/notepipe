@@ -1,5 +1,6 @@
 //! The current input form and task execution. Navigation never supplies retry inputs.
 use super::*;
+use crate::import_ui::cover_slot;
 use crate::{
     notes::default_output,
     preferences::ServiceRefs,
@@ -7,12 +8,11 @@ use crate::{
     workspace::{Intent, TaskPlan, TaskRecord, TaskState},
 };
 use anyhow::{Context as _, Result, ensure};
+use course2md::config::TranscriptSource;
+use course2md::execution::Component;
 use gpui_component::button::*;
 use std::collections::HashMap;
 use std::rc::Rc;
-use crate::import_ui::cover_slot;
-use course2md::config::TranscriptSource;
-use course2md::execution::Component;
 
 /// Request purpose of a remote speech recognition call.
 const TRANSCRIPTION_PURPOSE: &str = "transcription";
@@ -210,7 +210,11 @@ impl StageStatus {
     /// Visible status column text. A running row is already announced by its
     /// spinner or progress bar and the card badge.
     fn status_text(self) -> &'static str {
-        if self == Self::Running { "" } else { self.label() }
+        if self == Self::Running {
+            ""
+        } else {
+            self.label()
+        }
     }
 
     fn ink(self) -> Rgba {
@@ -290,7 +294,8 @@ fn task_stage_progress(
 /// Proofreading and summary are the AI components; remote request purposes
 /// use the same names.
 pub(crate) fn ai_component(name: &str) -> Option<Component> {
-    Component::parse(name).filter(|part| matches!(part, Component::Proofreading | Component::Summary))
+    Component::parse(name)
+        .filter(|part| matches!(part, Component::Proofreading | Component::Summary))
 }
 
 /// A proofreading stage can close after failed requests. Published component
@@ -313,7 +318,10 @@ fn ai_stage_outcome(name: &str, outcomes: Option<&serde_json::Value>) -> Option<
 /// Keep worker diagnostics in raw logs, and retain only a short, actionable
 /// localized failure summary in the task.
 fn task_failure_summary(state: TaskState, error: Option<&str>) -> Option<String> {
-    if matches!(state, TaskState::Paused | TaskState::Cancelled | TaskState::Partial) {
+    if matches!(
+        state,
+        TaskState::Paused | TaskState::Cancelled | TaskState::Partial
+    ) {
         return None;
     }
     error.map(|error| {
@@ -337,8 +345,7 @@ fn task_failure_summary(state: TaskState, error: Option<&str>) -> Option<String>
 }
 
 pub(crate) fn task_attention_summary(task: &TaskRecord) -> String {
-    if task.has_uncertain()
-    {
+    if task.has_uncertain() {
         return task_status_label(task);
     }
     if let Some(reason) = task_service_repair_reason(task) {
@@ -385,9 +392,7 @@ fn service_configuration_issue(message: &str) -> Option<&'static str> {
 }
 
 fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
-    if task.handled_by.is_some()
-        || task.has_uncertain()
-    {
+    if task.handled_by.is_some() || task.has_uncertain() {
         return None;
     }
     let outcomes = &task.outcomes;
@@ -610,9 +615,22 @@ struct TaskDisclosure {
 
 impl RenderOnce for TaskDisclosure {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let Self { panel, task_id, lead, content, open, animate, desktop } = self;
+        let Self {
+            panel,
+            task_id,
+            lead,
+            content,
+            open,
+            animate,
+            desktop,
+        } = self;
         let content = match lead {
-            Some(lead) => v_flex().w_full().min_w_0().gap_3().child(lead).child(content),
+            Some(lead) => v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_3()
+                .child(lead)
+                .child(content),
             None => content,
         };
         let id = |part: &str| SharedString::from(format!("task-{}-{part}-{task_id}", panel.slug()));
@@ -621,10 +639,18 @@ impl RenderOnce for TaskDisclosure {
         v_flex()
             .w_full()
             .min_w_0()
-            .gap(if panel == TaskPanel::Stages { rems(12. / 14.) } else { rems(8. / 14.) })
+            .gap(if panel == TaskPanel::Stages {
+                rems(12. / 14.)
+            } else {
+                rems(8. / 14.)
+            })
             .child(
                 disclosure_toggle(toggle_id)
-                    .icon(if open { icons::chevron_up() } else { icons::chevron_down() })
+                    .icon(if open {
+                        icons::chevron_up()
+                    } else {
+                        icons::chevron_down()
+                    })
                     .label(panel.label(open))
                     .on_click(move |_, _, cx| {
                         let _ = desktop.update(cx, |this, cx| {
@@ -657,10 +683,7 @@ fn validate_plan_storage(
                 check.available,
                 "保存位置不可访问，请连接磁盘或选择其他位置"
             );
-            ensure!(
-                !check.needs_reassociation,
-                "保存位置需要重新关联"
-            );
+            ensure!(!check.needs_reassociation, "保存位置需要重新关联");
             if let Some(problem) = &check.problem {
                 anyhow::bail!("{problem}");
             }
@@ -854,9 +877,7 @@ impl Desktop {
         match &self.environment {
             Some(environment) if environment.supports(AsrProvider::Coreml) => AsrProvider::Coreml,
             Some(environment) if environment.supports(AsrProvider::Gpu) => AsrProvider::Gpu,
-            Some(environment)
-                if environment.supports(AsrProvider::Npu) && !environment.llama =>
-            {
+            Some(environment) if environment.supports(AsrProvider::Npu) && !environment.llama => {
                 AsrProvider::Npu
             }
             Some(_) => AsrProvider::Cpu,
@@ -873,10 +894,7 @@ impl Desktop {
     }
 
     /// 任务计划对应的课程库保存位置；记录可能引用了已移除的库。
-    pub(crate) fn task_library(
-        &self,
-        task: &TaskRecord,
-    ) -> Option<&workspace::LibraryLocation> {
+    pub(crate) fn task_library(&self, task: &TaskRecord) -> Option<&workspace::LibraryLocation> {
         self.workspace
             .as_ref()
             .and_then(|w| w.state.library(&task.plan.library_id))
@@ -919,8 +937,7 @@ impl Desktop {
             Ok(())
         });
         if let Err(error) = result {
-            self.workspace_error =
-                Some(format!("当前输入尚未保存：{error:#}"));
+            self.workspace_error = Some(format!("当前输入尚未保存：{error:#}"));
             cx.notify();
             return false;
         }
@@ -1010,14 +1027,8 @@ impl Desktop {
     /// 计划构造共享的组件检查：引擎与 FFmpeg 必备；`online` 来源另需 yt-dlp
     /// （批量计划恒为在线来源，单条计划按已确认来源的 online 标记）。
     fn ensure_plan_environment(&self, online: bool) -> Result<&crate::backend::Environment> {
-        let environment = self
-            .environment
-            .as_ref()
-            .context("正在检查所需组件…")?;
-        ensure!(
-            environment.engine,
-            "生成引擎无法启动"
-        );
+        let environment = self.environment.as_ref().context("正在检查所需组件…")?;
+        ensure!(environment.engine, "生成引擎无法启动");
         ensure!(
             environment.ffmpeg && environment.ffprobe,
             "缺少视频处理组件，请在设置中查看"
@@ -1106,10 +1117,7 @@ impl Desktop {
                 || (source.subtitle_request.is_none() && source.subtitle_read_error.is_none()),
             "所选字幕还未确认，请继续读取或明确选择其他文字来源。"
         );
-        ensure!(
-            !source.identity.is_empty(),
-            "无法识别这个视频，请重新预览"
-        );
+        ensure!(!source.identity.is_empty(), "无法识别这个视频，请重新预览");
         ensure!(!draft.title.trim().is_empty(), "请填写笔记名称");
         self.ensure_plan_storage(workspace, draft, validation)?;
         let mut config = self.plan_config(draft);
@@ -1323,10 +1331,7 @@ impl Desktop {
                 }
                 self.start_next_task(cx);
             }
-            Err(error) => {
-                self.workspace_error =
-                    Some(format!("任务尚未加入队列：{error:#}"))
-            }
+            Err(error) => self.workspace_error = Some(format!("任务尚未加入队列：{error:#}")),
         }
         cx.notify();
     }
@@ -1416,10 +1421,7 @@ impl Desktop {
             Ok((id, created)) => {
                 self.pending_conversion = None;
                 self.source_validation = None;
-                self.message = (!created).then(|| {
-                    "已有相同任务，未重复加入"
-                        .into()
-                });
+                self.message = (!created).then(|| "已有相同任务，未重复加入".into());
                 if created {
                     self.following_conversion = self
                         .following_conversion
@@ -1434,10 +1436,7 @@ impl Desktop {
                 // Preparation may finish after navigation; keep the user's current page.
                 self.start_next_task(cx);
             }
-            Err(error) => {
-                self.workspace_error =
-                    Some(format!("任务尚未加入队列：{error:#}"))
-            }
+            Err(error) => self.workspace_error = Some(format!("任务尚未加入队列：{error:#}")),
         }
         cx.notify();
     }
@@ -1447,8 +1446,7 @@ impl Desktop {
         task: &TaskRecord,
         secrets: &HashMap<String, String>,
     ) -> Result<course2md::execution::Request> {
-        let location = self.task_library(task)
-            .context("任务保存位置暂时不可用")?;
+        let location = self.task_library(task).context("任务保存位置暂时不可用")?;
         workspace::check_library(location)?;
         ensure!(
             task.work_dir == location.root.join(".course2md/work").join(&task.id),
@@ -1463,7 +1461,8 @@ impl Desktop {
             .resolve_for_execution_with_secrets(&task.plan.config, &refs, secrets)?
             .into_config();
         let course_id = workspace::course_dir_name(&task.plan.source_id);
-        let subtitle_events = if task.plan.options.source_mode != TranscriptSource::Asr && task.plan.subtitle.is_none()
+        let subtitle_events = if task.plan.options.source_mode != TranscriptSource::Asr
+            && task.plan.subtitle.is_none()
         {
             workspace::task_subtitle_events(task)?
         } else {
@@ -1517,8 +1516,7 @@ impl Desktop {
     }
 
     fn write_task_control(&self, task: &TaskRecord, resend: Vec<String>) -> Result<()> {
-        let library = self.task_library(task)
-            .context("任务保存位置尚未恢复")?;
+        let library = self.task_library(task).context("任务保存位置尚未恢复")?;
         workspace::check_library(library)?;
         ensure!(
             task.work_dir == library.root.join(".course2md/work").join(&task.id),
@@ -1905,8 +1903,7 @@ impl Desktop {
                 self.navigate(Page::Task, cx);
                 return;
             }
-            if task.has_uncertain()
-            {
+            if task.has_uncertain() {
                 self.select_task(&id, cx);
                 self.navigate(Page::Task, cx);
                 return;
@@ -1952,8 +1949,12 @@ impl Desktop {
                 .context("原任务记录暂时不可用")?;
             let mut base = task.plan.config.clone();
             base.defaults.transcript_source = Some(course2md::config::TranscriptSource::Subtitle);
-            base.llm.enabled = components.iter().any(|part| part == Component::Proofreading.as_str());
-            base.llm.summarize = components.iter().any(|part| part == Component::Summary.as_str());
+            base.llm.enabled = components
+                .iter()
+                .any(|part| part == Component::Proofreading.as_str());
+            base.llm.summarize = components
+                .iter()
+                .any(|part| part == Component::Summary.as_str());
             let config = self.preferences.config_for_refs(
                 &base,
                 &ServiceRefs {
@@ -2007,9 +2008,8 @@ impl Desktop {
         else {
             return;
         };
-        let events = crate::spawn_blocking_io(move || {
-            workspace::task_subtitle_events(&task).ok().flatten()
-        });
+        let events =
+            crate::spawn_blocking_io(move || workspace::task_subtitle_events(&task).ok().flatten());
         cx.spawn_in(window, async move |this, cx| {
             let events = events.recv().await.ok().flatten();
             let _ = this.update_in(cx, |this, window, cx| {
@@ -2155,9 +2155,7 @@ impl Desktop {
                 task.state = match task.intent {
                     Intent::Cancel => TaskState::Cancelled,
                     Intent::Pause | Intent::Quit => TaskState::Paused,
-                    Intent::Run if task.has_uncertain() => {
-                        TaskState::Uncertain
-                    }
+                    Intent::Run if task.has_uncertain() => TaskState::Uncertain,
                     Intent::Run => TaskState::NeedsAttention,
                 };
                 if task.error.is_none() && !cancelled && task.intent == Intent::Run {
@@ -2250,11 +2248,15 @@ impl Desktop {
                         };
                         let _ = this.update(cx, |this, cx| {
                             if !issues.is_empty() {
-                                this.message =
-                                    Some(format!("笔记已保存，{}", issues.join("；")));
+                                this.message = Some(format!("笔记已保存，{}", issues.join("；")));
                             }
                             if let Some(manifest) = &manifest {
-                                update_published_course(&mut this.courses, &done, manifest, thumbnail);
+                                update_published_course(
+                                    &mut this.courses,
+                                    &done,
+                                    manifest,
+                                    thumbnail,
+                                );
                             }
                             this.refresh_library(cx);
                             if open {
@@ -2383,10 +2385,11 @@ impl Desktop {
     }
 
     fn queue_page_header(&self) -> Div {
-        h_flex().w_full().min_w_0().items_center().child(theme::page_heading(
-            "tasks-page-title",
-            "任务",
-        ))
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .child(theme::page_heading("tasks-page-title", "任务"))
     }
 
     /// One row of the virtualized queue: every row keeps the spacing the old
@@ -2526,16 +2529,18 @@ impl Desktop {
                     (if queued { primary } else { secondary })(SharedString::from(format!(
                         "{id_prefix}cancel-{id}"
                     )))
-                        .icon(icons::close())
-                        .label(if cancelling { "正在取消…" } else { "取消任务" })
-                        .loading(cancelling)
-                        .disabled(cancelling)
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, _, cx| {
-                                this.set_task_intent(id.clone(), Intent::Cancel, cx)
-                            }
-                        })),
+                    .icon(icons::close())
+                    .label(if cancelling {
+                        "正在取消…"
+                    } else {
+                        "取消任务"
+                    })
+                    .loading(cancelling)
+                    .disabled(cancelling)
+                    .on_click(cx.listener({
+                        let id = id.clone();
+                        move |this, _, _, cx| this.set_task_intent(id.clone(), Intent::Cancel, cx)
+                    })),
                 );
         }
         actions
@@ -2578,16 +2583,13 @@ impl Desktop {
             .cursor_pointer()
             .rounded(RADIUS_SMALL)
             .p_0()
-            .child(
-                cover_slot(rems(6.), cover)
-                    .when(!has_cover, |slot| {
-                        slot.child(
-                            icons::movie()
-                                .size(rems(20. / 14.))
-                                .text_color(color(ON_SECONDARY_CONTAINER)),
-                        )
-                    }),
-            )
+            .child(cover_slot(rems(6.), cover).when(!has_cover, |slot| {
+                slot.child(
+                    icons::movie()
+                        .size(rems(20. / 14.))
+                        .text_color(color(ON_SECONDARY_CONTAINER)),
+                )
+            }))
             .child(
                 v_flex()
                     .flex_1()
@@ -2650,7 +2652,8 @@ impl Desktop {
             .items_center()
             .flex_wrap()
             .child(div().flex_1().min_w(rems(14.)).max_w_full().child(heading));
-        let has_exports = self.task_library(task)
+        let has_exports = self
+            .task_library(task)
             .is_some_and(|location| !workspace::task_export_files(task, location).is_empty());
         if let Some(path) = &task.artifact {
             let path = path.clone();
@@ -2699,7 +2702,8 @@ impl Desktop {
                 .pt_3()
                 .border_t_1()
                 .border_color(color(HAIRLINE));
-            let destination = self.task_library(task)
+            let destination = self
+                .task_library(task)
                 .map(|lib| lib.name.clone())
                 .unwrap_or_else(|| "保存位置暂时不可用".into());
             let facts = v_flex()
@@ -2735,11 +2739,7 @@ impl Desktop {
                 progress.filter(|_| task.state != TaskState::Partial),
                 |view, progress| view.child(progress),
             );
-            let uncertain: Vec<_> = task
-                .blocked
-                .iter()
-                .filter(|b| b.is_uncertain())
-                .collect();
+            let uncertain: Vec<_> = task.blocked.iter().filter(|b| b.is_uncertain()).collect();
             if let Some(message) = self
                 .task_feedback_view(task)
                 .filter(|_| task.state != TaskState::Partial)
@@ -2750,11 +2750,14 @@ impl Desktop {
                 details = details.child(block);
             }
             let style = RecoveryStyle::Card;
-            let mut actions = h_flex().gap_2().flex_wrap().children(self.reassociate_action(
-                self.task_library(task),
-                style.button("reassociate", &id, Emphasis::Secondary),
-                cx,
-            ));
+            let mut actions = h_flex()
+                .gap_2()
+                .flex_wrap()
+                .children(self.reassociate_action(
+                    self.task_library(task),
+                    style.button("reassociate", &id, Emphasis::Secondary),
+                    cx,
+                ));
             if let Some(followup) = &task.handled_by {
                 let next = followup.clone();
                 actions = actions.child(
@@ -2783,8 +2786,8 @@ impl Desktop {
             if task.artifact.is_some() {
                 let requires_repair = task_requires_service_repair(task);
                 // Outside a partial result the feedback line already carries the reason.
-                if let Some(reason) = task_service_repair_reason(task)
-                    .filter(|_| task.state == TaskState::Partial)
+                if let Some(reason) =
+                    task_service_repair_reason(task).filter(|_| task.state == TaskState::Partial)
                 {
                     details = details.child(
                         accessible_text(
@@ -2802,7 +2805,10 @@ impl Desktop {
                 }
                 for (component, label, outcome) in &failures {
                     let unknown_component = uncertain.iter().any(|request| {
-                        request.purpose.as_deref().and_then(ai_component)
+                        request
+                            .purpose
+                            .as_deref()
+                            .and_then(ai_component)
                             .is_some_and(|part| part.as_str() == component)
                     });
                     if unknown_component {
@@ -2912,18 +2918,34 @@ impl Desktop {
         )
     }
 
-    fn resume_action(&self, task: &TaskRecord, style: RecoveryStyle, cx: &mut Context<Self>) -> Button {
+    fn resume_action(
+        &self,
+        task: &TaskRecord,
+        style: RecoveryStyle,
+        cx: &mut Context<Self>,
+    ) -> Button {
         let id = task.id.clone();
         style
             .button("resume", &task.id, Emphasis::Primary)
             .icon(icons::play_arrow())
-            .label(if task.state == TaskState::Paused { "继续生成" } else { "继续任务" })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.set_task_intent(id.clone(), Intent::Run, cx)
-            }))
+            .label(if task.state == TaskState::Paused {
+                "继续生成"
+            } else {
+                "继续任务"
+            })
+            .on_click(
+                cx.listener(move |this, _, _, cx| {
+                    this.set_task_intent(id.clone(), Intent::Run, cx)
+                }),
+            )
     }
 
-    fn repair_ai_action(&self, task: &TaskRecord, style: RecoveryStyle, cx: &mut Context<Self>) -> Button {
+    fn repair_ai_action(
+        &self,
+        task: &TaskRecord,
+        style: RecoveryStyle,
+        cx: &mut Context<Self>,
+    ) -> Button {
         let id = task.id.clone();
         style
             .button("repair-ai", &task.id, Emphasis::Secondary)
@@ -2953,7 +2975,12 @@ impl Desktop {
             }))
     }
 
-    fn adjust_action(&self, task: &TaskRecord, style: RecoveryStyle, cx: &mut Context<Self>) -> Button {
+    fn adjust_action(
+        &self,
+        task: &TaskRecord,
+        style: RecoveryStyle,
+        cx: &mut Context<Self>,
+    ) -> Button {
         let id = task.id.clone();
         style
             .button("adjust", &task.id, Emphasis::Secondary)
@@ -2965,7 +2992,9 @@ impl Desktop {
             } else {
                 "调整后重试"
             })
-            .on_click(cx.listener(move |this, _, window, cx| this.adjust_task(id.clone(), window, cx)))
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.adjust_task(id.clone(), window, cx)),
+            )
     }
 
     /// Collapsing a card unmounts its detail; expanding it later starts fresh.
@@ -3074,11 +3103,20 @@ impl Desktop {
 
     /// Compact workbench status uses the same measured progress as task details.
     pub(crate) fn compact_task_progress(&self, task: &TaskRecord) -> Option<(String, Option<f32>)> {
-        self.task_stage_rows(task).into_iter()
-            .find(|stage| matches!(stage.status, StageStatus::Running | StageStatus::Pausing | StageStatus::Stopping))
+        self.task_stage_rows(task)
+            .into_iter()
+            .find(|stage| {
+                matches!(
+                    stage.status,
+                    StageStatus::Running | StageStatus::Pausing | StageStatus::Stopping
+                )
+            })
             .map(|stage| {
-                let label = if stage.detail.is_empty() { stage.title }
-                    else { format!("{} · {}", stage.title, stage.detail) };
+                let label = if stage.detail.is_empty() {
+                    stage.title
+                } else {
+                    format!("{} · {}", stage.title, stage.detail)
+                };
                 (label, stage.fraction)
             })
     }
@@ -3124,13 +3162,20 @@ impl Desktop {
             Some(view)
         };
         let history = (!completed.is_empty()).then(|| {
-            let content = v_flex().w_full().min_w_0().child(TaskStages { rows: completed });
+            let content = v_flex()
+                .w_full()
+                .min_w_0()
+                .child(TaskStages { rows: completed });
             self.task_disclosure(TaskPanel::Stages, &task.id, content, cx)
         });
         (progress, history)
     }
 
-    fn task_log_view(&mut self, task: &TaskRecord, cx: &mut Context<Self>) -> Option<TaskDisclosure> {
+    fn task_log_view(
+        &mut self,
+        task: &TaskRecord,
+        cx: &mut Context<Self>,
+    ) -> Option<TaskDisclosure> {
         let text = task
             .logs
             .iter()
@@ -3142,7 +3187,10 @@ impl Desktop {
         (!text.trim().is_empty()).then(|| {
             let content = v_flex().child(
                 div()
-                    .id(SharedString::from(format!("task-raw-log-scroll-{}", task.id)))
+                    .id(SharedString::from(format!(
+                        "task-raw-log-scroll-{}",
+                        task.id
+                    )))
                     .w_full()
                     .min_w_0()
                     .max_h(rems(16.))
@@ -3165,8 +3213,7 @@ impl Desktop {
     }
 
     fn task_feedback_view(&self, task: &TaskRecord) -> Option<AnyElement> {
-        if task.has_uncertain()
-        {
+        if task.has_uncertain() {
             return None;
         }
         let id = SharedString::from(format!("task-feedback-{}", task.id));
@@ -3189,11 +3236,7 @@ impl Desktop {
     /// queue page and the workbench attention card.
     fn uncertain_block(&self, task: &TaskRecord, cx: &mut Context<Self>) -> Option<Div> {
         let id = task.id.clone();
-        let uncertain: Vec<_> = task
-            .blocked
-            .iter()
-            .filter(|b| b.is_uncertain())
-            .collect();
+        let uncertain: Vec<_> = task.blocked.iter().filter(|b| b.is_uncertain()).collect();
         if uncertain.is_empty() || task.handled_by.is_some() {
             return None;
         }
@@ -3274,26 +3317,23 @@ impl Desktop {
                         .whitespace_normal(),
                     )
                     .child(
-                        h_flex()
-                            .gap_3()
-                            .flex_wrap()
-                            .items_center()
-                            .child(
-                                badge(task_badge_kind(task.state)).child(task_status_label(task)),
-                            ),
+                        h_flex().gap_3().flex_wrap().items_center().child(
+                            badge(task_badge_kind(task.state)).child(task_status_label(task)),
+                        ),
                     ),
             )
     }
 
     fn task_processing_facts(&self, task: &TaskRecord) -> Div {
-        let source =
-            if task.plan.options.source_mode != TranscriptSource::Asr && task.plan.source.selected_subtitle.is_some() {
-                "视频字幕"
-            } else if task.plan.options.uses_cloud_provider() {
-                "识别服务"
-            } else {
-                "本机识别"
-            };
+        let source = if task.plan.options.source_mode != TranscriptSource::Asr
+            && task.plan.source.selected_subtitle.is_some()
+        {
+            "视频字幕"
+        } else if task.plan.options.uses_cloud_provider() {
+            "识别服务"
+        } else {
+            "本机识别"
+        };
         let mut facts = v_flex().w_full().min_w_0().gap_1().child(detail_row(
             SharedString::from(format!("task-text-source-{}", task.id)),
             "文字来源",
@@ -3348,15 +3388,15 @@ impl Desktop {
                         cx,
                     ),
                 )
-                .text_color(color(SUCCESS))))
+                .text_color(color(SUCCESS)),
+            ))
     }
 
     /// Workbench box card for a task that needs the user: paused, failed or
     /// uncertain outcomes, each with its real recovery action.
     pub fn box_task_attention(&mut self, task: &TaskRecord, cx: &mut Context<Self>) -> Div {
         let id = task.id.clone();
-        let uncertain = task.has_uncertain()
-            && task.handled_by.is_none();
+        let uncertain = task.has_uncertain() && task.handled_by.is_none();
         // 部分完成：正文已发布，逐项标明未完成的附加处理并可只补做该项。
         let partial_failures: Vec<(String, String, String)> = if task.state == TaskState::Partial {
             task.artifact
@@ -3406,9 +3446,10 @@ impl Desktop {
                 .text_sm(),
             );
         }
-        for (component, _, reason) in partial_failures.iter().filter(|(component, _, _)| {
-            !requires_repair || !ai_component(component).is_some()
-        }) {
+        for (component, _, reason) in partial_failures
+            .iter()
+            .filter(|(component, _, _)| !requires_repair || !ai_component(component).is_some())
+        {
             card = card.child(
                 accessible_text(
                     SharedString::from(format!("box-partial-{id}-{component}")),
@@ -3456,7 +3497,8 @@ impl Desktop {
                 if requires_repair && ai_component(component).is_some() {
                     continue;
                 }
-                actions = actions.child(self.retry_component_action(task, component, label, style, cx));
+                actions =
+                    actions.child(self.retry_component_action(task, component, label, style, cx));
             }
             let details_id = id.clone();
             actions = actions.child(
@@ -3557,8 +3599,7 @@ fn task_status_label(task: &TaskRecord) -> String {
     if task.handled_by.is_some() {
         return "已有后续处理任务".into();
     }
-    if task.has_uncertain()
-    {
+    if task.has_uncertain() {
         let purpose: std::collections::BTreeSet<_> = task
             .blocked
             .iter()
@@ -3567,7 +3608,10 @@ fn task_status_label(task: &TaskRecord) -> String {
             .collect();
         // The 阅读笔记 action shows whether the note is readable.
         let all = |component: Component| {
-            !purpose.is_empty() && purpose.iter().all(|purpose| ai_component(purpose) == Some(component))
+            !purpose.is_empty()
+                && purpose
+                    .iter()
+                    .all(|purpose| ai_component(purpose) == Some(component))
         };
         return if all(Component::Proofreading) {
             "AI 校对结果未确认"
@@ -3687,7 +3731,10 @@ pub(crate) fn task_component_failures(
             results.push((key.into(), label.into(), outcome));
         }
     }
-    if let Some(exports) = value.get(Component::Exports.as_str()).and_then(|v| v.as_object()) {
+    if let Some(exports) = value
+        .get(Component::Exports.as_str())
+        .and_then(|v| v.as_object())
+    {
         let failures: Vec<course2md::artifact::Outcome> = exports
             .values()
             .filter_map(|v| serde_json::from_value(v.clone()).ok())
@@ -3718,10 +3765,9 @@ pub(crate) fn task_component_failures(
 #[cfg(test)]
 mod tests {
     use super::{
-        PlanValidation, QueueItem, StageStatus, TaskGroup, WorkerWait,
-        ai_stage_outcome, batch_note_title, task_failure_summary, task_stage_progress,
-        update_draft_source_title, update_input_form, validate_plan_config,
-        validate_plan_storage, worker_wait_state,
+        PlanValidation, QueueItem, StageStatus, TaskGroup, WorkerWait, ai_stage_outcome,
+        batch_note_title, task_failure_summary, task_stage_progress, update_draft_source_title,
+        update_input_form, validate_plan_config, validate_plan_storage, worker_wait_state,
     };
 
     #[test]
@@ -3984,8 +4030,14 @@ mod tests {
     fn pause_and_cancel_intents_do_not_report_continued_generation() {
         for intent in [Intent::Pause, Intent::Quit, Intent::Cancel] {
             assert_eq!(worker_wait_state(true, false, intent, []), None);
-            assert_eq!(worker_wait_state(true, false, intent, [("llm", true)]), None);
-            assert_eq!(worker_wait_state(true, true, intent, [("render", true)]), None);
+            assert_eq!(
+                worker_wait_state(true, false, intent, [("llm", true)]),
+                None
+            );
+            assert_eq!(
+                worker_wait_state(true, true, intent, [("render", true)]),
+                None
+            );
             assert_eq!(worker_wait_state(false, false, intent, []), None);
         }
     }

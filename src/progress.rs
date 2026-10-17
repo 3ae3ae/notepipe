@@ -128,8 +128,7 @@ pub fn note_tokens(stage: &str, prompt: u64, completion: u64) {
 pub fn download_progress(current: u64, total: u64) {
     static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     let mut last = crate::runtime::lock_recover(&LAST);
-    if current != total
-        && last.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(200))
+    if current != total && last.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(200))
     {
         return;
     }

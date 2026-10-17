@@ -520,10 +520,7 @@ impl Desktop {
         let (workspace, workspace_error) =
             match workspace::Workspace::open(output.clone(), options.clone()) {
                 Ok(workspace) => (Some(workspace), None),
-                Err(error) => (
-                    None,
-                    Some(format!("任务记录读取失败：{error:#}")),
-                ),
+                Err(error) => (None, Some(format!("任务记录读取失败：{error:#}"))),
             };
         let settings_ui = settings_ui::State::new(window, cx);
         let onboarding = onboarding::State::new(window, cx);
@@ -1057,13 +1054,14 @@ impl Desktop {
                     match scan {
                         Ok(scan) => {
                             this.courses.extend(scan.courses);
-                            this.library_issues.extend(scan.issues.into_iter().map(|message| {
-                                course_library::LibraryIssue {
-                                    root: location.root.clone(),
-                                    kind: course_library::LibraryIssueKind::Scan,
-                                    message,
-                                }
-                            }));
+                            this.library_issues
+                                .extend(scan.issues.into_iter().map(|message| {
+                                    course_library::LibraryIssue {
+                                        root: location.root.clone(),
+                                        kind: course_library::LibraryIssueKind::Scan,
+                                        message,
+                                    }
+                                }));
                         }
                         Err(error) => this.library_issues.push(course_library::LibraryIssue {
                             root: location.root.clone(),
@@ -1197,7 +1195,9 @@ impl Desktop {
                             this.page,
                             this.preview_generation,
                             reader_revision,
-                            this.preview.as_ref().map(|preview| preview.course.dir.as_path()),
+                            this.preview
+                                .as_ref()
+                                .map(|preview| preview.course.dir.as_path()),
                         )
                 }) {
                     cx.notify();
@@ -1260,16 +1260,20 @@ impl Desktop {
                     }
                     Err(error) => {
                         let io_kind = error.chain().find_map(|cause| {
-                            cause.downcast_ref::<std::io::Error>().map(std::io::Error::kind)
+                            cause
+                                .downcast_ref::<std::io::Error>()
+                                .map(std::io::Error::kind)
                         });
                         let message = match io_kind {
-                            Some(std::io::ErrorKind::NotFound) =>
-                                "笔记文件不存在，请重新连接保存位置后重试",
-                            Some(std::io::ErrorKind::PermissionDenied) =>
-                                "无权读取这份笔记，请检查保存位置的访问权限",
-                            _ =>
-                                "这份笔记无法读取，请检查保存位置中的文件",
-                        }.to_owned();
+                            Some(std::io::ErrorKind::NotFound) => {
+                                "笔记文件不存在，请重新连接保存位置后重试"
+                            }
+                            Some(std::io::ErrorKind::PermissionDenied) => {
+                                "无权读取这份笔记，请检查保存位置的访问权限"
+                            }
+                            _ => "这份笔记无法读取，请检查保存位置中的文件",
+                        }
+                        .to_owned();
                         this.reader_course_error = Some((reading_path, message.clone()));
                         if origin != Page::Library {
                             this.message = Some(message);
@@ -1304,7 +1308,10 @@ fn carry_repaired_reading_positions(
 /// A completed read clears only its own earlier failure notice; newer,
 /// unrelated feedback stays visible.
 fn settle_reader_notice(current: &mut Option<String>, failure: &mut Option<String>) {
-    if failure.take().is_some_and(|failed| current.as_deref() == Some(failed.as_str())) {
+    if failure
+        .take()
+        .is_some_and(|failed| current.as_deref() == Some(failed.as_str()))
+    {
         *current = None;
     }
 }
@@ -1480,7 +1487,9 @@ fn main() {
                     // macOS keeps the app running with its window hidden. Other
                     // platforms cannot hide, so closing the window quits the app.
                     if !cfg!(target_os = "macos") {
-                        return weak.update(cx, |this, cx| this.request_close(cx)).unwrap_or(true);
+                        return weak
+                            .update(cx, |this, cx| this.request_close(cx))
+                            .unwrap_or(true);
                     }
                     let saved = weak
                         .update(cx, |this, cx| {
@@ -1520,8 +1529,7 @@ fn main() {
                 gpui::MenuItem::action("退出 course2md", Quit),
             ]),
             gpui::Menu::new("文件").items([gpui::MenuItem::action("导入视频", ImportVideo)]),
-            gpui::Menu::new("查找")
-                .items([gpui::MenuItem::action("搜索笔记", SearchContent)]),
+            gpui::Menu::new("查找").items([gpui::MenuItem::action("搜索笔记", SearchContent)]),
         ]);
         cx.activate(true);
     });

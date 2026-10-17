@@ -107,7 +107,8 @@ pub fn start(window: &mut Window, cx: &App) {
         return;
     };
     let trace_frames = std::env::var_os("COURSE2MD_FRAME_TRACE").is_some();
-    let trace_motion = std::env::var_os("COURSE2MD_MOTION_TRACE").as_deref() == Some(std::ffi::OsStr::new("1"));
+    let trace_motion =
+        std::env::var_os("COURSE2MD_MOTION_TRACE").as_deref() == Some(std::ffi::OsStr::new("1"));
     if trace_frames {
         gpui::profiler::set_trace_enabled(true);
     }

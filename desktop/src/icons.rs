@@ -96,13 +96,20 @@ icons! {
     bilibili_mark => "brands" / "bilibili";
 }
 
-const APP_ICON: (&str, &[u8]) = ("images/course2md.png", include_bytes!("../assets/128x128@2x.png"));
+const APP_ICON: (&str, &[u8]) = (
+    "images/course2md.png",
+    include_bytes!("../assets/128x128@2x.png"),
+);
 
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
-        if let Some((_, bytes)) = ICONS.iter().chain([&APP_ICON]).find(|(name, _)| *name == path) {
+        if let Some((_, bytes)) = ICONS
+            .iter()
+            .chain([&APP_ICON])
+            .find(|(name, _)| *name == path)
+        {
             return Ok(Some(Cow::Borrowed(bytes)));
         }
         gpui_kit_assets::Assets.load(path)

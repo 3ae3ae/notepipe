@@ -199,7 +199,9 @@ pub(crate) fn write_document(
             let source = match (local_file, document.meta.webpage_url.as_str()) {
                 (Some(file_name), _) => PortableSource::Local { file_name },
                 (None, "") => PortableSource::Unknown,
-                (None, url) => PortableSource::Online { url: url.to_owned() },
+                (None, url) => PortableSource::Online {
+                    url: url.to_owned(),
+                },
             };
             let export = PortableJson {
                 schema: 1,

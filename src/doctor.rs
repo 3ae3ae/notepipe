@@ -146,7 +146,12 @@ pub fn run() -> Result<()> {
                 Ok(()) => {}
                 Err(error) => {
                     failures += 1;
-                    check(&mut out, false, "配置值 / settings values", &format!("  {error:#}"));
+                    check(
+                        &mut out,
+                        false,
+                        "配置值 / settings values",
+                        &format!("  {error:#}"),
+                    );
                 }
             }
             let root = crate::config::model_dir_from(cfg.defaults.model_dir.as_deref());

@@ -35,7 +35,12 @@ pub enum Component {
 }
 
 impl Component {
-    pub const ALL: [Self; 4] = [Self::Screenshots, Self::Proofreading, Self::Summary, Self::Exports];
+    pub const ALL: [Self; 4] = [
+        Self::Screenshots,
+        Self::Proofreading,
+        Self::Summary,
+        Self::Exports,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {

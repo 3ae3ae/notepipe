@@ -162,7 +162,8 @@ impl RenderOnce for RevealFocus {
                         .as_ref()
                         .is_none_or(|(_, rem, size)| (*rem, *size) != (seen.1, seen.2));
                     state.update(cx, |state, _| {
-                        let reveal = focused.is_some() && (state.focused != focused || geometry_changed);
+                        let reveal =
+                            focused.is_some() && (state.focused != focused || geometry_changed);
                         state.focused = focused;
                         state.seen = Some(seen);
                         if !reveal {

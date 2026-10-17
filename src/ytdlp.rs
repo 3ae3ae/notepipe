@@ -46,7 +46,11 @@ fn bundled_candidates() -> Vec<PathBuf> {
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        for base in [dir.to_path_buf(), dir.join("../Resources"), dir.join("../Resources/bin")] {
+        for base in [
+            dir.to_path_buf(),
+            dir.join("../Resources"),
+            dir.join("../Resources/bin"),
+        ] {
             candidates.push(base.join(binary_name()));
         }
     }
