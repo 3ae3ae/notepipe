@@ -2746,7 +2746,7 @@ impl Desktop {
             && self.preview_cancel.is_none() && self.source_candidates.is_empty()
             && self.current_input_task(cx).is_none_or(|task| task.state.finished());
         let active = self.workbench_active_tasks_section(window, cx);
-        let recent = self.recent_notes_section(1, cx);
+        let recent = self.recent_notes_section(cx);
         let options = if show_options {
             Some(v_flex().w_full().min_w_0().p(rems(24. / 14.))
                 .gap(rems(24. / 14.)).rounded(RADIUS_HERO).bg(color(SURFACE))

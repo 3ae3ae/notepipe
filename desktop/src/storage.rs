@@ -139,6 +139,7 @@ pub enum LibraryCoverage {
     Unavailable,
 }
 
+#[derive(Clone)]
 pub struct LibraryAccess {
     pub available: Vec<PathBuf>,
     pub unavailable: Vec<PathBuf>,
