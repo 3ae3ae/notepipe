@@ -24,6 +24,20 @@ pub enum Status {
     Failed,
 }
 
+/// Machine-readable cause of a failed component. Display text stays free-form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    Authentication,
+    Model,
+    Parameters,
+    RateLimit,
+    Service,
+    Local,
+    Uncertain,
+    Other,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Outcome {
     pub status: Status,
@@ -33,6 +47,8 @@ pub struct Outcome {
     pub completed: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FailureKind>,
 }
 impl Default for Outcome {
     fn default() -> Self {
@@ -47,6 +63,7 @@ impl Outcome {
             message: None,
             completed: None,
             total: None,
+            kind: None,
         }
     }
     pub fn not_requested() -> Self {
@@ -59,6 +76,30 @@ impl Outcome {
         Self {
             status: Status::Failed,
             message: Some(message.into()),
+            kind: Some(FailureKind::Local),
+            ..Self::succeeded()
+        }
+    }
+    pub fn failed_kind(message: impl Into<String>, kind: FailureKind) -> Self {
+        Self {
+            status: Status::Failed,
+            message: Some(message.into()),
+            kind: Some(kind),
+            ..Self::succeeded()
+        }
+    }
+    /// Copies the structured cause from a dispatcher failure when present.
+    pub fn from_error(error: &anyhow::Error) -> Self {
+        let failure = error.downcast_ref::<crate::dispatch::Failure>();
+        let message = failure.map_or_else(|| format!("{error:#}"), |f| f.message.clone());
+        Self::from_error_with_message(error, message)
+    }
+    pub fn from_error_with_message(error: &anyhow::Error, message: impl Into<String>) -> Self {
+        let failure = error.downcast_ref::<crate::dispatch::Failure>();
+        Self {
+            status: Status::Failed,
+            message: Some(message.into()),
+            kind: Some(failure.and_then(|f| f.kind).unwrap_or(FailureKind::Local)),
             ..Self::succeeded()
         }
     }
@@ -402,7 +443,7 @@ pub fn publish_blocking(
             Err(error) => {
                 outcomes
                     .exports
-                    .insert(format.to_string(), Outcome::failed(format!("{error:#}")));
+                    .insert(format.to_string(), Outcome::from_error(&error));
             }
         }
     }

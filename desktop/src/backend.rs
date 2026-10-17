@@ -65,6 +65,8 @@ pub enum Event {
         purpose: Option<String>,
         #[serde(default)]
         description: Option<String>,
+        #[serde(default)]
+        kind: Option<course2md::artifact::FailureKind>,
         message: String,
     },
     #[serde(skip)]

@@ -207,14 +207,12 @@ pub fn text_matches(text: &str, query: &str) -> Vec<Range<usize>> {
 /// A contents list describes topics. Frame boundaries remain in the article,
 /// but a timestamp alone does not become a chapter in the reading rail.
 pub fn content_outline(
-    headings: &[(usize, String, Option<f64>)],
+    headings: &[(usize, String, Option<f64>, bool)],
     topics: &[(f64, String)],
 ) -> Vec<(usize, String, Option<f64>)> {
     let mut named = BTreeMap::new();
-    for (index, label, seconds) in headings {
-        if !label.trim().is_empty()
-            && !seconds.is_some_and(|seconds| course2md::render::fmt_ts(seconds) == *label)
-        {
+    for (index, label, seconds, timestamp_only) in headings {
+        if !label.trim().is_empty() && !timestamp_only {
             named.insert(*index, (label.clone(), *seconds));
         }
     }
@@ -222,15 +220,15 @@ pub fn content_outline(
         if let Some((index, _)) = nearest_time(
             headings
                 .iter()
-                .map(|(index, _, seconds)| (*index, *seconds)),
+                .map(|(index, _, seconds, _)| (*index, *seconds)),
             *seconds,
         ) {
             // The entry opens this section, whose displayed time may differ
             // slightly from the summary's proposed topic boundary.
             let displayed_time = headings
                 .iter()
-                .find(|(heading, _, _)| *heading == index)
-                .and_then(|(_, _, seconds)| *seconds);
+                .find(|(heading, _, _, _)| *heading == index)
+                .and_then(|(_, _, seconds, _)| *seconds);
             named.insert(index, (title.clone(), displayed_time));
         }
     }
@@ -291,11 +289,11 @@ mod tests {
     #[test]
     fn contents_use_real_topics_instead_of_every_frame_timestamp() {
         let headings = vec![
-            (0, "摘要".into(), None),
-            (2, "00:06".into(), Some(6.)),
-            (5, "00:16".into(), Some(16.)),
-            (8, "00:27".into(), Some(27.)),
-            (11, "00:40".into(), Some(40.)),
+            (0, "摘要".into(), None, false),
+            (2, "00:06".into(), Some(6.), true),
+            (5, "00:16".into(), Some(16.), true),
+            (8, "00:27".into(), Some(27.), true),
+            (11, "00:40".into(), Some(40.), true),
         ];
         assert!(content_outline(&headings, &[]).is_empty());
         assert_eq!(
@@ -309,8 +307,17 @@ mod tests {
                 (11, "讨论与回应".into(), Some(40.)),
             ]
         );
-        let authored = vec![(0, "第一章".into(), None), (5, "第二章".into(), None)];
-        assert_eq!(content_outline(&authored, &[]), authored);
+        let authored = vec![
+            (0, "第一章".into(), None, false),
+            (5, "第二章".into(), None, false),
+        ];
+        assert_eq!(
+            content_outline(&authored, &[]),
+            authored
+                .iter()
+                .map(|(index, label, seconds, _)| (*index, label.clone(), *seconds))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

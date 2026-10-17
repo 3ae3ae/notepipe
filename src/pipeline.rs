@@ -199,7 +199,6 @@ async fn run_task_inner(
         prior_work_dir,
     } = &request.operation
     {
-        let components = execution::Component::parse_all(components)?;
         return reprocess(
             request,
             cfg,
@@ -529,7 +528,7 @@ fn export_only(
                 exports.insert(format.to_string(), Outcome::succeeded());
             }
             Err(error) => {
-                exports.insert(format.to_string(), Outcome::failed(format!("{error:#}")));
+                exports.insert(format.to_string(), Outcome::from_error(&error));
             }
         }
     }
@@ -837,7 +836,7 @@ async fn run_prepared(
             Vec::new()
         }
         Err(error) => {
-            outcomes.screenshots = Outcome::failed(format!("{error:#}"));
+            outcomes.screenshots = Outcome::from_error(&error);
             Vec::new()
         }
     };
@@ -865,13 +864,19 @@ async fn run_prepared(
                 }
             };
             outcomes.transcript = if completed.is_empty() {
-                Outcome::failed(format!("{error:#}"))
+                Outcome::from_error(&error)
             } else {
                 Outcome {
                     status: Status::Partial,
                     message: Some(format!("{error:#}")),
                     completed: Some(completed.len()),
                     total: None,
+                    kind: Some(
+                        error
+                            .downcast_ref::<crate::dispatch::Failure>()
+                            .and_then(|failure| failure.kind)
+                            .unwrap_or(crate::artifact::FailureKind::Local),
+                    ),
                 }
             };
             save_materials(cfg, &frames, &completed, &outcomes)?;
@@ -1163,6 +1168,7 @@ impl Outcome {
     /// only callers; the type itself belongs to the version manifest.
     pub fn from_report(report: &crate::llm::PolishReport) -> Self {
         Self {
+            kind: None,
             status: if report.failed == 0 {
                 Status::Succeeded
             } else if report.succeeded > 0 {
@@ -1207,7 +1213,8 @@ async fn summarize_step(
                 error = %format!("{error:#}"),
                 "生成摘要未完成 / Summary generation incomplete"
             );
-            outcomes.summary = Outcome::failed(crate::summarize::failure_message(&error));
+            outcomes.summary =
+                Outcome::from_error_with_message(&error, crate::summarize::failure_message(&error));
             Ok(None)
         }
     }

@@ -1,5 +1,6 @@
 //! One start intent continues source preparation through to a readable note.
 use super::*;
+use course2md::execution::Component;
 
 /// Hero and preview share this ruler; the lower workbench reflows independently.
 const WORKBENCH_WIDTH: f32 = 760.;
@@ -3513,6 +3514,7 @@ mod tests {
     };
     use crate::{source, workspace};
     use course2md::config::TranscriptSource;
+    use course2md::execution::Component;
     use course2md::subtitle::{CachedSubtitle, SubtitleEvidence, SubtitleReadError};
 
     /// A pending Start for revision 7 with every prerequisite met.
@@ -3787,7 +3789,7 @@ mod tests {
         else {
             unreachable!();
         };
-        *components = vec!["exports".into()];
+        *components = vec![Component::Exports];
         tasks[1].state = workspace::TaskState::Complete;
         tasks[1].artifact = Some(original.to_owned());
         assert!(ConversionFollow::reader_reprocess(&tasks[1], original, 12).is_none());
@@ -3958,7 +3960,7 @@ mod tests {
         recovery.work_dir = "work/recovery".into();
         recovery.plan.operation = course2md::execution::Operation::Reprocess {
             base_version_dir: "versions/original".into(),
-            components: vec!["summary".into()],
+            components: vec![Component::Summary],
             prior_work_dir: Some(original.work_dir.clone()),
         };
         original.handled_by = Some(recovery.id.clone());
@@ -4011,6 +4013,7 @@ mod tests {
             request_id: Some("pending-summary".into()),
             purpose: Some("summary".into()),
             description: "摘要".into(),
+            kind: Some(course2md::artifact::FailureKind::Uncertain),
             message: "结果未知".into(),
         });
         assert!(super::retired_input_task(&draft, &tasks, &draft.input).is_none());

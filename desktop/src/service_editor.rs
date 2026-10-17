@@ -1,5 +1,6 @@
 //! Service editor: picker, editor dialog, connection testing and publishing.
 use super::*;
+use course2md::execution::Component;
 
 impl Desktop {
     /// Ordinary service editing with explicit Save and Cancel actions.
@@ -492,7 +493,7 @@ impl Desktop {
     pub(crate) fn open_reprocess_service_editor(
         &mut self,
         task_id: String,
-        components: Vec<String>,
+        components: Vec<Component>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -538,7 +539,7 @@ impl Desktop {
         &mut self,
         draft: ServiceDraft,
         target: Option<String>,
-        repair_task: Option<(String, Vec<String>)>,
+        repair_task: Option<(String, Vec<Component>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -1465,14 +1466,16 @@ impl Desktop {
             .filter(|kind| match kind {
                 TestKind::Proofread => components
                     .iter()
-                    .any(|component| component == "proofreading"),
+                    .any(|component| *component == Component::Proofreading),
                 TestKind::Vision => {
                     uses_vision
                         && components
                             .iter()
-                            .any(|component| component == "proofreading")
+                            .any(|component| *component == Component::Proofreading)
                 }
-                TestKind::Summary => components.iter().any(|component| component == "summary"),
+                TestKind::Summary => components
+                    .iter()
+                    .any(|component| *component == Component::Summary),
                 TestKind::Speech => false,
             })
             .map(TestKind::contract)

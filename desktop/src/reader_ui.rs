@@ -731,13 +731,7 @@ enum NoteItem {
 }
 
 fn note_summary_block(block: &PreviewBlock) -> bool {
-    match block {
-        PreviewBlock::Heading { anchor, .. } => anchor == "summary",
-        PreviewBlock::Paragraph { anchor, .. } => {
-            anchor == "summary-tldr" || anchor.starts_with("key-point-")
-        }
-        _ => false,
-    }
+    block.is_summary()
 }
 
 /// The title item leads every note; it is empty unless short windows scroll
@@ -956,7 +950,12 @@ fn reader_outline(preview: &notes::Preview) -> Vec<(usize, String, Option<f64>)>
         .enumerate()
         .filter_map(|(index, block)| {
             if let PreviewBlock::Heading { text, seconds, .. } = block {
-                Some((index, text.to_string(), *seconds))
+                Some((
+                    index,
+                    text.to_string(),
+                    *seconds,
+                    block.is_timestamp_heading(),
+                ))
             } else {
                 None
             }
@@ -1354,7 +1353,14 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize) -> AnyElement {
                 text,
                 anchor,
                 seconds,
-            } => render_note_heading(flow, index, text.clone(), anchor, *seconds),
+            } => render_note_heading(
+                flow,
+                index,
+                text.clone(),
+                anchor,
+                *seconds,
+                preview.blocks[index].is_timestamp_heading(),
+            ),
             PreviewBlock::Paragraph { text, anchor } => paragraph(
                 SharedString::from(anchor.clone()),
                 text.clone(),
@@ -1377,12 +1383,12 @@ fn render_note_heading(
     text: SharedString,
     anchor: &str,
     seconds: Option<f64>,
+    timestamp_only: bool,
 ) -> AnyElement {
     let marks = flow.highlight_runs(index);
     let chapter = flow.chapter_starts.get(&index);
     // Without a chapter title, a heading that is only its time is the chip itself.
-    let bare_timestamp =
-        chapter.is_none() && seconds.is_some_and(|s| course2md::render::fmt_ts(s) == text.as_ref());
+    let bare_timestamp = chapter.is_none() && timestamp_only;
     let heading = if !marks.is_empty() {
         Some(
             div()
@@ -2149,10 +2155,7 @@ impl Desktop {
                         this.refresh_reader_data(cx);
                         course2md::tr!("已定位原视频：{}", path.display())
                     }
-                    Err(error) => course2md::tr!(
-                        "原视频位置没有更改：{}",
-                        notes::chinese_half(&error.to_string())
-                    ),
+                    Err(error) => course2md::tr!("原视频位置没有更改：{}", error.to_string()),
                 });
                 cx.notify();
             });
@@ -2344,7 +2347,7 @@ impl Desktop {
                     Err(error) => {
                         this.message = Some(course2md::tr!(
                             "这个版本暂时无法打开：{}",
-                            notes::chinese_half(&error.to_string())
+                            error.to_string()
                         ))
                     }
                 }
@@ -3897,7 +3900,12 @@ impl Desktop {
                                 this.save_reading_position(cx);
                                 this.reprocess_task(
                                     retry.clone(),
-                                    components.clone(),
+                                    components
+                                        .iter()
+                                        .filter_map(|component| {
+                                            course2md::execution::Component::parse(component)
+                                        })
+                                        .collect(),
                                     Vec::new(),
                                     cx,
                                 );
@@ -5103,14 +5111,11 @@ fn load_reader_data(preview: &notes::Preview) -> ReaderData {
     let dir = &preview.course.dir;
     data.export_folder = existing_export_folder(dir, &preview.outputs);
     if let Some(manifest) = &preview.course.manifest {
-        let headings: HashMap<&str, usize> = preview
+        let headings: HashMap<usize, usize> = preview
             .blocks
             .iter()
             .enumerate()
-            .filter_map(|(index, block)| match block {
-                PreviewBlock::Heading { anchor, .. } => Some((anchor.as_str(), index)),
-                _ => None,
-            })
+            .filter_map(|(index, block)| block.section_index().map(|section| (section, index)))
             .collect();
         for (index, frame) in manifest.frames.iter().enumerate() {
             let section = preview
@@ -5130,7 +5135,7 @@ fn load_reader_data(preview: &notes::Preview) -> ReaderData {
                 })
                 .unwrap_or_default();
             let body_index = section
-                .and_then(|(section, _)| headings.get(format!("section-{section}").as_str()))
+                .and_then(|(section, _)| headings.get(&section))
                 .copied()
                 .or_else(|| {
                     nav::nearest_time(heading_times(&preview.blocks), frame.t).map(|(i, _)| i)

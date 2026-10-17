@@ -346,16 +346,16 @@ fn task_failure_summary(state: TaskState, error: Option<&str>) -> Option<String>
     error.map(|error| {
         let summary = error
             .lines()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or_default()
-            .split(" / ")
-            .next()
-            .unwrap_or_default()
-            .trim();
-        let localized = summary
-            .chars()
-            .any(|c| ('\u{3400}'..='\u{9fff}').contains(&c));
-        if localized && summary.chars().count() <= 140 {
+            .map(str::trim)
+            .find(|line| {
+                !line.is_empty()
+                    && !line.starts_with("ERROR:")
+                    && !line.starts_with("WARNING:")
+                    && !line.starts_with("Traceback")
+                    && !line.starts_with("panic")
+            })
+            .unwrap_or_default();
+        if summary.chars().count() <= 140 {
             summary.into()
         } else {
             course2md::tr!("转换未完成").into()
@@ -375,43 +375,19 @@ pub(crate) fn task_attention_summary(task: &TaskRecord) -> String {
 }
 
 /// Only concrete configuration rejections change recovery from Retry to Repair.
-/// Rate limiting, timeouts and unknown outcomes must keep their own recovery.
-fn service_configuration_issue(message: &str) -> Option<&'static str> {
-    let lower = message.to_ascii_lowercase();
-    if [
-        "api key",
-        "api_key",
-        "unauthorized",
-        "forbidden",
-        "http 401",
-        "http 403",
-    ]
-    .iter()
-    .any(|hint| lower.contains(hint))
-        || [
-            course2md::tr!("凭据"),
-            course2md::tr!("鉴权失败"),
-            course2md::tr!("认证失败"),
-            course2md::tr!("认证被拒绝"),
-        ]
-        .iter()
-        .any(|hint| message.contains(hint))
-    {
-        Some(course2md::tr!("AI 服务拒绝了 API Key，请检查密钥或权限"))
-    } else if ["http 404", "model not found", "unknown model"]
-        .iter()
-        .any(|hint| lower.contains(hint))
-        || message.contains("服务未找到此任务指定的接口或模型")
-    {
-        Some(course2md::tr!("AI 服务地址或模型名称有误"))
-    } else if ["http 400", "http 422"]
-        .iter()
-        .any(|hint| lower.contains(hint))
-        || message.contains("服务拒绝了请求参数")
-    {
-        Some(course2md::tr!("AI 服务不支持当前的模型设置"))
-    } else {
-        None
+/// Rate limiting, timeouts and unknown outcomes keep their own recovery.
+fn service_repair_reason(kind: course2md::artifact::FailureKind) -> Option<&'static str> {
+    match kind {
+        course2md::artifact::FailureKind::Authentication => {
+            Some(course2md::tr!("AI 服务拒绝了 API Key，请检查密钥或权限"))
+        }
+        course2md::artifact::FailureKind::Model => {
+            Some(course2md::tr!("AI 服务地址或模型名称有误"))
+        }
+        course2md::artifact::FailureKind::Parameters => {
+            Some(course2md::tr!("AI 服务不支持当前的模型设置"))
+        }
+        _ => None,
     }
 }
 
@@ -420,26 +396,22 @@ fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
         return None;
     }
     let outcomes = task.outcomes.as_ref()?;
-    let failures: Vec<&course2md::artifact::Outcome> = [&outcomes.proofreading, &outcomes.summary]
+    let components = [&outcomes.proofreading, &outcomes.summary]
         .into_iter()
         .filter(|outcome| {
             matches!(
                 outcome.status,
                 course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
             )
-        })
-        .collect();
-    if failures.is_empty() {
-        return None;
-    }
-    failures
+        });
+    let blocked = task
+        .blocked
         .iter()
-        .filter_map(|outcome| outcome.message.as_deref())
-        .chain(task.blocked.iter().filter_map(|request| {
-            ai_component(request.purpose.as_deref()?).map(|_| request.message.as_str())
-        }))
-        .chain(task.error.as_deref())
-        .find_map(service_configuration_issue)
+        .filter_map(|request| ai_component(request.purpose.as_deref()?).and_then(|_| request.kind));
+    components
+        .filter_map(|outcome| outcome.kind)
+        .chain(blocked)
+        .find_map(service_repair_reason)
 }
 
 pub(crate) fn task_requires_service_repair(task: &TaskRecord) -> bool {
@@ -1935,12 +1907,7 @@ impl Desktop {
                 .iter()
                 .filter(|b| b.is_uncertain())
                 .filter_map(|b| b.purpose.as_deref())
-                .map(|purpose| {
-                    ai_component(purpose)
-                        .unwrap_or(Component::Proofreading)
-                        .as_str()
-                        .to_owned()
-                })
+                .map(|purpose| ai_component(purpose).unwrap_or(Component::Proofreading))
                 .collect();
             self.reprocess_task(id, components, requests, cx);
             return;
@@ -1963,7 +1930,7 @@ impl Desktop {
     pub fn reprocess_task(
         &mut self,
         id: String,
-        mut components: Vec<String>,
+        mut components: Vec<Component>,
         resend: Vec<String>,
         cx: &mut Context<Self>,
     ) {
@@ -2023,8 +1990,8 @@ impl Desktop {
             .map(|task| {
                 task_component_failures(task)
                     .into_iter()
-                    .map(|(component, _, _)| component)
-                    .filter(|component| ai_component(component).is_some())
+                    .filter_map(|(component, _, _)| Component::parse(&component))
+                    .filter(|component| ai_component(component.as_str()).is_some())
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -2039,7 +2006,7 @@ impl Desktop {
     pub(crate) fn reprocess_task_with_service(
         &mut self,
         id: String,
-        components: Vec<String>,
+        components: Vec<Component>,
         ai_service: String,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -2055,12 +2022,8 @@ impl Desktop {
                 .context(course2md::tr!("原任务记录暂时不可用"))?;
             let mut base = task.plan.config.clone();
             base.defaults.transcript_source = Some(course2md::config::TranscriptSource::Subtitle);
-            base.llm.enabled = components
-                .iter()
-                .any(|part| part == Component::Proofreading.as_str());
-            base.llm.summarize = components
-                .iter()
-                .any(|part| part == Component::Summary.as_str());
+            base.llm.enabled = components.contains(&Component::Proofreading);
+            base.llm.summarize = components.contains(&Component::Summary);
             let config = self.preferences.config_for_refs(
                 &base,
                 &ServiceRefs {
@@ -2189,7 +2152,11 @@ impl Desktop {
                 let value = task.stages.entry(stage.clone()).or_default();
                 value.current = *current;
                 value.total = *total;
-                value.detail = message.clone();
+                value.detail = message.clone().or_else(|| {
+                    phase
+                        .as_deref()
+                        .map(|phase| crate::activity::model_transfer_phase(stage, Some(phase)))
+                });
             }
             Event::Error { message } => {
                 task.updated = workspace::now();
@@ -2200,6 +2167,7 @@ impl Desktop {
                 request_id,
                 purpose,
                 description,
+                kind,
                 message,
             } => {
                 task.updated = workspace::now();
@@ -2211,6 +2179,7 @@ impl Desktop {
                     request_id: request_id.clone(),
                     purpose: purpose.clone(),
                     description: description.clone().unwrap_or_default(),
+                    kind: *kind,
                     message: message.clone(),
                 };
                 if !task.blocked.contains(&blocked) {
@@ -3100,7 +3069,8 @@ impl Desktop {
             .icon(icons::refresh())
             .label(retry_component_label(&component))
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.reprocess_task(id.clone(), vec![component.clone()], Vec::new(), cx)
+                let parsed = Component::parse(&component).unwrap_or(Component::Proofreading);
+                this.reprocess_task(id.clone(), vec![parsed], Vec::new(), cx)
             }))
     }
 
@@ -3622,7 +3592,7 @@ impl Desktop {
             {
                 actions = actions.child(self.repair_ai_action(task, style, cx));
             }
-            for (component, label, _) in &partial_failures {
+            for (component, _, _) in &partial_failures {
                 if requires_repair && ai_component(component).is_some() {
                     continue;
                 }
@@ -4219,7 +4189,7 @@ mod tests {
         assert_eq!(
             task_failure_summary(
                 TaskState::NeedsAttention,
-                Some("服务拒绝凭据，请检查 API Key / Unauthorized: provider response\nraw details")
+                Some("服务拒绝凭据，请检查 API Key\nraw details")
             ),
             Some("服务拒绝凭据，请检查 API Key".into()),
         );
@@ -4516,9 +4486,10 @@ mod tests {
         };
         outcomes.proofreading = Outcome {
             status: Status::Partial,
-            message: Some("部分校对请求尚未完成".into()),
+            message: Some("服务拒绝凭据".into()),
             completed: Some(1),
             total: Some(2),
+            kind: Some(course2md::artifact::FailureKind::Authentication),
         };
         outcomes.exports.insert("md".into(), Outcome::succeeded());
         outcomes
@@ -4573,25 +4544,40 @@ mod tests {
         assert_eq!(failures[0].2.completed, Some(1));
         assert_eq!(failures[1].2.message.as_deref(), Some("HTML 写入失败"));
 
-        for (message, requires_repair) in [
+        for (message, kind, requires_repair) in [
             (
-                "服务未接受此任务保存的凭据，请检查对应服务的 API Key。",
-                true,
-            ),
-            ("此任务使用的凭据没有访问该服务或模型的权限。", true),
-            (
-                "服务未找到此任务指定的接口或模型，请检查服务地址和模型。",
+                "服务未接受此任务保存的凭据",
+                course2md::artifact::FailureKind::Authentication,
                 true,
             ),
             (
-                "服务拒绝了请求参数（HTTP 422），请检查此任务使用的模型与服务设置。",
+                "服务未找到此任务指定的接口或模型",
+                course2md::artifact::FailureKind::Model,
                 true,
             ),
-            ("服务请求次数达到限制，请稍后重试。", false),
-            ("服务未完成此请求（HTTP 500）。", false),
-            ("请求超时，请稍后重试。", false),
+            (
+                "服务拒绝了请求参数（HTTP 422）",
+                course2md::artifact::FailureKind::Parameters,
+                true,
+            ),
+            (
+                "服务请求次数达到限制，请稍后重试。",
+                course2md::artifact::FailureKind::RateLimit,
+                false,
+            ),
+            (
+                "服务未完成此请求（HTTP 500）。",
+                course2md::artifact::FailureKind::Service,
+                false,
+            ),
+            (
+                "请求超时，请稍后重试。",
+                course2md::artifact::FailureKind::Other,
+                false,
+            ),
         ] {
             outcomes.proofreading.message = Some(message.into());
+            outcomes.proofreading.kind = Some(kind);
             task.outcomes = Some(outcomes.clone());
             assert_eq!(
                 super::task_requires_service_repair(&task),
@@ -4600,12 +4586,14 @@ mod tests {
             );
         }
         outcomes.proofreading.message = Some("服务拒绝凭据".into());
+        outcomes.proofreading.kind = Some(course2md::artifact::FailureKind::Authentication);
         task.outcomes = Some(outcomes.clone());
         task.blocked.push(crate::workspace::BlockedRequest {
             reason: course2md::dispatch::REASON_UNCERTAIN.into(),
             request_id: Some("pending".into()),
             purpose: Some("summary".into()),
             description: "摘要".into(),
+            kind: Some(course2md::artifact::FailureKind::Uncertain),
             message: "结果尚未确认".into(),
         });
         assert!(!super::task_requires_service_repair(&task));

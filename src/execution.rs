@@ -19,14 +19,15 @@ pub enum Operation {
     Generate,
     Reprocess {
         base_version_dir: PathBuf,
-        components: Vec<String>,
+        components: Vec<Component>,
         prior_work_dir: Option<PathBuf>,
     },
 }
 
 /// A version component that a reprocess task can redo. The wire format stays the
 /// lowercase name so stored desktop plans keep loading.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Component {
     Screenshots,
     Proofreading,
@@ -53,16 +54,6 @@ impl Component {
 
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|c| c.as_str() == name)
-    }
-
-    /// Parse a requested component list; unknown names are an invalid task.
-    pub fn parse_all(names: &[String]) -> Result<Vec<Self>> {
-        names
-            .iter()
-            .map(|name| Self::parse(name))
-            .collect::<Option<Vec<_>>>()
-            .filter(|parsed| !parsed.is_empty())
-            .context(crate::tr!("补做内容无效 / Invalid requested components"))
     }
 }
 
@@ -188,7 +179,10 @@ impl Request {
                 base_version_dir.is_absolute(),
                 crate::tr!("原笔记版本需要绝对路径 / Base version requires an absolute path")
             );
-            Component::parse_all(components)?;
+            anyhow::ensure!(
+                !components.is_empty(),
+                crate::tr!("补做内容无效 / Invalid requested components")
+            );
             anyhow::ensure!(
                 prior_work_dir
                     .as_ref()
@@ -253,7 +247,7 @@ impl Request {
         };
         let needs_source = generating
             || matches!(&self.operation, Operation::Reprocess { components, .. }
-                if components.iter().any(|c| Component::parse(c) == Some(Component::Screenshots)));
+                if components.contains(&Component::Screenshots));
         let local_digest = if needs_source && Path::new(&self.source).is_file() {
             Some(file_digest(Path::new(&self.source))?)
         } else {

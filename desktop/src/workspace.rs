@@ -399,7 +399,7 @@ impl TaskRecord {
         matches!(
             &self.plan.operation,
             course2md::execution::Operation::Reprocess { components, .. }
-                if !components.is_empty() && components.iter().all(|part| part == Component::Exports.as_str())
+                if !components.is_empty() && components.iter().all(|part| *part == Component::Exports)
         )
     }
 }
@@ -482,6 +482,8 @@ pub struct BlockedRequest {
     pub purpose: Option<String>,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub kind: Option<course2md::artifact::FailureKind>,
     pub message: String,
 }
 
@@ -899,7 +901,7 @@ impl State {
     pub fn reprocess(
         &mut self,
         id: &str,
-        components: Vec<String>,
+        components: Vec<Component>,
         resend: Vec<String>,
     ) -> Result<String> {
         self.reprocess_with_service(id, components, resend, None)
@@ -910,7 +912,7 @@ impl State {
     pub fn reprocess_with_service(
         &mut self,
         id: &str,
-        mut components: Vec<String>,
+        mut components: Vec<Component>,
         resend: Vec<String>,
         ai_service: Option<(String, ConfigFile)>,
     ) -> Result<String> {
@@ -945,8 +947,7 @@ impl State {
             !components.is_empty(),
             course2md::tr!("请选择需要补做的内容")
         );
-        let mut parsed = Component::parse_all(&components)?;
-        for component in &parsed {
+        for component in &components {
             let failed = match (component, outcomes.as_ref()) {
                 (Component::Exports, Some(outcomes)) => {
                     outcomes.exports.values().any(failed_outcome)
@@ -974,9 +975,9 @@ impl State {
             // summary that the uncertain proofreading prevented from starting.
             // Any summary receipt means it has its own attempt to recover; do
             // not infer permission to repeat it from a proofreading decision.
-            let summary = Component::Summary.as_str();
-            if parsed.contains(&Component::Proofreading)
-                && !parsed.contains(&Component::Summary)
+            let summary = Component::Summary;
+            if components.contains(&Component::Proofreading)
+                && !components.contains(&Component::Summary)
                 && original.plan.config.llm.summarize
                 && outcomes
                     .as_ref()
@@ -987,10 +988,9 @@ impl State {
                 })
                 && !course2md::dispatch::receipts(&original.work_dir)?
                     .iter()
-                    .any(|receipt| receipt.purpose == summary)
+                    .any(|receipt| receipt.purpose == summary.as_str())
             {
-                parsed.push(Component::Summary);
-                components.push(summary.into());
+                components.push(Component::Summary);
                 components.sort();
             }
         } else {
@@ -1002,7 +1002,7 @@ impl State {
         let mut plan = original.plan;
         if let Some((service, config)) = ai_service {
             ensure!(
-                parsed
+                components
                     .iter()
                     .all(|part| matches!(part, Component::Proofreading | Component::Summary)),
                 course2md::tr!("服务修复只能用于未完成的校对或摘要")
@@ -1010,11 +1010,11 @@ impl State {
             plan.ai_service = Some(service);
             plan.config.llm = config.llm;
         }
-        let only_exports = parsed
+        let only_exports = components
             .iter()
             .all(|component| *component == Component::Exports);
-        plan.config.llm.enabled = parsed.contains(&Component::Proofreading);
-        plan.config.llm.summarize = parsed.contains(&Component::Summary);
+        plan.config.llm.enabled = components.contains(&Component::Proofreading);
+        plan.config.llm.summarize = components.contains(&Component::Summary);
         plan.config.llm.vision &= plan.config.llm.enabled;
         plan.options.llm = plan.config.llm.enabled;
         plan.options.summarize = plan.config.llm.summarize;
@@ -1134,7 +1134,7 @@ impl WorkspaceWriter {
                     last_record: None,
                     last_draft_subtitle: None,
                 };
-                let mut write = |state: State, cache: &mut WriterCache| -> Result<()> {
+                let write = |state: State, cache: &mut WriterCache| -> Result<()> {
                     Workspace::write_state(&thread_path, &state, &thread_mirrors, cache)
                 };
                 while let Ok(signal) = rx.recv() {
@@ -1415,7 +1415,7 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
     } = &task.plan.operation
         && components
             .iter()
-            .all(|component| component == Component::Exports.as_str())
+            .all(|component| *component == Component::Exports)
         && task.work_dir.join("export-result.json").is_file()
     {
         #[derive(serde::Deserialize)]
@@ -1478,6 +1478,7 @@ pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
             request_id: Some(receipt.request_id),
             purpose: Some(receipt.purpose),
             description: receipt.description.clone(),
+            kind: Some(course2md::artifact::FailureKind::Uncertain),
             message: if receipt.description.trim().is_empty() {
                 receipt
                     .message
@@ -2243,6 +2244,7 @@ pub(crate) fn accept_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use course2md::execution::Component;
     fn source(input: &str, title: &str) -> crate::source::Source {
         serde_json::from_value(serde_json::json!({"input":input,"title":title,"author":"","duration":60.0,"cover":null,"cover_error":null})).unwrap()
     }
@@ -3066,7 +3068,7 @@ mod tests {
         let draft = ws.state.draft().unwrap().clone();
         let next = ws
             .state
-            .reprocess(&id, vec!["proofreading".into()], vec![request.clone()])
+            .reprocess(&id, vec![Component::Proofreading], vec![request.clone()])
             .unwrap();
         let child = ws.state.task(&next).unwrap();
         let course2md::execution::Operation::Reprocess {
@@ -3077,7 +3079,7 @@ mod tests {
         else {
             panic!("expected component recovery");
         };
-        assert_eq!(components, &["proofreading", "summary"]);
+        assert_eq!(components, &[Component::Proofreading, Component::Summary]);
         assert_eq!(Some(base_version_dir), original.artifact.as_ref());
         assert_eq!(prior_work_dir.as_ref(), Some(&original.work_dir));
         assert!(child.plan.config.llm.enabled && child.plan.config.llm.summarize);
@@ -3088,7 +3090,7 @@ mod tests {
         assert_eq!(std::fs::read(manifest_path).unwrap(), manifest);
         assert_eq!(
             ws.state
-                .reprocess(&id, vec!["proofreading".into()], vec![request])
+                .reprocess(&id, vec![Component::Proofreading], vec![request])
                 .unwrap(),
             next
         );
@@ -3108,7 +3110,7 @@ mod tests {
             let (id, request) = uncertain_proofreading_note(&mut ws, requested, summary);
             let next = ws
                 .state
-                .reprocess(&id, vec!["proofreading".into()], vec![request])
+                .reprocess(&id, vec![Component::Proofreading], vec![request])
                 .unwrap();
             let child = ws.state.task(&next).unwrap();
             let course2md::execution::Operation::Reprocess { components, .. } =
@@ -3116,7 +3118,7 @@ mod tests {
             else {
                 panic!("expected component recovery");
             };
-            assert_eq!(components, &["proofreading"]);
+            assert_eq!(components, &[Component::Proofreading]);
             assert!(!child.plan.config.llm.summarize && !child.plan.options.summarize);
         }
     }
@@ -3162,7 +3164,7 @@ mod tests {
             .unwrap();
             let recovery = ws
                 .state
-                .reprocess(&id, vec!["proofreading".into()], vec![request]);
+                .reprocess(&id, vec![Component::Proofreading], vec![request]);
             if matches!(
                 receipt_state,
                 ReceiptState::Sending | ReceiptState::Uncertain
@@ -3181,7 +3183,7 @@ mod tests {
                 else {
                     panic!("expected component recovery");
                 };
-                assert_eq!(components, &["proofreading"], "{receipt_state:?}");
+                assert_eq!(components, &[Component::Proofreading], "{receipt_state:?}");
                 assert!(!child.plan.config.llm.summarize && !child.plan.options.summarize);
             }
         }
@@ -3266,16 +3268,16 @@ mod tests {
         let draft = ws.state.draft().unwrap().clone();
         assert!(
             ws.state
-                .reprocess(&id, vec!["screenshots".into()], vec![])
+                .reprocess(&id, vec![Component::Screenshots], vec![])
                 .is_err()
         );
         let followup = ws
             .state
-            .reprocess(&id, vec!["proofreading".into()], vec![])
+            .reprocess(&id, vec![Component::Proofreading], vec![])
             .unwrap();
         assert_eq!(
             ws.state
-                .reprocess(&id, vec!["proofreading".into()], vec![])
+                .reprocess(&id, vec![Component::Proofreading], vec![])
                 .unwrap(),
             followup
         );
@@ -3321,7 +3323,7 @@ mod tests {
             ws.state
                 .reprocess_with_service(
                     &id,
-                    vec!["screenshots".into()],
+                    vec![Component::Screenshots],
                     vec![],
                     Some(("new-ai-version".into(), repaired.clone()))
                 )
@@ -3331,7 +3333,7 @@ mod tests {
             .state
             .reprocess_with_service(
                 &id,
-                vec!["proofreading".into()],
+                vec![Component::Proofreading],
                 vec![],
                 Some(("new-ai-version".into(), repaired.clone())),
             )
@@ -3354,13 +3356,13 @@ mod tests {
         assert!(matches!(
             &child.plan.operation,
             course2md::execution::Operation::Reprocess { base_version_dir, components, .. }
-                if base_version_dir == &version && components == &["proofreading"]
+                if base_version_dir == &version && components == &[Component::Proofreading]
         ));
         let again = ws
             .state
             .reprocess_with_service(
                 &id,
-                vec!["proofreading".into()],
+                vec![Component::Proofreading],
                 vec![],
                 Some(("new-ai-version".into(), repaired)),
             )
@@ -3552,7 +3554,7 @@ mod tests {
         });
         let next = ws
             .state
-            .reprocess(&id, vec!["exports".into()], vec![])
+            .reprocess(&id, vec![Component::Exports], vec![])
             .unwrap();
         let child = ws.state.task(&next).unwrap();
         assert!(!child.plan.config.llm.enabled && !child.plan.config.llm.summarize);
@@ -3649,7 +3651,7 @@ mod tests {
         let manifest_bytes = std::fs::read(base.join("manifest.json")).unwrap();
         let next = ws
             .state
-            .reprocess(&id, vec!["exports".into()], vec![])
+            .reprocess(&id, vec![Component::Exports], vec![])
             .unwrap();
         ws.state.task_mut(&next).unwrap().state = TaskState::Running;
         ws.save().unwrap();
@@ -3704,7 +3706,7 @@ mod tests {
         assert!(available_task_export(task, location).is_err());
         let retry = missing
             .state
-            .reprocess(&next, vec!["exports".into()], vec![])
+            .reprocess(&next, vec![Component::Exports], vec![])
             .unwrap();
         let retry = missing.state.task(&retry).unwrap();
         assert!(retry.exports_only());

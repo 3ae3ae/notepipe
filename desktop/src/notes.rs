@@ -226,6 +226,36 @@ pub enum PreviewBlock {
         anchor: String,
     },
 }
+impl PreviewBlock {
+    /// Summary blocks are identified here once, not by anchor prefixes in the reader.
+    pub fn is_summary(&self) -> bool {
+        match self {
+            Self::Heading { anchor, .. } => anchor == "summary",
+            Self::Paragraph { anchor, .. } => {
+                anchor == "summary-tldr" || anchor.starts_with("key-point-")
+            }
+            Self::Image(_) => false,
+        }
+    }
+    /// Section headings are the document's own frame timestamps.
+    pub fn is_timestamp_heading(&self) -> bool {
+        match self {
+            Self::Heading {
+                text,
+                seconds: Some(seconds),
+                ..
+            } => course2md::render::fmt_ts(*seconds) == text.as_ref(),
+            _ => false,
+        }
+    }
+    pub fn section_index(&self) -> Option<usize> {
+        let Self::Heading { anchor, .. } = self else {
+            return None;
+        };
+        anchor.strip_prefix("section-")?.parse().ok()
+    }
+}
+
 #[derive(Clone)]
 pub enum ProcessingStage {
     Transcript,
@@ -249,18 +279,14 @@ pub struct ProcessingIssue {
     pub outcome: artifact::Outcome,
 }
 impl ProcessingIssue {
-    /// The recorded cause, without the English half of the engine's message.
+    /// The recorded cause as published (engine messages already use the UI language).
     pub fn detail(&self) -> Option<&str> {
         self.outcome
             .message
             .as_deref()
-            .map(chinese_half)
+            .map(str::trim)
             .filter(|detail| !detail.is_empty())
     }
-}
-/// Engine messages read 「中文 / English」; the desktop shows the Chinese half.
-pub(crate) fn chinese_half(message: &str) -> &str {
-    message.split(" / ").next().unwrap_or(message).trim()
 }
 fn processing_issues(manifest: &artifact::Manifest) -> Vec<ProcessingIssue> {
     [
@@ -588,10 +614,10 @@ mod tests {
     }
 
     #[test]
-    fn processing_details_show_the_chinese_half() {
+    fn processing_details_show_the_published_message() {
         let issue = ProcessingIssue {
             stage: ProcessingStage::Summary,
-            outcome: artifact::Outcome::failed("摘要尚未完成，已保留正文 / Summary incomplete"),
+            outcome: artifact::Outcome::failed("摘要尚未完成，已保留正文"),
         };
         assert_eq!(issue.detail(), Some("摘要尚未完成，已保留正文"));
     }

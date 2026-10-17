@@ -16,6 +16,7 @@ use crate::preferences::{
 use crate::service_test::{self, TestKind};
 use crate::theme::*;
 use anyhow::{Context as _, anyhow};
+use course2md::execution::Component;
 use gpui_component::{
     button::*,
     input::{InputContentType, Textarea, TextareaState},
@@ -47,7 +48,7 @@ enum EditField {
 struct ServiceEditor {
     form: ServiceForm,
     target: Option<String>,
-    repair_task: Option<(String, Vec<String>)>,
+    repair_task: Option<(String, Vec<Component>)>,
     scroll: ScrollHandle,
     also_default: bool,
     return_focus: Option<FocusHandle>,

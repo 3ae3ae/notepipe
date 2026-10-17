@@ -2512,7 +2512,9 @@ impl Desktop {
                     .map(|_| {
                         crate::task_ui::task_component_failures(&task)
                             .into_iter()
-                            .map(|(component, _, _)| component)
+                            .filter_map(|(component, _, _)| {
+                                course2md::execution::Component::parse(&component)
+                            })
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default()
@@ -2551,7 +2553,11 @@ impl Desktop {
                 );
             } else if !uncertain && !partial_components.is_empty() {
                 let retry_id = id.clone();
-                let label = crate::task_ui::retry_components_label(&partial_components);
+                let labels = partial_components
+                    .iter()
+                    .map(|component| component.as_str().to_owned())
+                    .collect::<Vec<_>>();
+                let label = crate::task_ui::retry_components_label(&labels);
                 actions = actions.child(
                     quiet(SharedString::from(format!("recent-retry-{id}")))
                         .icon(icons::refresh())

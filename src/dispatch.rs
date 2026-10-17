@@ -83,6 +83,7 @@ pub struct Failure {
     pub uncertain: bool,
     pub message: String,
     pub unsupported_response_format: bool,
+    pub kind: Option<crate::artifact::FailureKind>,
 }
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -99,6 +100,7 @@ impl Failure {
             uncertain: false,
             message: error.to_string(),
             unsupported_response_format: false,
+            kind: Some(crate::artifact::FailureKind::Local),
         }
     }
     fn with_status(status: Option<u16>, retryable: bool, message: impl Into<String>) -> Self {
@@ -106,6 +108,7 @@ impl Failure {
             status,
             retryable,
             message: message.into(),
+            kind: Some(kind_for_status(status)),
             ..Self::local("")
         }
     }
@@ -115,6 +118,19 @@ struct Rejection {
     retryable: bool,
     unsupported_response_format: bool,
     message: String,
+    kind: crate::artifact::FailureKind,
+}
+
+fn kind_for_status(status: Option<u16>) -> crate::artifact::FailureKind {
+    match status {
+        Some(401 | 403) => crate::artifact::FailureKind::Authentication,
+        Some(404) => crate::artifact::FailureKind::Model,
+        Some(400 | 422) => crate::artifact::FailureKind::Parameters,
+        Some(429) => crate::artifact::FailureKind::RateLimit,
+        Some(500..=599) => crate::artifact::FailureKind::Service,
+        None => crate::artifact::FailureKind::Local,
+        _ => crate::artifact::FailureKind::Other,
+    }
 }
 
 fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
@@ -122,6 +138,7 @@ fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
         retryable: status == 429,
         unsupported_response_format: rejects_response_format(status, value),
         message: rejection_message(status),
+        kind: kind_for_status(Some(status)),
     }
 }
 
@@ -320,11 +337,16 @@ impl Ledger {
             .unwrap_or(true)
         {
             crate::progress::emit(
-                serde_json::json!({"type":"blocked","reason":reason,"request_id":request_id,"purpose":request.map(|r|&r.purpose),"message":message,"description":request.map(|r|&r.description)}),
+                serde_json::json!({"type":"blocked","reason":reason,"request_id":request_id,"purpose":request.map(|r|&r.purpose),"kind":"uncertain","message":message,"description":request.map(|r|&r.description)}),
             );
         }
         Failure {
             uncertain: reason == REASON_UNCERTAIN,
+            kind: Some(if reason == REASON_UNCERTAIN {
+                crate::artifact::FailureKind::Uncertain
+            } else {
+                crate::artifact::FailureKind::Other
+            }),
             ..Failure::local(message)
         }
     }
@@ -546,6 +568,7 @@ impl Ledger {
             // a confirmed rejection without requiring uncertain-request authorization.
             return Err(Failure {
                 unsupported_response_format: rejection.unsupported_response_format,
+                kind: Some(rejection.kind),
                 ..Failure::with_status(
                     Some(response.status),
                     rejection.retryable,
@@ -618,6 +641,7 @@ pub fn json_request_described(
         return Err(Failure {
             uncertain: response.status >= 500,
             unsupported_response_format: rejection.unsupported_response_format,
+            kind: Some(rejection.kind),
             ..Failure::with_status(
                 Some(response.status),
                 rejection.retryable,
