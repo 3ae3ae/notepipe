@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Release version grammar shared by every package channel.
 
-semver.org core and prerelease grammar without build metadata, limited to the
+A SemVer core without build metadata, optionally followed by one of the
 alpha/beta/rc.N (N >= 1) prerelease channels that the release matrix publishes.
 Run as a script to validate one version: exit status 0 when it is accepted.
 """
@@ -9,24 +9,19 @@ import re
 import sys
 
 PRERELEASE_CHANNELS = ("alpha", "beta", "rc")
-SEMVER = re.compile(
-    r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+_NUMBER = r"(?:0|[1-9]\d*)"
+RELEASE = re.compile(
+    rf"({_NUMBER}\.{_NUMBER}\.{_NUMBER})(?:-({'|'.join(PRERELEASE_CHANNELS)})\.([1-9]\d*))?"
 )
 
 
 def parse_release(version):
     """Return (channel, number) for a release version, or None if invalid."""
-    match = SEMVER.fullmatch(version)
+    match = RELEASE.fullmatch(version)
     if match is None:
         return None
-    prerelease = match[4]
-    if prerelease is None:
-        return "stable", None
-    channel, dot, number = prerelease.partition(".")
-    if channel not in PRERELEASE_CHANNELS or not dot or not number.isdigit() or int(number) < 1:
-        return None
-    return channel, number
+    _, channel, number = match.groups()
+    return (channel, number) if channel else ("stable", None)
 
 
 if __name__ == "__main__":

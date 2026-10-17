@@ -7,9 +7,9 @@ import os
 from pathlib import Path
 import platform
 import plistlib
-import re
 import shutil
 import subprocess
+import sys
 import tomllib
 import urllib.request
 
@@ -17,11 +17,13 @@ from dmg import build_install_dmg
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT.parent
+sys.path.insert(0, str(PROJECT / "packaging"))
+from versioning import RELEASE  # noqa: E402
 
 
 def macos_versions(version):
     """Keep the product SemVer while using Apple's bundle version syntax."""
-    match = re.fullmatch(r"(\d+\.\d+\.\d+)(?:-(alpha|beta|rc)\.([1-9]\d*))?", version)
+    match = RELEASE.fullmatch(version)
     if not match:
         raise ValueError(f"Unsupported macOS release version: {version}")
     short, channel, number = match.groups()
@@ -36,6 +38,18 @@ def macos_versions(version):
 
 def run(*args):
     subprocess.run(args, cwd=PROJECT, check=True)
+
+
+def copy_licenses(dest):
+    shutil.copy2(PROJECT / "LICENSE", dest / "LICENSE")
+    shutil.copy2(ROOT / "assets/material/LICENSE", dest / "LICENSE-material-icons")
+    shutil.copy2(ROOT / "assets/outline/LICENSE", dest / "LICENSE-lucide-icons")
+    shutil.copytree(ROOT / "assets/themes/licenses", dest / "design-licenses", dirs_exist_ok=True)
+
+
+def notarize(path, key_path, key_id, issuer):
+    run("xcrun", "notarytool", "submit", str(path), "--key", key_path,
+        "--key-id", key_id, "--issuer", issuer, "--wait")
 
 
 # Bundled yt-dlp is pinned so release archives are reproducible. To update, take
@@ -181,23 +195,18 @@ def main():
             print(f"bundled {bundled.name}")
     if system == "Windows":
         verify_windows_icon(binaries / "course2md-desktop.exe")
-    shutil.copy2(PROJECT / "LICENSE", base / "LICENSE")
-    shutil.copy2(ROOT / "assets/material/LICENSE", base / "LICENSE-material-icons")
-    shutil.copy2(ROOT / "assets/outline/LICENSE", base / "LICENSE-lucide-icons")
-    shutil.copytree(ROOT / "assets/themes/licenses", base / "design-licenses", dirs_exist_ok=True)
-    shutil.copy2(ROOT / "README.md", base / "README.md")
+    copy_licenses(base)
+    shutil.copy2(PROJECT / "readme.md", base / "README.md")
     # A development archive follows main and must not claim the previous release
     # revisions. Release builds have already checked this snapshot against the lock.
     (base / "sources.lock.json").write_text(json.dumps(revisions, indent=2) + "\n")
     if system == "Darwin":
-        shutil.copy2(PROJECT / "LICENSE", resources / "LICENSE")
-        shutil.copy2(ROOT / "assets/material/LICENSE", resources / "LICENSE-material-icons")
-        shutil.copy2(ROOT / "assets/outline/LICENSE", resources / "LICENSE-lucide-icons")
-        shutil.copytree(ROOT / "assets/themes/licenses", resources / "design-licenses", dirs_exist_ok=True)
+        copy_licenses(resources)
         shutil.copy2(base / "sources.lock.json", resources / "sources.lock.json")
         identity = "-" if args.app_only else os.environ.get("APPLE_SIGNING_IDENTITY", "-")
+        signed = identity != "-"
         signing = ["--force", "--sign", identity]
-        if identity != "-":
+        if signed:
             signing.extend(["--options", "runtime", "--timestamp"])
         run("codesign", *signing, str(binaries / "course2md"))
         run("codesign", *signing, str(binaries / "course2md-desktop"))
@@ -211,28 +220,25 @@ def main():
             print(bundle)
             return
         notarization = [os.environ.get(key) for key in ("APPLE_API_KEY_PATH", "APPLE_API_KEY_ID", "APPLE_API_ISSUER")]
-        if identity != "-" and not all(notarization):
+        if signed and not all(notarization):
             raise SystemExit(
                 "Signing identity is set but notarization credentials are incomplete "
                 "(APPLE_API_KEY_PATH/APPLE_API_KEY_ID/APPLE_API_ISSUER); the DMG would be "
                 "blocked by Gatekeeper. Provide them or set APPLE_SIGNING_IDENTITY to '-'."
             )
-        if identity != "-" and all(notarization):
+        if signed:
             upload = base.parent / "notarization.zip"
             run("ditto", "-c", "-k", "--keepParent", str(bundle), str(upload))
-            run("xcrun", "notarytool", "submit", str(upload), "--key", notarization[0],
-                "--key-id", notarization[1], "--issuer", notarization[2], "--wait")
+            notarize(upload, *notarization)
             run("xcrun", "stapler", "staple", str(bundle))
             upload.unlink()
         dmg = base.parent / f"course2md-gui-macos-{platform.machine()}.dmg"
         if dmg.exists():
             dmg.unlink()
         build_install_dmg(bundle, dmg)
-        if identity != "-":
+        if signed:
             run("codesign", "--force", "--sign", identity, "--timestamp", str(dmg))
-        if identity != "-" and all(notarization):
-            run("xcrun", "notarytool", "submit", str(dmg), "--key", notarization[0],
-                "--key-id", notarization[1], "--issuer", notarization[2], "--wait")
+            notarize(dmg, *notarization)
             run("xcrun", "stapler", "staple", str(dmg))
         print(dmg)
     if system == "Darwin":
