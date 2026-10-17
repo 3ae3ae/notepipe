@@ -2,6 +2,7 @@
 use crate::backend::Completed;
 use anyhow::{Context, Result};
 use course2md::artifact;
+use gpui::SharedString;
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
@@ -200,12 +201,12 @@ pub fn default_output() -> PathBuf {
 pub enum PreviewBlock {
     Image(PathBuf),
     Heading {
-        text: String,
+        text: SharedString,
         anchor: String,
         seconds: Option<f64>,
     },
     Paragraph {
-        text: String,
+        text: SharedString,
         anchor: String,
     },
 }
@@ -309,14 +310,14 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
             seconds: None,
         });
         blocks.push(PreviewBlock::Paragraph {
-            text: summary.tldr.clone(),
+            text: summary.tldr.clone().into(),
             anchor: "summary-tldr".into(),
         });
         plain_text.push_str(&summary.tldr);
         plain_text.push_str("\n\n");
         for (i, point) in summary.key_points.iter().enumerate() {
             blocks.push(PreviewBlock::Paragraph {
-                text: format!("• {point}"),
+                text: format!("• {point}").into(),
                 anchor: format!("key-point-{i}"),
             });
             plain_text.push_str(point);
@@ -337,7 +338,7 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
     }
     for (section_index, section) in document.sections.iter().enumerate() {
         blocks.push(PreviewBlock::Heading {
-            text: course2md::render::fmt_ts(section.t),
+            text: course2md::render::fmt_ts(section.t).into(),
             anchor: format!("section-{section_index}"),
             seconds: Some(section.t),
         });
@@ -350,7 +351,7 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
         for (paragraph_index, paragraph) in section.speech.iter().enumerate() {
             if !paragraph.text.trim().is_empty() {
                 blocks.push(PreviewBlock::Paragraph {
-                    text: paragraph.text.clone(),
+                    text: paragraph.text.clone().into(),
                     anchor: format!("paragraph-{section_index}-{paragraph_index}"),
                 });
                 plain_text.push_str(&paragraph.text);

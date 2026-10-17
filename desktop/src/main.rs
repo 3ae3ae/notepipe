@@ -289,7 +289,6 @@ struct Desktop {
     reader_course_error: Option<(PathBuf, String)>,
     reader_failure_notice: Option<String>,
     reader_scroll: ScrollHandle,
-    reader_saved_offset: f32,
     reader_position_saved_at: Option<Instant>,
     // Virtualized long pages: the task queue and the course library each keep
     // a persistent list state plus the identity keys and focus containers of
@@ -308,7 +307,6 @@ struct Desktop {
     // Disclosure open state that outlives a virtualized row's unmount.
     task_panels_open: HashSet<String>,
     event_repaint_pending: bool,
-    exporting: bool,
     message: Option<String>,
     _subscriptions: Vec<Subscription>,
     _poll: Task<()>,
@@ -623,7 +621,6 @@ impl Desktop {
             reader_course_error: None,
             reader_failure_notice: None,
             reader_scroll: ScrollHandle::new(),
-            reader_saved_offset: f32::NAN,
             reader_position_saved_at: None,
             queue_list: ListState::new(0, ListAlignment::Top, px(1000.)),
             queue_keys: Vec::new(),
@@ -636,7 +633,6 @@ impl Desktop {
             entered: HashSet::new(),
             task_panels_open: HashSet::new(),
             event_repaint_pending: false,
-            exporting: false,
             message,
             _subscriptions: subscriptions,
             _poll: poll,

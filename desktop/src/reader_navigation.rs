@@ -6,6 +6,11 @@ use std::{
 };
 
 /// Content coordinates keyed by document block (or frame), regardless of layout nesting.
+///
+/// The note list records window coordinates: only differences within one item
+/// and item heights are read (`search_within`, `item_height`), so the scroll
+/// base cancels out, and the list state cannot be queried while its items
+/// prepaint. The screenshot grid records offsets inside its scrolled content.
 #[derive(Default)]
 pub struct ReadingLayout {
     blocks: BTreeMap<usize, (f32, f32)>,
@@ -21,10 +26,10 @@ impl ReadingLayout {
         self.search_lines.insert((block, byte), (top, height));
     }
 
-    /// A found line lands below one line of context, never midway through its glyphs.
-    pub fn search_offset(&self, block: usize, byte: usize) -> Option<f32> {
-        let &(top, line_height) = self.search_lines.get(&(block, byte))?;
-        Some((-top + line_height).min(0.))
+    /// Forget measurements after the layout or the measured content changes.
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.search_lines.clear();
     }
 
     pub fn top_item(&self, offset: f32) -> Option<(usize, f32, f32)> {
@@ -265,28 +270,6 @@ fn timestamp_in_timezone<Tz: chrono::TimeZone>(milliseconds: u64, timezone: &Tz)
     display().unwrap_or_else(|| "时间未知".into())
 }
 
-/// Explicit UTC formatting remains available for technical evidence.
-#[allow(dead_code)]
-pub fn timestamp_utc(milliseconds: u64) -> String {
-    // Gregorian civil date from days since Unix epoch; constant time for untrusted dates.
-    let seconds = (milliseconds / 1000).min(253402300799);
-    let days = (seconds / 86400) as i64 + 719468;
-    let era = days.div_euclid(146097);
-    let doe = days - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let mut year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    year += i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
-        seconds % 86400 / 3600,
-        seconds % 3600 / 60
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,16 +319,6 @@ mod tests {
         assert_eq!(grid.restore(2, Some(0.12), 0.), Some(-456.));
     }
 
-    #[test]
-    fn search_uses_the_shaped_line_and_leaves_context_above_it() {
-        let mut layout = ReadingLayout::default();
-        layout.record(1, 20., 320.);
-        layout.record_search_line(1, 130, 84., 32.);
-        assert_eq!(layout.search_offset(1, 130), Some(-52.));
-        layout.record_search_line(1, 0, 20., 32.);
-        assert_eq!(layout.search_offset(1, 0), Some(0.));
-        assert_eq!(layout.search_offset(1, 42), None);
-    }
     #[test]
     fn search_within_is_relative_to_the_owning_item() {
         let mut layout = ReadingLayout::default();
@@ -418,11 +391,6 @@ mod tests {
         assert!(text_matches(value, "").is_empty());
     }
     #[test]
-    fn creation_time_has_a_real_calendar_date_and_explicit_timezone() {
-        assert_eq!(timestamp_utc(0), "1970-01-01 00:00 UTC");
-        assert_eq!(timestamp_utc(1709164800000), "2024-02-29 00:00 UTC");
-    }
-    #[test]
     fn local_display_rolls_dates_across_year_and_leap_day_boundaries() {
         let singapore = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
         let pacific = chrono::FixedOffset::west_opt(8 * 3600).unwrap();
@@ -451,7 +419,5 @@ mod tests {
         assert_eq!(timestamp_in_timezone(0, &nepal), "1970-01-01 05:45");
         assert_eq!(timestamp_in_timezone(u64::MAX, &nepal), "时间未知");
         assert_eq!(timestamp_in_timezone(253402300799999, &nepal), "时间未知");
-        // This is presentation only; explicit UTC output retains its old meaning.
-        assert_eq!(timestamp_utc(0), "1970-01-01 00:00 UTC");
     }
 }

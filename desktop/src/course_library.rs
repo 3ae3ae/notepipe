@@ -1726,6 +1726,14 @@ impl Desktop {
         }
     }
 
+    pub fn save_library_presentation(&mut self, cx: &mut Context<Self>) {
+        let mut preferences = self.application_edit_base();
+        preferences.desktop.library_cards = self.desktop_settings.library_cards;
+        preferences.desktop.library_group_folders = self.desktop_settings.library_group_folders;
+        self.commit_application(preferences, cx);
+        cx.notify();
+    }
+
     fn course_has_reading_position(&self, course: &Course) -> bool {
         course.manifest.as_ref().is_some_and(|manifest| {
             let key = crate::reader_ui::manifest_reading_key(
@@ -1736,9 +1744,7 @@ impl Desktop {
             self.workspace
                 .as_ref()
                 .and_then(|workspace| workspace.state.positions.get(&key))
-                .is_some_and(|position| {
-                    position.offset < -8. || position.seconds.is_some_and(|seconds| seconds > 0.)
-                })
+                .is_some_and(crate::reader_ui::has_reading_position)
         })
     }
 
