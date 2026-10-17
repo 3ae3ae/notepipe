@@ -296,10 +296,6 @@ fn run_blocking(
         "llama-server"
     );
     tracing::debug!(args = %args.join(" "), "llama-server spawn");
-    // 存档实际 spawn 参数：失败 run.json 会附带（诊断 GPU hang 的关键证据）
-    if let Ok(mut g) = LAST_LLAMA_SPAWN_ARGS.lock() {
-        *g = Some(args.clone());
-    }
     crate::progress::stage("model/load", "start");
     let mut child = spawn_server(&bin, &args)?;
     let stderr_tail = child
@@ -348,11 +344,16 @@ fn run_blocking(
     child.kill();
     let _ = child.wait();
     let events = r.map_err(|e| {
-        // 转写中途失败大概率是 server 侧问题，附上 stderr 尾部便于定位
-        stderr_tail.attach(
-            e,
-            crate::tr!("识别服务错误详情 / llama-server error details"),
-        )
+        // 转写中途失败大概率是 server 侧问题，附上 stderr 与启动参数便于定位
+        stderr_tail
+            .attach(
+                e,
+                crate::tr!("识别服务错误详情 / llama-server error details"),
+            )
+            .context(format!(
+                "llama-server 启动参数 / arguments: {}",
+                args.join(" ")
+            ))
     })?;
     tracing::info!(
         n = events.len(),
@@ -885,18 +886,6 @@ pub(crate) struct OffloadOpts {
 
 /// 最近一次 llama-server spawn 的完整参数（诊断用：失败 run.json 附带）。
 /// 单进程同一时刻只有一个 llama-server 实例，静态足够。
-static LAST_LLAMA_SPAWN_ARGS: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
-
-pub(crate) fn reset_llama_spawn_args() {
-    if let Ok(mut args) = LAST_LLAMA_SPAWN_ARGS.lock() {
-        *args = None;
-    }
-}
-
-/// 最近一次 llama-server spawn 的参数（未 spawn 过 → None），供失败诊断记录。
-pub(crate) fn last_llama_spawn_args() -> Option<Vec<String>> {
-    LAST_LLAMA_SPAWN_ARGS.lock().ok().and_then(|g| g.clone())
-}
 
 /// 组装 llama-server 启动参数（纯函数，便于单测）：
 /// - gpu 后端：`-ngl <gpu_layers>`；mmproj_offload=false 且 llama.cpp 支持时

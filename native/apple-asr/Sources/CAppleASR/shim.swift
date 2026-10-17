@@ -52,6 +52,20 @@ public func c2mLastError() -> UnsafePointer<CChar> {
 
 // MARK: - Silero VAD
 
+@_cdecl("c2m_vad_load")
+public func c2mVadLoad() -> Int32 {
+    do {
+        _ = try runSync {
+            try await SileroVADModel.fromPretrained(
+                engine: .coreml, offlineMode: true, progressHandler: cachedLoadProgress)
+        }
+        return 0
+    } catch {
+        setErr("语音检测模型加载失败 / VAD model failed to load: \(error)")
+        return -1
+    }
+}
+
 @_cdecl("c2m_vad_detect")
 public func c2mVadDetect(
     wavPath: UnsafePointer<CChar>,
@@ -130,9 +144,7 @@ final class AsrBox {
 @_cdecl("c2m_asr_prepare_cache")
 public func c2mAsrPrepareCache(
     _ model: UnsafePointer<CChar>,
-    _ manifest: UnsafePointer<CChar>,
-    _ errBuf: UnsafeMutablePointer<CChar>,
-    _ errLen: Int
+    _ manifest: UnsafePointer<CChar>
 ) -> Int32 {
     let name = String(cString: model)
     let manifestText = String(cString: manifest)
@@ -171,17 +183,13 @@ public func c2mAsrPrepareCache(
         }
         return 0
     } catch {
-        if errLen > 0 {
-            let message = "Apple 模型下载失败 / Apple model download failed (\(name)): \(error)"
-            message.withCString { _ = strncpy(errBuf, $0, errLen - 1) }
-            errBuf[errLen - 1] = 0
-        }
+        setErr("Apple 模型下载失败 / Apple model download failed (\(name)): \(error)")
         return -1
     }
 }
 
 @_cdecl("c2m_asr_create")
-public func c2mAsrCreate(_ model: UnsafePointer<CChar>, _ errBuf: UnsafeMutablePointer<CChar>, _ errLen: Int) -> UnsafeMutableRawPointer? {
+public func c2mAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRawPointer? {
     let name = String(cString: model)
     do {
         let kind: AsrKind
@@ -211,13 +219,7 @@ public func c2mAsrCreate(_ model: UnsafePointer<CChar>, _ errBuf: UnsafeMutableP
         }
         return Unmanaged.passRetained(AsrBox(kind)).toOpaque()
     } catch {
-        let msg = "识别模型加载失败 / Speech model failed to load (\(name)): \(error)"
-        if errLen > 0 {
-            msg.withCString { cStr in
-                _ = strncpy(errBuf, cStr, errLen - 1)
-            }
-            errBuf[errLen - 1] = 0
-        }
+        setErr("识别模型加载失败 / Speech model failed to load (\(name)): \(error)")
         return nil
     }
 }

@@ -426,7 +426,7 @@ pub fn publish_blocking(
             image: section.image.clone(),
         });
     }
-    // 截图复制并行（原实现逐张 fs::copy 串行）；目标目录先在主线程建好，
+    // 截图复制并行；目标目录先在主线程建好，
     // frames 列表仍按 section 顺序生成，产物内容与串行版一致。
     let images: Vec<&String> = copied.iter().collect();
     for image in &images {
@@ -491,7 +491,7 @@ pub fn publish_blocking(
     paths.extend(outputs.iter().cloned());
     paths.sort();
     paths.dedup();
-    // 逐文件 fsync + SHA-256 并行（原实现串行逐文件 hash），结果按 paths 顺序写回
+    // 逐文件 fsync + SHA-256 并行，结果按 paths 顺序写回
     let assets = parallel_map(&paths, |path| {
         let full = staging.path().join(path);
         // Windows FlushFileBuffers requires a writable handle. These are

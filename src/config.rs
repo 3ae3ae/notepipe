@@ -83,7 +83,7 @@ pub fn asr_api_key_from_env() -> Option<String> {
         .filter(|k| !k.trim().is_empty())
 }
 
-/// ASR 后端。typed enum 取代散落各处的字符串比较（`eq_ignore_ascii_case`）。
+/// ASR 后端。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AsrProvider {

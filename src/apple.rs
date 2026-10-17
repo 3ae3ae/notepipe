@@ -24,17 +24,9 @@ mod ffi {
             out_n: *mut c_int,
         ) -> c_int;
         pub fn c2m_free_doubles(p: *mut c_double);
-        pub fn c2m_asr_create(
-            model: *const c_char,
-            err: *mut c_char,
-            err_len: usize,
-        ) -> *mut std::ffi::c_void;
-        pub fn c2m_asr_prepare_cache(
-            model: *const c_char,
-            manifest: *const c_char,
-            err: *mut c_char,
-            err_len: usize,
-        ) -> c_int;
+        pub fn c2m_asr_create(model: *const c_char) -> *mut std::ffi::c_void;
+        pub fn c2m_asr_prepare_cache(model: *const c_char, manifest: *const c_char) -> c_int;
+        pub fn c2m_vad_load() -> c_int;
         pub fn c2m_asr_transcribe(
             handle: *mut std::ffi::c_void,
             wav_path: *const c_char,
@@ -214,14 +206,9 @@ impl CoremlAsr {
     /// 只加载已准备的缓存；缺失文件由模型准备阶段下载。
     pub fn load(model: &str) -> Result<Self> {
         let name = CString::new(model)?;
-        let mut err = vec![0u8; 4096];
-        let handle =
-            unsafe { ffi::c2m_asr_create(name.as_ptr(), err.as_mut_ptr() as *mut _, err.len()) };
+        let handle = unsafe { ffi::c2m_asr_create(name.as_ptr()) };
         if handle.is_null() {
-            let msg = CStr::from_bytes_until_nul(&err)
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            anyhow::bail!("{msg}");
+            anyhow::bail!("{}", last_error());
         }
         Ok(Self { handle })
     }
@@ -264,27 +251,11 @@ impl CoremlAsr {
 pub fn prepare_model(model: &str) -> Result<()> {
     ensure_metallib()?;
     let _asr = CoremlAsr::load(model)?;
-    // VAD is a separate required model. Load it using a local second of silence so a
-    // successful ASR download cannot misleadingly imply offline transcription readiness.
-    let temporary = crate::runtime::TempWorkDir::new("model-check")?;
-    let wav = temporary.path().join("silence.wav");
-    let bytes = 32_000_u32;
-    let mut data = Vec::with_capacity(44 + bytes as usize);
-    data.extend_from_slice(b"RIFF");
-    data.extend_from_slice(&(36 + bytes).to_le_bytes());
-    data.extend_from_slice(b"WAVEfmt ");
-    data.extend_from_slice(&16_u32.to_le_bytes());
-    data.extend_from_slice(&1_u16.to_le_bytes());
-    data.extend_from_slice(&1_u16.to_le_bytes());
-    data.extend_from_slice(&16_000_u32.to_le_bytes());
-    data.extend_from_slice(&32_000_u32.to_le_bytes());
-    data.extend_from_slice(&2_u16.to_le_bytes());
-    data.extend_from_slice(&16_u16.to_le_bytes());
-    data.extend_from_slice(b"data");
-    data.extend_from_slice(&bytes.to_le_bytes());
-    data.resize(44 + bytes as usize, 0);
-    crate::checkpoint::atomic_write(&wav, &data)?;
-    vad(&wav, 0.25, 0.35)?;
+    // VAD is a separate required model; load it directly so readiness never depends
+    // on a synthetic WAV or on the ASR files happening to be present.
+    if unsafe { ffi::c2m_vad_load() } != 0 {
+        anyhow::bail!("{}", last_error());
+    }
     Ok(())
 }
 
@@ -310,25 +281,9 @@ pub fn prepare_cache(model: &str) -> Result<()> {
     ensure_metallib()?;
     let name = CString::new(model)?;
     let manifest = CString::new(cache_manifest(model)?)?;
-    let mut error = vec![0_u8; 4096];
-    let status = unsafe {
-        ffi::c2m_asr_prepare_cache(
-            name.as_ptr(),
-            manifest.as_ptr(),
-            error.as_mut_ptr() as *mut _,
-            error.len(),
-        )
-    };
+    let status = unsafe { ffi::c2m_asr_prepare_cache(name.as_ptr(), manifest.as_ptr()) };
     if status != 0 {
-        anyhow::bail!(
-            "{}",
-            CStr::from_bytes_until_nul(&error)
-                .map(|error| error.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| {
-                    crate::tr!("Apple 模型缓存准备失败 / Apple model cache preparation failed")
-                        .into()
-                })
-        );
+        anyhow::bail!("{}", last_error());
     }
     Ok(())
 }

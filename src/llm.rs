@@ -24,7 +24,7 @@ pub const DEFAULT_PROMPT: &str = "你是视频逐字稿校对器。输入的每�
 /// 每次请求合并的语音段数。
 const BATCH: usize = 20;
 
-/// LLM 服务方言/登录方式。typed enum 取代散落的字符串比较。
+/// LLM 服务方言/登录方式。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LlmProvider {
@@ -163,7 +163,7 @@ pub struct PolishReport {
     pub note: Option<String>,
 }
 
-/// 校对 worker 池骨架（非 vision / vision 两条路径原先各复制一份，此处置于一处）：
+/// 校对 worker 池骨架：
 /// `Mutex` 队列 + `std::thread::scope` workers 抢占式取活，每轮先 `check_control`，
 /// 中止（或锁中毒）记 `aborted` 并由首个错误胜出；队列取走即计进度，
 /// `work` 返回本批成功条数（0 = 该批被跳过/失败，与成功语义一致地不累加）。

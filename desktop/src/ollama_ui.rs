@@ -137,7 +137,7 @@ impl Desktop {
             _ => None,
         };
         let mut actions: Vec<AnyElement> = Vec::new();
-        // 已有对应服务条目时不再邀请重复添加：给直达入口，服务列表仍是唯一管理面（review#1）
+        // 已有对应服务条目时不再邀请重复添加：给直达入口，服务列表仍是唯一管理面
         match added_version {
             Some(version_id) => actions.push(
                 quiet(SharedString::from(format!("{id}-open-added")))

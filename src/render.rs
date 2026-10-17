@@ -70,7 +70,7 @@ pub fn render_markdown(meta: &VideoMeta, sections: &[Section]) -> String {
     } else {
         format!("- 作者：{}\n", md_inline(&meta.uploader))
     };
-    // 本地来源的 canonicalize 每次渲染只算一次（原实现经 ts_url 逐节重复）
+    // 本地来源的 canonicalize 每次渲染只算一次
     let source = source_url(meta);
     let mut md = String::new();
     // 写 String 不会失败，unwrap 安全

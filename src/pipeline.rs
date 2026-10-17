@@ -689,7 +689,6 @@ async fn run_prepared(
     credentials: Credentials,
     started: Instant,
 ) -> Result<()> {
-    asr::reset_llama_spawn_args();
     crate::dispatch::check_control()?;
     let published_target = target.clone();
     if let Some(manifest) = blocking(move || artifact::published(&published_target)).await? {
@@ -1286,9 +1285,6 @@ impl FailureRecord<'_> {
             "error": format!("{err:#}"),
             "elapsed_secs": (self.started.elapsed().as_secs_f64() * 100.0).round() / 100.0,
         });
-        if let Some(args) = crate::asr::last_llama_spawn_args() {
-            info["llama_server_args"] = serde_json::json!(args);
-        }
         match serde_json::to_string_pretty(&info) {
             Ok(text) => {
                 if let Err(error) =
