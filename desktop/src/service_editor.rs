@@ -764,7 +764,7 @@ impl Desktop {
                         .child(setting_label(
                             "service-protocol-heading",
                             if protocol.purpose() == ServicePurpose::Speech {
-                                course2md::tr!("接口类型")
+                                course2md::tr!("服务类型")
                             } else {
                                 course2md::tr!("服务类型")
                             },
@@ -774,7 +774,7 @@ impl Desktop {
                                 FormOwner::Editor,
                                 self.setting_choices(
                                     "service-protocol",
-                                    course2md::tr!("服务接口类型"),
+                                    course2md::tr!("服务类型"),
                                 ),
                                 cx,
                             )
@@ -1777,7 +1777,7 @@ impl Desktop {
                     dialog.child(text(
                         "delete-service-affected",
                         course2md::tr!(
-                            "有 {} 个未完成任务引用此服务；相关后续请求会停止派发",
+                            "有 {} 个未完成任务引用此服务；这些任务中用到此服务的步骤将不再继续",
                             affected
                         ),
                     ))
@@ -1811,7 +1811,7 @@ impl Desktop {
                                 course2md::tr!(
                                     "{}：{}",
                                     if blocked {
-                                        course2md::tr!("已停止派发，删除记录尚未完整保存")
+                                        course2md::tr!("已停止使用此服务，但删除尚未完整保存")
                                     } else {
                                         course2md::tr!("尚未删除此服务")
                                     },

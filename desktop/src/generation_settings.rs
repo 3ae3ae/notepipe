@@ -205,7 +205,7 @@ impl Desktop {
                         .label(if online {
                             course2md::tr!("在线语音服务")
                         } else {
-                            course2md::tr!("本机")
+                            course2md::tr!("本机识别")
                         })
                         .child(div().flex_1())
                         .when(!online, |button| {
@@ -437,7 +437,7 @@ impl Desktop {
             .child(recognition)
             .child(ai)
             .child(
-                group("export-default-settings", course2md::tr!("保存"))
+                group("export-default-settings", course2md::tr!("保存与导出"))
                     .child(
                         setting_surface().child(
                             h_flex()

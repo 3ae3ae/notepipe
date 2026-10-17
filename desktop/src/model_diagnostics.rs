@@ -429,7 +429,7 @@ impl Desktop {
         let message = if success {
             course2md::tr!("{} 已准备完成", name)
         } else if cancelled {
-            course2md::tr!("{} 的准备已停止", name)
+            course2md::tr!("{} 的准备已暂停", name)
         } else {
             course2md::tr!(
                 "{} 的准备未完成：{}",
@@ -913,7 +913,7 @@ impl Desktop {
                     .settings_text()
                     .icon(icons::pause())
                     .label(if self.cancelling {
-                        course2md::tr!("正在停止…")
+                        course2md::tr!("正在暂停…")
                     } else {
                         course2md::tr!("暂停准备")
                     })

@@ -332,7 +332,7 @@ fn run_test(
         Err(cancelled) => return cancelled,
     };
     if !kind.accepts(config.protocol) {
-        evidence.message = course2md::tr!("所选接口类型不支持这项测试，尚未发送请求").into();
+        evidence.message = course2md::tr!("所选服务类型不支持这项测试，尚未发送请求").into();
         return evidence;
     }
     if normalize_endpoint(&config.endpoint, config.protocol)
@@ -444,7 +444,7 @@ fn run_test(
     }
     let Some(json) = json else {
         evidence.outcome = TestOutcome::ContractMismatch;
-        evidence.message = course2md::tr!("服务返回的内容格式不对，请确认接口类型和地址").into();
+        evidence.message = course2md::tr!("服务返回的内容格式不对，请确认服务类型和地址").into();
         return evidence;
     };
     let content = if config.protocol == ServiceProtocol::SpeechTranscriptions {

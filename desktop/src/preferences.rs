@@ -598,7 +598,7 @@ impl ServiceVersion {
             changed.push(course2md::tr!("地址"));
         }
         if old.config.protocol != self.config.protocol {
-            changed.push(course2md::tr!("协议"));
+            changed.push(course2md::tr!("服务类型"));
         }
         if old.config.authentication != self.config.authentication
             || old.config.credential != self.config.credential
@@ -1887,7 +1887,7 @@ pub fn normalize_endpoint(address: &str, protocol: ServiceProtocol) -> Result<St
         ],
     ) {
         bail!(course2md::tr!(
-            "这个地址和所选接口类型不匹配，请更换其中之一"
+            "这个地址和所选服务类型不匹配，请更换其中之一"
         ));
     }
     // Ollama 接受主机地址或 /v1 基础地址，统一补全到 OpenAI 兼容端点

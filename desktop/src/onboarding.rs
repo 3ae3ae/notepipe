@@ -1394,7 +1394,7 @@ impl Desktop {
         let draft = &service.form.draft;
         let busy = service.running.is_some() || service.pending_version.is_some();
         let (label, choice_label) = if purpose == ServicePurpose::Speech {
-            (course2md::tr!("接口类型"), course2md::tr!("语音接口类型"))
+            (course2md::tr!("服务类型"), course2md::tr!("语音服务类型"))
         } else {
             (course2md::tr!("服务类型"), course2md::tr!("AI 服务类型"))
         };
@@ -2251,7 +2251,7 @@ impl Desktop {
         } else if result_error {
             course2md::tr!("准备未完成").into()
         } else {
-            course2md::tr!("准备已结束").into()
+            course2md::tr!("已准备完成").into()
         };
         Some(
             v_flex()

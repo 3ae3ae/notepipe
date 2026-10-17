@@ -47,6 +47,7 @@ pub enum Event {
         workers: usize,
     },
     Done(Completed),
+    #[serde(rename = "model_ready")]
     ModelReady {
         operation: String,
         dir: PathBuf,

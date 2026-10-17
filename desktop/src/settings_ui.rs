@@ -1709,7 +1709,7 @@ impl Desktop {
                 self.settings_ui.pending_generation = None;
                 self.set_settings_feedback(
                     PreferenceGroup::Generation,
-                    course2md::tr!("尚未应用").into(),
+                    course2md::tr!("已暂存，点击「应用」后生效").into(),
                     false,
                     cx,
                 );
@@ -1999,7 +1999,7 @@ impl Desktop {
                 control(("reset-settings-group", group as usize))
                     .settings_text()
                     .icon(icons::refresh())
-                    .label(course2md::tr!("保留原文件并重置此组"))
+                    .label(course2md::tr!("保留原文件并重置这些设置"))
                     .self_start()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.restore_settings_group(group, window, cx);
@@ -2017,7 +2017,7 @@ impl Desktop {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some(course2md::tr!("添加存储位置").into()),
+            prompt: Some(course2md::tr!("添加笔记库位置").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
@@ -2061,9 +2061,9 @@ impl Desktop {
                                 Ok(_) => {
                                     this.message = Some(
                                         if duplicate {
-                                            course2md::tr!("这个存储位置已经在笔记库中")
+                                            course2md::tr!("这个文件夹已是笔记库位置")
                                         } else {
-                                            course2md::tr!("已添加存储位置")
+                                            course2md::tr!("已添加笔记库位置")
                                         }
                                         .into(),
                                     );
@@ -2071,7 +2071,7 @@ impl Desktop {
                                 }
                                 Err(error) => {
                                     this.workspace_error = Some(course2md::tr!(
-                                        "存储位置尚未添加：{}",
+                                        "笔记库位置尚未添加：{}",
                                         format!("{error:#}")
                                     ))
                                 }
@@ -2081,7 +2081,7 @@ impl Desktop {
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
                         this.workspace_error =
-                            Some(course2md::tr!("无法选择存储位置：{}", format!("{error:#}")))
+                            Some(course2md::tr!("无法选择文件夹：{}", format!("{error:#}")))
                     }
                     Err(error) => {
                         this.workspace_error = Some(course2md::tr!("无法打开文件选择器：{}", error))
@@ -2201,7 +2201,7 @@ impl Desktop {
                                 .child(
                                     outline_pill("restart-onboarding")
                                         .settings_text()
-                                        .label(course2md::tr!("重新运行首次设置"))
+                                        .label(course2md::tr!("重新运行"))
                                         .icon(icons::restart())
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.start_onboarding(window, cx);
@@ -2343,7 +2343,7 @@ impl Desktop {
                             quiet("toggle-diagnostics-details")
                                 .settings_text()
                                 .w_full()
-                                .label(course2md::tr!("诊断详情"))
+                                .label(course2md::tr!("查看诊断详情"))
                                 .child(div().flex_1())
                                 .child(if open {
                                     icons::chevron_up()
@@ -2645,7 +2645,7 @@ impl Desktop {
                 self.hydrate_settings_inputs(window, cx);
                 self.set_settings_feedback(
                     group,
-                    course2md::tr!("原文件已保留，此组设置已重置").into(),
+                    course2md::tr!("原文件已保留，这些设置已重置").into(),
                     false,
                     cx,
                 );
