@@ -1411,7 +1411,7 @@ impl Desktop {
                 .child(
                     quiet("clear-search-scope")
                         .icon(crate::icons::close())
-                        .label(course2md::tr!("清空搜索"))
+                        .label(course2md::tr!("清除搜索"))
                         .min_h(rems(1.6))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.inputs[&Field::Search]
@@ -2570,7 +2570,7 @@ impl Desktop {
                 actions = actions.child(
                     outline_pill(SharedString::from(format!("recent-resume-{id}")))
                         .icon(icons::play_arrow())
-                        .label(course2md::tr!("继续处理"))
+                        .label(course2md::tr!("继续生成"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.set_task_intent(
                                 resume_id.clone(),

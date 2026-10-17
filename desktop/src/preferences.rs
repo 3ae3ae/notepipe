@@ -1454,7 +1454,7 @@ impl Store {
             let id = required
                 .asr
                 .as_deref()
-                .ok_or_else(|| anyhow!(course2md::tr!("请为这次笔记设置语音服务")))?;
+                .ok_or_else(|| anyhow!(course2md::tr!("请为这次笔记设置语音识别服务")))?;
             let version = check(id)?;
             if version.config.protocol.purpose() != ServicePurpose::Speech {
                 bail!(course2md::tr!("所选服务不支持语音识别"));

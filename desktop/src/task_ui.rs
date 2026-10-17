@@ -1139,7 +1139,7 @@ impl Desktop {
         self.ordinary_preferences_ready_for_submit()?;
         ensure!(
             !self.preference_defaults_pending,
-            course2md::tr!("默认设置已保存，当前视频的选项尚未同步。请重试保存输入记录。")
+            course2md::tr!("默认设置已保存，当前视频的选项尚未同步。请重试。")
         );
         let (workspace, draft) = self.plan_draft()?;
         ensure!(
@@ -1202,7 +1202,7 @@ impl Desktop {
                                 | SubtitleEvidence::Unsupported { .. }
                                 | SubtitleEvidence::Failed { .. }
                         )),
-                course2md::tr!("字幕还未确认。请读取字幕，或明确选择识别视频声音。")
+                course2md::tr!("字幕还未确认。请读取字幕，或明确选择语音识别。")
             );
             config.defaults.transcript_source = Some(course2md::config::TranscriptSource::Asr);
             let provider = config
@@ -3061,7 +3061,7 @@ impl Desktop {
             .label(if task.state == TaskState::Paused {
                 course2md::tr!("继续生成")
             } else {
-                course2md::tr!("继续任务")
+                course2md::tr!("继续生成")
             })
             .on_click(
                 cx.listener(move |this, _, _, cx| {
@@ -3459,7 +3459,7 @@ impl Desktop {
         {
             course2md::tr!("视频字幕")
         } else if task.plan.options.uses_cloud_provider() {
-            course2md::tr!("识别服务")
+            course2md::tr!("语音识别服务")
         } else {
             course2md::tr!("本机识别")
         };
@@ -3791,7 +3791,7 @@ fn ensure_asr_capability(
         ),
         AsrProvider::Cpu => ensure!(
             environment.llama,
-            course2md::tr!("CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。")
+            course2md::tr!("CPU 识别引擎尚未安装。请在设置的「应用」中查看安装方法。")
         ),
         AsrProvider::Npu => ensure!(
             environment.npu,

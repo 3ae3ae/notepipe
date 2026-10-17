@@ -571,9 +571,9 @@ impl Desktop {
             course2md::tr!("修复服务并补做")
         } else {
             match (draft.protocol.purpose(), target.is_some()) {
-                (ServicePurpose::Speech, true) => course2md::tr!("为这次笔记设置语音服务"),
+                (ServicePurpose::Speech, true) => course2md::tr!("为这次笔记设置语音识别服务"),
                 (ServicePurpose::Ai, true) => course2md::tr!("为这次笔记设置 AI 服务"),
-                (ServicePurpose::Speech, false) => course2md::tr!("设置语音服务"),
+                (ServicePurpose::Speech, false) => course2md::tr!("设置语音识别服务"),
                 (ServicePurpose::Ai, false) => course2md::tr!("设置 AI 服务"),
             }
         };
@@ -739,7 +739,7 @@ impl Desktop {
             .track_scroll(&editor.scroll)
             .role(if inline { Role::Group } else { Role::Dialog })
             .aria_label(if protocol.purpose() == ServicePurpose::Speech {
-                course2md::tr!("设置语音服务")
+                course2md::tr!("设置语音识别服务")
             } else {
                 course2md::tr!("设置 AI 服务")
             })

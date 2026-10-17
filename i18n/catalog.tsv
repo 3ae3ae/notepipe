@@ -102,6 +102,7 @@ Bilibili 返回未知扫码状态，请重试 / Bilibili returned an unknown QR 
 Bilibili：{}	Bilibili：{}	Bilibili：{}	Bilibili：{}	Bilibili：{}
 COURSE2MD_BIN 指向的文件不存在：{}	COURSE2MD_BIN 指向的文件不存在：{}	The file pointed to by COURSE2MD_BIN does not exist: {}	COURSE2MD_BIN 指向的檔案不存在：{}	COURSE2MD_BIN が指すファイルが存在しません: {}
 CPU 架构	CPU 架构	CPU architecture	CPU 架構	CPUアーキテクチャ
+CPU 识别引擎尚未安装。请在设置的「应用」中查看安装方法。	CPU 识别引擎尚未安装。请在设置的「应用」中查看安装方法。	The CPU speech engine is not installed. See the installation steps in Settings → Application.	CPU 語音辨識引擎尚未安裝。請在設定的「應用」中查看安裝方式。	CPU 音声認識エンジンがインストールされていません。設定の「アプリ」でインストール方法を確認してください。
 CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。	CPU 识别引擎尚未安装。请在设置的应用与诊断中查看安装方法。	The CPU identification engine has not been installed. Please check the installation method in Applications and Diagnostics of Settings.	CPU 識別引擎尚未安裝。請在設定的應用與診斷中檢視安裝方法。	CPU識別エンジンがインストールされていません。インストール方法は設定のアプリケーションと診断でご確認ください。
 CPU（较慢）	CPU（较慢）	CPU (slower)	CPU（較慢）	CPU (低速)
 Codex 模型目录无法解析 / Cannot parse the Codex model catalog	Codex 模型目录无法解析	Cannot parse the Codex model catalog	Codex 模型目錄無法解析	Codex モデル ディレクトリを解析できません
@@ -196,6 +197,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 {} · 构建 {}	{} · 构建 {}	{} · Build {}	{} · 構建 {}	{} · {} をビルドする
 {} · 还没有已下载的模型	{} · 还没有已下载的模型	{} · There are no downloaded models yet	{} · 還沒有已下載的模型	{} · ダウンロードされたモデルはまだありません
 {} 不支持“{}”，已改用 {}。	{} 不支持“{}”，已改用 {}。	{} does not support "{}" and has been replaced with {}.	{} 不支援“{}”，已改用 {}。	{} は「{}」をサポートしていないため、{} に置き換えられました。
+{} 不支持「{}」，已改用 {}。	{} 不支持「{}」，已改用 {}。	{} does not support “{}”; switched to {}.	{} 不支援「{}」，已改用 {}。	{} は「{}」に対応していないため、{} に切り替えました。
 {} 个与进行中的任务相同，未重复加入	{} 个与进行中的任务相同，未重复加入	{} are the same as the ongoing tasks and have not been added repeatedly.	{} 個與進行中的任務相同，未重複加入	{} は進行中のタスクと同じであり、繰り返し追加されていません。
 {} 个已有笔记，将生成新版	{} 个已有笔记，将生成新版	{} existing notes, a new version will be generated	{} 個已有筆記，將生成新版	{} 既存のノート、新しいバージョンが生成されます
 {} 个无法识别，已跳过	{} 个无法识别，已跳过	{} unrecognized, skipped	{} 個無法識別，已跳過	{} は認識されず、スキップされました
@@ -319,6 +321,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 为已有笔记生成 AI 摘要 / Add AI summaries to existing notes	为已有笔记生成 AI 摘要 / Add AI summaries to existing notes	Add AI summaries to existing notes	為既有筆記產生 AI 摘要	既存のノートに AI 要約を追加
 为这次笔记设置 AI 服务	为这次笔记设置 AI 服务	Set up AI service for this note	為這次筆記設定 AI 服務	このノートの AI サービスを設定する
 为这次笔记设置语音服务	为这次笔记设置语音服务	Set up voice service for this note	為這次筆記設定語音服務	このノートの音声サービスを設定します
+为这次笔记设置语音识别服务	为这次笔记设置语音识别服务	Set up speech recognition for this note	為這次筆記設定語音辨識服務	このノートの音声認識を設定
 主题	主题	Theme	主題	テーマ
 二维码响应缺少 key / QR code response is missing key	二维码响应缺少 key	QR code response is missing key	二維碼響應缺少 key	QR コード応答のキーがありません
 二维码响应缺少 url / QR code response is missing url	二维码响应缺少 url	QR code response is missing url	二維碼響應缺少 url	QR コード応答に URL がありません
@@ -683,6 +686,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 字幕语言	字幕语言	subtitle language	字幕語言	字幕言語
 字幕读取意外中断	字幕读取意外中断	Subtitle reading unexpectedly interrupted	字幕讀取意外中斷	字幕の読み取りが予期せず中断されました
 字幕还未确认。请读取字幕，或明确选择识别视频声音。	字幕还未确认。请读取字幕，或明确选择识别视频声音。	Subtitles have not yet been confirmed. Please read subtitles, or explicitly choose to recognize video sounds.	字幕還未確認。請讀取字幕，或明確選擇識別影片聲音。	字幕はまだ確認されていません。 Please read subtitles, or explicitly choose to recognize video sounds.
+字幕还未确认。请读取字幕，或明确选择语音识别。	字幕还未确认。请读取字幕，或明确选择语音识别。	Subtitles are not confirmed. Read them, or explicitly choose speech recognition.	字幕尚未確認。請讀取字幕，或明確選擇語音辨識。	字幕が未確認です。字幕を読み取るか、音声認識を明示的に選択してください。
 字幕还没读取完成	字幕还没读取完成	Subtitles are still loading	字幕尚未讀取完成	字幕を読み込み中です
 字幕还没读取完成，请重新读取，或改用语音识别	字幕还没读取完成，请重新读取，或改用语音识别	The subtitles have not been read yet. Please read them again or use speech recognition instead.	字幕還沒讀取完成，請重新讀取，或改用語音識別	字幕はまだ読んでいません。 Please read them again or use speech recognition instead.
 字幕重新读取未完成	字幕重新读取未完成	Subtitle reread not completed	字幕重新讀取未完成	字幕の再読が完了していません
@@ -715,6 +719,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 导出文件	导出文件	Export file	匯出檔案	エクスポートファイル
 导出文件已移动或无法读取，可以重新导出	导出文件已移动或无法读取，可以重新导出	The export file has been moved or cannot be read. It can be re-exported.	匯出檔案已移動或無法讀取，可以重新匯出	エクスポート ファイルが移動されているか、読み取れません。再輸出も可能です。
 导出文件已移动或无法读取，可打开笔记后从“导出”菜单重新保存。	导出文件已移动或无法读取，可打开笔记后从“导出”菜单重新保存。	The exported file has been moved or cannot be read. You can open the note and resave it from the "Export" menu.	匯出檔案已移動或無法讀取，可開啟筆記後從“匯出”選單重新儲存。	エクスポートされたファイルは移動されているか、読み取ることができません。 「エクスポート」メニューからノートを開いて再保存できます。
+导出文件已移动或无法读取，可打开笔记后从「导出」菜单重新保存。	导出文件已移动或无法读取，可打开笔记后从「导出」菜单重新保存。	The export was moved or cannot be read. Open the note and save it again from the Export menu.	匯出檔案已移動或無法讀取，可開啟筆記後從「匯出」選單重新儲存。	書き出したファイルが移動されたか読み取れません。ノートを開いて「書き出し」メニューから再保存してください。
 导出文件已被修改，原文件已保留 / Export file changed; original retained	导出文件已被修改，原文件已保留	Export file changed; original retained	匯出檔案已被修改，原檔案已保留	エクスポートされたファイルは変更されており、元のファイルは保持されています。
 导出时意外中断，请重试	导出时意外中断，请重试	Export interrupted unexpectedly, please try again	匯出時意外中斷，請重試	エクスポートが予期せず中断されました。もう一度お試しください。
 导出未完成	导出未完成	Export not completed	匯出未完成	エクスポートが完了していません
@@ -728,6 +733,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 封面格式无法识别	封面格式无法识别	Cover format cannot be recognized	封面格式無法識別	表紙のフォーマットが認識できません
 封面缓存位置无效	封面缓存位置无效	Cover cache location is invalid	封面快取位置無效	カバーのキャッシュの場所が無効です
 封面超过读取上限	封面超过读取上限	Cover exceeds read limit	封面超過讀取上限	表紙が読み取り制限を超えています
+将使用语音识别	将使用语音识别	Speech recognition will be used	將使用語音辨識	音声認識を使用します
 将全部分段摘要合并为整篇摘要 / Merge all partial summaries into the full summary	将全部分段摘要合并为整篇摘要	Merge all partial summaries into the full summary	將全部分段摘要合併為整篇摘要	すべてのセグメント化されたサマリーを完全なサマリーに結合します
 将删除 {} 中的旧位置备份。当前笔记库仍保留在 {}。	将删除 {} 中的旧位置备份。当前笔记库仍保留在 {}。	The old location backup in {} will be deleted. The current note library remains at {}.	將刪除 {} 中的舊位置備份。當前筆記庫仍保留在 {}。	{} の古い場所のバックアップは削除されます。現在のノート ライブラリは {} のままです。
 将删除此服务配置，已有笔记不受影响	将删除此服务配置，已有笔记不受影响	This service configuration will be deleted and existing notes will not be affected.	將刪除此服務配置，已有筆記不受影響	このサービス構成は削除され、既存のノートは影響を受けません。
@@ -1309,6 +1315,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 有 {} 个未完成任务引用此服务；这些任务中用到此服务的步骤将不再继续	有 {} 个未完成任务引用此服务；这些任务中用到此服务的步骤将不再继续	{} unfinished tasks use this service; their steps that need it will not continue.	有 {} 個未完成任務引用此服務；這些任務中用到此服務的步驟將不再繼續	{} 件の未完了タスクがこのサービスを使用しています。このサービスが必要な手順は続行されません。
 有 {} 次未完成的移动记录已损坏，相关文件均已保留	有 {} 次未完成的移动记录已损坏，相关文件均已保留	{} unfinished move records are corrupted and related files have been retained	有 {} 次未完成的移動記錄已損壞，相關檔案均已保留	{} 未完了の移動レコードが破損しており、関連ファイルが保持されています
 有一个旧版本无法读取	有一个旧版本无法读取	There is an older version that cannot be read	有一箇舊版本無法讀取	読み込めない古いバージョンがあります
+有字幕时直接用字幕，没有字幕时使用语音识别	有字幕时直接用字幕，没有字幕时使用语音识别	Use subtitles when available; otherwise use speech recognition	有字幕時直接使用字幕，沒有字幕時使用語音辨識	字幕があれば字幕を使用し、なければ音声認識を使用します
 有字幕时直接用字幕，没有字幕时识别视频声音	有字幕时直接用字幕，没有字幕时识别视频声音	Use subtitles directly when there are subtitles, and identify the video sound when there are no subtitles.	有字幕時直接用字幕，沒有字幕時識別影片聲音	字幕がある場合は字幕を直接使用し、字幕がない場合は動画音声を識別します。
 有字幕，将直接使用	有字幕，将直接使用	There are subtitles and will be used directly	有字幕，將直接使用	字幕があり、そのまま使用されます
 有效服务版本记录不完整	有效服务版本记录不完整	The effective service version record is incomplete	有效服務版本記錄不完整	有効なサービス バージョン レコードが不完全です
@@ -1522,6 +1529,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 模型下载失败 / Model download failed	模型下载失败	Model download failed	模型下載失敗	モデルのダウンロードに失敗しました
 模型下载完成或停止后再移动笔记库	模型下载完成或停止后再移动笔记库	Move the note library after the model download is completed or stopped.	模型下載完成或停止後再移動筆記庫	モデルのダウンロードが完了または停止した後で、ノート ライブラリを移動します。
 模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份	模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份	The model is still using the old location. Please save the model location in "Generate Notes" before cleaning the backup.	模型仍在使用舊位置，請先在“生成筆記”中儲存模型位置，再清理備份	モデルはまだ古い場所を使用しています。バックアップを消去する前に、「ノートの生成」でモデルの場所を保存してください。
+模型仍在使用旧位置，请先在「生成笔记」中保存模型位置，再清理备份	模型仍在使用旧位置，请先在「生成笔记」中保存模型位置，再清理备份	The model still uses the old location. Save the model location in “Create note” before cleaning backups.	模型仍在使用舊位置，請先在「產生筆記」中儲存模型位置，再清理備份	モデルはまだ古い場所を使用しています。「ノートを作成」でモデルの場所を保存してからバックアップを整理してください
 模型会继续在后台准备	模型会继续在后台准备	The model will continue to be prepared in the background	模型會繼續在後臺準備	モデルはバックグラウンドで引き続き準備されます
 模型位置尚未更新，修改已保留，可重试保存：{error:#}	模型位置尚未更新，修改已保留，可重试保存：{error:#}	The model position has not been updated, the modification has been retained, you can try saving again: {error:#}	模型位置尚未更新，修改已保留，可重試儲存：{error:#}	モデルの位置は更新されておらず、変更は保持されています。再度保存してみてください: {error:#}
 模型位置尚未更新，修改已保留，可重试保存：{}	模型位置尚未更新，修改已保留，可重试保存：{}	The model position has not been updated, the modification has been retained, you can try saving again: {}	模型位置尚未更新，修改已保留，可重試儲存：{}	モデルの位置は更新されておらず、変更は保持されています。再度保存してみてください: {}
@@ -1874,7 +1882,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 继续准备	继续准备	Continue to prepare	繼續準備	準備を続ける
 继续准备模型	继续准备模型	Continue to prepare the model	繼續準備模型	モデルの準備を続けます
 继续处理	继续处理	Continue processing	繼續處理	処理を続行
-继续生成	继续生成	Continue to generate	繼續生成	生成し続ける
+继续生成	继续生成	Continue	繼續產生	続行
 继续移动	继续移动	keep moving	繼續移動	動き続ける
 继续阅读	继续阅读	Continue reading	繼續閱讀	続きを読む
 编译识别模型	编译识别模型	Compile recognition model	編譯識別模型	認識モデルをコンパイルする
@@ -1984,6 +1992,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 设置目录：{}\n{}	设置目录：{}\n{}	Settings directory: {}\n{}	設定目錄：{}\n{}	設定ディレクトリ：{}\n{}
 设置记录无法解析	设置记录无法解析	Settings record cannot be parsed	設定記錄無法解析	設定レコードを解析できません
 设置语音服务	设置语音服务	Set up speech recognition	設定語音辨識	音声認識を設定
+设置语音识别服务	设置语音识别服务	Set up speech recognition	設定語音辨識服務	音声認識を設定
 设计	设计	Design	設計	デザイン
 识别后端 / Speech backend: coreml (Apple Silicon), gpu, cpu, npu (Intel), api (cloud)	识别后端	Speech backend: coreml (Apple Silicon), gpu, cpu, npu (Intel), api (cloud)	識別後端	バックエンドの識別
 识别方式	识别方式	Identification method	識別方式	識別方法
@@ -2016,15 +2025,18 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 语音识别 / Speech recognition	语音识别	Speech recognition	語音識別	音声認識
 语音识别任务未能完成 / Speech recognition task did not complete	语音识别任务未能完成	Speech recognition task did not complete	語音識別任務未能完成	音声認識タスクを完了できませんでした
 语音识别方式	语音识别方式	Voice recognition method	語音識別方式	音声認識方式
+语音识别服务	语音识别服务	Speech recognition service	語音辨識服務	音声認識サービス
 语音识别模型	语音识别模型	speech recognition model	語音識別模型	音声認識モデル
 语音识别线程数（至少 1）/ Speech recognition threads (minimum 1)	语音识别线程数（至少 1）/ Speech recognition threads (minimum 1)	Speech recognition threads (minimum 1)	語音識別執行緒數（至少 1）/ Speech recognition threads (minimum 1)	音声認識スレッド (最小 1)
 语音识别结果未确认	语音识别结果未确认	Voice recognition result not confirmed	語音識別結果未確認	音声認識結果は未確認
+语音识别，不使用现有字幕	语音识别，不使用现有字幕	Speech recognition without existing subtitles	語音辨識，不使用現有字幕	既存の字幕を使わず音声認識
 语音转写	语音转写	Speech transcription	語音轉寫	音声文字起こし
 语音转写方式 / Transcription	语音转写方式	Transcription	語音轉寫方式	音声転写方式
 诶	诶	Hey	誒	ねえ
 请为浅色和深色外观分别选择对应的主题	请为浅色和深色外观分别选择对应的主题	Please select separate themes for light and dark looks	請為淺色和深色外觀分別選擇對應的主題	明るい外観と暗い外観に別々のテーマを選択してください
 请为这次笔记设置 AI 服务	请为这次笔记设置 AI 服务	Please set up AI service for this note	請為這次筆記設定 AI 服務	このノートに AI サービスを設定してください
 请为这次笔记设置语音服务	请为这次笔记设置语音服务	Please set up voice service for this note	請為這次筆記設定語音服務	このノートに対して音声サービスを設定してください
+请为这次笔记设置语音识别服务	请为这次笔记设置语音识别服务	Set up speech recognition for this note	請為這次筆記設定語音辨識服務	このノートの音声認識を設定してください
 请使用 Bilibili App 扫码	请使用 Bilibili App 扫码	Please use Bilibili App to scan the code	請使用 Bilibili App 掃碼	Bilibiliアプリを使用してコードをスキャンしてください
 请先填写 API Key，再获取模型	请先填写 API Key，再获取模型	Please fill in the API Key first and then obtain the model	請先填寫 API Key，再獲取模型	最初に API キーを入力してからモデルを取得してください
 请先填写有效的服务地址和模型 ID，尚未发送请求	请先填写有效的服务地址和模型 ID，尚未发送请求	Please fill in a valid service address and model ID first, the request has not been sent yet	請先填寫有效的服務地址和模型 ID，尚未傳送請求	最初に有効なサービス アドレスとモデル ID を入力してください。リクエストはまだ送信されていません
@@ -2126,6 +2138,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 这个库已经登记在另一个位置，请使用移动笔记库操作	这个库已经登记在另一个位置，请使用移动笔记库操作	This library has been registered in another location, please use the mobile note library operation	這個庫已經登記在另一個位置，請使用移動筆記庫操作	このライブラリは別の場所に登録されています。モバイル ノート ライブラリ操作を使用してください。
 这个文件与生成笔记时的视频内容不同，请选择同一个原视频	这个文件与生成笔记时的视频内容不同，请选择同一个原视频	This file is different from the video content when generating notes. Please select the same original video.	這個檔案與生成筆記時的影片內容不同，請選擇同一個原影片	このファイルは、ノートを生成するときの動画 コンテンツとは異なります。同じ元の動画を選択してください。
 这个文件夹属于另一个笔记库，请用“重新定位…”选择正确的文件夹	这个文件夹属于另一个笔记库，请用“重新定位…”选择正确的文件夹	This folder belongs to another note library, please use "Relocate..." to select the correct folder	這個資料夾屬於另一個筆記庫，請用“重新定位…”選擇正確的資料夾	このフォルダーは別のノート ライブラリに属しています。「再配置...」を使用して正しいフォルダーを選択してください。
+这个文件夹属于另一个笔记库，请用「重新定位…」选择正确的文件夹	这个文件夹属于另一个笔记库，请用「重新定位…」选择正确的文件夹	This folder belongs to another note library. Use “Relocate…” to choose the correct folder.	這個資料夾屬於另一個筆記庫，請用「重新定位…」選擇正確的資料夾	このフォルダは別のノートライブラリに属しています。「再配置…」で正しいフォルダを選択してください
 这个文件夹已是笔记库位置	这个文件夹已是笔记库位置	This folder is already a note library location	這個資料夾已是筆記庫位置	このフォルダはすでにノートライブラリの場所です
 这个文件夹暂时不能写入，请重新连接磁盘或检查访问权限	这个文件夹暂时不能写入，请重新连接磁盘或检查访问权限	This folder cannot be written to temporarily, please reconnect the disk or check access permissions	這個資料夾暫時不能寫入，請重新連線磁碟或檢查訪問許可權	このフォルダーには一時的に書き込むことができません。ディスクを再接続するか、アクセス許可を確認してください。
 这个文件夹还没有笔记	这个文件夹还没有笔记	There are no notes in this folder yet	這個資料夾還沒有筆記	このフォルダーにはまだノートがありません
@@ -2264,6 +2277,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 重试	重试	Retry	重試	再試行
 重试 AI 校对	重试 AI 校对	Retry AI proofreading	重試 AI 校對	AI校正を再試行する
 重试保存	重试保存	Retry save	重試儲存	保存を再試行
+重试保存处理选项	重试保存处理选项	Retry saving processing options	重試儲存處理選項	処理オプションの保存を再試行
 重试保存本次选择	重试保存本次选择	Try again to save this selection	重試儲存本次選擇	この選択内容を保存するためにもう一度試してください
 重试保存生成选项	重试保存生成选项	Retry saving build options	重試儲存生成選項	ビルド オプションの保存を再試行します
 重试导出	重试导出	Retry export	重試匯出	エクスポートを再試行します
@@ -2307,6 +2321,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 韩语	韩语	Korean	韓語	韓国人
 音频会发送到所选服务	音频会发送到所选服务	Audio is sent to the selected service	音訊會傳送到所選服務	音声は選択したサービスに送信されます
 音频会发送到所选识别服务	音频会发送到所选识别服务	Audio is sent to the selected recognition service	音訊會傳送到所選識別服務	音声は選択した認識サービスに送信されます
+音频会发送到所选语音识别服务	音频会发送到所选语音识别服务	Audio is sent to the selected speech recognition service	音訊會傳送到所選語音辨識服務	音声は選択した音声認識サービスに送信されます
 音频切分线程异常终止 / Audio split thread terminated unexpectedly	音频切分线程异常终止	Audio split thread terminated unexpectedly	音訊切分執行緒異常終止	オーディオ分割スレッドが異常終了する
 音频编码部分也用 GPU（默认）/ Also run the audio encoder on the GPU (default)	音频编码部分也用 GPU（默认）/ Also run the audio encoder on the GPU (default)	Also run the audio encoder on the GPU (default)	音訊編碼部分也用 GPU（預設）/ Also run the audio encoder on the GPU (default)	GPU 上でオーディオ エンコーダも実行します (デフォルト)
 音频编码部分改用 CPU（显存不足时）/ Run the audio encoder on the CPU (when GPU memory is low)	音频编码部分改用 CPU（显存不足时）/ Run the audio encoder on the CPU (when GPU memory is low)	Run the audio encoder on the CPU (when GPU memory is low)	音訊編碼部分改用 CPU（視訊記憶體不足時）/ Run the audio encoder on the CPU (when GPU memory is low)	CPU 上でオーディオ エンコーダを実行する (GPU ノートリが少ない場合)
@@ -2334,6 +2349,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 默认服务尚未更改，请重试	默认服务尚未更改，请重试	The default service has not been changed, please try again	預設服務尚未更改，請重試	デフォルトのサービスは変更されていません。もう一度お試しください。
 默认服务版本不存在	默认服务版本不存在	Default service version does not exist	預設服務版本不存在	デフォルトのサービスバージョンが存在しません
 默认服务用途不匹配	默认服务用途不匹配	Default service purpose does not match	預設服務用途不匹配	デフォルトのサービス目的が一致しません
+默认设置已保存，当前视频的选项尚未同步。请重试。	默认设置已保存，当前视频的选项尚未同步。请重试。	Default settings saved. The current video's options were not synced; try again.	預設設定已儲存，目前影片的選項尚未同步。請重試。	デフォルト設定を保存しました。現在の動画のオプションは同期されていません。再試行してください。
 默认设置已保存，当前视频的选项尚未同步。请重试保存输入记录。	默认设置已保存，当前视频的选项尚未同步。请重试保存输入记录。	The default settings have been saved and the options for the current video have not yet been synced. Please try again to save the input record.	預設設定已儲存，當前影片的選項尚未同步。請重試儲存輸入記錄。	デフォルト設定は保存されていますが、現在の動画のオプションはまだ同期されていません。入力レコードの保存を再試行してください。
 默认设置已保存，当前视频的选项尚未同步：{error:#}	默认设置已保存，当前视频的选项尚未同步：{error:#}	Default settings saved, options for current video not yet synced: {error:#}	預設設定已儲存，當前影片的選項尚未同步：{error:#}	デフォルト設定が保存されました。現在の動画のオプションはまだ同期されていません: {error:#}
 默认设置已保存，当前视频的选项尚未同步：{}	默认设置已保存，当前视频的选项尚未同步：{}	Default settings saved, options for current video not yet synced: {}	預設設定已儲存，當前影片的選項尚未同步：{}	デフォルト設定が保存されました。現在の動画のオプションはまだ同期されていません: {}

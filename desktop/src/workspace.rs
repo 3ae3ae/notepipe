@@ -471,7 +471,7 @@ pub(crate) fn available_task_export(
         .into_iter()
         .find(|path| path.is_file())
         .context(course2md::tr!(
-            "导出文件已移动或无法读取，可打开笔记后从“导出”菜单重新保存。"
+            "导出文件已移动或无法读取，可打开笔记后从「导出」菜单重新保存。"
         ))
 }
 

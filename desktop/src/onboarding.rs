@@ -231,7 +231,7 @@ fn apply_provider_choice(
     }
     let previous = std::mem::replace(model, course2md::config::DEFAULT_ASR_MODEL.into());
     Some(course2md::tr!(
-        "{} 不支持“{}”，已改用 {}。",
+        "{} 不支持「{}」，已改用 {}。",
         crate::provider_label(Some(resolved)),
         previous,
         model_label(model)

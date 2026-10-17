@@ -29,9 +29,9 @@ impl Desktop {
                         course2md::tr!("没有字幕时会提示选择字幕文件或改用语音识别")
                     }
                     Some(course2md::config::TranscriptSource::Asr) => {
-                        course2md::tr!("识别视频声音，不使用现有字幕")
+                        course2md::tr!("语音识别，不使用现有字幕")
                     }
-                    _ => course2md::tr!("有字幕时直接用字幕，没有字幕时识别视频声音"),
+                    _ => course2md::tr!("有字幕时直接用字幕，没有字幕时使用语音识别"),
                 },
                 self.setting_choices("default-text-source", course2md::tr!("文字来源"))
                     .options([

@@ -1805,7 +1805,7 @@ impl Desktop {
         } else if pending {
             course2md::tr!("文字来源待确认")
         } else if self.import_uses_speech() {
-            course2md::tr!("将识别视频声音")
+            course2md::tr!("将使用语音识别")
         } else if confirmed_subtitle {
             course2md::tr!("有字幕，将直接使用")
         } else {
@@ -1984,7 +1984,7 @@ impl Desktop {
                 None => course2md::tr!("字幕还没读取完成").into(),
             }
         } else if speech {
-            course2md::tr!("识别视频声音").into()
+            course2md::tr!("语音识别").into()
         } else if let Some(subtitle) = &source.selected_subtitle {
             // 自动选择的解析结果就是当前值，与显式选择同样只显示字幕名
             subtitle.label.clone()
@@ -2128,7 +2128,7 @@ impl Desktop {
             {
                 choices.push((format!("track:{}", cached.track_id), cached.label.clone()));
             }
-            choices.push(("speech".into(), course2md::tr!("识别视频声音").into()));
+            choices.push(("speech".into(), course2md::tr!("语音识别").into()));
             let selected = if speech {
                 Some("speech".to_owned())
             } else {
@@ -2282,7 +2282,7 @@ impl Desktop {
                     self.task_options.source_mode == TranscriptSource::Auto,
                     |view| {
                         view.child(aux_text(course2md::tr!(
-                            "有字幕时直接用字幕，没有字幕时识别视频声音"
+                            "有字幕时直接用字幕，没有字幕时使用语音识别"
                         )))
                     },
                 ),
@@ -2408,7 +2408,7 @@ impl Desktop {
     fn import_speech_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let cloud = self.task_options.uses_cloud_provider();
         let label = if cloud {
-            course2md::tr!("识别服务").to_owned()
+            course2md::tr!("语音识别服务").to_owned()
         } else {
             let (_, model, _) = self.import_model_request();
             course2md::tr!("本机 · {}", course2md::config::model_label(&model))
@@ -2469,7 +2469,7 @@ impl Desktop {
         if cloud {
             view = view
                 .child(self.task_service_picker(ServicePurpose::Speech, cx))
-                .child(aux_text(course2md::tr!("音频会发送到所选识别服务")));
+                .child(aux_text(course2md::tr!("音频会发送到所选语音识别服务")));
         } else {
             let (provider, model, root) = self.import_model_request();
             let snapshot = self.setup_model_snapshot(provider, Some(&model), &root);
@@ -3343,7 +3343,7 @@ impl Desktop {
                 outline_pill("repair-generation-preferences")
                     .icon(icons::refresh())
                     .label(if issue.can_retry {
-                        course2md::tr!("重试保存生成选项")
+                        course2md::tr!("重试保存处理选项")
                     } else {
                         course2md::tr!("重置处理选项")
                     })
@@ -3436,7 +3436,7 @@ impl Desktop {
                 primary_pill("configure-conversion-service")
                     .icon(icons::settings())
                     .label(match purpose {
-                        ServicePurpose::Speech => course2md::tr!("设置语音服务"),
+                        ServicePurpose::Speech => course2md::tr!("设置语音识别服务"),
                         ServicePurpose::Ai => course2md::tr!("设置 AI 服务"),
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {

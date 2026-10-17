@@ -157,7 +157,7 @@ fn inspect_location(location: &workspace::LibraryLocation) -> LocationCheck {
         Ok(identity) if identity.trim() == location.id => {}
         Ok(_) => {
             check.problem = Some(
-                course2md::tr!("这个文件夹属于另一个笔记库，请用“重新定位…”选择正确的文件夹")
+                course2md::tr!("这个文件夹属于另一个笔记库，请用「重新定位…」选择正确的文件夹")
                     .into(),
             )
         }
@@ -1853,7 +1853,7 @@ impl Desktop {
         if self.preferences.references_storage_path(&backup.path) {
             self.storage_ui.begin(StorageOp::Cleanup);
             self.storage_ui.error = Some(
-                course2md::tr!("模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份")
+                course2md::tr!("模型仍在使用旧位置，请先在「生成笔记」中保存模型位置，再清理备份")
                     .into(),
             );
             self.open_storage_dialog(window, cx);
