@@ -10,6 +10,7 @@ mod codex_ui;
 mod course_library;
 mod credentials;
 mod focus_scroll;
+mod i18n;
 mod icons;
 mod import_ui;
 mod library_ui;
@@ -412,6 +413,9 @@ impl Desktop {
             configuration_directory.join("desktop-preferences"),
             credentials::system_vault(configuration_directory.join("desktop-credentials.json")),
         );
+        // Inputs and the first frame read the catalog immediately, so the
+        // persisted language must be active before they are constructed.
+        i18n::apply(preferences.application().language);
         let mut config = preferences.defaults_config();
         config.defaults.out = Some(output.clone());
         let fields = [

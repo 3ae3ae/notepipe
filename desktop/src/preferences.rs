@@ -210,12 +210,64 @@ impl GenerationPreferences {
 /// 界面文字大小档位：应用、下拉选项、持久化校验共用同一白名单
 pub const FONT_SCALES: [f32; 4] = [1.0, 1.25, 1.5, 2.0];
 
+/// The interface language, including the default that follows the operating system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum InterfaceLanguage {
+    #[default]
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "en")]
+    En,
+    #[serde(rename = "zh-Hans")]
+    ZhHans,
+    #[serde(rename = "zh-Hant")]
+    ZhHant,
+    #[serde(rename = "ja")]
+    Ja,
+}
+
+impl InterfaceLanguage {
+    pub const ALL: [Self; 5] = [
+        Self::System,
+        Self::En,
+        Self::ZhHans,
+        Self::ZhHant,
+        Self::Ja,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::En => "en",
+            Self::ZhHans => "zh-Hans",
+            Self::ZhHant => "zh-Hant",
+            Self::Ja => "ja",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|language| language.id() == id)
+    }
+
+    pub fn resolve(self) -> course2md::i18n::Lang {
+        match self {
+            Self::System => course2md::i18n::Lang::detect(),
+            Self::En => course2md::i18n::Lang::En,
+            Self::ZhHans => course2md::i18n::Lang::ZhHans,
+            Self::ZhHant => course2md::i18n::Lang::ZhHant,
+            Self::Ja => course2md::i18n::Lang::Ja,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ApplicationPreferences {
     pub desktop: DesktopSettings,
     pub font_scale: f32,
     pub appearance: crate::palettes::ThemePreferences,
+    /// Interface language; `System` follows the operating system at launch.
+    pub language: InterfaceLanguage,
 }
 
 impl Default for ApplicationPreferences {
@@ -223,6 +275,7 @@ impl Default for ApplicationPreferences {
         Self {
             font_scale: 1.0,
             appearance: Default::default(),
+            language: InterfaceLanguage::default(),
             desktop: DesktopSettings {
                 system_titlebar: true,
                 setup_completed: false,
