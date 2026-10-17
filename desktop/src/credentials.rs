@@ -112,6 +112,10 @@ impl CredentialVault for MemoryCredentialVault {
     }
 }
 
+/// errSecItemNotFound: the Keychain has no item for this reference.
+#[cfg(target_os = "macos")]
+const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
 #[cfg(target_os = "macos")]
 pub struct KeychainCredentialVault {
     service: String,
@@ -146,7 +150,7 @@ impl CredentialVault for KeychainCredentialVault {
         validate_reference(reference)?;
         let bytes = security_framework::passwords::get_generic_password(&self.service, reference)
             .map_err(|error| match error.code() {
-            -25300 => anyhow!("钥匙串中找不到此服务的凭据，请重新保存 API Key"),
+            ERR_SEC_ITEM_NOT_FOUND => anyhow!("钥匙串中找不到此服务的凭据，请重新保存 API Key"),
             code => anyhow!("暂时无法读取此服务的钥匙串凭据（系统代码 {code}）"),
         })?;
         // Keep the intermediate byte buffer zeroizing as well as the returned UTF-8 value.
@@ -160,7 +164,7 @@ impl CredentialVault for KeychainCredentialVault {
         validate_reference(reference)?;
         match security_framework::passwords::delete_generic_password(&self.service, reference) {
             Ok(()) => Ok(()),
-            Err(error) if error.code() == -25300 => Ok(()),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
             Err(error) => bail!("无法移除此服务的钥匙串凭据（系统代码 {}）", error.code()),
         }
     }
@@ -196,25 +200,33 @@ impl CredentialVault for KeyringCredentialVault {
             bail!("请输入 API Key");
         }
         let reference = new_reference();
-        let entry = keyring::Entry::new(&self.service, &reference)?;
-        entry.set_password(secret.expose())?;
+        keyring::Entry::new(&self.service, &reference)
+            .and_then(|entry| entry.set_password(secret.expose()))
+            .map_err(|_| anyhow!("无法将 API Key 保存到系统凭据库"))?;
         Ok(reference)
     }
 
     fn resolve(&self, reference: &str) -> Result<Secret> {
         validate_reference(reference)?;
-        let entry = keyring::Entry::new(&self.service, reference)?;
-        let password = entry.get_password()?;
+        let password = keyring::Entry::new(&self.service, reference)
+            .and_then(|entry| entry.get_password())
+            .map_err(|error| match error {
+                keyring::Error::NoEntry => {
+                    anyhow!("系统凭据库中找不到此服务的凭据，请重新保存 API Key")
+                }
+                _ => anyhow!("暂时无法读取系统凭据库中此服务的凭据"),
+            })?;
         Ok(Secret::new(password))
     }
 
     fn remove(&self, reference: &str) -> Result<()> {
         validate_reference(reference)?;
-        let entry = keyring::Entry::new(&self.service, reference)?;
         // 与 Keychain 实现一致：条目不存在视为已删除
-        match entry.delete_credential() {
+        match keyring::Entry::new(&self.service, reference)
+            .and_then(|entry| entry.delete_credential())
+        {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.into()),
+            Err(_) => bail!("无法移除系统凭据库中此服务的凭据"),
         }
     }
 }
@@ -229,8 +241,9 @@ impl CredentialVault for KeyringCredentialVault {
 pub struct FileCredentialVault {
     path: PathBuf,
     values: Mutex<BTreeMap<CredentialRef, Zeroizing<String>>>,
-    /// 文件损坏/不可读时的错误：存在期间拒绝任何写入，避免用空表覆盖原文件丢密钥
-    load_error: Mutex<Option<String>>,
+    /// Set when the file exists but cannot be read; writes are refused so an
+    /// empty map never replaces the saved keys.
+    load_error: Option<&'static str>,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -239,38 +252,34 @@ impl FileCredentialVault {
         let path = path.into();
         let (values, load_error) = match Self::load(&path) {
             Ok(values) => (values, None),
-            Err(error) => {
-                // 写入锁定说明见 refuse_if_unreadable；不引入日志框架，错误在写入尝试时展示
-                (BTreeMap::new(), Some(format!("{error:#}")))
-            }
+            Err(error) => (BTreeMap::new(), Some(error)),
         };
         Self {
             path,
             values: Mutex::new(values),
-            load_error: Mutex::new(load_error),
+            load_error,
         }
     }
 
     fn refuse_if_unreadable(&self) -> Result<()> {
-        if let Some(error) = self.load_error.lock().map_err(|_| anyhow!("暂时无法访问凭据"))?.as_ref() {
-            bail!(
-                "凭据文件无法读取（{}），为避免覆盖丢失已暂停写入；请修复或备份后删除该文件重试：{}",
-                error,
-                self.path.display()
-            );
+        if let Some(error) = self.load_error {
+            bail!("{error}。请备份后删除该文件再重试：{}", self.path.display());
         }
         Ok(())
     }
 
-    fn load(path: &Path) -> Result<BTreeMap<CredentialRef, Zeroizing<String>>> {
+    fn load(
+        path: &Path,
+    ) -> std::result::Result<BTreeMap<CredentialRef, Zeroizing<String>>, &'static str> {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(BTreeMap::new());
             }
-            Err(error) => return Err(error.into()),
+            Err(_) => return Err("已保存的 API Key 文件无法读取，为避免丢失暂不写入"),
         };
-        let plain: BTreeMap<CredentialRef, String> = serde_json::from_slice(&bytes)?;
+        let plain: BTreeMap<CredentialRef, String> = serde_json::from_slice(&bytes)
+            .map_err(|_| "已保存的 API Key 文件已损坏，为避免丢失暂不写入")?;
         Ok(plain
             .into_iter()
             .map(|(reference, value)| (reference, Zeroizing::new(value)))
@@ -416,7 +425,7 @@ mod tests {
 
     #[cfg(not(target_os = "macos"))]
     #[test]
-    fn file_vault_starts_empty_when_file_is_missing_or_corrupt() {
+    fn file_vault_resolves_nothing_from_a_missing_or_corrupt_file() {
         let directory = tempfile::tempdir().unwrap();
         let missing = FileCredentialVault::new(directory.path().join("missing.json"));
         assert!(
@@ -444,7 +453,11 @@ mod tests {
         let vault = FileCredentialVault::new(&corrupt);
         // 损坏文件存在期间：写入与删除都必须拒绝，不得静默覆盖丢密钥
         assert!(vault.insert(Secret::new("test-only-key")).is_err());
-        assert!(vault.remove("credential-00000000-0000-0000-0000-000000000000").is_err());
+        assert!(
+            vault
+                .remove("credential-00000000-0000-0000-0000-000000000000")
+                .is_err()
+        );
         assert_eq!(std::fs::read(&corrupt).unwrap(), b"not json");
     }
 }
