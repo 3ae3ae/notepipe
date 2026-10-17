@@ -14,6 +14,13 @@ use std::{
 const SCHEMA: u32 = 1;
 /// Minimum spacing between throttled progress saves while a task streams events.
 const PROGRESS_SAVE_INTERVAL: Duration = Duration::from_secs(2);
+/// Parsed subtitle text of a submitted task, kept in its work directory so the
+/// workspace record stays small. Older records carry the events inline.
+const TASK_SUBTITLE_FILE: &str = "subtitle-events.json";
+/// Log lines kept once a task has finished.
+const FINISHED_TASK_LOG_LINES: usize = 50;
+/// Cancelled attempts without a note kept in the task list.
+const KEPT_CANCELLED_TASKS: usize = 30;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn new_id(prefix: &str) -> String {
@@ -69,7 +76,8 @@ pub struct Draft {
     pub revision: u64,
     pub online: bool,
     pub input: String,
-    #[serde(default)]
+    /// Subtitle events live in a separate file beside the workspace record.
+    #[serde(default, serialize_with = "serialize_draft_source")]
     pub source: Option<crate::source::Source>,
     pub title: String,
     pub custom_title: bool,
@@ -196,6 +204,26 @@ fn serialize_public_config<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     public_config(config).serialize(serializer)
+}
+fn serialize_draft_source<S: serde::Serializer>(
+    source: &Option<crate::source::Source>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match source {
+        Some(source)
+            if source
+                .selected_subtitle
+                .as_ref()
+                .is_some_and(|subtitle| !subtitle.events.is_empty()) =>
+        {
+            let mut light = source.clone();
+            if let Some(subtitle) = &mut light.selected_subtitle {
+                subtitle.events = Vec::new();
+            }
+            Some(light).serialize(serializer)
+        }
+        source => source.serialize(serializer),
+    }
 }
 fn serialize_optional_public_config<S: serde::Serializer>(
     config: &Option<ConfigFile>,
@@ -597,7 +625,13 @@ impl State {
     }
 
     /// Replace the current form with a task's options without mutating that task.
-    pub fn adjust_task(&mut self, id: &str) -> Result<()> {
+    /// `subtitle_events` comes from `task_subtitle_events`; without it the form
+    /// asks for the subtitle to be read again.
+    pub fn adjust_task(
+        &mut self,
+        id: &str,
+        subtitle_events: Option<Vec<course2md::timeline::TranscriptEvent>>,
+    ) -> Result<()> {
         let task = self.task(id).context("任务不存在")?.clone();
         ensure!(
             task.handled_by.is_none(),
@@ -616,7 +650,16 @@ impl State {
             task.plan.options.clone(),
         );
         draft.input = task.plan.source.input.clone();
-        draft.source = Some(task.plan.source);
+        let mut source = task.plan.source;
+        match subtitle_events.filter(|events| !events.is_empty()) {
+            Some(events) => {
+                if let Some(subtitle) = &mut source.selected_subtitle {
+                    subtitle.events = events;
+                }
+            }
+            None => source.selected_subtitle = None,
+        }
+        draft.source = Some(source);
         draft.title = task.plan.title;
         draft.custom_title = true;
         draft.folder = task.plan.folder;
@@ -1004,6 +1047,8 @@ pub struct Workspace {
     /// Record bytes this process last wrote, so the backup copy needs no
     /// re-read of the file it replaces.
     last_record: RefCell<Option<Vec<u8>>>,
+    /// Draft subtitle this process last wrote beside the record.
+    last_draft_subtitle: RefCell<Option<course2md::subtitle::CachedSubtitle>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1252,6 +1297,142 @@ pub fn reconcile_receipts(task: &mut TaskRecord) -> Result<()> {
     Ok(())
 }
 
+/// Move inline subtitle events of submitted tasks into their work directories.
+/// A task whose library is offline or unwritable keeps its events inline until
+/// a later save.
+fn store_task_subtitles(state: &mut State) {
+    for task in &mut state.tasks {
+        let Some(events) = task
+            .plan
+            .source
+            .selected_subtitle
+            .as_ref()
+            .map(|subtitle| &subtitle.events)
+            .filter(|events| !events.is_empty())
+        else {
+            continue;
+        };
+        let Some(library) = state
+            .libraries
+            .iter()
+            .find(|library| library.id == task.plan.library_id)
+            .filter(|library| check_library(library).is_ok())
+        else {
+            continue;
+        };
+        let stored = ensure_work_directory(task, library).and_then(|_| {
+            course2md::checkpoint::atomic_write(
+                &task.work_dir.join(TASK_SUBTITLE_FILE),
+                &serde_json::to_vec(events)?,
+            )
+        });
+        if stored.is_ok()
+            && let Some(subtitle) = &mut task.plan.source.selected_subtitle
+        {
+            subtitle.events = Vec::new();
+        }
+    }
+}
+
+/// Finished tasks keep a short log tail, and only recent cancelled attempts
+/// without a note remain listed.
+fn compact_history(state: &mut State) {
+    for task in state.tasks.iter_mut().filter(|task| task.state.finished()) {
+        if task.logs.len() > FINISHED_TASK_LOG_LINES {
+            task.logs.drain(..task.logs.len() - FINISHED_TASK_LOG_LINES);
+        }
+    }
+    let referenced: BTreeSet<String> = state
+        .tasks
+        .iter()
+        .flat_map(|task| task.parent.iter().chain(task.handled_by.iter()))
+        .chain(state.selected_task.iter())
+        .chain(
+            state
+                .drafts
+                .iter()
+                .flat_map(|draft| draft.retry_of.iter().chain(draft.submitted_task.iter())),
+        )
+        .cloned()
+        .collect();
+    let mut cancelled: Vec<_> = state
+        .tasks
+        .iter()
+        .filter(|task| {
+            task.state == TaskState::Cancelled
+                && task.artifact.is_none()
+                && !referenced.contains(&task.id)
+        })
+        .map(|task| (task.updated, task.id.clone()))
+        .collect();
+    if cancelled.len() <= KEPT_CANCELLED_TASKS {
+        return;
+    }
+    cancelled.sort();
+    let pruned: BTreeSet<String> = cancelled
+        .into_iter()
+        .rev()
+        .skip(KEPT_CANCELLED_TASKS)
+        .map(|(_, id)| id)
+        .collect();
+    state.tasks.retain(|task| !pruned.contains(&task.id));
+}
+
+/// Parsed subtitle events the task was submitted with. A repair attempt reuses
+/// its base note's transcript and has none of its own.
+pub fn task_subtitle_events(
+    task: &TaskRecord,
+) -> Result<Option<Vec<course2md::timeline::TranscriptEvent>>> {
+    let Some(subtitle) = &task.plan.source.selected_subtitle else {
+        return Ok(None);
+    };
+    if !subtitle.events.is_empty() {
+        return Ok(Some(subtitle.events.clone()));
+    }
+    let path = task.work_dir.join(TASK_SUBTITLE_FILE);
+    if path.is_file() {
+        return Ok(Some(serde_json::from_slice(&read_record_bytes(&path)?)?));
+    }
+    ensure!(
+        matches!(
+            task.plan.operation,
+            course2md::execution::Operation::Reprocess { .. }
+        ),
+        "所选字幕的内容已丢失，请重新读取字幕后再试"
+    );
+    Ok(None)
+}
+
+fn draft_subtitle_path(record: &Path) -> PathBuf {
+    record.with_extension("subtitle.json")
+}
+
+/// Restore the draft's subtitle events from the file beside the record. A
+/// missing or mismatched file leaves the subtitle to be read again.
+fn hydrate_draft_subtitles(state: &mut State, record: &Path) {
+    let stored = read_record_bytes(&draft_subtitle_path(record))
+        .ok()
+        .and_then(|bytes| {
+            serde_json::from_slice::<course2md::subtitle::CachedSubtitle>(&bytes).ok()
+        });
+    for source in state.drafts.iter_mut().filter_map(|draft| draft.source.as_mut()) {
+        let Some(selected) = &source.selected_subtitle else {
+            continue;
+        };
+        if !selected.events.is_empty() {
+            continue;
+        }
+        source.selected_subtitle = stored
+            .as_ref()
+            .filter(|stored| {
+                stored.source_identity == selected.source_identity
+                    && stored.track_id == selected.track_id
+                    && !stored.events.is_empty()
+            })
+            .cloned();
+    }
+}
+
 impl Workspace {
     /// The UI explains the registered path and obtains an explicit association choice.
     pub fn reassociate_library(&mut self, id: &str) -> Result<()> {
@@ -1480,7 +1661,9 @@ impl Workspace {
         }
         state.retain_current_input();
         state.recover();
-        course2md::checkpoint::atomic_write(&path, &serde_json::to_vec_pretty(&state)?)?;
+        hydrate_draft_subtitles(&mut state, &path);
+        store_task_subtitles(&mut state);
+        course2md::checkpoint::atomic_write(&path, &serde_json::to_vec(&state)?)?;
         let recovery = format!(
             "已重建 {} 项任务记录，未启动处理。原始记录保存在 {}。{}",
             state.tasks.len(),
@@ -1498,6 +1681,7 @@ impl Workspace {
             mirror_snapshots: Default::default(),
             last_write: Cell::new(None),
             last_record: RefCell::new(None),
+            last_draft_subtitle: RefCell::new(None),
         })
     }
 
@@ -1581,6 +1765,8 @@ impl Workspace {
             initial
         };
         state.recover();
+        hydrate_draft_subtitles(&mut state, &path);
+        store_task_subtitles(&mut state);
         for task in &mut state.tasks {
             let result = state
                 .libraries
@@ -1601,6 +1787,7 @@ impl Workspace {
             mirror_snapshots: Default::default(),
             last_write: Cell::new(None),
             last_record: RefCell::new(None),
+            last_draft_subtitle: RefCell::new(None),
         })
     }
 
@@ -1627,6 +1814,8 @@ impl Workspace {
     pub fn transaction<T>(&mut self, edit: impl FnOnce(&mut State) -> Result<T>) -> Result<T> {
         let mut next = self.state.clone();
         let result = edit(&mut next)?;
+        store_task_subtitles(&mut next);
+        compact_history(&mut next);
         self.write(&next)?;
         self.state = next;
         Ok(result)
@@ -1677,7 +1866,7 @@ impl Workspace {
             validate_record_location(task, &state.libraries)?;
             ensure_work_directory(task, library)?;
             let mirror = task.work_dir.join("task-record.json");
-            let bytes = serde_json::to_vec_pretty(&TaskMirror {
+            let bytes = serde_json::to_vec(&TaskMirror {
                 schema: SCHEMA,
                 task: task.clone(),
             })?;
@@ -1689,6 +1878,21 @@ impl Workspace {
                 .borrow_mut()
                 .insert(task.id.clone(), (task.clone(), library.clone()));
         }
+        // The record refers to the draft subtitle by identity, so its events
+        // must be on disk first.
+        if let Some(subtitle) = state
+            .draft()
+            .and_then(|draft| draft.source.as_ref())
+            .and_then(|source| source.selected_subtitle.as_ref())
+            .filter(|subtitle| !subtitle.events.is_empty())
+            && self.last_draft_subtitle.borrow().as_ref() != Some(subtitle)
+        {
+            course2md::checkpoint::atomic_write(
+                &draft_subtitle_path(&self.path),
+                &serde_json::to_vec(subtitle)?,
+            )?;
+            *self.last_draft_subtitle.borrow_mut() = Some(subtitle.clone());
+        }
         let backup = self.path.with_extension("json.bak");
         let cached = self.last_record.borrow();
         if let Some(bytes) = cached.as_deref() {
@@ -1698,7 +1902,7 @@ impl Workspace {
             course2md::checkpoint::atomic_write(&backup, &bytes)?;
         }
         drop(cached);
-        let bytes = serde_json::to_vec_pretty(state)?;
+        let bytes = serde_json::to_vec(state)?;
         course2md::checkpoint::atomic_write(&self.path, &bytes)?;
         *self.last_record.borrow_mut() = Some(bytes);
         self.last_write.set(Some(Instant::now()));
@@ -1885,6 +2089,85 @@ mod tests {
         restored.save().unwrap();
         let repaired: TaskMirror = serde_json::from_slice(&std::fs::read(mirror).unwrap()).unwrap();
         assert_eq!(repaired.task.logs, ["实际进度"]);
+    }
+
+    #[test]
+    fn subtitle_text_and_finished_logs_stay_out_of_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = test_workspace(dir.path());
+        let events = vec![course2md::timeline::TranscriptEvent {
+            start: 0.,
+            end: 1.,
+            text: "字幕正文".into(),
+            raw: None,
+        }];
+        let mut task = plan(&ws.state.default_library);
+        task.source.identity = "video-a".into();
+        task.source.selected_subtitle = Some(course2md::subtitle::CachedSubtitle {
+            source_identity: "video-a".into(),
+            track_id: "zh".into(),
+            label: "中文".into(),
+            path: "lesson.srt".into(),
+            events: events.clone(),
+        });
+        // A record from an earlier version carries the events inline.
+        ws.state.enqueue(task.clone(), None).unwrap();
+        ws.state.draft_mut().unwrap().source = Some(task.source.clone());
+        let id = ws.state.tasks[0].id.clone();
+        ws.state.tasks[0].logs = (0..200).map(|n| n.to_string()).collect();
+        ws.state.tasks[0].state = TaskState::Complete;
+        let mut legacy = serde_json::to_value(&ws.state).unwrap();
+        legacy["drafts"][0]["source"]["selected_subtitle"]["events"] =
+            serde_json::to_value(&events).unwrap();
+        std::fs::write(ws.storage_path(), serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let legacy = std::fs::read_to_string(ws.storage_path()).unwrap();
+        assert!(legacy.contains("字幕正文"));
+
+        let mut reopened = test_workspace(dir.path());
+        assert_eq!(
+            task_subtitle_events(reopened.state.task(&id).unwrap()).unwrap(),
+            Some(events.clone())
+        );
+        reopened.transaction(|_| Ok(())).unwrap();
+        let saved = std::fs::read_to_string(reopened.storage_path()).unwrap();
+        assert!(!saved.contains("字幕正文"));
+        assert_eq!(
+            reopened.state.task(&id).unwrap().logs.len(),
+            FINISHED_TASK_LOG_LINES
+        );
+
+        let again = test_workspace(dir.path());
+        let draft_subtitle = again
+            .state
+            .draft()
+            .and_then(|draft| draft.source.as_ref())
+            .and_then(|source| source.selected_subtitle.as_ref())
+            .unwrap();
+        assert_eq!(draft_subtitle.events, events);
+        assert_eq!(
+            task_subtitle_events(again.state.task(&id).unwrap()).unwrap(),
+            Some(events)
+        );
+    }
+
+    #[test]
+    fn only_recent_cancelled_attempts_without_notes_are_kept() {
+        let mut state = State::initial("/library".into(), Default::default());
+        let library = state.default_library.clone();
+        for n in 0..KEPT_CANCELLED_TASKS + 5 {
+            let mut task = plan(&library);
+            task.source_id = format!("video-{n}");
+            let (id, _) = state.enqueue(task, None).unwrap();
+            let record = state.task_mut(&id).unwrap();
+            record.state = TaskState::Cancelled;
+            record.updated = n as u64;
+        }
+        let selected = state.tasks[0].id.clone();
+        state.selected_task = Some(selected.clone());
+        compact_history(&mut state);
+        assert_eq!(state.tasks.len(), KEPT_CANCELLED_TASKS + 1);
+        assert!(state.task(&selected).is_some());
+        assert!(state.task(&state.tasks[1].id.clone()).unwrap().updated >= 5);
     }
 
     #[test]
@@ -2226,7 +2509,7 @@ mod tests {
         b.folder = Some(7);
         b.options.summarize = true;
         let b = b.clone();
-        assert!(ws.state.adjust_task(&id).is_err());
+        assert!(ws.state.adjust_task(&id, None).is_err());
         assert_eq!(ws.state.draft().unwrap(), &b);
 
         ws.state.task_mut(&id).unwrap().state = TaskState::NeedsAttention;
@@ -2234,7 +2517,7 @@ mod tests {
         assert!(ws.state.next_task().unwrap().plan == original);
         assert_eq!(ws.state.draft().unwrap(), &b);
         ws.state.set_intent(&id, Intent::Pause).unwrap();
-        ws.transaction(|state| state.adjust_task(&id)).unwrap();
+        ws.transaction(|state| state.adjust_task(&id, None)).unwrap();
         let revised = ws.state.draft_mut().unwrap();
         let options = revised.options.clone();
         revised.inherit(&ConversionOptions::default());
@@ -2269,7 +2552,7 @@ mod tests {
             reopened.state.enqueue(adjusted, Some(id.clone())).unwrap(),
             (followup, false)
         );
-        assert!(reopened.state.adjust_task(&id).is_err());
+        assert!(reopened.state.adjust_task(&id, None).is_err());
         assert_eq!(reopened.state.drafts.len(), 1);
         assert!(reopened.state.drafts.iter().all(|input| input.id != b.id));
     }

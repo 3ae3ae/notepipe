@@ -7,6 +7,13 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+/// Identity marker written at the root of every registered library.
+pub const LIBRARY_ID_FILE: &str = ".course2md-library-id";
+/// Task bindings rewrite this file when a verified copy is relocated.
+const TASK_IDENTITY_FILE: &str = "task-identity.json";
+const MOVE_MARKER_FILE: &str = ".course2md-move.json";
+const MAX_DEPTH: usize = 64;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileRecord {
     pub path: PathBuf,
@@ -23,6 +30,23 @@ pub struct BackupRecord {
     pub created: u64,
     pub verified: bool,
     pub journal_path: PathBuf,
+}
+
+impl BackupRecord {
+    /// The verification journal of this backup, rejected when it describes a
+    /// different move.
+    pub fn load_journal(&self) -> Result<Journal> {
+        let journal: Journal = serde_json::from_slice(
+            &std::fs::read(&self.journal_path).context("缺少这份备份的核验记录，未清理任何文件")?,
+        )?;
+        ensure!(
+            journal.id == self.id
+                && journal.source == self.path
+                && journal.library_id == self.library_id,
+            "备份与核验记录不一致，未清理任何文件"
+        );
+        Ok(journal)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -132,55 +156,34 @@ impl LibraryAccess {
     }
 }
 
-/// A missing or unreadable location is an unknown part of the library, not an
-/// empty collection. Keep that distinction when presenting search results.
-#[cfg(test)]
-pub fn library_access(roots: impl IntoIterator<Item = PathBuf>) -> LibraryAccess {
-    let mut access = LibraryAccess {
-        available: Vec::new(),
-        unavailable: Vec::new(),
-    };
-    for root in roots {
-        if access.available.contains(&root) || access.unavailable.contains(&root) {
-            continue;
-        }
-        if std::fs::read_dir(&root).is_ok() {
-            access.available.push(root);
-        } else {
-            access.unavailable.push(root);
-        }
-    }
-    access
-}
-
 fn check_cancel(cancel: &AtomicBool) -> Result<()> {
     ensure!(
         !cancel.load(Ordering::Relaxed),
-        "已取消迁移，原课程库仍保留"
+        "已取消移动，原笔记库仍保留"
     );
     Ok(())
 }
 fn ignored(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|value| value.to_str()),
-        Some(".DS_Store" | "Thumbs.db" | ".course2md-move.json")
+        Some(".DS_Store" | "Thumbs.db" | MOVE_MARKER_FILE)
     )
 }
 
 pub fn validate_destination(source: &Path, destination: &Path) -> Result<(PathBuf, PathBuf)> {
     let source =
-        std::fs::canonicalize(source).context("原课程库无法访问，请重新连接这个保存位置")?;
+        std::fs::canonicalize(source).context("原笔记库无法访问，请重新连接这个保存位置")?;
     let destination =
         std::fs::canonicalize(destination).context("目标文件夹无法访问，请选择已有的空文件夹")?;
     ensure!(
         source.is_dir() && destination.is_dir(),
-        "请选择文件夹作为课程库位置"
+        "请选择文件夹作为笔记库位置"
     );
     ensure!(
         source != destination
             && !source.starts_with(&destination)
             && !destination.starts_with(&source),
-        "目标不能是原课程库、它的父文件夹或子文件夹"
+        "目标不能是原笔记库、它的父文件夹或子文件夹"
     );
     ensure!(
         std::fs::read_dir(&destination)?.next().is_none(),
@@ -206,14 +209,14 @@ fn walk(
         }
         let relative = path.strip_prefix(root)?.to_path_buf();
         ensure!(
-            relative.components().count() <= 64,
-            "课程库目录层级过深，请检查 {}",
+            relative.components().count() <= MAX_DEPTH,
+            "笔记库目录层级过深，请检查 {}",
             path.display()
         );
         let kind = entry.file_type()?;
         ensure!(
             !kind.is_symlink(),
-            "课程库包含符号链接，尚未移动：{}。请先把需要的实际文件放入课程库。",
+            "笔记库包含符号链接，尚未移动：{}。请先把需要的实际文件放入笔记库。",
             path.display()
         );
         if kind.is_dir() {
@@ -222,7 +225,7 @@ fn walk(
         } else {
             ensure!(
                 kind.is_file(),
-                "课程库包含无法复制的特殊文件：{}",
+                "笔记库包含无法复制的特殊文件：{}",
                 path.display()
             );
             files.push(relative);
@@ -238,6 +241,7 @@ fn digest(path: &Path, cancel: &AtomicBool) -> Result<String> {
 
 pub fn inventory(
     root: &Path,
+    message: &str,
     cancel: &AtomicBool,
     progress: &impl Fn(Progress),
 ) -> Result<(Vec<FileRecord>, Vec<PathBuf>)> {
@@ -259,7 +263,7 @@ pub fn inventory(
             digest: hash,
         });
         progress(Progress {
-            message: "正在核验课程库文件…".into(),
+            message: message.into(),
             completed: files.len() as u64,
             total,
         });
@@ -283,7 +287,7 @@ fn sync_directory(path: &Path) -> Result<()> {
 
 fn valid_relative(path: &Path) -> bool {
     !path.as_os_str().is_empty()
-        && path.components().count() <= 64
+        && path.components().count() <= MAX_DEPTH
         && path
             .components()
             .all(|part| matches!(part, std::path::Component::Normal(_)))
@@ -346,11 +350,6 @@ pub fn scan_journals(directory: &Path) -> (Vec<(PathBuf, Journal)>, Vec<PathBuf>
     (pending, corrupt)
 }
 
-#[cfg(test)]
-pub fn pending_journals(directory: &Path) -> Vec<(PathBuf, Journal)> {
-    scan_journals(directory).0
-}
-
 pub fn prepare_move(
     library_id: String,
     source: &Path,
@@ -360,7 +359,7 @@ pub fn prepare_move(
     progress: &impl Fn(Progress),
 ) -> Result<PreparedMove> {
     let (source, destination) = validate_destination(source, destination)?;
-    let (files, directories) = inventory(&source, cancel, progress)?;
+    let (files, directories) = inventory(&source, "正在检查原笔记库…", cancel, progress)?;
     ensure!(
         std::fs::read_dir(&destination)?.next().is_none(),
         "目标文件夹在准备期间出现了内容，请选择另一个空文件夹"
@@ -392,11 +391,13 @@ pub fn prepare_move(
     marker.write_all(&serde_json::to_vec(&journal)?)?;
     marker.as_file().sync_all()?;
     marker
-        .persist_noclobber(journal.destination.join(".course2md-move.json"))
+        .persist_noclobber(journal.destination.join(MOVE_MARKER_FILE))
         .map_err(|error| error.error)
-        .context("目标已被其他操作使用，原课程库尚未改变")?;
+        .context("目标已被其他操作使用，原笔记库尚未改变")?;
     sync_directory(&journal.destination)?;
-    copy_journal(path, journal, cancel, progress)
+    // The inventory above is the one just recorded; only a resumed copy has to
+    // check that the source still matches it.
+    copy_journal(path, journal, false, cancel, progress)
 }
 
 pub fn resume_move(
@@ -415,7 +416,7 @@ pub fn resume_move(
         "迁移位置已经变化，原数据和副本已保留"
     );
     let marker: Journal = serde_json::from_slice(
-        &std::fs::read(journal.destination.join(".course2md-move.json"))
+        &std::fs::read(journal.destination.join(MOVE_MARKER_FILE))
             .context("目标缺少这次迁移的识别记录，未修改目标内容")?,
     )?;
     ensure!(
@@ -425,12 +426,13 @@ pub fn resume_move(
             && marker.files == journal.files,
         "目标不属于这次迁移，未修改目标内容"
     );
-    copy_journal(path.to_owned(), journal, cancel, progress)
+    copy_journal(path.to_owned(), journal, true, cancel, progress)
 }
 
 fn copy_journal(
     path: PathBuf,
     mut journal: Journal,
+    resumed: bool,
     cancel: &AtomicBool,
     progress: &impl Fn(Progress),
 ) -> Result<PreparedMove> {
@@ -471,16 +473,20 @@ fn copy_journal(
             }
         }
         journal.temporary_files.clear();
-        let (current, directories) = inventory(&journal.source, cancel, &|_| {})?;
-        ensure!(
-            current == journal.files && directories == journal.directories,
-            "原课程库在迁移准备后发生变化，尚未切换位置。请保留这份副本，并重新选择空文件夹迁移。"
-        );
+        if resumed {
+            let (current, directories) =
+                inventory(&journal.source, "正在检查原笔记库…", cancel, progress)?;
+            ensure!(
+                current == journal.files && directories == journal.directories,
+                "原笔记库在上次移动后发生变化，尚未切换位置。请保留这份副本，并重新选择空文件夹移动。"
+            );
+        }
         for directory in &journal.directories {
             std::fs::create_dir_all(journal.destination.join(directory))?;
         }
         let total = journal.files.iter().map(|file| file.bytes).sum();
         let mut completed = 0;
+        let mut buffer = vec![0; 1024 * 1024];
         for index in 0..journal.files.len() {
             let record = &journal.files[index];
             check_cancel(cancel)?;
@@ -497,7 +503,7 @@ fn copy_journal(
                     && record
                         .path
                         .file_name()
-                        .is_none_or(|name| name != "task-identity.json")
+                        .is_none_or(|name| name != TASK_IDENTITY_FILE)
                 {
                     anyhow::bail!("目标副本已被修改，未覆盖：{}", destination.display());
                 }
@@ -515,7 +521,8 @@ fn copy_journal(
                         .to_path_buf(),
                 );
                 save_journal(&path, &journal)?;
-                let mut buffer = vec![0; 1024 * 1024];
+                let message = format!("正在复制 {}", record.path.display());
+                let mut copied = 0;
                 loop {
                     check_cancel(cancel)?;
                     let count = input.read(&mut buffer)?;
@@ -523,16 +530,17 @@ fn copy_journal(
                         break;
                     }
                     output.write_all(&buffer[..count])?;
+                    copied += count as u64;
                     progress(Progress {
-                        message: format!("正在复制 {}", record.path.display()),
-                        completed: completed + output.as_file().metadata()?.len(),
+                        message: message.clone(),
+                        completed: completed + copied,
                         total,
                     });
                 }
                 output.as_file().sync_all()?;
                 ensure!(
                     digest(output.path(), cancel)? == record.digest,
-                    "复制内容未通过校验，尚未切换课程库：{}",
+                    "复制内容未通过校验，尚未切换笔记库：{}",
                     record.path.display()
                 );
                 std::fs::set_permissions(output.path(), std::fs::metadata(&source)?.permissions())?;
@@ -543,19 +551,21 @@ fn copy_journal(
             }
             completed += record.bytes;
             progress(Progress {
-                message: "正在复制课程库…".into(),
+                message: "正在复制笔记库…".into(),
                 completed,
                 total,
             });
         }
         check_cancel(cancel)?;
-        let (source_files, source_dirs) = inventory(&journal.source, cancel, progress)?;
+        let (source_files, source_dirs) =
+            inventory(&journal.source, "正在检查原笔记库…", cancel, progress)?;
         ensure!(
             source_files == journal.files && source_dirs == journal.directories,
-            "原课程库在复制期间发生变化，尚未切换保存位置"
+            "原笔记库在复制期间发生变化，尚未切换保存位置"
         );
         course2md::execution::relocate_work_bindings(&journal.source, &journal.destination)?;
-        let (target_files, target_dirs) = inventory(&journal.destination, cancel, progress)?;
+        let (target_files, target_dirs) =
+            inventory(&journal.destination, "正在核验副本…", cancel, progress)?;
         ensure!(
             target_dirs == journal.directories && target_files.len() == journal.files.len(),
             "目标副本包含非预期内容，尚未切换保存位置"
@@ -567,7 +577,7 @@ fn copy_journal(
                         || original
                             .path
                             .file_name()
-                            .is_some_and(|name| name == "task-identity.json")),
+                            .is_some_and(|name| name == TASK_IDENTITY_FILE)),
                 "目标副本未通过校验，尚未切换保存位置：{}",
                 original.path.display()
             );
@@ -605,15 +615,7 @@ pub fn cleanup_backup(
     cancel: &AtomicBool,
 ) -> Result<()> {
     ensure!(backup.verified, "这份备份尚未核验，不能清理");
-    let mut journal: Journal = serde_json::from_slice(
-        &std::fs::read(&backup.journal_path).context("缺少这份备份的核验记录，未清理任何文件")?,
-    )?;
-    ensure!(
-        journal.id == backup.id
-            && journal.source == backup.path
-            && journal.library_id == backup.library_id,
-        "备份与核验记录不一致，未清理任何文件"
-    );
+    let mut journal = backup.load_journal()?;
     if journal.cleanup_complete {
         return Ok(());
     }
@@ -636,10 +638,10 @@ pub fn cleanup_backup(
         let root = std::fs::canonicalize(root)?;
         ensure!(
             !root.starts_with(&path) && !path.starts_with(&root),
-            "这个位置仍被课程库使用，不能作为备份清理"
+            "这个位置仍被笔记库使用，不能作为备份清理"
         );
     }
-    let (files, directories) = inventory(&path, cancel, &|_| {})?;
+    let (files, directories) = inventory(&path, "正在检查备份…", cancel, &|_| {})?;
     let unchanged = if journal.cleanup_started {
         files.iter().all(|file| journal.files.contains(file))
             && directories
@@ -666,35 +668,6 @@ pub fn cleanup_backup(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn disconnected_libraries_keep_search_coverage_unknown_until_reconnected() {
-        let temp = tempfile::tempdir().unwrap();
-        let first = temp.path().join("first");
-        let second = temp.path().join("second");
-        std::fs::create_dir(&first).unwrap();
-        std::fs::create_dir(&second).unwrap();
-        let roots = || vec![first.clone(), second.clone()];
-        assert_eq!(
-            library_access(roots()).coverage(),
-            LibraryCoverage::Complete
-        );
-        std::fs::rename(&first, temp.path().join("first-disconnected")).unwrap();
-        let partial = library_access(roots());
-        assert_eq!(partial.coverage(), LibraryCoverage::Partial);
-        assert_eq!(partial.available, vec![second.clone()]);
-        std::fs::rename(&second, temp.path().join("second-disconnected")).unwrap();
-        let unavailable = library_access(roots());
-        assert_eq!(unavailable.coverage(), LibraryCoverage::Unavailable);
-        assert!(unavailable.available.is_empty());
-        std::fs::rename(temp.path().join("first-disconnected"), &first).unwrap();
-        assert_eq!(library_access(roots()).coverage(), LibraryCoverage::Partial);
-        std::fs::rename(temp.path().join("second-disconnected"), &second).unwrap();
-        assert_eq!(
-            library_access(roots()).coverage(),
-            LibraryCoverage::Complete
-        );
-    }
 
     #[test]
     fn association_confirmation_detects_a_replaced_directory() {
@@ -930,7 +903,7 @@ mod tests {
             std::fs::metadata(source.join("large.bin")).unwrap().len(),
             2 * 1024 * 1024
         );
-        let pending = pending_journals(&journal_dir);
+        let (pending, _) = scan_journals(&journal_dir);
         assert_eq!(pending.len(), 1);
         resume_move(&pending[0].0, &AtomicBool::new(false), &|_| {}).unwrap();
         assert_eq!(

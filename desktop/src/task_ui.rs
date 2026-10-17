@@ -1499,17 +1499,10 @@ impl Desktop {
             .preferences
             .resolve_for_execution_with_secrets(&task.plan.config, &refs, secrets)?
             .into_config();
-        let course_id = format!(
-            "course-{}",
-            &course2md::execution::digest(task.plan.source_id.as_bytes())[..32]
-        );
+        let course_id = workspace::course_dir_name(&task.plan.source_id);
         let subtitle_events = if task.plan.options.source_mode != 2 && task.plan.subtitle.is_none()
         {
-            task.plan
-                .source
-                .selected_subtitle
-                .as_ref()
-                .map(|s| s.events.clone())
+            workspace::task_subtitle_events(task)?
         } else {
             None
         };
@@ -2044,20 +2037,38 @@ impl Desktop {
         if !self.save_current_draft(cx) {
             return;
         }
-        let Some(workspace) = &mut self.workspace else {
+        let Some(task) = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.state.task(&id))
+            .cloned()
+        else {
             return;
         };
-        let result = workspace.transaction(|state| state.adjust_task(&id));
-        match result {
-            Ok(()) => {
-                self.following_conversion = None;
-                self.invalidate_source();
-                self.restore_draft(window, cx);
-                self.page = Page::New;
-            }
-            Err(error) => self.workspace_error = Some(format!("尚未打开任务调整选项：{error:#}")),
-        }
-        cx.notify();
+        let events = crate::spawn_blocking_io(move || {
+            workspace::task_subtitle_events(&task).ok().flatten()
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let events = events.recv().await.ok().flatten();
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(workspace) = &mut this.workspace else {
+                    return;
+                };
+                match workspace.transaction(|state| state.adjust_task(&id, events)) {
+                    Ok(()) => {
+                        this.following_conversion = None;
+                        this.invalidate_source();
+                        this.restore_draft(window, cx);
+                        this.page = Page::New;
+                    }
+                    Err(error) => {
+                        this.workspace_error = Some(format!("尚未打开任务调整选项：{error:#}"))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub fn record_task_event(&mut self, event: &Event) {

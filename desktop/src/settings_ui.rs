@@ -2058,7 +2058,7 @@ impl Desktop {
                             });
                             if !duplicate
                                 && let Ok(identity) =
-                                    std::fs::read_to_string(path.join(".course2md-library-id"))
+                                    std::fs::read_to_string(path.join(crate::storage::LIBRARY_ID_FILE))
                                 && let Some(existing) = this
                                     .workspace
                                     .as_ref()

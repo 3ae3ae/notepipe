@@ -101,7 +101,7 @@ fn inspect_location(location: &workspace::LibraryLocation) -> LocationCheck {
     if !available || location.id.is_empty() {
         return check;
     }
-    match std::fs::read_to_string(location.root.join(".course2md-library-id")) {
+    match std::fs::read_to_string(location.root.join(storage::LIBRARY_ID_FILE)) {
         Ok(identity) if identity.trim() == location.id => {}
         Ok(_) => check.problem = Some("此位置属于其他课程库，请恢复原位置或重新登记".into()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -451,7 +451,7 @@ fn inspect_relocation(
     );
     validate_registered_destination(state, library_id, &destination)?;
     let stamp = storage::directory_stamp(&destination)?;
-    let identity = std::fs::read_to_string(destination.join(".course2md-library-id"))
+    let identity = std::fs::read_to_string(destination.join(storage::LIBRARY_ID_FILE))
         .context("所选文件夹没有可读取的课程库关联记录，请选择移动后的完整课程库文件夹")?;
     ensure!(
         identity.trim() == library_id,
