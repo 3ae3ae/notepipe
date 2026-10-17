@@ -23,7 +23,6 @@ impl Desktop {
         let languages = group("language-settings", "字幕与识别")
             .child(settings_stacked_row(
                 "default-text-source-label",
-                icons::subtitles(),
                 "文字来源",
                 match value.options.transcript_source {
                     Some(course2md::config::TranscriptSource::Subtitle) => {
@@ -61,7 +60,6 @@ impl Desktop {
             ))
             .child(settings_outlined_row(
                 "subtitle-language-label",
-                icons::subtitles(),
                 "字幕语言",
                 "",
                 v_flex()
@@ -191,7 +189,6 @@ impl Desktop {
         let mut recognition =
             group("asr-default-settings", "语音识别").child(settings_outlined_row(
                 "asr-method-label",
-                icons::mic(),
                 "识别方式",
                 if online {
                     "音频会发送到所选服务"
@@ -258,7 +255,6 @@ impl Desktop {
                         self.settings_ui.asr_details_open,
                         settings_stacked_row(
                             "asr-hardware-heading",
-                            icons::computer(),
                             "本机引擎",
                             "",
                             engines
@@ -333,7 +329,6 @@ impl Desktop {
                 // As on the canvas, the rule is a list item showing its current value.
                 .child(settings_row(
                     "proofread-rules-label",
-                    icons::edit(),
                     "自定义校对规则",
                     "",
                     quiet("show-proofread-rules")
@@ -494,7 +489,6 @@ impl Desktop {
                     )
                     .child(settings_row(
                         "export-format-label",
-                        icons::download(),
                         "同时导出",
                         "",
                         h_flex().w_full().gap_3().flex_wrap().children(
@@ -670,7 +664,6 @@ impl Desktop {
             );
         let mut view = v_flex().w_full().min_w_0().child(settings_stacked_row(
             "local-model-heading",
-            icons::storage(),
             "识别模型",
             "",
             v_flex()

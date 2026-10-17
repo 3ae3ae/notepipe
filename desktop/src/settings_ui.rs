@@ -71,6 +71,9 @@ pub struct OrdinaryPreferenceIssue {
     pub can_retry: bool,
 }
 
+/// How long a success notice such as 已保存 stays.
+const SUCCESS_NOTICE_SECS: u64 = 6;
+
 /// Pause after the last keystroke before typed settings text is written.
 const TEXT_SAVE_DELAY_MS: u64 = 600;
 
@@ -86,7 +89,8 @@ pub(crate) struct State {
     asr_details_open: bool,
     model_details_open: bool,
     diagnostics_details_open: bool,
-    feedback: BTreeMap<PreferenceGroup, (String, bool, Instant)>,
+    feedback: BTreeMap<PreferenceGroup, (String, bool)>,
+    feedback_expiry: BTreeMap<PreferenceGroup, Task<()>>,
     feedback_details: BTreeMap<PreferenceGroup, String>,
     expanded_feedback: std::collections::BTreeSet<PreferenceGroup>,
     generation_block_messages: std::collections::BTreeSet<String>,
@@ -151,6 +155,7 @@ impl State {
             model_details_open: false,
             diagnostics_details_open: false,
             feedback: BTreeMap::new(),
+            feedback_expiry: BTreeMap::new(),
             feedback_details: BTreeMap::new(),
             expanded_feedback: Default::default(),
             generation_block_messages: Default::default(),
@@ -187,7 +192,7 @@ pub(super) fn field_label(
         .font_weight(FontWeight::SEMIBOLD)
 }
 
-fn setting_label(id: impl Into<ElementId>, _icon: Icon, value: impl Into<SharedString>) -> Div {
+fn setting_label(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Div {
     div().child(
         text(id, value)
             .text_size(TEXT_SETTINGS_BODY)
@@ -199,28 +204,25 @@ fn setting_label(id: impl Into<ElementId>, _icon: Icon, value: impl Into<SharedS
 /// Controls align to this item's trailing edge and reflow as a unit.
 pub(super) fn settings_row(
     id: impl Into<ElementId>,
-    icon: Icon,
     label: &'static str,
     hint: &'static str,
     control: impl IntoElement,
 ) -> Div {
-    settings_form_row(id, icon, label, hint, control, false)
+    settings_form_row(id, label, hint, control, false)
 }
 
 /// Editing fields use a top label: errors and related actions stay with the
 /// input without forcing long values into the preference label/control grid.
 pub(super) fn settings_field_row(
     id: impl Into<ElementId>,
-    icon: Icon,
     label: &'static str,
     field: impl IntoElement,
 ) -> Div {
-    settings_form_row(id, icon, label, "", field, true)
+    settings_form_row(id, label, "", field, true)
 }
 
 fn settings_form_row(
     id: impl Into<ElementId>,
-    icon: Icon,
     label: &'static str,
     hint: &'static str,
     control: impl IntoElement,
@@ -232,7 +234,7 @@ fn settings_form_row(
             .w_full()
             .min_w_0()
             .gap_2()
-            .child(setting_label(id.clone(), icon, label))
+            .child(setting_label(id.clone(), label))
             .child(div().w_full().min_w_0().child(control));
     }
     let row = h_flex()
@@ -250,7 +252,7 @@ fn settings_form_row(
                 .max_w_full()
                 .min_h(CONTROL_HEIGHT)
                 .justify_center()
-                .child(setting_label(id.clone(), icon, label)),
+                .child(setting_label(id.clone(), label)),
         )
         .child(
             v_flex()
@@ -281,10 +283,9 @@ fn settings_form_row(
     setting_surface().child(row)
 }
 
-/// Top-label controls share the reference form's 520 px reading width.
+/// A setting whose control sits under its label.
 pub(super) fn settings_stacked_row(
     id: impl Into<ElementId>,
-    _icon: Icon,
     label: &'static str,
     hint: &'static str,
     control: impl IntoElement,
@@ -293,7 +294,6 @@ pub(super) fn settings_stacked_row(
     setting_surface().child(
         v_flex()
             .w_full()
-            .max_w(px(520.))
             .min_w_0()
             .gap_3()
             .child(text(id.clone(), label).text_size(TEXT_SETTINGS_BODY))
@@ -311,7 +311,6 @@ pub(super) fn settings_stacked_row(
 
 pub(super) fn settings_outlined_row(
     id: impl Into<ElementId>,
-    _icon: Icon,
     label: &'static str,
     hint: &'static str,
     control: impl IntoElement,
@@ -320,7 +319,6 @@ pub(super) fn settings_outlined_row(
     setting_surface().child(
         v_flex()
             .w_full()
-            .max_w(px(520.))
             .min_w_0()
             .gap_2()
             .child(outlined_field_label(
@@ -634,7 +632,6 @@ fn group(id: &'static str, title: &'static str) -> SettingsGroup {
 pub(crate) struct SettingsGroup {
     id: &'static str,
     title: &'static str,
-    action: Option<AnyElement>,
     items: Vec<Vec<AnyElement>>,
     resource_dividers: bool,
 }
@@ -644,7 +641,6 @@ impl SettingsGroup {
         Self {
             id,
             title,
-            action: None,
             items: Vec::new(),
             resource_dividers: false,
         }
@@ -662,14 +658,6 @@ impl SettingsGroup {
             Some(item) => item.push(element.into_any_element()),
             None => self.items.push(vec![element.into_any_element()]),
         }
-        self
-    }
-
-    /// A quiet action that applies to the whole group, trailing its title.
-    /// Kept as the shared primitive for group-wide actions while no page uses it.
-    #[allow(dead_code)]
-    pub(crate) fn action(mut self, action: impl IntoElement) -> Self {
-        self.action = Some(action.into_any_element());
         self
     }
 }
@@ -717,8 +705,7 @@ impl RenderOnce for SettingsGroup {
                         theme::section_title(self.id, self.title)
                             .flex_1()
                             .pl(SETTING_ITEM_INSET),
-                    )
-                    .children(self.action),
+                    ),
             )
             .child(card)
     }
@@ -736,12 +723,7 @@ pub(crate) fn settings_card() -> Div {
         .rounded(SETTINGS_CARD_RADIUS)
         .overflow_hidden()
 }
-pub(super) fn preference(
-    icon: Option<Icon>,
-    label: &'static str,
-    hint: &'static str,
-    control: Switch,
-) -> Div {
+pub(super) fn preference(label: &'static str, hint: &'static str, control: Switch) -> Div {
     setting_surface().child(
         h_flex()
             .w_full()
@@ -757,17 +739,10 @@ pub(super) fn preference(
                         v_flex()
                             .min_h(CONTROL_HEIGHT)
                             .justify_center()
-                            .child(match icon {
-                                Some(icon) => setting_label(
-                                    SharedString::from(format!("preference-label-{label}")),
-                                    icon,
-                                    label,
-                                ),
-                                None => v_flex().child(field_label(
-                                    SharedString::from(format!("preference-label-{label}")),
-                                    label,
-                                )),
-                            }),
+                            .child(setting_label(
+                                SharedString::from(format!("preference-label-{label}")),
+                                label,
+                            )),
                     )
                     .when(!hint.is_empty(), |view| {
                         view.child(theme::supporting_info(
@@ -855,32 +830,15 @@ impl Desktop {
                 )
             })
     }
-    fn setting_preference(
-        &self,
-        icon: Icon,
-        label: &'static str,
-        hint: &'static str,
-        control: Switch,
-    ) -> Div {
+    fn setting_preference(&self, label: &'static str, hint: &'static str, control: Switch) -> Div {
         self.reveal_setting(
             SharedString::from(format!("preference-reveal-{label}")),
-            preference(Some(icon), label, hint, control),
+            preference(label, hint, control),
         )
     }
     fn setting_field(&self, field: EditField, label: &'static str) -> Div {
-        self.input_field(
-            field as usize,
-            &self.settings_ui.inputs[&field],
-            match field {
-                EditField::LocalModel => icons::storage(),
-                EditField::Languages => icons::subtitles(),
-            },
-            label,
-            None,
-            false,
-            false,
-            None,
-        )
+        let input = text_input(&self.settings_ui.inputs[&field]);
+        self.input_field(field as usize, label, input, None, None)
     }
     /// A service editor input with its field error and an optional trailing action.
     fn service_field(
@@ -892,53 +850,36 @@ impl Desktop {
         let Some(editor) = &self.settings_ui.editor else {
             return div();
         };
-        self.input_field(
-            8 + field as usize,
-            editor.form.input(field),
-            match field {
-                FormField::Name => icons::edit(),
-                FormField::Address => icons::cloud(),
-                FormField::Key => icons::shield(),
-                FormField::Model => icons::storage(),
-            },
-            label,
-            editor.form.error(field).map(str::to_owned),
-            editor.pending_binding.is_some(),
-            field == FormField::Key,
-            action,
-        )
+        let input = text_input(editor.form.input(field))
+            .readonly(editor.pending_binding.is_some())
+            .when(field == FormField::Key, |input| {
+                input.content_type(InputContentType::Password)
+            });
+        let error = editor.form.error(field).map(str::to_owned);
+        self.input_field(8 + field as usize, label, input, error, action)
     }
-    #[allow(clippy::too_many_arguments)]
     fn input_field(
         &self,
         index: usize,
-        input: &Entity<InputState>,
-        icon: Icon,
         label: &'static str,
+        input: gpui_component::input::Input,
         error: Option<String>,
-        readonly: bool,
-        password: bool,
         action: Option<AnyElement>,
     ) -> Div {
-        let input = text_input(input)
+        let input = input
             .settings_text()
             .w_full()
-            .when(password, |input| {
-                input.content_type(InputContentType::Password)
-            })
             .aria_label(
                 error
                     .as_ref()
                     .map(|error| format!("{label}，{error}"))
                     .unwrap_or_else(|| label.to_owned()),
             )
-            .readonly(readonly)
             .when(error.is_some(), |input| input.border_color(color(DANGER)));
         self.reveal_setting(
             ("setting-field-reveal", index),
             settings_field_row(
                 ("setting-field-label", index),
-                icon,
                 label,
                 v_flex()
                     .w_full()
@@ -980,6 +921,7 @@ impl Desktop {
                 PreferenceGroup::Generation,
                 "已恢复未保存的修改".into(),
                 true,
+                cx,
             );
         }
         if let Some(intent) = self.preferences.application_intent().cloned() {
@@ -988,6 +930,7 @@ impl Desktop {
                 PreferenceGroup::Application,
                 "已恢复未保存的修改".into(),
                 true,
+                cx,
             );
         }
         let languages = value
@@ -1020,11 +963,7 @@ impl Desktop {
             || self.preferences.application_intent().is_some()
             || self.settings_ui.pending_generation.is_some()
             || self.settings_ui.pending_application.is_some()
-            || self
-                .settings_ui
-                .feedback
-                .values()
-                .any(|(_, error, _)| *error)
+            || self.settings_ui.feedback.values().any(|(_, error)| *error)
             || self
                 .settings_ui
                 .editor
@@ -1245,25 +1184,18 @@ impl Desktop {
                         .rounded(RADIUS_SMALL)
                         .bg(color(DANGER_BG))
                         .child(
-                            text(
-                                ("settings-failed-group", target.index()),
-                                if message.starts_with(group.label()) {
-                                    message
-                                } else {
-                                    format!("{}：{message}", group.label())
-                                },
-                            )
-                            .role(Role::Alert)
-                            .flex_1()
-                            .min_w_0()
-                            .text_color(color(DANGER))
-                            .text_size(TEXT_SETTINGS_AUX),
+                            text(("settings-failed-group", target.index()), message)
+                                .role(Role::Alert)
+                                .flex_1()
+                                .min_w_0()
+                                .text_color(color(DANGER))
+                                .text_size(TEXT_SETTINGS_AUX),
                         )
                         .child(
                             control(("open-failed-settings-group", target.index()))
                                 .settings_text()
                                 .icon(icons::settings())
-                                .label("查看设置")
+                                .label(format!("前往「{}」", target.label()))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.select_settings_tab(target, window, cx);
                                 })),
@@ -1413,23 +1345,6 @@ impl Desktop {
                 empty = false;
                 section = section.child(self.service_card(version, cx));
             }
-            // The add action is the list's last item. An empty list says so in
-            // the same row for both kinds; otherwise the speech consequence sits
-            // beside the action because adding is where the choice is made.
-            let _lead = if empty {
-                Some(
-                    text(("services-empty", purpose as usize), "尚未添加")
-                        .text_color(color(GRAY))
-                        .into_any_element(),
-                )
-            } else if purpose == ServicePurpose::Speech {
-                Some(
-                    theme::supporting_info("speech-services-purpose", "音频会发送到所选服务")
-                        .into_any_element(),
-                )
-            } else {
-                None
-            };
             section = section.child(
                 setting_surface()
                     .when(purpose == ServicePurpose::Ai, |row| row.py(rems(9. / 14.)))
@@ -1666,8 +1581,8 @@ impl Desktop {
                             text(
                                 SharedString::from(format!("saved-service-old-default-{id}")),
                                 format!(
-                                    "以后生成的笔记仍使用旧配置 v{} · {}",
-                                    default.number, default.config.model
+                                    "以后生成的笔记仍使用修改前的配置 · {}",
+                                    default.config.model
                                 ),
                             )
                             .flex_1()
@@ -1790,7 +1705,12 @@ impl Desktop {
         match self.preferences.save_generation(next.clone()) {
             Ok(()) => {
                 self.settings_ui.pending_generation = None;
-                self.set_settings_feedback(PreferenceGroup::Generation, "尚未应用".into(), false);
+                self.set_settings_feedback(
+                    PreferenceGroup::Generation,
+                    "尚未应用".into(),
+                    false,
+                    cx,
+                );
                 if had_pending {
                     self.refresh_preference_defaults(cx);
                 }
@@ -1798,7 +1718,7 @@ impl Desktop {
             }
             Err(error) => {
                 self.settings_ui.pending_generation = Some(next);
-                self.set_settings_save_failure(PreferenceGroup::Generation, &error);
+                self.set_settings_save_failure(PreferenceGroup::Generation, &error, cx);
             }
         }
         cx.notify();
@@ -1873,6 +1793,7 @@ impl Desktop {
                 PreferenceGroup::Generation,
                 "语言代码只能包含字母、数字和连字符，请用逗号分隔各语言".into(),
                 true,
+                cx,
             );
             cx.notify();
             return;
@@ -1882,7 +1803,14 @@ impl Desktop {
         next.subtitle_languages_draft = None;
         self.commit_generation(next, cx);
     }
-    fn set_settings_feedback(&mut self, group: PreferenceGroup, message: String, error: bool) {
+    /// Shows a group's result. A success notice clears itself after a few seconds.
+    fn set_settings_feedback(
+        &mut self,
+        group: PreferenceGroup,
+        message: String,
+        error: bool,
+        cx: &mut Context<Self>,
+    ) {
         if group == PreferenceGroup::Generation && error {
             self.settings_ui
                 .generation_block_messages
@@ -1892,21 +1820,43 @@ impl Desktop {
         if !error {
             self.settings_ui.expanded_feedback.remove(&group);
         }
-        self.settings_ui
-            .feedback
-            .insert(group, (message, error, Instant::now()));
+        self.settings_ui.feedback_expiry.remove(&group);
+        if !error {
+            let shown = message.clone();
+            let expiry = cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_secs(SUCCESS_NOTICE_SECS))
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.settings_ui.feedback.get(&group) == Some(&(shown, false)) {
+                        this.settings_ui.feedback.remove(&group);
+                        cx.notify();
+                    }
+                });
+            });
+            self.settings_ui.feedback_expiry.insert(group, expiry);
+        }
+        self.settings_ui.feedback.insert(group, (message, error));
     }
-    fn set_settings_save_failure(&mut self, group: PreferenceGroup, error: &anyhow::Error) {
-        self.set_settings_feedback(group, preferences::save_failure_message(group, error), true);
+    fn set_settings_save_failure(
+        &mut self,
+        group: PreferenceGroup,
+        error: &anyhow::Error,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_settings_feedback(
+            group,
+            preferences::save_failure_message(group, error),
+            true,
+            cx,
+        );
         self.settings_ui.feedback_details.insert(
             group,
             format!("设置目录：{}\n{error:#}", self.preferences.root().display()),
         );
     }
     pub(crate) fn settings_group_notice(&self, group: PreferenceGroup) -> Option<(String, bool)> {
-        if let Some((message, error, when)) = self.settings_ui.feedback.get(&group)
-            && (*error || when.elapsed() < Duration::from_secs(6))
-        {
+        if let Some((message, error)) = self.settings_ui.feedback.get(&group) {
             return Some((message.clone(), *error));
         }
         self.preferences
@@ -2137,7 +2087,6 @@ impl Desktop {
             group("appearance-motion", "界面偏好")
                 .child(settings_stacked_row(
                     "app-font-scale-label",
-                    icons::zoom_in(),
                     "界面文字大小",
                     "",
                     self.setting_choices("app-font-scale", "应用文字大小")
@@ -2209,20 +2158,12 @@ impl Desktop {
                                         .flex_1()
                                         .min_w_0()
                                         .gap_1()
-                                        .child(text("restart-onboarding-label", "用户引导"))
-                                        .child(
-                                            text(
-                                                "restart-onboarding-help",
-                                                "重新了解应用的基本使用方式",
-                                            )
-                                            .text_size(TEXT_SETTINGS_AUX)
-                                            .text_color(color(GRAY)),
-                                        ),
+                                        .child(text("restart-onboarding-label", "首次设置")),
                                 )
                                 .child(
                                     outline_pill("restart-onboarding")
                                         .settings_text()
-                                        .label("重新开始用户引导")
+                                        .label("重新运行首次设置")
                                         .icon(icons::restart())
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.start_onboarding(window, cx);
@@ -2243,13 +2184,18 @@ impl Desktop {
                 self.settings_ui.pending_application = None;
                 self.desktop_settings = self.preferences.application().desktop.clone();
                 cx.set_reduce_motion(self.desktop_settings.reduce_motion);
-                self.set_settings_feedback(PreferenceGroup::Application, "已保存".into(), false);
+                self.set_settings_feedback(
+                    PreferenceGroup::Application,
+                    "已保存".into(),
+                    false,
+                    cx,
+                );
                 cx.notify();
                 true
             }
             Err(error) => {
                 self.settings_ui.pending_application = Some(next);
-                self.set_settings_save_failure(PreferenceGroup::Application, &error);
+                self.set_settings_save_failure(PreferenceGroup::Application, &error, cx);
                 cx.notify();
                 false
             }
@@ -2309,30 +2255,10 @@ impl Desktop {
                                                 icons::check_circle().text_color(color(SUCCESS)),
                                             ))
                                             .child(
-                                                v_flex()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .gap_1()
-                                                    .child(
-                                                        text("diagnostic-summary", "一切正常")
-                                                            .font_weight(FontWeight::SEMIBOLD),
-                                                    )
-                                                    .child(
-                                                        text(
-                                                            "diagnostic-summary-detail",
-                                                            format!(
-                                                                "{} 项检查全部通过",
-                                                                capabilities
-                                                                    .iter()
-                                                                    .filter(|(_, _, optional)| {
-                                                                        !optional
-                                                                    })
-                                                                    .count()
-                                                            ),
-                                                        )
-                                                        .text_size(TEXT_SETTINGS_AUX)
-                                                        .text_color(color(GRAY)),
-                                                    ),
+                                                v_flex().flex_1().min_w_0().gap_1().child(
+                                                    text("diagnostic-summary", "一切正常")
+                                                        .font_weight(FontWeight::SEMIBOLD),
+                                                ),
                                             ),
                                     )
                                     .child(
@@ -2657,7 +2583,7 @@ impl Desktop {
                 self.settings_ui.initialized = false;
                 // 事件路径立刻重新水合，不等下一次进入设置（渲染不做这件事）
                 self.hydrate_settings_inputs(window, cx);
-                self.set_settings_feedback(group, "原文件已保留，此组设置已重置".into(), false);
+                self.set_settings_feedback(group, "原文件已保留，此组设置已重置".into(), false, cx);
                 if group == PreferenceGroup::Application {
                     self.desktop_settings = self.preferences.application().desktop.clone();
                     cx.set_reduce_motion(self.desktop_settings.reduce_motion);
@@ -2674,7 +2600,7 @@ impl Desktop {
                 true
             }
             Err(error) => {
-                self.set_settings_save_failure(group, &error);
+                self.set_settings_save_failure(group, &error, cx);
                 cx.notify();
                 false
             }
@@ -2711,6 +2637,7 @@ impl Desktop {
                 PreferenceGroup::Generation,
                 format!("模型位置尚未更新，修改已保留，可重试保存：{error:#}"),
                 true,
+                cx,
             );
         } else {
             self.refresh_preference_defaults(cx);
@@ -2722,10 +2649,13 @@ impl Desktop {
     /// Ordinary preferences save immediately. Service form edits become active
     /// only through Save and do not create a separate quit-time save workflow.
     pub fn flush_settings_for_exit(&mut self, cx: &mut Context<Self>) -> bool {
-        if let Some(editor) = &self.settings_ui.editor {
-            if let Some(cancel) = &editor.test_running {
-                cancel.store(true, Ordering::Release);
-            }
+        if let Some(cancel) = self
+            .settings_ui
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.test_running.as_ref())
+        {
+            cancel.store(true, Ordering::Release);
         }
         self.flush_generation_text(cx);
         if let Some(next) = self.settings_ui.pending_generation.clone() {

@@ -350,10 +350,10 @@ fn run_discovery(
     // an expired request must stop here before any network request is sent.
     check()?;
     let authorization = authorization?;
-    if let Some(secret) = &authorization {
-        if secret.is_empty() || secret.expose().chars().any(char::is_control) {
-            return Err(Error::InvalidKey);
-        }
+    if let Some(secret) = &authorization
+        && (secret.is_empty() || secret.expose().chars().any(char::is_control))
+    {
+        return Err(Error::InvalidKey);
     }
     check()?;
     let response = transport.get(&request.key.endpoint, authorization.as_ref());

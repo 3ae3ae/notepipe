@@ -77,14 +77,6 @@ pub enum PreferenceGroup {
 }
 
 impl PreferenceGroup {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Generation => "生成笔记",
-            Self::Application => "应用",
-            Self::Services => "服务与账号",
-        }
-    }
-
     fn filename(self) -> &'static str {
         match self {
             Self::Generation => "generation.json",
@@ -542,7 +534,7 @@ pub struct ServiceVersion {
 impl ServiceVersion {
     /// Field-level differences against another version of the same service, in
     /// display order (name/model/endpoint/protocol/auth). Shared by the service
-    /// picker's "新版 vN · …已更新" label.
+    /// picker's "已修改：…" label.
     pub fn changes_since(&self, old: &ServiceVersion) -> Vec<&'static str> {
         let mut changed = Vec::new();
         if old.config.name != self.config.name {
@@ -1621,16 +1613,16 @@ impl Store {
     ) where
         T: Serialize + DeserializeOwned + Validate,
     {
-        if let Ok(Some(intent)) = read_envelope::<T>(&self.recovery_root().join(file)) {
-            if self.revisions.get(&group).copied().unwrap_or(0) <= intent.revision {
-                *intent_slot(self) = Some(intent.value);
-                self.issues.push(SettingsIssue {
-                    group,
-                    kind: SettingsIssueKind::SaveFailed,
-                    message: message.into(),
-                    detail: None,
-                });
-            }
+        if let Ok(Some(intent)) = read_envelope::<T>(&self.recovery_root().join(file))
+            && self.revisions.get(&group).copied().unwrap_or(0) <= intent.revision
+        {
+            *intent_slot(self) = Some(intent.value);
+            self.issues.push(SettingsIssue {
+                group,
+                kind: SettingsIssueKind::SaveFailed,
+                message: message.into(),
+                detail: None,
+            });
         }
     }
 

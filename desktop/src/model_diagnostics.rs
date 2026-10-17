@@ -553,23 +553,13 @@ impl Desktop {
         let request = Request::new(provider, model, root);
         let key = request.key();
         let entry = self.settings_ui.model_diagnostics.entries.get(&key);
-        let device_issue = self.model_device_issue(provider);
         let checking = entry.is_none_or(Entry::checking);
         let status = entry
             .and_then(Entry::result)
             .and_then(|result| result.as_ref().ok());
         let (mut view, cache_action, cache_details) =
             self.model_status_section(provider, &request, provider_row, cx);
-        let (actions, extras) = self.model_prepare_actions(
-            provider,
-            &request,
-            &key,
-            checking,
-            status,
-            &device_issue,
-            window,
-            cx,
-        );
+        let (actions, extras) = self.model_prepare_actions(&request, checking, status, window, cx);
         for extra in extras {
             view = view.child(extra);
         }
@@ -839,17 +829,17 @@ impl Desktop {
     /// prepare progress, download transfers, and queue/network-scope notes.
     fn model_prepare_actions(
         &self,
-        provider: AsrProvider,
         request: &Request,
-        key: &str,
         checking: bool,
         status: Option<&LocalModelStatus>,
-        device_issue: &Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Div, Vec<AnyElement>) {
         let mut extras: Vec<AnyElement> = Vec::new();
         let request = request.clone();
+        let provider = request.provider;
+        let key = &request.key();
+        let device_issue = self.engine_issue(provider);
         let active = self.is_preparing(key);
         let request_for_check = request.clone();
         let recheck = outline_pill(SharedString::from(format!("recheck-model-{key}")))

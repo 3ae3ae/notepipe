@@ -451,7 +451,6 @@ impl Desktop {
                 crate::settings_ui::SettingsGroup::new("appearance-theme", "主题")
                     .child(settings_stacked_row(
                         "appearance-mode-row",
-                        icons::palette(),
                         "外观模式",
                         "",
                         modes,

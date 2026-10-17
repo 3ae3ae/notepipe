@@ -2451,10 +2451,12 @@ mod tests {
 
     #[test]
     fn existing_ai_configuration_checks_only_new_capabilities_and_never_disabled_ones() {
-        let mut existing = GenerationPreferences::default();
-        existing.ai_proofread = true;
-        existing.ai_summary = false;
-        existing.vision = true;
+        let mut existing = GenerationPreferences {
+            ai_proofread: true,
+            ai_summary: false,
+            vision: true,
+            ..Default::default()
+        };
 
         assert!(newly_enabled_ai_tests(&existing, true, false).is_empty());
         assert!(newly_enabled_ai_tests(&existing, false, false).is_empty());
@@ -2484,11 +2486,13 @@ mod tests {
 
     #[test]
     fn engine_choice_changes_only_engine_fields_and_preserves_other_preferences() {
-        let mut current = GenerationPreferences::default();
-        current.ai_proofread = true;
-        current.ai_summary = true;
-        current.ai_concurrency = 5;
-        current.prompt = Some("Keep technical terms".into());
+        let mut current = GenerationPreferences {
+            ai_proofread: true,
+            ai_summary: true,
+            ai_concurrency: 5,
+            prompt: Some("Keep technical terms".into()),
+            ..Default::default()
+        };
         current.options.keep_video = Some(true);
         current.options.model_dir = Some("/existing/cache".into());
         let next = engine_preferences(&current, Some(AsrProvider::Gpu), "qwen3-1.7b");

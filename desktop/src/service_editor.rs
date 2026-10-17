@@ -126,9 +126,9 @@ impl Desktop {
                 .unwrap_or_else(|| "选择服务".into());
             let detail = current_version.as_ref().map(|version| {
                 let state = if old_current.is_some() {
-                    format!(" · 当前使用旧配置 v{}", version.number)
+                    " · 当前使用修改前的配置"
                 } else {
-                    String::new()
+                    ""
                 };
                 format!("{}{state}", version.config.model)
             });
@@ -140,18 +140,14 @@ impl Desktop {
                         .filter(|old| old.service_id == version.service_id)
                     {
                         if old.id == version.id {
-                            format!("当前使用 · 旧配置 v{}", version.number)
+                            "当前使用修改前的配置".into()
                         } else {
                             let changed = version.changes_since(old);
-                            format!(
-                                "新版 v{} · {}",
-                                version.number,
-                                if changed.is_empty() {
-                                    "配置内容相同".to_owned()
-                                } else {
-                                    format!("{}已更新", changed.join("、"))
-                                }
-                            )
+                            if changed.is_empty() {
+                                "配置内容相同".into()
+                            } else {
+                                format!("已修改：{}", changed.join("、"))
+                            }
                         }
                     } else if current.as_ref() == Some(&version.id) {
                         "当前使用".into()
@@ -215,8 +211,10 @@ impl Desktop {
                         |menu, (version, state)| {
                             let id = version.id.clone();
                             let name = version.config.name.clone();
-                            let detail =
-                                format!("{} · {}", version.config.model, version.config.endpoint);
+                            let detail = format!(
+                                "{} · {} · v{}",
+                                version.config.model, version.config.endpoint, version.number
+                            );
                             let state = state.clone();
                             let entity = entity.clone();
                             menu.item(
@@ -344,8 +342,7 @@ impl Desktop {
                     ),
             );
         }
-        if let Some((message, true, _)) = self.settings_ui.feedback.get(&PreferenceGroup::Services)
-        {
+        if let Some((message, true)) = self.settings_ui.feedback.get(&PreferenceGroup::Services) {
             view = view.child(
                 text(("task-service-error", purpose as usize), message.clone())
                     .text_sm()
@@ -392,11 +389,6 @@ impl Desktop {
         } else {
             settings_row(
                 ("default-service-label", purpose as usize),
-                if purpose == ServicePurpose::Speech {
-                    icons::mic()
-                } else {
-                    icons::science()
-                },
                 if purpose == ServicePurpose::Speech {
                     "语音服务"
                 } else {
@@ -448,6 +440,7 @@ impl Desktop {
                     PreferenceGroup::Services,
                     "服务选择已保存".into(),
                     false,
+                    cx,
                 );
                 self.advance_conversion_when_ready(cx);
                 cx.notify();
@@ -458,6 +451,7 @@ impl Desktop {
                     PreferenceGroup::Services,
                     format!("服务选择尚未保存：{error:#}"),
                     true,
+                    cx,
                 );
                 cx.notify();
                 false
@@ -760,7 +754,6 @@ impl Desktop {
                 setting_surface()
                     .child(setting_label(
                         "service-protocol-heading",
-                        icons::cloud(),
                         if protocol.purpose() == ServicePurpose::Speech {
                             "接口类型"
                         } else {
@@ -797,11 +790,7 @@ impl Desktop {
         if !protocol.keyless() {
             connection = connection.child(
                 setting_surface()
-                    .child(setting_label(
-                        "service-auth-heading",
-                        icons::shield(),
-                        "认证方式",
-                    ))
+                    .child(setting_label("service-auth-heading", "认证方式"))
                     .child(
                         self.service_auth_choices(
                             FormOwner::Editor,
@@ -878,7 +867,7 @@ impl Desktop {
             }
             if let Some(source) = &editor.form.draft.credential_source {
                 connection = connection.detail(
-                    div().px(rems(20. / 14.)).pb(rems(14. / 14.)).child(
+                    div().px(rems(20. / 14.)).pb(rems(1.)).child(
                         text("service-credential-source", format!("密钥来源：{source}"))
                             .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
@@ -904,7 +893,6 @@ impl Desktop {
                         .gap_2()
                         .child(setting_label(
                             ("setting-field-label", 8 + FormField::Model as usize),
-                            icons::storage(),
                             "模型 ID",
                         ))
                         .child(self.service_model_field(
@@ -919,7 +907,6 @@ impl Desktop {
         if editor.target.is_some() {
             connection = connection.child(
                 self.setting_preference(
-                    icons::check_circle(),
                     "同时设为默认服务",
                     "",
                     Switch::new("service-also-default")
@@ -1538,18 +1525,18 @@ impl Desktop {
                 return;
             }
         }
-        if let Some((task_id, components)) = repair_task {
-            if !self.reprocess_task_with_service(task_id, components, version.id.clone(), cx) {
-                if let Some(editor) = &mut self.settings_ui.editor {
-                    editor.pending_binding = Some(version);
-                    editor.status = Some("服务已保存，补做任务尚未创建。请重试补做。".into());
-                }
-                cx.notify();
-                return;
+        if let Some((task_id, components)) = repair_task
+            && !self.reprocess_task_with_service(task_id, components, version.id.clone(), cx)
+        {
+            if let Some(editor) = &mut self.settings_ui.editor {
+                editor.pending_binding = Some(version);
+                editor.status = Some("服务已保存，补做任务尚未创建。请重试补做。".into());
             }
+            cx.notify();
+            return;
         }
         self.refresh_dispatch_controls(cx);
-        self.set_settings_feedback(PreferenceGroup::Services, "服务已保存".into(), false);
+        self.set_settings_feedback(PreferenceGroup::Services, "服务已保存".into(), false, cx);
         self.restore_service_focus(window, cx);
         if !inline {
             window.close_dialog(cx);
@@ -1647,12 +1634,14 @@ impl Desktop {
                                 PreferenceGroup::Services,
                                 "已更新默认服务".into(),
                                 false,
+                                cx,
                             ),
                             Err(error) => {
                                 this.set_settings_feedback(
                                     PreferenceGroup::Services,
                                     "默认服务尚未更改，请重试".into(),
                                     true,
+                                    cx,
                                 );
                                 this.settings_ui
                                     .feedback_details
@@ -1731,6 +1720,7 @@ impl Desktop {
                                 PreferenceGroup::Services,
                                 "已删除此服务".into(),
                                 false,
+                                cx,
                             );
                             cx.notify();
                             true
@@ -1751,6 +1741,7 @@ impl Desktop {
                                     }
                                 ),
                                 true,
+                                cx,
                             );
                             this.refresh_dispatch_controls(cx);
                             cx.notify();
@@ -1774,7 +1765,7 @@ impl Desktop {
         match self.preferences.save_generation(next.clone()) {
             Ok(()) => {
                 self.settings_ui.pending_generation = None;
-                self.set_settings_feedback(PreferenceGroup::Generation, "已保存".into(), false);
+                self.set_settings_feedback(PreferenceGroup::Generation, "已保存".into(), false, cx);
                 self.refresh_preference_defaults(cx);
                 self.clear_resolved_generation_errors(previous);
                 if !self.preference_defaults_pending {
@@ -1784,7 +1775,7 @@ impl Desktop {
             }
             Err(error) => {
                 self.settings_ui.pending_generation = Some(next);
-                self.set_settings_save_failure(PreferenceGroup::Generation, &error);
+                self.set_settings_save_failure(PreferenceGroup::Generation, &error, cx);
                 cx.notify();
                 false
             }
