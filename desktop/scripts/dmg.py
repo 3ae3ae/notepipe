@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
+APP_ICON_AT = (196, 224)
+APPLICATIONS_ICON_AT = (564, 224)
 
 
 def build_install_dmg(bundle, destination):
@@ -28,7 +30,7 @@ def build_install_dmg(bundle, destination):
         "background": str(background),
         # Leave room when Finder's global preferences force tabs/status bars on.
         "window_rect": ((200, 200), (760, 540)),
-        "icon_locations": {bundle.name: (196, 224), "Applications": (564, 224)},
+        "icon_locations": {bundle.name: APP_ICON_AT, "Applications": APPLICATIONS_ICON_AT},
         "icon_size": 128,
         "text_size": 13,
         "label_pos": "bottom",
@@ -64,15 +66,17 @@ def verify_install_dmg(image, app_name):
             if (mount / ".background.tiff").read_bytes() != (ASSETS / "dmg/background.tiff").read_bytes():
                 raise ValueError("DMG background differs from the checked-in artwork")
             with DSStore.open(str(mount / ".DS_Store"), "r") as store:
-                if store[app_name]["Iloc"] != (196, 224) or store["Applications"]["Iloc"] != (564, 224):
+                if (store[app_name]["Iloc"] != APP_ICON_AT
+                        or store["Applications"]["Iloc"] != APPLICATIONS_ICON_AT):
                     raise ValueError("DMG is missing its drag-to-install layout")
                 if store["."]["icvp"]["backgroundType"] != 2:
                     raise ValueError("Finder background image is not configured")
             resources = mount / app_name / "Contents/Resources"
             if (resources / "course2md.icns").read_bytes() != (ASSETS / "icon.icns").read_bytes():
                 raise ValueError("Packaged app has a stale icon")
-            for name in ("LICENSE", "LICENSE-material-icons", "sources.lock.json"):
-                if not (resources / name).is_file():
+            for name in ("LICENSE", "LICENSE-material-icons", "LICENSE-lucide-icons",
+                         "design-licenses", "sources.lock.json"):
+                if not (resources / name).exists():
                     raise ValueError(f"App is missing {name}")
             subprocess.run(["codesign", "--verify", "--deep", "--strict", str(mount / app_name)], check=True)
         finally:
