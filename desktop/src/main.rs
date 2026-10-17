@@ -305,7 +305,7 @@ struct Desktop {
     // virtualized list may unmount and remount while scrolling.
     entered: HashSet<String>,
     // Disclosure open state that outlives a virtualized row's unmount.
-    task_panels_open: HashSet<String>,
+    task_panels_open: HashSet<(task_ui::TaskPanel, String)>,
     event_repaint_pending: bool,
     message: Option<String>,
     _subscriptions: Vec<Subscription>,

@@ -3,6 +3,16 @@ use super::*;
 
 /// Hero and preview share this ruler; the lower workbench reflows independently.
 const WORKBENCH_WIDTH: f32 = 760.;
+/// Spacing between workbench sections and the inset of its panels.
+const SECTION_GAP: Rems = rems(24. / 14.);
+/// Square icon buttons beside the hero input.
+const HERO_CONTROL: Rems = rems(48. / 14.);
+/// Square icon buttons inside the selected video row.
+const ROW_CONTROL: Rems = rems(32. / 14.);
+/// Icons that lead a hero row.
+const HERO_ICON: Rems = rems(24. / 14.);
+/// Option labels and the selected video title.
+const TEXT_LEAD: Rems = rems(16. / 14.);
 use crate::{motion, preferences::ServicePurpose, theme::*};
 use anyhow::Context as _;
 use course2md::config::TranscriptSource;
@@ -42,6 +52,14 @@ fn import_option_label(
         .child(content)
 }
 
+/// A 16:9 cover slot; the width scales with the text size.
+pub(crate) fn cover_slot(width: Rems, cover: Option<PathBuf>) -> Div {
+    div().w(width).aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL).overflow_hidden()
+        .bg(color(SECONDARY_CONTAINER)).flex().items_center().justify_center()
+        .when_some(cover, |slot, cover| slot.child(
+            img(cover).size_full().rounded(RADIUS_SMALL).object_fit(ObjectFit::Cover)))
+}
+
 /// Secondary text below a control.
 pub(crate) fn aux_text(content: impl IntoElement) -> Div {
     div().text_size(TEXT_AUX).text_color(color(GRAY)).child(content)
@@ -50,7 +68,7 @@ pub(crate) fn aux_text(content: impl IntoElement) -> Div {
 fn import_option_switch_row(label: &'static str, hint: &'static str, switch: impl IntoElement) -> Div {
     h_flex().w_full().min_w_0().min_h(rems(44. / 14.)).items_center().gap_4()
         .child(v_flex().flex_1().min_w_0().gap_1()
-            .child(div().text_size(rems(16. / 14.)).child(label))
+            .child(div().text_size(TEXT_LEAD).child(label))
             .when(!hint.is_empty(), |view| view.child(
                 aux_text(hint))))
         .child(div().flex_shrink_0().child(switch))
@@ -441,7 +459,9 @@ enum ConversionGate {
 
 /// Normal asynchronous stages retain the first Start intent. Only an abandoned
 /// source or an unresolved material choice ends this automatic continuation.
-fn conversion_gate(
+/// What a pending Start depends on.
+#[derive(Clone, Copy)]
+struct GateInputs {
     requested_revision: Option<u64>,
     current_revision: u64,
     reading: bool,
@@ -450,16 +470,18 @@ fn conversion_gate(
     environment_ready: bool,
     library_ready: bool,
     existing_note: bool,
-) -> ConversionGate {
-    if requested_revision != Some(current_revision) {
+}
+
+fn conversion_gate(gate: GateInputs) -> ConversionGate {
+    if gate.requested_revision != Some(gate.current_revision) {
         ConversionGate::Stop
-    } else if reading {
+    } else if gate.reading {
         ConversionGate::Wait
-    } else if !has_source {
+    } else if !gate.has_source {
         ConversionGate::Stop
-    } else if needs_text_choice || !environment_ready || !library_ready {
+    } else if gate.needs_text_choice || !gate.environment_ready || !gate.library_ready {
         ConversionGate::Wait
-    } else if existing_note {
+    } else if gate.existing_note {
         ConversionGate::Stop
     } else {
         ConversionGate::Submit
@@ -541,16 +563,16 @@ impl Desktop {
                 return;
             }
         }
-        match conversion_gate(
-            self.pending_conversion,
-            self.preview_generation,
+        match conversion_gate(GateInputs {
+            requested_revision: self.pending_conversion,
+            current_revision: self.preview_generation,
             reading,
-            self.source_preview.is_some(),
-            self.subtitle_attention_required(),
-            self.environment.is_some(),
-            !self.loading,
-            self.existing_source_note().is_some(),
-        ) {
+            has_source: self.source_preview.is_some(),
+            needs_text_choice: self.subtitle_attention_required(),
+            environment_ready: self.environment.is_some(),
+            library_ready: !self.loading,
+            existing_note: self.existing_source_note().is_some(),
+        }) {
             ConversionGate::Wait => cx.notify(),
             ConversionGate::Stop => {
                 self.pending_conversion = None;
@@ -622,11 +644,7 @@ impl Desktop {
         let Some(source) = self.source_preview.clone() else {
             return;
         };
-        if let Some(cancel) = self.subtitle_cancel.take() {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        self.subtitle_generation = self.subtitle_generation.wrapping_add(1);
-        let generation = self.subtitle_generation;
+        let generation = self.stop_subtitle_read();
         let source_generation = self.preview_generation;
         let token = self
             .workspace
@@ -782,11 +800,7 @@ impl Desktop {
         let Some(source) = self.source_preview.clone() else {
             return;
         };
-        if let Some(cancel) = self.subtitle_cancel.take() {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        self.subtitle_generation = self.subtitle_generation.wrapping_add(1);
-        let generation = self.subtitle_generation;
+        let generation = self.stop_subtitle_read();
         let source_generation = self.preview_generation;
         let identity = source.identity.clone();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -892,18 +906,29 @@ impl Desktop {
         cx.notify();
     }
 
-    fn use_speech(&mut self, cx: &mut Context<Self>) {
+    /// Cancel any subtitle read in flight and ignore its late result.
+    fn stop_subtitle_read(&mut self) -> u64 {
         if let Some(cancel) = self.subtitle_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
         self.subtitle_generation = self.subtitle_generation.wrapping_add(1);
         self.subtitle_loading = false;
-        self.subtitle_error = None;
-        self.task_options.source_mode = TranscriptSource::Asr;
+        self.subtitle_generation
+    }
+
+    /// Stop reading subtitles and drop the unfinished request.
+    fn abort_subtitle_read(&mut self) {
+        self.stop_subtitle_read();
         if let Some(source) = &mut self.source_preview {
             source.subtitle_request = None;
             source.subtitle_read_error = None;
         }
+    }
+
+    fn use_speech(&mut self, cx: &mut Context<Self>) {
+        self.abort_subtitle_read();
+        self.subtitle_error = None;
+        self.task_options.source_mode = TranscriptSource::Asr;
         self.save_current_draft(cx);
         self.advance_conversion_when_ready(cx);
         cx.notify();
@@ -917,17 +942,9 @@ impl Desktop {
         {
             return;
         }
-        if let Some(cancel) = self.subtitle_cancel.take() {
-            cancel.store(true, Ordering::Relaxed);
-        }
-        self.subtitle_generation = self.subtitle_generation.wrapping_add(1);
-        self.subtitle_loading = false;
+        self.abort_subtitle_read();
         self.subtitle_error = None;
         self.task_options.source_mode = TranscriptSource::Subtitle;
-        if let Some(source) = &mut self.source_preview {
-            source.subtitle_request = None;
-            source.subtitle_read_error = None;
-        }
         self.save_current_draft(cx);
         self.advance_conversion_when_ready(cx);
         cx.notify();
@@ -1062,7 +1079,7 @@ impl Desktop {
                             } else {
                                 CARD_LINE
                             }))
-                            .child(Icon::new(icons::link()).size(rems(24. / 14.)).text_color(color(GRAY)))
+                            .child(Icon::new(icons::link()).size(HERO_ICON).text_color(color(GRAY)))
                             .child(
                                 div().flex_1().min_w_0().child(
                                     text_input(&self.inputs[&Field::Source])
@@ -1075,15 +1092,15 @@ impl Desktop {
                                 ),
                             )
                             .when(validation.is_some() || self.preview_error.is_some(), |row| row.child(
-                                icons::warning().size(rems(24. / 14.)).text_color(color(DANGER))))
+                                icons::warning().size(HERO_ICON).text_color(color(DANGER))))
                             // The link pill always ends in its action; an unavailable
                             // start stays visible as a disabled button.
                             .child(
                                 nav_action("generation-options", self.generation_options_open, cx)
-                                    .child(icons::tune().size(rems(24. / 14.)))
+                                    .child(icons::tune().size(HERO_ICON))
                                     .rounded(RADIUS_PILL)
-                                    .w(rems(48. / 14.))
-                                    .h(rems(48. / 14.))
+                                    .w(HERO_CONTROL)
+                                    .h(HERO_CONTROL)
                                     .accessibility_label("处理选项")
                                     .tooltip("处理选项")
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1104,8 +1121,7 @@ impl Desktop {
                 .child(motion::indeterminate_progress("source-reading-progress", cx))
                 .child(h_flex().w_full().min_w_0().p_4().gap_4().items_center()
                     .rounded(RADIUS_CARD).bg(color(SURFACE))
-                    .child(div().w(rems(128. / 14.)).max_w(relative(0.28))
-                        .aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL).bg(color(INSET)))
+                    .child(cover_slot(rems(128. / 14.), None).max_w(relative(0.28)).bg(color(INSET)))
                     .child(v_flex().flex_1().min_w_0().gap_3()
                         .child(accessible_text("import-reading-state", "正在读取视频信息…")
                             .text_size(TEXT_BODY).text_color(color(GRAY)))
@@ -1167,18 +1183,15 @@ impl Desktop {
             .iter()
             .map(course2md::fetch::candidate_identity)
             .collect();
+        let noted_sources: std::collections::HashSet<&str> = self
+            .courses
+            .iter()
+            .filter_map(|course| course.manifest.as_ref())
+            .map(|manifest| manifest.source_id.as_str())
+            .collect();
         let noted: Vec<bool> = identities
             .iter()
-            .map(|identity| {
-                identity.as_ref().is_some_and(|identity| {
-                    self.courses.iter().any(|course| {
-                        course
-                            .manifest
-                            .as_ref()
-                            .is_some_and(|manifest| manifest.source_id == *identity)
-                    })
-                })
-            })
+            .map(|identity| identity.as_deref().is_some_and(|identity| noted_sources.contains(identity)))
             .collect();
         let selectable: Vec<String> = self
             .source_candidates
@@ -1645,11 +1658,8 @@ impl Desktop {
         let compact = is_compact(window);
         let duration = (source.duration.is_finite() && source.duration > 0.)
             .then(|| course2md::render::fmt_ts(source.duration));
-        let mut cover = div().relative().w(rems(if compact { 128. / 14. } else { 160. / 14. }))
-            .max_w(relative(0.28)).aspect_ratio(16. / 9.).flex_shrink_0().rounded(RADIUS_SMALL)
-            .bg(color(SECONDARY_CONTAINER)).overflow_hidden()
-            .when_some(source.cover.clone(), |cover, path| cover.child(
-                img(path).size_full().rounded(RADIUS_SMALL).object_fit(ObjectFit::Cover)));
+        let mut cover = cover_slot(rems(if compact { 128. / 14. } else { 160. / 14. }), source.cover.clone())
+            .relative().max_w(relative(0.28));
         if let Some(duration) = duration {
             cover = cover.child(div().absolute().right(px(4.)).bottom(px(4.)).px_1().py(px(1.))
                 .rounded(px(3.)).bg(color(INK)).text_color(color(CANVAS))
@@ -1683,7 +1693,7 @@ impl Desktop {
             .child(cover)
             .child(v_flex().min_w_0().flex_1().gap(rems(6. / 14.))
                 .child(accessible_text("import-selected-title", source.title.clone())
-                    .text_size(rems(16. / 14.)).line_height(rems(22. / 14.)).font_weight(FontWeight::SEMIBOLD)
+                    .text_size(TEXT_LEAD).line_height(rems(22. / 14.)).font_weight(FontWeight::SEMIBOLD)
                     .whitespace_normal().text_ellipsis().line_clamp(2))
                 .when(!metadata.is_empty(), |view| view.child(
                     div().text_size(TEXT_BODY).text_color(color(GRAY)).child(metadata)))
@@ -1699,13 +1709,13 @@ impl Desktop {
                     })))
                 .child(h_flex().gap_1()
                     .child(quiet("source-details").icon(if self.show_preview_details { crate::icons::chevron_up() } else { crate::icons::chevron_down() })
-                        .w(rems(32. / 14.)).h(rems(32. / 14.)).px_0()
+                        .w(ROW_CONTROL).h(ROW_CONTROL).px_0()
                         .accessibility_label("来源详情").tooltip("来源详情")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.show_preview_details = !this.show_preview_details; cx.notify();
                         })))
                     .when(self.online, |row| row.child(quiet("reread-source").icon(icons::refresh())
-                        .w(rems(32. / 14.)).h(rems(32. / 14.)).px_0()
+                        .w(ROW_CONTROL).h(ROW_CONTROL).px_0()
                         .accessibility_label("重新读取").tooltip("重新读取")
                         .on_click(cx.listener(|this, _, window, cx| this.inspect_source(window, cx)))))));
         v_flex().w_full().min_w_0().child(v_flex().id("import-selected-source")
@@ -1811,15 +1821,7 @@ impl Desktop {
                     .label("取消读取字幕")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.pending_conversion = None;
-                        if let Some(cancel) = this.subtitle_cancel.take() {
-                            cancel.store(true, Ordering::Relaxed);
-                        }
-                        this.subtitle_generation = this.subtitle_generation.wrapping_add(1);
-                        this.subtitle_loading = false;
-                        if let Some(source) = &mut this.source_preview {
-                            source.subtitle_request = None;
-                            source.subtitle_read_error = None;
-                        }
+                        this.abort_subtitle_read();
                         this.save_current_draft(cx);
                         cx.notify();
                     })),
@@ -2029,7 +2031,7 @@ impl Desktop {
         let mut view = v_flex()
             .w_full()
             .min_w_0()
-            .gap(rems(24. / 14.))
+            .gap(SECTION_GAP)
             .child(import_option_section(
                 "conversion-text-mode-label",
                 "文字来源",
@@ -2081,7 +2083,7 @@ impl Desktop {
         let mut view = v_flex()
             .w_full()
             .min_w_0()
-            .gap(rems(24. / 14.))
+            .gap(SECTION_GAP)
             .child(import_option_section("import-ai-label", "AI 处理", choices));
         if self.task_options.llm || self.task_options.summarize {
             let mut service = v_flex()
@@ -2168,7 +2170,7 @@ impl Desktop {
             .collect();
         let selector = control("import-speech-location")
             .h(rems(56. / 14.))
-            .font_weight(FontWeight::NORMAL).text_size(rems(16. / 14.))
+            .font_weight(FontWeight::NORMAL).text_size(TEXT_LEAD)
             .rounded(RADIUS_SMALL)
             .w_full()
             .min_w_0()
@@ -2436,7 +2438,7 @@ impl Desktop {
                 .child(
                     outline_pill("import-new-folder")
                         .icon(icons::create_new_folder())
-                        .w(rems(48. / 14.)).h(rems(48. / 14.)).px_0()
+                        .w(HERO_CONTROL).h(HERO_CONTROL).px_0()
                         .accessibility_label("新建文件夹")
                         .tooltip("新建文件夹")
                         .on_click(
@@ -2486,7 +2488,7 @@ impl Desktop {
             "同时导出",
             choices,
         )).when(self.online, |view| view.child(
-            div().w_full().min_w_0().pt(rems(24. / 14.))
+            div().w_full().min_w_0().pt(SECTION_GAP)
                 .child(import_option_switch_row(
                     "保留原视频", "供离线播放，会占用更多磁盘空间",
                     processing_switch(Switch::new("import-keep-video"))
@@ -2500,7 +2502,7 @@ impl Desktop {
         ))
     }
 
-    fn existing_source_note(&self) -> Option<Course> {
+    fn existing_source_note(&self) -> Option<&Course> {
         let source = self.source_preview.as_ref()?;
         let preferred = self
             .workspace
@@ -2521,7 +2523,6 @@ impl Desktop {
                     .is_some_and(|manifest| manifest.source_id == source.identity)
             })
             .min_by_key(|course| !preferred.is_some_and(|root| course.dir.starts_with(root)))
-            .cloned()
     }
 
     fn can_start_input(&self, cx: &App) -> bool {
@@ -2553,9 +2554,9 @@ impl Desktop {
         let label = if start { "开始转换" } else { "预览视频" };
         h_flex().items_center().child(
             theme::disabled_when(primary_pill("preview-source"), disabled, cx)
-                .h(rems(48. / 14.)).icon(icons::arrow_forward())
+                .h(HERO_CONTROL).icon(icons::arrow_forward())
                 .when(!compact || start, |button| button.label(label))
-                .when(compact && !start, |button| button.w(rems(48. / 14.)).px_0())
+                .when(compact && !start, |button| button.w(HERO_CONTROL).px_0())
                 .accessibility_label(label).tooltip(label)
                 .track_focus(&self.import_submit_focus).disabled(disabled)
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -2678,7 +2679,7 @@ impl Desktop {
             .when(!self.online, |input| input.child(self.source_kind_tabs(cx)))
             .child(self.box_source_input(window, cx));
         let mut view = v_flex()
-            .gap(rems(24. / 14.))
+            .gap(SECTION_GAP)
             .w_full().min_w_0().max_w(rems(WORKBENCH_WIDTH / 14.)).mx_auto()
             .child(v_flex().w_full().items_center().gap(rems(8. / 14.))
                 .child(accessible_text("workbench-title", "把视频整理成笔记")
@@ -2748,8 +2749,8 @@ impl Desktop {
         let active = self.workbench_active_tasks_section(window, cx);
         let recent = self.recent_notes_section(cx);
         let options = if show_options {
-            Some(v_flex().w_full().min_w_0().p(rems(24. / 14.))
-                .gap(rems(24. / 14.)).rounded(RADIUS_HERO).bg(color(SURFACE))
+            Some(v_flex().w_full().min_w_0().p(SECTION_GAP)
+                .gap(SECTION_GAP).rounded(RADIUS_HERO).bg(color(SURFACE))
                 .child(v_flex().w_full().gap(rems(4. / 14.))
                     .child(h_flex().w_full().items_center()
                         .child(div().flex_1().text_size(rems(24. / 14.))
@@ -2770,7 +2771,7 @@ impl Desktop {
                     .child(quiet("reset-task-overrides").icon(icons::refresh()).label("恢复 AI 默认")
                         .on_click(cx.listener(|this, _, _, cx| this.reset_task_ai_overrides(cx))))))
         } else { None };
-        let mut lower = div().flex().w_full().min_w_0().gap(rems(24. / 14.)).items_start();
+        let mut lower = div().flex().w_full().min_w_0().gap(SECTION_GAP).items_start();
         if wide {
             if let Some(recent) = recent {
                 lower = lower.child(div().flex_1().min_w_0().child(recent));
@@ -2810,7 +2811,7 @@ impl Desktop {
         div().id("workbench-drop-overlay").absolute().inset_0()
             .invisible()
             .group_drag_over::<gpui::ExternalPaths>("workbench-drop", |style| style.visible())
-            .bg(color(CANVAS).opacity(0.88)).p(rems(24. / 14.))
+            .bg(color(CANVAS).opacity(0.88)).p(SECTION_GAP)
             .child(v_flex().size_full().items_center().justify_center().gap_4()
                 .rounded(RADIUS_HERO).border_2().border_dashed().border_color(color(ACCENT))
                 .child(h_flex().size(rems(88. / 14.)).rounded_full()
@@ -2834,6 +2835,16 @@ impl Desktop {
                 })
             });
         let reading = self.preview_cancel.is_some() || self.subtitle_loading;
+        // Built once per render; both the issue text and the duplicate check use it.
+        let preview_plan = self.preview_plan();
+        let matching_task = preview_plan
+            .as_ref()
+            .ok()
+            .and_then(|plan| self.matching_task(plan))
+            .map(|task| {
+                let location = self.task_library(task).map(|library| library.name.clone());
+                (task.id.clone(), task.plan.title.clone(), location)
+            });
         let preferences_issue = self.ordinary_preferences_submit_issue();
         let preferences_blocked = preferences_issue.is_some();
         let submission_error = preferences_issue
@@ -2842,7 +2853,7 @@ impl Desktop {
             .or_else(|| {
                 if self.source_preview.is_some() && !reading && !self.subtitle_attention_required()
                 {
-                    self.submission_issue()
+                    preview_plan.as_ref().err().map(|error| format!("{error:#}"))
                 } else {
                     None
                 }
@@ -2893,39 +2904,21 @@ impl Desktop {
                     })),
             );
         }
-        if let Some(library) = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| {
-                workspace
-                    .state
-                    .draft()
-                    .and_then(|draft| workspace.state.library(&draft.library_id))
-            })
-            .filter(|library| {
-                self.cached_location_check(library)
-                    .is_some_and(|check| check.needs_reassociation)
-            })
-        {
-            let id = library.id.clone();
-            actions = actions.child(
-                outline_pill("reassociate-import-location")
-                    .icon(crate::icons::folder_open())
-                    .label("重新关联此保存位置")
-                    .disabled(self.storage_ui.busy)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.begin_library_reassociation(id.clone(), window, cx)
-                    })),
-            );
-        }
-        if let Some(task) = self.matching_current_task().cloned() {
-            let id = task.id.clone();
-            let location = self
-                .task_library(&task)
-                .map(|library| library.name.clone())
-                .unwrap_or_else(|| "原保存位置".into());
+        let draft_library = self.workspace.as_ref().and_then(|workspace| {
+            workspace
+                .state
+                .draft()
+                .and_then(|draft| workspace.state.library(&draft.library_id))
+        });
+        actions = actions.children(self.reassociate_action(
+            draft_library,
+            outline_pill("reassociate-import-location"),
+            cx,
+        ));
+        if let Some((id, title, location)) = matching_task.clone() {
+            let location = location.unwrap_or_else(|| "原保存位置".into());
             inset = inset.child(conversion_fact(
-                format!("已有相同处理任务：《{}》（{location}）", task.plan.title),
+                format!("已有相同处理任务：《{title}》（{location}）"),
                 true,
             ));
             actions = actions.child(
@@ -2941,7 +2934,7 @@ impl Desktop {
                         cx.notify();
                     })),
             );
-        } else if let Some(course) = self.existing_source_note() {
+        } else if let Some(course) = self.existing_source_note().cloned() {
             let location = self
                 .course_location(&course)
                 .map(|library| library.name.clone())
@@ -2997,7 +2990,7 @@ impl Desktop {
             && !reading
             && self.missing_import_service().is_none()
             && self.existing_source_note().is_none()
-            && self.matching_current_task().is_none()
+            && matching_task.is_none()
         {
             actions = actions.child(
                 outline_pill("retry-conversion-validation")
@@ -3055,20 +3048,41 @@ impl Desktop {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConversionFollow, ConversionGate, automatic_subtitle_fallback, completed_input_task,
-        conversion_gate, submitted_input_task, subtitle_needs_confirmation, uses_speech,
+        ConversionFollow, ConversionGate, GateInputs, automatic_subtitle_fallback,
+        completed_input_task, conversion_gate, submitted_input_task, subtitle_needs_confirmation,
+        uses_speech,
     };
     use course2md::config::TranscriptSource;
-    use crate::{ConversionOptions, source, workspace};
+    use crate::{source, workspace};
     use course2md::subtitle::{CachedSubtitle, SubtitleEvidence, SubtitleReadError};
+
+    /// A pending Start for revision 7 with every prerequisite met.
+    fn ready() -> GateInputs {
+        GateInputs {
+            requested_revision: Some(7),
+            current_revision: 7,
+            reading: false,
+            has_source: true,
+            needs_text_choice: false,
+            environment_ready: true,
+            library_ready: true,
+            existing_note: false,
+        }
+    }
 
     #[test]
     fn preview_completion_without_confirmation_never_submits() {
         for reading in [true, false] {
             for environment_ready in [true, false] {
                 for library_ready in [true, false] {
-                    assert_eq!(conversion_gate(None, 7, reading, true, false,
-                        environment_ready, library_ready, false), ConversionGate::Stop);
+                    let gate = GateInputs {
+                        requested_revision: None,
+                        reading,
+                        environment_ready,
+                        library_ready,
+                        ..ready()
+                    };
+                    assert_eq!(conversion_gate(gate), ConversionGate::Stop);
                 }
             }
         }
@@ -3077,70 +3091,36 @@ mod tests {
     #[test]
     fn confirmed_start_waits_for_remaining_prerequisites() {
         // The same Start revision survives each independently completing prerequisite.
-        let start = Some(7);
-        for (reading, source, text_choice, environment) in [
+        for (reading, has_source, needs_text_choice, environment_ready) in [
             (true, false, false, false),
             (true, true, true, true),
             (false, true, false, false),
             (false, true, true, true),
         ] {
-            assert_eq!(
-                conversion_gate(
-                    start,
-                    7,
-                    reading,
-                    source,
-                    text_choice,
-                    environment,
-                    true,
-                    false
-                ),
-                ConversionGate::Wait,
-            );
+            let gate = GateInputs { reading, has_source, needs_text_choice, environment_ready, ..ready() };
+            assert_eq!(conversion_gate(gate), ConversionGate::Wait);
         }
-        assert_eq!(
-            conversion_gate(start, 7, false, true, false, true, true, false),
-            ConversionGate::Submit
-        );
+        assert_eq!(conversion_gate(ready()), ConversionGate::Submit);
         // Source replacement and duplicate content require a fresh intent/choice.
-        assert_eq!(
-            conversion_gate(start, 8, true, false, false, true, true, false),
-            ConversionGate::Stop
-        );
-        assert_eq!(
-            conversion_gate(start, 7, false, true, false, true, true, true),
-            ConversionGate::Stop
-        );
-        assert_eq!(
-            conversion_gate(start, 7, false, false, false, true, true, false),
-            ConversionGate::Stop
-        );
+        let replaced = GateInputs { current_revision: 8, reading: true, has_source: false, ..ready() };
+        assert_eq!(conversion_gate(replaced), ConversionGate::Stop);
+        assert_eq!(conversion_gate(GateInputs { existing_note: true, ..ready() }), ConversionGate::Stop);
+        assert_eq!(conversion_gate(GateInputs { has_source: false, ..ready() }), ConversionGate::Stop);
     }
 
     #[test]
     fn first_start_waits_for_library_scan_before_existing_note_decision() {
         // A restored source and the environment can be ready before the async
         // library scan replaces its initially empty (or stale) note list.
-        let start = Some(7);
-        for cached_note in [false, true] {
-            assert_eq!(
-                conversion_gate(start, 7, false, true, false, true, false, cached_note),
-                ConversionGate::Wait,
-            );
+        for existing_note in [false, true] {
+            let gate = GateInputs { library_ready: false, existing_note, ..ready() };
+            assert_eq!(conversion_gate(gate), ConversionGate::Wait);
         }
         // The original Start is still pending when the scan reports a result.
-        assert_eq!(
-            conversion_gate(start, 7, false, true, false, true, true, true),
-            ConversionGate::Stop,
-        );
-        assert_eq!(
-            conversion_gate(start, 7, false, true, false, true, true, false),
-            ConversionGate::Submit,
-        );
-        assert_eq!(
-            conversion_gate(start, 8, false, true, false, true, false, false),
-            ConversionGate::Stop,
-        );
+        assert_eq!(conversion_gate(GateInputs { existing_note: true, ..ready() }), ConversionGate::Stop);
+        assert_eq!(conversion_gate(ready()), ConversionGate::Submit);
+        let replaced = GateInputs { current_revision: 8, library_ready: false, ..ready() };
+        assert_eq!(conversion_gate(replaced), ConversionGate::Stop);
     }
 
     #[test]

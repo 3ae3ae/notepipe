@@ -10,6 +10,7 @@ use anyhow::{Context as _, Result, ensure};
 use gpui_component::button::*;
 use std::collections::HashMap;
 use std::rc::Rc;
+use crate::import_ui::cover_slot;
 use course2md::config::TranscriptSource;
 use course2md::execution::Component;
 
@@ -532,153 +533,110 @@ fn disclosure_toggle(id: SharedString) -> Button {
 /// Same minimum height as the card's `detail_row`.
 const DISCLOSURE_ROW: Rems = rems(32. / 14.);
 
-#[derive(IntoElement)]
-struct TaskProcessingDetails {
-    task_id: String,
-    rows: Vec<TaskStage>,
-    /// Non-actionable task facts shown inside the disclosure on recovery cards.
-    facts: Option<Div>,
-    open: bool,
-    animate: bool,
-    desktop: WeakEntity<Desktop>,
+/// Where recovery actions appear: the task list card or the workbench box.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecoveryStyle {
+    Card,
+    Workbench,
 }
 
-impl RenderOnce for TaskProcessingDetails {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        // Open state lives on Desktop: a virtualized task row unmounts when it
-        // leaves the viewport, and keyed window state would be forgotten.
-        let open = self.open;
-        let task_id = self.task_id.clone();
-        let desktop = self.desktop.clone();
-        let details = v_flex()
-            .w_full()
-            .min_w_0()
-            .gap_3()
-            .when_some(self.facts, |view, facts| view.child(facts))
-            .child(TaskStages { rows: self.rows });
-        v_flex()
-            .w_full()
-            .min_w_0()
-            .gap_3()
-            .child(
-                disclosure_toggle(SharedString::from(format!(
-                    "task-stage-details-toggle-{}",
-                    self.task_id
-                )))
-                .icon(if open {
-                    icons::chevron_up()
-                } else {
-                    icons::chevron_down()
-                })
-                .label(if open {
-                    "收起已完成的处理"
-                } else {
-                    "查看已完成的处理"
-                })
-                .on_click(move |_, _, cx| {
-                    let _ = desktop.update(cx, |this, cx| {
-                        let key = format!("task-stage-details-state-{task_id}");
-                        if !this.task_panels_open.remove(&key) {
-                            this.task_panels_open.insert(key);
-                        } else {
-                            // Closing unmounts the detail; reopening re-enters.
-                            this.entered
-                                .remove(&format!("task-stage-details-{task_id}"));
-                        }
-                        cx.notify();
-                    });
-                }),
-            )
-            .child(if self.animate {
-                crate::motion::disclosure(
-                    SharedString::from(format!("task-stage-details-{}", self.task_id)),
-                    open,
-                    details)
-            } else if open {
-                details.into_any_element()
-            } else {
-                div().hidden().into_any_element()
-            })
+#[derive(Clone, Copy)]
+enum Emphasis {
+    Primary,
+    Secondary,
+    Quiet,
+}
+
+impl RecoveryStyle {
+    fn button(self, name: &str, task_id: &str, emphasis: Emphasis) -> Button {
+        let prefix = if self == Self::Workbench { "box-" } else { "" };
+        let id = SharedString::from(format!("{prefix}{name}-{task_id}"));
+        match (self, emphasis) {
+            (_, Emphasis::Secondary) => outline_pill(id),
+            (Self::Workbench, Emphasis::Primary) => primary_pill(id),
+            (Self::Workbench, Emphasis::Quiet) => quiet(id),
+            (Self::Card, _) => control(id),
+        }
+    }
+}
+
+/// A collapsible section of a task card. Open state lives on Desktop: a
+/// virtualized task row unmounts when it leaves the viewport, and keyed
+/// window state would be forgotten.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TaskPanel {
+    /// Completed processing steps.
+    Stages,
+    /// Raw worker log and error text.
+    RawLog,
+}
+
+impl TaskPanel {
+    const ALL: [Self; 2] = [Self::Stages, Self::RawLog];
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Stages => "stage-details",
+            Self::RawLog => "raw-log",
+        }
+    }
+
+    fn label(self, open: bool) -> &'static str {
+        match (self, open) {
+            (Self::Stages, true) => "收起已完成的处理",
+            (Self::Stages, false) => "查看已完成的处理",
+            (Self::RawLog, true) => "收起技术详情",
+            (Self::RawLog, false) => "技术详情",
+        }
+    }
+
+    /// Key of the panel's one-time entrance animation.
+    fn entrance_key(self, task_id: &str) -> String {
+        format!("task-{}-{task_id}", self.slug())
     }
 }
 
 #[derive(IntoElement)]
-struct TaskRawLogs {
+struct TaskDisclosure {
+    panel: TaskPanel,
     task_id: String,
-    text: String,
+    /// Task facts shown above the content on recovery cards.
+    lead: Option<Div>,
+    content: Div,
     open: bool,
     animate: bool,
     desktop: WeakEntity<Desktop>,
 }
 
-impl RenderOnce for TaskRawLogs {
+impl RenderOnce for TaskDisclosure {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let open = self.open;
-        let task_id = self.task_id.clone();
-        let desktop = self.desktop.clone();
-        let log = v_flex().child(
-            div()
-                .id(SharedString::from(format!(
-                    "task-raw-log-content-{}",
-                    self.task_id
-                )))
-                .w_full()
-                .min_w_0()
-                .max_h(rems(16.))
-                .overflow_y_scroll()
-                .p_4()
-                .rounded(RADIUS_CARD)
-                .bg(color(INSET))
-                .child(
-                    accessible_text(
-                        SharedString::from(format!("task-raw-log-text-{}", self.task_id)),
-                        self.text,
-                    )
-                    .text_size(TEXT_AUX)
-                    .text_color(color(GRAY))
-                    .whitespace_normal(),
-                ),
-        );
+        let Self { panel, task_id, lead, content, open, animate, desktop } = self;
+        let content = match lead {
+            Some(lead) => v_flex().w_full().min_w_0().gap_3().child(lead).child(content),
+            None => content,
+        };
+        let id = |part: &str| SharedString::from(format!("task-{}-{part}-{task_id}", panel.slug()));
+        let toggle_id = id("toggle");
+        let content_id = id("content");
         v_flex()
             .w_full()
             .min_w_0()
-            .gap_2()
+            .gap(if panel == TaskPanel::Stages { rems(12. / 14.) } else { rems(8. / 14.) })
             .child(
-                disclosure_toggle(SharedString::from(format!(
-                    "task-raw-log-toggle-{}",
-                    self.task_id
-                )))
-                .icon(if open {
-                    icons::chevron_up()
-                } else {
-                    // 与同级「查看已完成的处理」一致：可展开项用 chevron 表达
-                    icons::chevron_down()
-                })
-                .label(if open {
-                    "收起技术详情"
-                } else {
-                    "技术详情"
-                })
-                .on_click(move |_, _, cx| {
-                    let _ = desktop.update(cx, |this, cx| {
-                        let key = format!("task-raw-log-state-{task_id}");
-                        if !this.task_panels_open.remove(&key) {
-                            this.task_panels_open.insert(key);
-                        } else {
-                            this.entered
-                                .remove(&format!("task-raw-log-disclosure-{task_id}"));
-                        }
-                        cx.notify();
-                    });
-                }),
+                disclosure_toggle(toggle_id)
+                    .icon(if open { icons::chevron_up() } else { icons::chevron_down() })
+                    .label(panel.label(open))
+                    .on_click(move |_, _, cx| {
+                        let _ = desktop.update(cx, |this, cx| {
+                            this.toggle_task_panel(panel, &task_id);
+                            cx.notify();
+                        });
+                    }),
             )
-            .child(if self.animate {
-                crate::motion::disclosure(
-                    SharedString::from(format!("task-raw-log-disclosure-{}", self.task_id)),
-                    open,
-                    log)
+            .child(if animate {
+                crate::motion::disclosure(content_id, open, content)
             } else if open {
-                log.into_any_element()
+                content.into_any_element()
             } else {
                 div().hidden().into_any_element()
             })
@@ -1373,18 +1331,17 @@ impl Desktop {
         cx.notify();
     }
 
-    /// The form uses loaded snapshots. Submission rechecks live storage, local
-    /// source and dispatch markers before a task can enter the queue.
-    pub fn submission_issue(&self) -> Option<String> {
+    /// The plan the form would submit, checked against loaded snapshots.
+    /// Submission rechecks live storage, local source and dispatch markers
+    /// before a task can enter the queue.
+    pub fn preview_plan(&self) -> Result<TaskPlan> {
         self.build_plan(PlanValidation::Preview)
-            .err()
-            .map(|error| format!("{error:#}"))
     }
 
-    pub fn matching_current_task(&self) -> Option<&TaskRecord> {
-        let plan = self.build_plan(PlanValidation::Preview).ok()?;
+    /// An unfinished task already doing the same work as `plan`.
+    pub fn matching_task(&self, plan: &TaskPlan) -> Option<&TaskRecord> {
         self.workspace.as_ref()?.state.tasks.iter().find(|task| {
-            !task.state.finished() && task.handled_by.is_none() && task.plan.same_work(&plan)
+            !task.state.finished() && task.handled_by.is_none() && task.plan.same_work(plan)
         })
     }
 
@@ -2252,38 +2209,61 @@ impl Desktop {
                                 .map(|preview| preview.course.dir.as_path()),
                         )
                     });
-                if let Some(done) = &done {
+                if let Some(done) = done {
                     self.completed = Some(done.clone());
-                    if let Some(root) = self.task_library(&task).map(|l| l.root.clone()) {
-                        let _ = source::save_cover(&task.plan.source, &done.out_dir).map_err(|e| {
-                            self.message = Some(format!("笔记已保存，封面暂未保存：{e:#}"))
-                        });
-                        if let Err(error) = organize::Library::edit(&root, |library| {
-                            library.assign(
-                                &root,
-                                &Course::from_completed(done).storage_dir(),
-                                task.plan.folder,
-                            )
-                        }) {
-                            self.message =
-                                Some(format!("笔记已保存，文件夹归属暂未更新：{error:#}"));
+                    let root = self.task_library(&task).map(|l| l.root.clone());
+                    let open = !task.exports_only()
+                        && (follow_input_completion || follow_reader_completion);
+                    let source = task.plan.source.clone();
+                    let folder = task.plan.folder;
+                    let out_dir = done.out_dir.clone();
+                    let storage_dir = Course::from_completed(&done).storage_dir();
+                    let frames = manifest
+                        .as_ref()
+                        .map(|manifest| manifest.frames.clone())
+                        .unwrap_or_default();
+                    // Cover copy, folder assignment and thumbnail lookup touch the
+                    // library disk; the record above is already committed.
+                    let published = crate::spawn_blocking_io(move || {
+                        let mut issues = Vec::new();
+                        if let Some(root) = &root {
+                            if let Err(error) = source::save_cover(&source, &out_dir) {
+                                issues.push(format!("封面暂未保存：{error:#}"));
+                            }
+                            if let Err(error) = organize::Library::edit(root, |library| {
+                                library.assign(root, &storage_dir, folder)
+                            }) {
+                                issues.push(format!("文件夹归属暂未更新：{error:#}"));
+                            }
                         }
-                    }
-                    if let Some(manifest) = &manifest {
-                        let cover = done.out_dir.join("cover.jpg");
+                        let cover = out_dir.join("cover.jpg");
                         let thumbnail = cover.is_file().then_some(cover).or_else(|| {
-                            manifest.frames.iter().find_map(|frame| {
-                                course2md::artifact::safe_asset_path(&done.out_dir, &frame.image)
-                                    .ok()
+                            frames.iter().find_map(|frame| {
+                                course2md::artifact::safe_asset_path(&out_dir, &frame.image).ok()
                             })
                         });
-                        update_published_course(&mut self.courses, done, manifest, thumbnail);
-                    }
-                    self.refresh_library(cx);
-                    if !task.exports_only() && (follow_input_completion || follow_reader_completion)
-                    {
-                        self.open_completed_conversion(Course::from_completed(done), cx);
-                    }
+                        (issues, thumbnail)
+                    });
+                    cx.spawn(async move |this, cx| {
+                        let Ok((issues, thumbnail)) = published.recv().await else {
+                            return;
+                        };
+                        let _ = this.update(cx, |this, cx| {
+                            if !issues.is_empty() {
+                                this.message =
+                                    Some(format!("笔记已保存，{}", issues.join("；")));
+                            }
+                            if let Some(manifest) = &manifest {
+                                update_published_course(&mut this.courses, &done, manifest, thumbnail);
+                            }
+                            this.refresh_library(cx);
+                            if open {
+                                this.open_completed_conversion(Course::from_completed(&done), cx);
+                            }
+                            cx.notify();
+                        });
+                    })
+                    .detach();
                 }
                 self.task_status = task.status_label().into();
                 self.transient_task_result = Some((id.to_owned(), std::time::Instant::now()));
@@ -2571,6 +2551,11 @@ impl Desktop {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = task.id.clone();
+        let failures = if task.artifact.is_some() {
+            task_component_failures(task)
+        } else {
+            Vec::new()
+        };
         let cover = self.task_cover(task);
         let has_cover = cover.is_some();
         let heading = control(SharedString::from(format!("select-{id}")))
@@ -2594,24 +2579,7 @@ impl Desktop {
             .rounded(RADIUS_SMALL)
             .p_0()
             .child(
-                div()
-                    .w(rems(6.))
-                    .h(rems(3.375))
-                    .flex_shrink_0()
-                    .rounded(RADIUS_SMALL)
-                    .overflow_hidden()
-                    .bg(color(SECONDARY_CONTAINER))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when_some(cover, |slot, cover| {
-                        slot.child(
-                            img(cover)
-                                .size_full()
-                                .rounded(RADIUS_SMALL)
-                                .object_fit(ObjectFit::Cover),
-                        )
-                    })
+                cover_slot(rems(6.), cover)
                     .when(!has_cover, |slot| {
                         slot.child(
                             icons::movie()
@@ -2758,7 +2726,7 @@ impl Desktop {
             );
             if recovery {
                 if let Some(history) = &mut history {
-                    history.facts = Some(facts);
+                    history.lead = Some(facts);
                 }
             } else {
                 details = details.child(facts);
@@ -2781,22 +2749,12 @@ impl Desktop {
             if let Some(block) = self.uncertain_block(task, cx) {
                 details = details.child(block);
             }
-            let mut actions = h_flex().gap_2().flex_wrap();
-            if let Some(library) = self.task_library(task)
-                && self
-                    .cached_location_check(library)
-                    .is_some_and(|check| check.needs_reassociation)
-            {
-                let library_id = library.id.clone();
-                actions = actions.child(
-                    control(SharedString::from(format!("reassociate-{id}")))
-                        .icon(icons::storage())
-                        .label("重新关联此保存位置")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.begin_library_reassociation(library_id.clone(), window, cx)
-                        })),
-                );
-            }
+            let style = RecoveryStyle::Card;
+            let mut actions = h_flex().gap_2().flex_wrap().children(self.reassociate_action(
+                self.task_library(task),
+                style.button("reassociate", &id, Emphasis::Secondary),
+                cx,
+            ));
             if let Some(followup) = &task.handled_by {
                 let next = followup.clone();
                 actions = actions.child(
@@ -2820,15 +2778,7 @@ impl Desktop {
                 && matches!(task.state, TaskState::Paused | TaskState::NeedsAttention)
                 && uncertain.is_empty()
             {
-                actions = actions.child(
-                    control(SharedString::from(format!("resume-{id}")))
-                        .icon(icons::play_arrow())
-                        .label("继续任务")
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, _, cx| this.set_task_intent(id.clone(), Intent::Run, cx)
-                        })),
-                );
+                actions = actions.child(self.resume_action(task, style, cx));
             }
             if task.artifact.is_some() {
                 let requires_repair = task_requires_service_repair(task);
@@ -2844,24 +2794,13 @@ impl Desktop {
                         .text_sm(),
                     );
                 }
-                let repairable =
-                    task_component_failures(task)
-                        .iter()
-                        .any(|(component, _, _)| {
-                            ai_component(component).is_some()
-                        });
+                let repairable = failures
+                    .iter()
+                    .any(|(component, _, _)| ai_component(component).is_some());
                 if repairable && uncertain.is_empty() && task.handled_by.is_none() {
-                    let repair_id = id.clone();
-                    actions = actions.child(
-                        outline_pill(SharedString::from(format!("repair-ai-task-{id}")))
-                            .icon(icons::settings())
-                            .label("修复 AI 服务并补做")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.repair_task_service(repair_id.clone(), window, cx);
-                            })),
-                    );
+                    actions = actions.child(self.repair_ai_action(task, style, cx));
                 }
-                for (component, label, outcome) in task_component_failures(task) {
+                for (component, label, outcome) in &failures {
                     let unknown_component = uncertain.iter().any(|request| {
                         request.purpose.as_deref().and_then(ai_component)
                             .is_some_and(|part| part.as_str() == component)
@@ -2870,8 +2809,8 @@ impl Desktop {
                         continue;
                     }
                     let reason =
-                        activity::component_failure_message(&label, outcome.message.as_deref());
-                    let ai_component = ai_component(&component).is_some();
+                        activity::component_failure_message(label, outcome.message.as_deref());
+                    let ai_component = ai_component(component).is_some();
                     if !(requires_repair && ai_component) {
                         details = details.child(
                             accessible_text(
@@ -2885,20 +2824,8 @@ impl Desktop {
                         && task.handled_by.is_none()
                         && !(requires_repair && ai_component)
                     {
-                        let task_id = id.clone();
-                        actions = actions.child(
-                            control(SharedString::from(format!("retry-{id}-{component}")))
-                                .icon(icons::refresh())
-                                .label(format!("仅补{label}"))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.reprocess_task(
-                                        task_id.clone(),
-                                        vec![component.clone()],
-                                        Vec::new(),
-                                        cx,
-                                    )
-                                })),
-                        );
+                        actions = actions
+                            .child(self.retry_component_action(task, component, label, style, cx));
                     }
                 }
             }
@@ -2908,21 +2835,7 @@ impl Desktop {
                     TaskState::Running | TaskState::Pausing | TaskState::Queued
                 )
             {
-                actions = actions.child(
-                    outline_pill(SharedString::from(format!("adjust-{id}")))
-                        .icon(icons::tune())
-                        .label(if task.artifact.is_some() {
-                            "调整并生成新版"
-                        } else if task.state == TaskState::Paused {
-                            "调整选项"
-                        } else {
-                            "调整后重试"
-                        })
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, window, cx| this.adjust_task(id.clone(), window, cx)
-                        })),
-                );
+                actions = actions.child(self.adjust_action(task, style, cx));
             }
             details = details.child(actions);
             if matches!(
@@ -2958,7 +2871,6 @@ impl Desktop {
             }
             if task.state == TaskState::Partial {
                 if task.artifact.is_some() {
-                    let failures = task_component_failures(task);
                     if !failures.is_empty() {
                         card = card.child(
                             accessible_text(
@@ -2981,16 +2893,124 @@ impl Desktop {
         card.into_any_element()
     }
 
+    /// Re-associate a library location whose identity marker needs confirming.
+    pub(crate) fn reassociate_action(
+        &self,
+        library: Option<&workspace::LibraryLocation>,
+        button: Button,
+        cx: &mut Context<Self>,
+    ) -> Option<Button> {
+        let library = library.filter(|library| {
+            self.cached_location_check(library)
+                .is_some_and(|check| check.needs_reassociation)
+        })?;
+        let library_id = library.id.clone();
+        Some(
+            button
+                .icon(icons::storage())
+                .label("重新关联此保存位置")
+                .disabled(self.storage_ui.busy)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.begin_library_reassociation(library_id.clone(), window, cx)
+                })),
+        )
+    }
+
+    fn resume_action(&self, task: &TaskRecord, style: RecoveryStyle, cx: &mut Context<Self>) -> Button {
+        let id = task.id.clone();
+        style
+            .button("resume", &task.id, Emphasis::Primary)
+            .icon(icons::play_arrow())
+            .label(if task.state == TaskState::Paused { "继续生成" } else { "继续任务" })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.set_task_intent(id.clone(), Intent::Run, cx)
+            }))
+    }
+
+    fn repair_ai_action(&self, task: &TaskRecord, style: RecoveryStyle, cx: &mut Context<Self>) -> Button {
+        let id = task.id.clone();
+        style
+            .button("repair-ai", &task.id, Emphasis::Secondary)
+            .icon(icons::settings())
+            .label("修复 AI 服务并补做")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.repair_task_service(id.clone(), window, cx);
+            }))
+    }
+
+    fn retry_component_action(
+        &self,
+        task: &TaskRecord,
+        component: &str,
+        label: &str,
+        style: RecoveryStyle,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let id = task.id.clone();
+        let component = component.to_owned();
+        style
+            .button(&format!("retry-{component}"), &task.id, Emphasis::Quiet)
+            .icon(icons::refresh())
+            .label(format!("仅补{label}"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.reprocess_task(id.clone(), vec![component.clone()], Vec::new(), cx)
+            }))
+    }
+
+    fn adjust_action(&self, task: &TaskRecord, style: RecoveryStyle, cx: &mut Context<Self>) -> Button {
+        let id = task.id.clone();
+        style
+            .button("adjust", &task.id, Emphasis::Secondary)
+            .icon(icons::tune())
+            .label(if task.artifact.is_some() {
+                "调整并生成新版"
+            } else if task.state == TaskState::Paused {
+                "调整选项"
+            } else {
+                "调整后重试"
+            })
+            .on_click(cx.listener(move |this, _, window, cx| this.adjust_task(id.clone(), window, cx)))
+    }
+
     /// Collapsing a card unmounts its detail; expanding it later starts fresh.
     fn clear_task_card_motion(&mut self, id: &str) {
         self.entered.remove(&format!("task-detail-{id}"));
-        self.entered.remove(&format!("task-stage-details-{id}"));
-        self.entered
-            .remove(&format!("task-raw-log-disclosure-{id}"));
-        self.task_panels_open
-            .remove(&format!("task-stage-details-state-{id}"));
-        self.task_panels_open
-            .remove(&format!("task-raw-log-state-{id}"));
+        for panel in TaskPanel::ALL {
+            self.entered.remove(&panel.entrance_key(id));
+            self.task_panels_open.remove(&(panel, id.to_owned()));
+        }
+    }
+
+    fn toggle_task_panel(&mut self, panel: TaskPanel, id: &str) {
+        let key = (panel, id.to_owned());
+        if !self.task_panels_open.remove(&key) {
+            self.task_panels_open.insert(key);
+        } else {
+            // Closing unmounts the detail; reopening re-enters.
+            self.entered.remove(&panel.entrance_key(id));
+        }
+    }
+
+    /// An opened panel enters once; scrolling the row out of the virtualized
+    /// list and back must not replay the entrance.
+    fn task_disclosure(
+        &mut self,
+        panel: TaskPanel,
+        task_id: &str,
+        content: Div,
+        cx: &mut Context<Self>,
+    ) -> TaskDisclosure {
+        let open = self.task_panels_open.contains(&(panel, task_id.to_owned()));
+        let animate = open && self.enter_once(panel.entrance_key(task_id));
+        TaskDisclosure {
+            panel,
+            task_id: task_id.to_owned(),
+            lead: None,
+            content,
+            open,
+            animate,
+            desktop: cx.weak_entity(),
+        }
     }
 
     /// Live and retained stages use the same labels, status column and icon slot.
@@ -3071,7 +3091,7 @@ impl Desktop {
         &mut self,
         task: &TaskRecord,
         cx: &mut Context<Self>,
-    ) -> (Option<Div>, Option<TaskProcessingDetails>) {
+    ) -> (Option<Div>, Option<TaskDisclosure>) {
         let (completed, current): (Vec<_>, Vec<_>) = self
             .task_stage_rows(task)
             .into_iter()
@@ -3108,26 +3128,13 @@ impl Desktop {
             Some(view)
         };
         let history = (!completed.is_empty()).then(|| {
-            let task_id = task.id.clone();
-            let open = self
-                .task_panels_open
-                .contains(&format!("task-stage-details-state-{task_id}"));
-            // An opened detail enters once; scrolling the row out of the
-            // virtualized list and back must not replay the entrance.
-            let animate = open && self.enter_once(format!("task-stage-details-{task_id}"));
-            TaskProcessingDetails {
-                task_id,
-                rows: completed,
-                facts: None,
-                open,
-                animate,
-                desktop: cx.weak_entity(),
-            }
+            let content = v_flex().w_full().min_w_0().child(TaskStages { rows: completed });
+            self.task_disclosure(TaskPanel::Stages, &task.id, content, cx)
         });
         (progress, history)
     }
 
-    fn task_log_view(&mut self, task: &TaskRecord, cx: &mut Context<Self>) -> Option<TaskRawLogs> {
+    fn task_log_view(&mut self, task: &TaskRecord, cx: &mut Context<Self>) -> Option<TaskDisclosure> {
         let text = task
             .logs
             .iter()
@@ -3137,18 +3144,27 @@ impl Desktop {
             .collect::<Vec<_>>()
             .join("\n");
         (!text.trim().is_empty()).then(|| {
-            let task_id = task.id.clone();
-            let open = self
-                .task_panels_open
-                .contains(&format!("task-raw-log-state-{task_id}"));
-            let animate = open && self.enter_once(format!("task-raw-log-disclosure-{task_id}"));
-            TaskRawLogs {
-                task_id,
-                text,
-                open,
-                animate,
-                desktop: cx.weak_entity(),
-            }
+            let content = v_flex().child(
+                div()
+                    .id(SharedString::from(format!("task-raw-log-scroll-{}", task.id)))
+                    .w_full()
+                    .min_w_0()
+                    .max_h(rems(16.))
+                    .overflow_y_scroll()
+                    .p_4()
+                    .rounded(RADIUS_CARD)
+                    .bg(color(INSET))
+                    .child(
+                        accessible_text(
+                            SharedString::from(format!("task-raw-log-text-{}", task.id)),
+                            text,
+                        )
+                        .text_size(TEXT_AUX)
+                        .text_color(color(GRAY))
+                        .whitespace_normal(),
+                    ),
+            );
+            self.task_disclosure(TaskPanel::RawLog, &task.id, content, cx)
         })
     }
 
@@ -3245,14 +3261,7 @@ impl Desktop {
             .gap_4()
             .items_start()
             .when_some(self.task_cover(task), |row, cover| {
-                row.child(
-                    img(cover)
-                        .w(rems(8.))
-                        .h(rems(4.5))
-                        .object_fit(ObjectFit::Cover)
-                        .rounded(RADIUS_SMALL)
-                        .flex_shrink_0(),
-                )
+                row.child(cover_slot(rems(8.), Some(cover)))
             })
             .child(
                 v_flex()
@@ -3373,6 +3382,7 @@ impl Desktop {
             Vec::new()
         };
         let requires_repair = task_requires_service_repair(task);
+        let style = RecoveryStyle::Workbench;
         let mut card = v_flex()
             .w_full()
             .min_w_0()
@@ -3444,37 +3454,13 @@ impl Desktop {
                 .iter()
                 .any(|(component, _, _)| ai_component(component).is_some())
             {
-                let repair_id = id.clone();
-                actions = actions.child(
-                    outline_pill(SharedString::from(format!("box-repair-ai-{id}")))
-                        .icon(icons::settings())
-                        .label("修复 AI 服务并补做")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.repair_task_service(repair_id.clone(), window, cx);
-                        })),
-                );
+                actions = actions.child(self.repair_ai_action(task, style, cx));
             }
             for (component, label, _) in &partial_failures {
                 if requires_repair && ai_component(component).is_some() {
                     continue;
                 }
-                let component = component.clone();
-                actions = actions.child(
-                    quiet(SharedString::from(format!("box-retry-{id}-{component}")))
-                        .icon(icons::refresh())
-                        .label(format!("仅补{label}"))
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, _, cx| {
-                                this.reprocess_task(
-                                    id.clone(),
-                                    vec![component.clone()],
-                                    Vec::new(),
-                                    cx,
-                                )
-                            }
-                        })),
-                );
+                actions = actions.child(self.retry_component_action(task, component, label, style, cx));
             }
             let details_id = id.clone();
             actions = actions.child(
@@ -3487,51 +3473,16 @@ impl Desktop {
                     })),
             );
         } else if !uncertain {
-            actions = actions.child(
-                primary_pill(SharedString::from(format!("box-resume-{id}")))
-                    .icon(icons::play_arrow())
-                    .self_start()
-                    .label(if task.state == TaskState::Paused {
-                        "继续生成"
-                    } else {
-                        "继续任务"
-                    })
-                    .on_click(cx.listener({
-                        let id = id.clone();
-                        move |this, _, _, cx| this.set_task_intent(id.clone(), Intent::Run, cx)
-                    })),
-            );
+            actions = actions.child(self.resume_action(task, style, cx).self_start());
         }
         if partial_failures.is_empty() {
-            if let Some(library) = self.task_library(task)
-                && self
-                    .cached_location_check(library)
-                    .is_some_and(|check| check.needs_reassociation)
-            {
-                let library_id = library.id.clone();
-                actions = actions.child(
-                    outline_pill(SharedString::from(format!("box-reassociate-{id}")))
-                        .icon(icons::storage())
-                        .label("重新关联此保存位置")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.begin_library_reassociation(library_id.clone(), window, cx)
-                        })),
-                );
-            }
             actions = actions
-                .child(
-                    outline_pill(SharedString::from(format!("box-adjust-{id}")))
-                        .icon(icons::tune())
-                        .label(if task.state == TaskState::Paused {
-                            "调整选项"
-                        } else {
-                            "调整后重试"
-                        })
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, window, cx| this.adjust_task(id.clone(), window, cx)
-                        })),
-                )
+                .children(self.reassociate_action(
+                    self.task_library(task),
+                    style.button("reassociate", &id, Emphasis::Secondary),
+                    cx,
+                ))
+                .child(self.adjust_action(task, style, cx))
                 .child(
                     quiet(SharedString::from(format!("box-cancel-{id}")))
                         .icon(icons::close())
