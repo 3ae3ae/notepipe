@@ -651,7 +651,7 @@ pub enum TestOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields, from = "StoredTestEvidence")]
+#[serde(deny_unknown_fields)]
 pub struct ServiceTestEvidence {
     pub fingerprint: String,
     pub contract: String,
@@ -663,41 +663,6 @@ pub struct ServiceTestEvidence {
     /// The HTTP status the service answered with, when it answered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_status: Option<u16>,
-}
-
-/// Saved evidence as written by any version. Records from before `http_status`
-/// carry the status only in their "HTTP n" detail line; it is recovered once here.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StoredTestEvidence {
-    fingerprint: String,
-    contract: String,
-    tested_at: u64,
-    outcome: TestOutcome,
-    message: String,
-    details: Vec<String>,
-    #[serde(default)]
-    http_status: Option<u16>,
-}
-
-impl From<StoredTestEvidence> for ServiceTestEvidence {
-    fn from(stored: StoredTestEvidence) -> Self {
-        let http_status = stored.http_status.or_else(|| {
-            stored.details.iter().find_map(|detail| {
-                let digits = detail.strip_prefix("HTTP ")?;
-                digits.get(..3)?.parse().ok()
-            })
-        });
-        Self {
-            fingerprint: stored.fingerprint,
-            contract: stored.contract,
-            tested_at: stored.tested_at,
-            outcome: stored.outcome,
-            message: stored.message,
-            details: stored.details,
-            http_status,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1784,7 +1749,10 @@ fn atomic_write_with_retry(path: &Path, bytes: &[u8]) -> Result<()> {
     for _ in 0..3 {
         match course2md::checkpoint::atomic_write(path, bytes) {
             Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
+            Err(error) => {
+                last_error = Some(error);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
     }
     Err(last_error.expect("write was attempted"))

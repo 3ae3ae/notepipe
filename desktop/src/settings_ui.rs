@@ -2138,10 +2138,6 @@ impl Desktop {
                                 format!("{}%", (scale * 100.) as u32),
                             )
                         }))
-                        .icon("100", icons::zoom_in())
-                        .icon("125", icons::zoom_in())
-                        .icon("150", icons::zoom_in())
-                        .icon("200", icons::zoom_in())
                         .full_width()
                         .selected(
                             (self.preferences.application().font_scale * 100.)
