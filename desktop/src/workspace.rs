@@ -368,7 +368,8 @@ pub struct TaskRecord {
     pub error: Option<String>,
     #[serde(default)]
     pub artifact: Option<PathBuf>,
-    pub outcomes: serde_json::Value,
+    #[serde(default)]
+    pub outcomes: Option<course2md::artifact::Outcomes>,
     #[serde(default)]
     pub unread: bool,
     #[serde(default)]
@@ -443,11 +444,7 @@ pub(crate) fn task_export_files(task: &TaskRecord, location: &LibraryLocation) -
     {
         return Vec::new();
     }
-    let Some(exports) = task
-        .outcomes
-        .get("exports")
-        .and_then(|exports| exports.as_object())
-    else {
+    let Some(outcomes) = task.outcomes.as_ref() else {
         return Vec::new();
     };
     let Some(directory) = task_export_directory(task, location) else {
@@ -457,11 +454,10 @@ pub(crate) fn task_export_files(task: &TaskRecord, location: &LibraryLocation) -
     [OutputFormat::Md, OutputFormat::Html, OutputFormat::Json]
         .into_iter()
         .filter(|format| {
-            exports
+            outcomes
+                .exports
                 .get(&format.to_string())
-                .and_then(|outcome| outcome.get("status"))
-                .and_then(|status| status.as_str())
-                == Some("succeeded")
+                .is_some_and(|outcome| outcome.status == course2md::artifact::Status::Succeeded)
         })
         .map(|format| directory.join(course2md::portable::file_name(format)))
         .collect()
@@ -760,7 +756,7 @@ impl State {
             stages: BTreeMap::new(),
             error: None,
             artifact: None,
-            outcomes: serde_json::Value::Null,
+            outcomes: None,
             unread: false,
             logs: Vec::new(),
             blocked: Vec::new(),
@@ -942,7 +938,7 @@ impl State {
             manifest.source_id == original.plan.source_id,
             course2md::tr!("笔记来源与任务不匹配")
         );
-        let value = original.outcomes.clone();
+        let outcomes = original.outcomes.clone();
         components.sort();
         components.dedup();
         ensure!(
@@ -951,12 +947,14 @@ impl State {
         );
         let mut parsed = Component::parse_all(&components)?;
         for component in &parsed {
-            let failed = match component {
-                Component::Exports => value
-                    .get("exports")
-                    .and_then(|v| v.as_object())
-                    .is_some_and(|exports| exports.values().any(failed_outcome)),
-                component => value.get(component.as_str()).is_some_and(failed_outcome),
+            let failed = match (component, outcomes.as_ref()) {
+                (Component::Exports, Some(outcomes)) => {
+                    outcomes.exports.values().any(failed_outcome)
+                }
+                (component, Some(outcomes)) => {
+                    failed_outcome(component_outcome(outcomes, *component))
+                }
+                (_, None) => false,
             };
             ensure!(failed, course2md::tr!("这部分无需补做"));
         }
@@ -980,7 +978,9 @@ impl State {
             if parsed.contains(&Component::Proofreading)
                 && !parsed.contains(&Component::Summary)
                 && original.plan.config.llm.summarize
-                && value.get(summary).is_some_and(failed_outcome)
+                && outcomes
+                    .as_ref()
+                    .is_some_and(|outcomes| failed_outcome(&outcomes.summary))
                 && original.blocked.iter().any(|request| {
                     request.is_uncertain()
                         && request.purpose.as_deref() == Some(Component::Proofreading.as_str())
@@ -1024,9 +1024,9 @@ impl State {
             let formats: Vec<_> = [OutputFormat::Md, OutputFormat::Html, OutputFormat::Json]
                 .into_iter()
                 .filter(|format| {
-                    value
-                        .get("exports")
-                        .and_then(|exports| exports.get(format.to_string()))
+                    outcomes
+                        .as_ref()
+                        .and_then(|outcomes| outcomes.exports.get(&format.to_string()))
                         .is_some_and(failed_outcome)
                 })
                 .collect();
@@ -1328,11 +1328,23 @@ fn pause_recovered_control(task: &TaskRecord) -> Result<()> {
     course2md::checkpoint::atomic_write(&path, &serde_json::to_vec(&control)?)
 }
 
-fn failed_outcome(value: &serde_json::Value) -> bool {
+fn failed_outcome(outcome: &course2md::artifact::Outcome) -> bool {
     matches!(
-        value.get("status").and_then(|v| v.as_str()),
-        Some("failed" | "partial")
+        outcome.status,
+        course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
     )
+}
+
+fn component_outcome(
+    outcomes: &course2md::artifact::Outcomes,
+    component: Component,
+) -> &course2md::artifact::Outcome {
+    match component {
+        Component::Screenshots => &outcomes.screenshots,
+        Component::Proofreading => &outcomes.proofreading,
+        Component::Summary => &outcomes.summary,
+        Component::Exports => &outcomes.transcript,
+    }
 }
 
 pub fn check_library(location: &LibraryLocation) -> Result<()> {
@@ -1386,7 +1398,7 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
         );
         course2md::artifact::validate_version(&version, &manifest)?;
         task.artifact = Some(version);
-        task.outcomes = serde_json::to_value(&manifest.outcomes)?;
+        task.outcomes = Some(manifest.outcomes);
         task.state = if manifest.partial {
             TaskState::Partial
         } else {
@@ -1406,18 +1418,21 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
             .all(|component| component == Component::Exports.as_str())
         && task.work_dir.join("export-result.json").is_file()
     {
-        let value: serde_json::Value =
+        #[derive(serde::Deserialize)]
+        struct ExportResult {
+            #[serde(default)]
+            outcomes: BTreeMap<String, course2md::artifact::Outcome>,
+        }
+        let mut record: ExportResult =
             serde_json::from_slice(&std::fs::read(task.work_dir.join("export-result.json"))?)?;
-        let outcomes = value
-            .get("outcomes")
-            .and_then(|v| v.as_object())
-            .context(course2md::tr!("导出结果记录不完整"))?;
-        ensure!(!outcomes.is_empty(), course2md::tr!("导出结果记录为空"));
-        let mut outcomes = outcomes.clone();
+        ensure!(
+            !record.outcomes.is_empty(),
+            course2md::tr!("导出结果记录为空")
+        );
         let export_directory = task_export_directory(task, location)
             .context(course2md::tr!("导出位置与任务记录不匹配"))?;
-        for (format, outcome) in &mut outcomes {
-            if outcome.get("status").and_then(|v| v.as_str()) == Some("succeeded") {
+        for (format, outcome) in &mut record.outcomes {
+            if outcome.status == course2md::artifact::Status::Succeeded {
                 let format = match format.as_str() {
                     "md" => course2md::config::OutputFormat::Md,
                     "html" => course2md::config::OutputFormat::Html,
@@ -1426,23 +1441,24 @@ fn reconcile_artifact(task: &mut TaskRecord, location: &LibraryLocation) -> Resu
                 };
                 let expected = export_directory.join(course2md::portable::file_name(format));
                 if !expected.is_file() {
-                    *outcome = serde_json::to_value(course2md::artifact::Outcome::failed(
-                        course2md::tr!("导出文件已移动或无法读取，可以重新导出"),
-                    ))?;
+                    *outcome = course2md::artifact::Outcome::failed(course2md::tr!(
+                        "导出文件已移动或无法读取，可以重新导出"
+                    ));
                 }
             }
         }
-        let partial = outcomes.values().any(failed_outcome);
-        let next_outcomes = serde_json::json!({"exports":outcomes});
-        let next_state = if partial {
+        let next_state = if record.outcomes.values().any(failed_outcome) {
             TaskState::Partial
         } else {
             TaskState::Complete
         };
-        task.unread |=
-            task.artifact.is_none() || task.outcomes != next_outcomes || task.state != next_state;
+        let previous = task.outcomes.clone();
         task.artifact = Some(base_version_dir.clone());
-        task.outcomes = next_outcomes;
+        task.outcomes
+            .get_or_insert_with(course2md::artifact::Outcomes::default)
+            .exports = record.outcomes;
+        task.unread |=
+            task.artifact.is_none() || task.outcomes != previous || task.state != next_state;
         task.state = next_state;
     }
     Ok(())
@@ -3026,7 +3042,7 @@ mod tests {
         let task = ws.state.task_mut(&id).unwrap();
         task.state = TaskState::Uncertain;
         task.artifact = Some(version);
-        task.outcomes = serde_json::to_value(&outcomes).unwrap();
+        task.outcomes = Some(outcomes.clone());
         let request = write_unknown(task, 1);
         (id, request)
     }
@@ -3242,7 +3258,7 @@ mod tests {
         let original = ws.state.task_mut(&id).unwrap();
         original.state = TaskState::Partial;
         original.artifact = Some(version);
-        original.outcomes = serde_json::to_value(&outcomes).unwrap();
+        original.outcomes = Some(outcomes.clone());
         ws.state
             .draft_mut()
             .unwrap()
@@ -3291,7 +3307,7 @@ mod tests {
         let original = ws.state.task_mut(&id).unwrap();
         original.state = TaskState::Partial;
         original.artifact = Some(version.clone());
-        original.outcomes = serde_json::to_value(&outcomes).unwrap();
+        original.outcomes = Some(outcomes.clone());
         ws.state
             .draft_mut()
             .unwrap()
@@ -3524,9 +3540,16 @@ mod tests {
         original.plan.config.llm.enabled = true;
         original.plan.config.llm.summarize = true;
         original.plan.config.defaults.formats = Some(vec![OutputFormat::Md, OutputFormat::Html]);
-        original.outcomes = serde_json::json!({"exports":{
-            "md":{"status":"succeeded"}, "html":{"status":"failed","message":"disk full"}
-        }});
+        original.outcomes = Some(course2md::artifact::Outcomes {
+            exports: BTreeMap::from([
+                ("md".into(), course2md::artifact::Outcome::succeeded()),
+                (
+                    "html".into(),
+                    course2md::artifact::Outcome::failed("disk full"),
+                ),
+            ]),
+            ..Default::default()
+        });
         let next = ws
             .state
             .reprocess(&id, vec!["exports".into()], vec![])
@@ -3617,7 +3640,7 @@ mod tests {
         let original = ws.state.task_mut(&id).unwrap();
         original.state = TaskState::Partial;
         original.artifact = Some(base.clone());
-        original.outcomes = serde_json::to_value(&manifest.outcomes).unwrap();
+        original.outcomes = Some(manifest.outcomes.clone());
         let original_plan = original.plan.clone();
         let old_markdown = base
             .join("exports")

@@ -314,15 +314,20 @@ pub(crate) fn ai_component(name: &str) -> Option<Component> {
 
 /// A proofreading stage can close after failed requests. Published component
 /// outcomes distinguish an ended attempt from a successfully completed step.
-fn ai_stage_outcome(name: &str, outcomes: Option<&serde_json::Value>) -> Option<StageStatus> {
-    let component = match name {
-        "llm" => Component::Proofreading,
-        "summary" => Component::Summary,
+fn ai_stage_outcome(
+    name: &str,
+    outcomes: Option<&course2md::artifact::Outcomes>,
+) -> Option<StageStatus> {
+    let outcome = match name {
+        "llm" => &outcomes?.proofreading,
+        "summary" => &outcomes?.summary,
         _ => return None,
     };
-    match outcomes?.get(component.as_str())?.get("status")?.as_str()? {
-        "succeeded" => Some(StageStatus::Complete),
-        "failed" | "partial" => Some(StageStatus::Failed),
+    match outcome.status {
+        course2md::artifact::Status::Succeeded => Some(StageStatus::Complete),
+        course2md::artifact::Status::Failed | course2md::artifact::Status::Partial => {
+            Some(StageStatus::Failed)
+        }
         _ => None,
     }
 }
@@ -414,14 +419,13 @@ fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
     if task.handled_by.is_some() || task.has_uncertain() {
         return None;
     }
-    let outcomes = &task.outcomes;
-    let failures: Vec<_> = [Component::Proofreading, Component::Summary]
+    let outcomes = task.outcomes.as_ref()?;
+    let failures: Vec<&course2md::artifact::Outcome> = [&outcomes.proofreading, &outcomes.summary]
         .into_iter()
-        .filter_map(|component| outcomes.get(component.as_str()))
         .filter(|outcome| {
             matches!(
-                outcome.get("status").and_then(|status| status.as_str()),
-                Some("failed" | "partial")
+                outcome.status,
+                course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
             )
         })
         .collect();
@@ -430,7 +434,7 @@ fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
     }
     failures
         .iter()
-        .filter_map(|outcome| outcome.get("message").and_then(|message| message.as_str()))
+        .filter_map(|outcome| outcome.message.as_deref())
         .chain(task.blocked.iter().filter_map(|request| {
             ai_component(request.purpose.as_deref()?).map(|_| request.message.as_str())
         }))
@@ -2242,12 +2246,7 @@ impl Desktop {
             task.outcomes = done
                 .as_ref()
                 .and_then(|done| done.outcomes.clone())
-                .or_else(|| {
-                    manifest
-                        .as_ref()
-                        .and_then(|manifest| serde_json::to_value(&manifest.outcomes).ok())
-                })
-                .unwrap_or(serde_json::Value::Null);
+                .or_else(|| manifest.as_ref().map(|manifest| manifest.outcomes.clone()));
             workspace::reconcile_receipts(task)?;
             if let (Some(done), Some(manifest)) = (&done, &manifest) {
                 task.artifact = Some(done.out_dir.clone());
@@ -3190,7 +3189,7 @@ impl Desktop {
                         .as_ref()
                         .and_then(|done| done.outcomes.as_ref())
                 } else {
-                    Some(&task.outcomes)
+                    task.outcomes.as_ref()
                 };
                 let status = if let Some(outcome) = ai_stage_outcome(&name, outcomes) {
                     outcome
@@ -3840,40 +3839,45 @@ fn validate_plan_config(source: &str, config: &course2md::settings::ConfigFile) 
 pub(crate) fn task_component_failures(
     task: &TaskRecord,
 ) -> Vec<(String, String, course2md::artifact::Outcome)> {
-    let value = &task.outcomes;
+    let Some(outcomes) = &task.outcomes else {
+        return Vec::new();
+    };
     let mut results = Vec::new();
-    for (component, label) in [
-        (Component::Screenshots, course2md::tr!("截图")),
-        (Component::Proofreading, course2md::tr!("校对")),
-        (Component::Summary, course2md::tr!("摘要")),
+    for (component, label, outcome) in [
+        (
+            Component::Screenshots,
+            course2md::tr!("截图"),
+            &outcomes.screenshots,
+        ),
+        (
+            Component::Proofreading,
+            course2md::tr!("校对"),
+            &outcomes.proofreading,
+        ),
+        (
+            Component::Summary,
+            course2md::tr!("摘要"),
+            &outcomes.summary,
+        ),
     ] {
-        let key = component.as_str();
-        if let Some(outcome) = value
-            .get(key)
-            .and_then(|v| serde_json::from_value::<course2md::artifact::Outcome>(v.clone()).ok())
+        if matches!(
+            outcome.status,
+            course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
+        ) {
+            results.push((component.as_str().into(), label.into(), outcome.clone()));
+        }
+    }
+    {
+        let failures: Vec<course2md::artifact::Outcome> = outcomes
+            .exports
+            .values()
             .filter(|outcome| {
                 matches!(
                     outcome.status,
                     course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
                 )
             })
-        {
-            results.push((key.into(), label.into(), outcome));
-        }
-    }
-    if let Some(exports) = value
-        .get(Component::Exports.as_str())
-        .and_then(|v| v.as_object())
-    {
-        let failures: Vec<course2md::artifact::Outcome> = exports
-            .values()
-            .filter_map(|v| serde_json::from_value(v.clone()).ok())
-            .filter(|o: &course2md::artifact::Outcome| {
-                matches!(
-                    o.status,
-                    course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
-                )
-            })
+            .cloned()
             .collect();
         if !failures.is_empty() {
             results.push((
@@ -3988,7 +3992,7 @@ mod tests {
             stages: Default::default(),
             error: None,
             artifact: None,
-            outcomes: serde_json::Value::Null,
+            outcomes: None,
             unread: false,
             logs: Vec::new(),
             blocked: Vec::new(),
@@ -4180,7 +4184,7 @@ mod tests {
             summary: Outcome::succeeded(),
             ..Default::default()
         };
-        let value = serde_json::to_value(&outcomes).unwrap();
+        let value = outcomes.clone();
         assert_eq!(
             ai_stage_outcome("llm", Some(&value)),
             Some(StageStatus::Failed)
@@ -4190,13 +4194,13 @@ mod tests {
             Some(StageStatus::Complete)
         );
         outcomes.proofreading.status = Status::Partial;
-        let value = serde_json::to_value(&outcomes).unwrap();
+        let value = outcomes.clone();
         assert_eq!(
             ai_stage_outcome("llm", Some(&value)),
             Some(StageStatus::Failed)
         );
         outcomes.proofreading = Outcome::succeeded();
-        let value = serde_json::to_value(&outcomes).unwrap();
+        let value = outcomes.clone();
         assert_eq!(
             ai_stage_outcome("llm", Some(&value)),
             Some(StageStatus::Complete)
@@ -4550,7 +4554,7 @@ mod tests {
             stages: Default::default(),
             error: None,
             artifact: Some(path.clone()),
-            outcomes: serde_json::to_value(&outcomes).unwrap(),
+            outcomes: Some(outcomes.clone()),
             unread: false,
             logs: Vec::new(),
             blocked: Vec::new(),
@@ -4589,7 +4593,7 @@ mod tests {
             ("请求超时，请稍后重试。", false),
         ] {
             outcomes.proofreading.message = Some(message.into());
-            task.outcomes = serde_json::to_value(&outcomes).unwrap();
+            task.outcomes = Some(outcomes.clone());
             assert_eq!(
                 super::task_requires_service_repair(&task),
                 requires_repair,
@@ -4597,7 +4601,7 @@ mod tests {
             );
         }
         outcomes.proofreading.message = Some("服务拒绝凭据".into());
-        task.outcomes = serde_json::to_value(&outcomes).unwrap();
+        task.outcomes = Some(outcomes.clone());
         task.blocked.push(crate::workspace::BlockedRequest {
             reason: course2md::dispatch::REASON_UNCERTAIN.into(),
             request_id: Some("pending".into()),
@@ -4613,11 +4617,11 @@ mod tests {
 
         outcomes.proofreading = Outcome::succeeded();
         outcomes.exports.insert("html".into(), Outcome::succeeded());
-        task.outcomes = serde_json::to_value(outcomes).unwrap();
+        task.outcomes = Some(outcomes);
         assert!(super::task_component_failures(&task).is_empty());
         task.error = Some("服务拒绝凭据".into());
         assert!(!super::task_requires_service_repair(&task));
-        task.outcomes = serde_json::Value::Null;
+        task.outcomes = None;
         assert!(super::task_component_failures(&task).is_empty());
 
         let mut completed = task.clone();

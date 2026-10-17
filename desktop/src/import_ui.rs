@@ -3942,7 +3942,7 @@ mod tests {
             stages: Default::default(),
             error: Some("原摘要请求结果未确认".into()),
             artifact: Some("versions/original".into()),
-            outcomes: serde_json::Value::Null,
+            outcomes: None,
             unread: false,
             logs: Vec::new(),
             blocked: Vec::new(),

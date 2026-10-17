@@ -18,7 +18,7 @@ pub struct Completed {
     #[serde(default)]
     pub partial: Option<bool>,
     #[serde(default)]
-    pub outcomes: Option<serde_json::Value>,
+    pub outcomes: Option<course2md::artifact::Outcomes>,
 }
 
 #[derive(Debug, Deserialize)]

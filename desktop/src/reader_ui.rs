@@ -5511,7 +5511,7 @@ mod tests {
             stages: Default::default(),
             error: None,
             artifact: Some(course.dir.clone()),
-            outcomes: serde_json::Value::Null,
+            outcomes: None,
             unread: false,
             logs: Vec::new(),
             blocked: Vec::new(),

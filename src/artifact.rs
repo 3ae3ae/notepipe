@@ -24,7 +24,7 @@ pub enum Status {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Outcome {
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -34,6 +34,12 @@ pub struct Outcome {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total: Option<usize>,
 }
+impl Default for Outcome {
+    fn default() -> Self {
+        Self::not_requested()
+    }
+}
+
 impl Outcome {
     pub fn succeeded() -> Self {
         Self {
@@ -58,24 +64,14 @@ impl Outcome {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Outcomes {
     pub transcript: Outcome,
     pub screenshots: Outcome,
     pub proofreading: Outcome,
     pub summary: Outcome,
     pub exports: BTreeMap<String, Outcome>,
-}
-impl Default for Outcomes {
-    fn default() -> Self {
-        Self {
-            transcript: Outcome::not_requested(),
-            screenshots: Outcome::not_requested(),
-            proofreading: Outcome::not_requested(),
-            summary: Outcome::not_requested(),
-            exports: BTreeMap::new(),
-        }
-    }
 }
 impl Outcomes {
     pub fn is_partial(&self) -> bool {
