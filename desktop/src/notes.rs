@@ -486,16 +486,9 @@ pub(crate) mod fixtures {
             extractor: "bilibili".into(),
             id: "fixture".into(),
         };
-        let manifest = artifact::publish_blocking(
-            &target,
-            &work,
-            &meta,
-            &sections,
-            None,
-            &[],
-            outcomes,
-        )
-        .unwrap();
+        let manifest =
+            artifact::publish_blocking(&target, &work, &meta, &sections, None, &[], outcomes)
+                .unwrap();
         Course {
             dir: target.version_dir(),
             title: meta.title,

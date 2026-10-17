@@ -123,7 +123,7 @@ impl Desktop {
             // A brand link, not a destination: no pill, so it never reads as selected.
             .hover(|style| style.opacity(0.8))
             .role(Role::Link)
-            .aria_label(course2md::tr!("course2md 工作台"))
+            .aria_label(course2md::tr!("course2md，生成笔记"))
             .child(
                 div()
                     .text_size(rems(24. / 14.))

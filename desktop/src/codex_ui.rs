@@ -127,7 +127,7 @@ impl Desktop {
                         .fail(course2md::tr!("暂时无法读取 Codex 登录状态：{}", error)),
                 }
                 // 已连接的 Codex 界面没有目录时，顺接拉取账号目录（空模型输入自动填首个候选）
-                let needs_catalog = matches!(this.codex.status, Some(LoginStatus::Connected(_)))
+                let needs_catalog = matches!(this.codex.status, Some(LoginStatus::Connected))
                     && this.codex_form_needs_catalog(surface);
                 if needs_catalog {
                     this.codex_refresh_models(surface, cx);
@@ -165,8 +165,8 @@ impl Desktop {
         surface: CodexSurface,
         work: CodexWork,
         action: impl FnOnce() -> anyhow::Result<course2md::login::codex::DesktopCatalog>
-            + Send
-            + 'static,
+        + Send
+        + 'static,
         cx: &mut Context<Self>,
     ) {
         if self.codex.busy() {
@@ -187,7 +187,7 @@ impl Desktop {
                 this.codex.authorize_cancel = None;
                 match result {
                     Ok(catalog) => {
-                        this.codex.status = Some(LoginStatus::Connected("Codex".into()));
+                        this.codex.status = Some(LoginStatus::Connected);
                         if catalog.catalog_is_fallback {
                             this.codex.inform(course2md::tr!("模型目录暂不可用，已使用默认模型").into());
                         } else {
@@ -367,17 +367,15 @@ impl Desktop {
             (Some(CodexWork::Checking), _) => (BadgeKind::Progress, course2md::tr!("正在检查")),
             (Some(CodexWork::LoggingOut), _) => (BadgeKind::Progress, course2md::tr!("正在退出")),
             (Some(_), _) => (BadgeKind::Progress, course2md::tr!("正在连接")),
-            (_, Some(LoginStatus::Connected(_))) => (BadgeKind::Success, course2md::tr!("已连接")),
+            (_, Some(LoginStatus::Connected)) => (BadgeKind::Success, course2md::tr!("已连接")),
             (_, Some(LoginStatus::Expired)) => (BadgeKind::Warning, course2md::tr!("登录已失效")),
             _ => (BadgeKind::Neutral, course2md::tr!("未连接")),
         };
         let detail = match &self.codex.status {
-            Some(LoginStatus::Connected(detail)) if !detail.trim().is_empty() => {
-                Some(detail.clone())
-            }
+            Some(LoginStatus::Connected) => None,
             _ => None,
         };
-        let connected = matches!(self.codex.status, Some(LoginStatus::Connected(_)))
+        let connected = matches!(self.codex.status, Some(LoginStatus::Connected))
             && !matches!(working, Some(CodexWork::LoggingOut));
         let notice = self.codex.notice.clone();
         let authorizing = working == Some(CodexWork::Authorizing);
@@ -407,7 +405,8 @@ impl Desktop {
                     .disabled(disabled)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.codex.cancel_authorization();
-                        this.codex.inform(course2md::tr!("正在取消浏览器授权…").into());
+                        this.codex
+                            .inform(course2md::tr!("正在取消浏览器授权…").into());
                         cx.notify();
                     }))
                     .into_any_element(),
@@ -425,32 +424,39 @@ impl Desktop {
                 {
                     let mut buttons = actions;
                     buttons.push(
-                    quiet(SharedString::from(format!("{id}-authorize")))
-                        .when(
-                            surface == CodexSurface::Settings,
-                            SettingsText::settings_text,
-                        )
-                        .icon(icons::external_link())
-                        .label(course2md::tr!("浏览器授权"))
-                        .disabled(disabled || busy)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.codex_authorize(surface, cx)),
-                        )
-                        .into_any_element());
-                    buttons.push(tonal_pill(SharedString::from(format!("{id}-import")), cx)
-                        .when(
-                            surface == CodexSurface::Settings,
-                            SettingsText::settings_text,
-                        )
-                        .icon(icons::login())
-                        .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
-                            course2md::tr!("重新导入 Codex 登录")
-                        } else {
-                            course2md::tr!("导入 Codex 登录")
-                        })
-                        .disabled(disabled || busy)
-                        .on_click(cx.listener(move |this, _, _, cx| this.codex_import(surface, cx)))
-                        .into_any_element());
+                        quiet(SharedString::from(format!("{id}-authorize")))
+                            .when(
+                                surface == CodexSurface::Settings,
+                                SettingsText::settings_text,
+                            )
+                            .icon(icons::external_link())
+                            .label(course2md::tr!("浏览器授权"))
+                            .disabled(disabled || busy)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.codex_authorize(surface, cx)
+                                }),
+                            )
+                            .into_any_element(),
+                    );
+                    buttons.push(
+                        tonal_pill(SharedString::from(format!("{id}-import")), cx)
+                            .when(
+                                surface == CodexSurface::Settings,
+                                SettingsText::settings_text,
+                            )
+                            .icon(icons::login())
+                            .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
+                                course2md::tr!("重新导入 Codex 登录")
+                            } else {
+                                course2md::tr!("导入 Codex 登录")
+                            })
+                            .disabled(disabled || busy)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.codex_import(surface, cx)),
+                            )
+                            .into_any_element(),
+                    );
                     buttons
                 }
             } else {

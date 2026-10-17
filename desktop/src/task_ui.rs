@@ -278,7 +278,7 @@ fn task_stage_progress(
     current: u64,
     total: u64,
 ) -> (String, Option<f32>) {
-    if matches!(name, "llm" | "summary" | "summarize") {
+    if matches!(name, "llm" | "summary") {
         return (
             if !done && let Some(live) = live {
                 live.ai_detail().into()
@@ -317,7 +317,7 @@ pub(crate) fn ai_component(name: &str) -> Option<Component> {
 fn ai_stage_outcome(name: &str, outcomes: Option<&serde_json::Value>) -> Option<StageStatus> {
     let component = match name {
         "llm" => Component::Proofreading,
-        "summary" | "summarize" => Component::Summary,
+        "summary" => Component::Summary,
         _ => return None,
     };
     match outcomes?.get(component.as_str())?.get("status")?.as_str()? {
@@ -4131,7 +4131,7 @@ mod tests {
 
     #[test]
     fn ai_dispatch_counts_do_not_claim_received_results() {
-        for name in ["llm", "summary", "summarize"] {
+        for name in ["llm", "summary"] {
             let mut activity = crate::activity::Activity::new();
             for (current, total) in [(0, 3), (1, 3), (3, 3), (1, 1)] {
                 activity.update(current, total, None);

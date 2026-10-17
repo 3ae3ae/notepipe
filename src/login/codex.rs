@@ -608,21 +608,25 @@ pub(super) fn login() -> Result<()> {
     cfg.llm.provider = LlmProvider::Codex;
     cfg.llm.base_url.clear();
     cfg.llm.api_key.clear();
-    let catalog = match fetch_models(&tokens) {
-        Ok(catalog) => catalog,
-        Err(e) => {
-            tracing::warn!("{e:#}");
-            crate::println_tr!(
-                "无法获取账号可用的模型列表，已使用默认模型 {}。",
-                DEFAULT_MODEL
-            );
-            Vec::new()
-        }
-    };
-    cfg.llm.model = if catalog.is_empty() {
-        DEFAULT_MODEL.to_string()
-    } else if interactive {
-        let labels: Vec<&str> = catalog.iter().map(|(_, label)| label.as_str()).collect();
+    let catalog = desktop_catalog(&tokens);
+    if catalog.catalog_is_fallback {
+        crate::println_tr!(
+            "无法获取账号可用的模型列表，已使用默认模型 {}。",
+            DEFAULT_MODEL
+        );
+    }
+    let catalog = catalog.models;
+    cfg.llm.model = if !interactive {
+        catalog
+            .first()
+            .map(|(id, _)| id.clone())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+    } else if let Some(labels) = (!catalog.is_empty()).then(|| {
+        catalog
+            .iter()
+            .map(|(_, label)| label.as_str())
+            .collect::<Vec<_>>()
+    }) {
         let pick = dialoguer::Select::new()
             .with_prompt(crate::tr!("选择 Codex 模型 / Choose a Codex model"))
             .items(&labels)
@@ -635,7 +639,7 @@ pub(super) fn login() -> Result<()> {
             })?;
         catalog[pick].0.clone()
     } else {
-        catalog[0].0.clone()
+        DEFAULT_MODEL.to_string()
     };
     cfg.llm.enabled = true;
     crate::llm::validate(&cfg.llm)?;
@@ -658,7 +662,7 @@ pub(super) fn login() -> Result<()> {
 pub enum LoginStatus {
     Disconnected,
     /// 已连接：展示用说明
-    Connected(String),
+    Connected,
     /// 凭据存在但无法再刷新，需要重新登录
     Expired,
 }
@@ -669,7 +673,7 @@ pub fn status() -> Result<LoginStatus> {
     Ok(match load_tokens()? {
         None => LoginStatus::Disconnected,
         Some(tokens) if tokens.refresh_token.is_empty() => LoginStatus::Expired,
-        Some(_) => LoginStatus::Connected("Codex".into()),
+        Some(_) => LoginStatus::Connected,
     })
 }
 

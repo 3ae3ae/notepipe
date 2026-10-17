@@ -152,6 +152,11 @@ fn error_kind(error: &anyhow::Error) -> FailureKind {
 
 /// Repair actions follow the actual response, never a platform-wide login tip.
 /// Stored messages keep the tool's own lines, which are what this matches.
+/// Local sources use a content digest identity; online sources use platform ids.
+pub fn is_local_identity(identity: &str) -> bool {
+    identity.starts_with("local:sha256:")
+}
+
 pub fn is_login_failure(message: &str) -> bool {
     failure_kind(message) == FailureKind::LoginRequired
 }

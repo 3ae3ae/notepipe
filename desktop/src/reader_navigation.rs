@@ -245,6 +245,21 @@ pub fn content_outline(
 
 /// Display an immutable UTC instant using the system timezone's rules for that
 /// date, rather than applying today's offset to every historical timestamp.
+/// Calendar date in local time, without slicing a formatted timestamp.
+pub fn date_local(milliseconds: u64) -> String {
+    use chrono::Datelike;
+    let instant = i64::try_from(milliseconds)
+        .ok()
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
+    let Some(instant) = instant.filter(|instant| (1..=9999).contains(&instant.year())) else {
+        return "-".into();
+    };
+    instant
+        .with_timezone(&chrono::Local)
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
 pub fn timestamp_local(milliseconds: u64) -> String {
     timestamp_in_timezone(milliseconds, &chrono::Local)
 }

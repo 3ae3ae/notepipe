@@ -971,6 +971,10 @@ impl Desktop {
                     self.pending_done = Some(done);
                     immediate = true;
                 }
+                Event::ModelReady { .. } => {
+                    self.task_status = course2md::tr!("模型已就绪").into();
+                    immediate = true;
+                }
                 Event::Exit { success, cancelled } => {
                     immediate = true;
                     self.job = None;

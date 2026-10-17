@@ -514,9 +514,9 @@ impl State {
             }
         });
         cx.bind_keys([
-            KeyBinding::new("cmd-f", FindInNote, Some("CourseReader")),
-            KeyBinding::new("cmd-g", NextMatch, Some("CourseReader")),
-            KeyBinding::new("cmd-shift-g", PreviousMatch, Some("CourseReader")),
+            KeyBinding::new("secondary-f", FindInNote, Some("CourseReader")),
+            KeyBinding::new("secondary-g", NextMatch, Some("CourseReader")),
+            KeyBinding::new("secondary-shift-g", PreviousMatch, Some("CourseReader")),
             KeyBinding::new("escape", CloseFind, Some("CourseReader")),
             KeyBinding::new("left", PreviousImage, Some("ReaderImage")),
             KeyBinding::new("right", NextImage, Some("ReaderImage")),
@@ -2049,7 +2049,7 @@ impl Desktop {
             return Some(nav::SourceTarget::Local(path.clone()));
         }
         let meta = &self.preview.as_ref()?.document.meta;
-        nav::source_target(&meta.webpage_url, meta.extractor == "local")
+        nav::source_target(&meta.webpage_url, meta.is_local())
     }
     fn open_reader_source(&mut self, seconds: Option<f64>, cx: &mut Context<Self>) {
         let Some(source) = self.reader_source() else {
@@ -2112,7 +2112,7 @@ impl Desktop {
                     anyhow::bail!(course2md::tr!("请选择可读取的视频文件"));
                 };
                 anyhow::ensure!(
-                    !identity.starts_with("local:sha256:") || identity == source.identity,
+                    !crate::source::is_local_identity(&identity) || identity == source.identity,
                     course2md::tr!("这个文件与生成笔记时的视频内容不同，请选择同一个原视频")
                 );
                 Ok::<_, anyhow::Error>(())
@@ -3023,10 +3023,10 @@ impl Desktop {
             }
         };
         let return_label = match self.result_origin {
-            Page::New => course2md::tr!("工作台"),
+            Page::New => course2md::tr!("生成笔记"),
             Page::Task => course2md::tr!("任务"),
             Page::Settings => course2md::tr!("设置"),
-            _ => course2md::tr!("我的笔记"),
+            _ => course2md::tr!("笔记库"),
         };
         let title = theme::accessible_text("reader-title", preview.course.title.clone())
             .role(Role::Heading)
@@ -3051,7 +3051,7 @@ impl Desktop {
         // Meta line 1: 作者 · 时长 · 平台 BV 号 · 打开原视频；无数据的字段省略。
         let mut facts = preview.facts.clone();
         let meta = &preview.document.meta;
-        let platform = if meta.extractor == "local" {
+        let platform = if meta.is_local() {
             Some(course2md::tr!("本地视频"))
         } else {
             match course2md::config::known_video_site(&meta.webpage_url) {
@@ -3268,7 +3268,15 @@ impl Desktop {
                         .w(CONTROL_HEIGHT)
                         .px_0()
                         .accessibility_label(course2md::tr!("查找笔记内容"))
-                        .tooltip(course2md::tr!("查找笔记内容 ⌘F"))
+                        .tooltip(format!(
+                            "{} {}",
+                            course2md::tr!("查找笔记内容"),
+                            if cfg!(target_os = "macos") {
+                                "⌘F"
+                            } else {
+                                "Ctrl+F"
+                            }
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_reader_find(window, cx);
                         })),
@@ -3602,8 +3610,7 @@ impl Desktop {
             _ => None,
         });
         if let Some(manifest) = &preview.course.manifest {
-            let stamp = nav::timestamp_local(manifest.created_at_ms);
-            let date = stamp.get(..10).unwrap_or(&stamp);
+            let date = nav::date_local(manifest.created_at_ms);
             details.push((
                 course2md::tr!("版本"),
                 icons::history(),
@@ -3924,7 +3931,7 @@ impl Desktop {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.save_reading_position(cx);
                             this.select_task(&id, cx);
-                            this.page = Page::Task;
+                            this.navigate(Page::Task, cx);
                             cx.notify();
                         })))
                     .into_any_element(),

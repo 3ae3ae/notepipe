@@ -47,6 +47,14 @@ pub enum Event {
         workers: usize,
     },
     Done(Completed),
+    ModelReady {
+        operation: String,
+        dir: PathBuf,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        status: Option<serde_json::Value>,
+    },
     Error {
         message: String,
     },
@@ -609,6 +617,11 @@ mod tests {
     fn done_event_uses_the_cli_protocol() {
         let event: Event = serde_json::from_str(r#"{"type":"done","out_dir":"out/test","title":"课程","slides":3,"segments":4,"chars":50,"elapsed_secs":1.5,"outputs":["course.md"]}"#).unwrap();
         assert!(matches!(event, Event::Done(Completed { slides: 3, .. })));
+        let event: Event = serde_json::from_str(
+            r#"{"type":"model_ready","operation":"prepare","dir":"/tmp/models","model":"qwen3-1.7b"}"#,
+        )
+        .unwrap();
+        assert!(matches!(event, Event::ModelReady { dir, .. } if dir == Path::new("/tmp/models")));
     }
 
     #[test]

@@ -148,6 +148,7 @@ codex CLI 的登录已失效。改用浏览器授权登录（ChatGPT 账号）�
 course2md — 将视频转换为图文笔记	course2md — 将视频转换为图文笔记	course2md — Turn videos into illustrated notes	course2md — 將影片轉換為圖文筆記	course2md — 動画をグラフィックノートに変換する
 course2md — 将视频转换为图文笔记 / Turn videos into illustrated notes\n	course2md — 将视频转换为图文笔记	Turn videos into illustrated notes	course2md — 將影片轉換為圖文筆記	course2md — 動画をグラフィックノートに変換する
 course2md 工作台	course2md 工作台	course2md workbench	course2md 工作臺	コース2MDワークベンチ
+course2md，生成笔记	course2md，生成笔记	course2md, create note	course2md，產生筆記	course2md、ノートを作成
 llama-server --help 探测失败，按旧版处理（仅 -ngl）	llama-server --help 探测失败，按旧版处理（仅 -ngl）	llama-server --help detection failed, processed according to the old version (only -ngl)	llama-server --help 探測失敗，按舊版處理（僅 -ngl）	llama-server --help 検出に失敗しました。古いバージョンに従って処理されました (-ngl のみ)
 llama-server flag 探测	llama-server flag 探测	llama-server flag detection	llama-server flag 探測	ラマサーバーフラグ検出
 stable 模式的画面稳定时间（秒）/ Seconds to wait for a stable frame	stable 模式的画面稳定时间（秒）/ Seconds to wait for a stable frame	The picture stabilization time in stable mode (seconds)/Seconds to wait for a stable frame	stable 模式的畫面穩定時間（秒）/ Seconds to wait for a stable frame	安定モードでの画像の安定化時間 (秒)/安定したフレームを待機する秒数
@@ -1520,7 +1521,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 模型尚未下载	模型尚未下载	The model has not been downloaded yet	模型尚未下載	モデルはまだダウンロードされていません
 模型已下载	模型已下载	Model downloaded	模型已下載	ダウンロードされたモデル
 模型已下载 · {}	模型已下载 · {}	Model has been downloaded · {}	模型已下載 · {}	モデルはダウンロードされました · {}
-模型已就绪	模型已就绪	Model is ready	模型已就緒	モデルの準備ができました
+模型已就绪	模型已就绪	Model ready	模型已就緒	モデルの準備が完了
 模型文件下载不完整，请重新运行 course2md models download / Model download incomplete; run course2md models download again	模型文件下载不完整，请重新运行 course2md models download	Model download incomplete; run course2md models download again	模型檔案下載不完整，請重新執行 course2md models download	モデル ファイルのダウンロードが不完全です。course2md モデルのダウンロードを再実行してください。
 模型文件不完整，正在重新下载 / Model file incomplete; downloading again	模型文件不完整，正在重新下载	Model file incomplete; downloading again	模型檔案不完整，正在重新下載	モデル ファイルが不完全なため、再度ダウンロード中です。
 模型文件已下载	模型文件已下载	Model file downloaded	模型檔案已下載	ダウンロードしたモデルファイル
