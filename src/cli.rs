@@ -1,3 +1,4 @@
+use crate::i18n::{t, Lang};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -17,8 +18,8 @@ pub const QUICK_START: &str = "快速开始 / Quick start:
   course2md --logout bilibili   清除登录 / Remove saved login
   course2md doctor              检查依赖与配置 / Check dependencies and settings
   course2md config init         生成配置模板 / Create a configuration template
-  course2md llm setup           配置可选的 AI 润色 / Set up optional AI proofreading
-  course2md summarize ./notes   为已有笔记生成总结 / Summarize existing notes
+  course2md llm setup           配置可选的 AI 校对 / Set up optional AI proofreading
+  course2md summarize ./notes   为已有笔记生成摘要 / Summarize existing notes
 
 交互终端首次转换会引导配置；脚本请显式传入所需参数。
 First conversion in a terminal offers setup; scripts should pass options explicitly.
@@ -34,6 +35,10 @@ First conversion in a terminal offers setup; scripts should pass options explici
     after_help = QUICK_START
 )]
 pub struct Cli {
+    /// 界面语言：auto、en、zh-Hans、zh-Hant、ja / Interface language: auto, en, zh-Hans, zh-Hant, ja
+    #[arg(long, global = true, value_name = "LANG")]
+    pub lang: Option<String>,
+
     /// 登录（bilibili 扫码；ollama 本地服务；codex 订阅），可接视频地址继续转换 / Log in (bilibili QR, ollama local, codex subscription), optionally then process a video
     #[arg(long, value_enum, conflicts_with_all = ["logout", "json"])]
     pub login: Option<LoginPlatform>,
@@ -187,59 +192,59 @@ pub struct RunOpts {
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub no_download: bool,
 
-    /// 本次启用 AI 润色 / Enable AI proofreading for this run
+    /// 本次启用 AI 校对 / Enable AI proofreading for this run
     #[arg(long)]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm: bool,
 
-    /// 本次禁用 AI 润色 / Disable AI proofreading for this run
+    /// 本次禁用 AI 校对 / Disable AI proofreading for this run
     #[arg(long, conflicts_with = "llm")]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub no_llm: bool,
 
-    /// AI 润色服务地址 / AI proofreading base URL (OpenAI-compatible)
+    /// AI 校对服务地址 / AI proofreading base URL (OpenAI-compatible)
     #[arg(long)]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm_base_url: Option<String>,
 
-    /// AI 润色密钥（建议通过 llm setup 设置，避免命令历史记录）/ AI API key (prefer llm setup)
+    /// AI 校对密钥（建议通过 llm setup 设置，避免命令历史记录）/ AI API key (prefer llm setup)
     #[arg(long)]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm_api_key: Option<String>,
 
-    /// AI 润色模型名称 / AI proofreading model name
+    /// AI 校对模型名称 / AI proofreading model name
     #[arg(long)]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm_model: Option<String>,
 
-    /// AI 润色提示词 / AI proofreading instructions
+    /// AI 校对提示词 / AI proofreading instructions
     #[arg(long)]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm_prompt: Option<String>,
 
-    /// 附截图辅助润色（需要视觉模型）/ Attach slides for proofreading (requires image support)
+    /// 附截图辅助校对（需要视觉模型）/ Attach slides for proofreading (requires image support)
     #[arg(long, conflicts_with = "no_llm_vision")]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub llm_vision: bool,
 
-    /// 本次禁用截图辅助润色 / Disable image-assisted proofreading
+    /// 本次禁用截图辅助校对 / Disable image-assisted proofreading
     #[arg(long, conflicts_with = "llm_vision")]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub no_llm_vision: bool,
 
-    /// 隐藏完成后的 AI 润色提示 / Hide the optional AI proofreading tip
+    /// 隐藏完成后的 AI 校对提示 / Hide the optional AI proofreading tip
     #[arg(long)]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub no_llm_hint: bool,
 
-    /// 本次生成视频总结并写入笔记 / Generate video summary (TL;DR, key points, outline)
+    /// 本次生成视频摘要并写入笔记 / Generate video summary (TL;DR, key points, outline)
     #[arg(long)]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub summarize: bool,
 
-    /// 本次禁用视频总结 / Disable video summary for this run
+    /// 本次禁用视频摘要 / Disable video summary for this run
     #[arg(long, conflicts_with = "summarize")]
-    #[arg(help_heading = "AI 润色 / AI proofreading")]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub no_summarize: bool,
 
     /// 显示诊断日志；-vv 显示调试细节 / Diagnostic logs; -vv for debug details
@@ -278,7 +283,7 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ModelsCmd,
     },
-    /// 配置可选的 AI 润色 / Configure optional AI proofreading
+    /// 配置可选的 AI 校对 / Configure optional AI proofreading
     Llm {
         #[command(subcommand)]
         cmd: LlmCmd,
@@ -290,9 +295,9 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// 为已有笔记生成 AI 总结 / Add AI summaries to existing notes
+    /// 为已有笔记生成 AI 摘要 / Add AI summaries to existing notes
     Summarize(SummarizeArgs),
-    /// 清除 AI 润色的地址、密钥、模型和 Codex 登录 / Clear the AI proofreading endpoint, key, model and Codex login
+    /// 清除 AI 校对的地址、密钥、模型和 Codex 登录 / Clear the AI proofreading endpoint, key, model and Codex login
     Remove(RemoveArgs),
 }
 
@@ -308,10 +313,10 @@ pub struct SummarizeArgs {
     /// 笔记目录，或存放多份笔记的上级目录 / A note directory or a folder of notes
     #[arg(required = true)]
     pub dirs: Vec<PathBuf>,
-    /// 重新生成已有总结 / Regenerate existing summaries
+    /// 重新生成已有摘要 / Regenerate existing summaries
     #[arg(long)]
     pub force: bool,
-    /// 另存一份总结（Markdown）到此目录 / Also save each summary as Markdown in this directory
+    /// 另存一份摘要（Markdown）到此目录 / Also save each summary as Markdown in this directory
     #[arg(short = 'o', long)]
     pub out: Option<PathBuf>,
     /// 静默模式，仅报告错误 / Quiet mode: report errors only
@@ -369,7 +374,7 @@ pub struct ModelTarget {
 
 #[derive(Subcommand)]
 pub enum LlmCmd {
-    /// 配置并启用 AI 润色（终端内询问缺失项）/ Set up AI proofreading; prompts in a terminal
+    /// 配置并启用 AI 校对（终端内询问缺失项）/ Set up AI proofreading; prompts in a terminal
     Setup {
         #[arg(long)]
         base_url: Option<String>,
@@ -377,13 +382,13 @@ pub enum LlmCmd {
         api_key: Option<String>,
         #[arg(long)]
         model: Option<String>,
-        /// 关闭完成后的润色提示 / Hide the completion tip
+        /// 关闭完成后的校对提示 / Hide the completion tip
         #[arg(long)]
         disable_hint: bool,
     },
     /// 显示当前配置（隐藏密钥）/ Show settings with keys hidden
     Status,
-    /// 关闭 AI 润色并保留凭据 / Disable AI proofreading and keep credentials
+    /// 关闭 AI 校对并保留凭据 / Disable AI proofreading and keep credentials
     Disable,
 }
 
@@ -396,4 +401,184 @@ pub enum ConfigCmd {
     },
     /// 显示配置路径和文件设置 / Show the config path and file settings
     Show,
+}
+
+/// Resolves `--lang` / `COURSE2MD_LANG` / the system locale before clap renders help.
+pub fn requested_lang() -> Lang {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        let value = if arg == "--lang" {
+            args.next()
+        } else {
+            arg.strip_prefix("--lang=").map(str::to_owned)
+        };
+        if let Some(value) = value
+            && let Some(lang) = Lang::from_code(&value)
+        {
+            return lang;
+        }
+    }
+    Lang::detect()
+}
+
+/// Replaces clap's compile-time help and about texts with catalog translations.
+///
+/// The catalog is keyed by the original text, so the compiled doc comments stay
+/// the single source of truth and a missing entry falls back to the source.
+pub fn localize_command(command: clap::Command) -> clap::Command {
+    use clap::Command;
+
+    fn localized(value: Option<&clap::builder::StyledStr>) -> Option<String> {
+        value.map(|value| t(&value.to_string()).to_owned())
+    }
+
+    fn about(command: Command) -> Command {
+        let about = localized(command.get_about());
+        let long_about = localized(command.get_long_about());
+        let before = localized(command.get_before_help());
+        let after = localized(command.get_after_help());
+        let mut command = command;
+        if let Some(value) = about {
+            command = command.about(value);
+        }
+        if let Some(value) = long_about {
+            command = command.long_about(value);
+        }
+        if let Some(value) = before {
+            command = command.before_help(value);
+        }
+        if let Some(value) = after {
+            command = command.after_help(value);
+        }
+        command
+    }
+
+    fn args(command: Command) -> Command {
+        command.mut_args(|arg| {
+            let help = localized(arg.get_help());
+            let long_help = localized(arg.get_long_help());
+            let heading = arg.get_help_heading().map(|heading| {
+                // clap's heading type only accepts static strings; this runs once per process.
+                Box::leak(t(heading).to_owned().into_boxed_str()) as &'static str
+            });
+            let mut arg = arg;
+            if let Some(value) = help {
+                arg = arg.help(value);
+            }
+            if let Some(value) = long_help {
+                arg = arg.long_help(value);
+            }
+            if let Some(value) = heading {
+                arg = arg.help_heading(value);
+            }
+            arg
+        })
+    }
+
+    let command = about(command);
+    let command = args(command);
+    command.mut_subcommands(|subcommand| localize_command(subcommand))
+}
+
+/// Localizes clap's own section headings in rendered help and error text.
+///
+/// Clap has no runtime translations for these strings; replacing whole lines
+/// keeps the argument help itself (already localized) untouched.
+pub fn localize_rendered(text: &str) -> String {
+    let lang = crate::i18n::lang();
+    if lang == Lang::En {
+        return text.to_owned();
+    }
+    let (usage, options, commands, arguments, more) = match lang {
+        Lang::ZhHans => ("用法：", "选项：", "命令：", "参数：", "更多信息请运行 --help。"),
+        Lang::ZhHant => ("用法：", "選項：", "命令：", "參數：", "更多資訊請執行 --help。"),
+        Lang::Ja => ("使用法：", "オプション：", "コマンド：", "引数：", "詳細は --help を参照してください。"),
+        Lang::En => unreachable!(),
+    };
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let localized = if trimmed.starts_with("Usage:") {
+            Some(line.replacen("Usage:", usage, 1))
+        } else if trimmed.starts_with("Options:") {
+            Some(line.replacen("Options:", options, 1))
+        } else if trimmed.starts_with("Commands:") {
+            Some(line.replacen("Commands:", commands, 1))
+        } else if trimmed.starts_with("Arguments:") {
+            Some(line.replacen("Arguments:", arguments, 1))
+        } else if trimmed.starts_with("For more information, try '--help'.") {
+            Some(line.replacen("For more information, try '--help'.", more, 1))
+        } else if line.contains("Print help") {
+            Some(line.replacen("Print help", more_help(lang), 1))
+        } else if line.contains("Print version") {
+            Some(line.replacen("Print version", more_version(lang), 1))
+        } else if line.contains("Print this message or the help of the given subcommand(s)") {
+            Some(line.replacen(
+                "Print this message or the help of the given subcommand(s)",
+                more_help_command(lang),
+                1,
+            ))
+        } else {
+            None
+        };
+        out.push_str(localized.as_deref().unwrap_or(line));
+        out.push('\n');
+    }
+    if !text.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn more_help(lang: Lang) -> &'static str {
+    match lang {
+        Lang::ZhHans => "显示帮助",
+        Lang::ZhHant => "顯示說明",
+        Lang::Ja => "ヘルプを表示",
+        Lang::En => "Print help",
+    }
+}
+
+fn more_help_command(lang: Lang) -> &'static str {
+    match lang {
+        Lang::ZhHans => "显示此消息或子命令的帮助",
+        Lang::ZhHant => "顯示此訊息或子命令的說明",
+        Lang::Ja => "このメッセージまたはサブコマンドのヘルプを表示",
+        Lang::En => "Print this message or the help of the given subcommand(s)",
+    }
+}
+
+fn more_version(lang: Lang) -> &'static str {
+    match lang {
+        Lang::ZhHans => "显示版本",
+        Lang::ZhHant => "顯示版本",
+        Lang::Ja => "バージョンを表示",
+        Lang::En => "Print version",
+    }
+}
+
+#[cfg(test)]
+mod i18n_tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn rendered_headings_follow_the_language() {
+        crate::i18n::set_lang(Lang::ZhHans);
+        let rendered = "Usage: course2md [OPTIONS]\n\nOptions:\n  -h, --help  Print help\n";
+        let localized = localize_rendered(rendered);
+        assert!(localized.contains("用法："));
+        assert!(localized.contains("选项："));
+        assert!(localized.contains("显示帮助"));
+        crate::i18n::set_lang(Lang::ZhHans);
+    }
+
+    #[test]
+    fn command_help_uses_the_catalog() {
+        crate::i18n::set_lang(Lang::ZhHans);
+        let mut command = localize_command(Cli::command());
+        let rendered = command.render_help().to_string();
+        assert!(rendered.contains("用法") || rendered.contains("Usage"));
+        crate::i18n::set_lang(Lang::ZhHans);
+    }
 }

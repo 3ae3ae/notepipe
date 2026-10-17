@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use course2md::cli::{Cli, Command, ConfigCmd, LlmCmd, ModelsCmd};
 use course2md::{config, doctor, llm, models, pipeline, progress, settings, wizard};
 use tracing_subscriber::EnvFilter;
@@ -55,20 +55,52 @@ fn main() -> std::process::ExitCode {
         .skip(1)
         .take_while(|a| *a != "--")
         .any(|a| a == "--json" || a == "run-task");
-    let cli = match Cli::try_parse_from(&args) {
-        Ok(cli) => cli,
+    let requested = course2md::cli::requested_lang();
+    course2md::i18n::set_lang(requested);
+    let command = course2md::cli::localize_command(Cli::command());
+    let cli = match command.try_get_matches_from(&args) {
+        Ok(matches) => match Cli::from_arg_matches(&matches) {
+            Ok(cli) => cli,
+            Err(error) => {
+                let rendered = course2md::cli::localize_rendered(&error.render().to_string());
+                eprint!("{rendered}");
+                return std::process::ExitCode::from(error.exit_code() as u8);
+            }
+        },
         Err(error) => {
             if error.use_stderr() && json_requested {
                 progress::set_json_mode();
                 progress::emit(
                     serde_json::json!({"type": "error", "message": format!("参数无效 / Invalid arguments: {error}")}),
                 );
-            } else {
+            } else if course2md::i18n::lang() == course2md::i18n::Lang::En {
                 let _ = error.print();
+            } else {
+                let rendered = course2md::cli::localize_rendered(&error.render().to_string());
+                print!("{rendered}");
             }
             return std::process::ExitCode::from(error.exit_code() as u8);
         }
     };
+    // Machine protocol messages stay in the source language for stable consumers;
+    // the desktop pins this command to Simplified Chinese.
+    if matches!(cli.command, Some(Command::RunTask)) {
+        course2md::i18n::set_lang(course2md::i18n::Lang::ZhHans);
+    } else if let Some(value) = &cli.lang {
+        match course2md::i18n::Lang::from_code(value) {
+            Some(lang) => course2md::i18n::set_lang(lang),
+            None if value == "auto" => {
+                course2md::i18n::init_from_env();
+            }
+            None => {
+                eprintln!(
+                    "{}",
+                    course2md::tr!("未知的语言：{value}。可用：auto、en、zh-Hans、zh-Hant、ja", value)
+                );
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    }
     let json = cli.opts.json
         || matches!(&cli.command, Some(Command::RunTask))
         || matches!(
@@ -203,7 +235,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     cfg.llm.enabled = false;
                     let path = settings::save(&cfg)?;
                     println!(
-                        "已关闭 AI 润色，凭据保留 / AI proofreading disabled; credentials kept: {}",
+                        "已关闭 AI 校对，凭据保留 / AI proofreading disabled; credentials kept: {}",
                         path.display()
                     );
                 }
@@ -401,7 +433,7 @@ fn collect_targets(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, dep
     }
 }
 
-/// `summarize` 子命令：为一份笔记补写 AI 总结，保存为新版笔记（幂等，--force 重新生成）。
+/// `summarize` 子命令：为一份笔记补写 AI 摘要，保存为新版笔记（幂等，--force 重新生成）。
 fn summarize_note(
     file: &settings::ConfigFile,
     dir: &std::path::Path,
@@ -492,7 +524,7 @@ fn summarize_note(
         let text = course2md::summarize::render_standalone_md(&document.meta.title, &summary);
         course2md::checkpoint::atomic_write(&file, text.as_bytes())?;
         if !progress::is_quiet() {
-            println!("已导出总结 / Summary exported: {}", file.display());
+            println!("已导出摘要 / Summary exported: {}", file.display());
         }
     }
     if !progress::is_quiet() {
