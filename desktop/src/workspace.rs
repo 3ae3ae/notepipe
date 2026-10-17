@@ -517,7 +517,7 @@ impl State {
     fn initial(root: PathBuf, options: ConversionOptions) -> Self {
         let library = LibraryLocation {
             id: new_id("library"),
-            name: "课程库".into(),
+            name: "笔记库".into(),
             root,
             previous_roots: Vec::new(),
         };
@@ -815,7 +815,7 @@ impl State {
         let task = self.task_mut(id).context("任务记录不存在")?;
         ensure!(
             !task.state.finished(),
-            "这项任务已结束，请从结果页选择补做或生成新版"
+            "这项任务已结束，可在任务卡中补做或生成新版"
         );
         ensure!(
             task.handled_by.is_none(),

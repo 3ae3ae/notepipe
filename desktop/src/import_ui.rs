@@ -1084,8 +1084,8 @@ impl Desktop {
                                     .rounded(RADIUS_PILL)
                                     .w(rems(48. / 14.))
                                     .h(rems(48. / 14.))
-                                    .accessibility_label("本次生成选项")
-                                    .tooltip("本次生成选项")
+                                    .accessibility_label("处理选项")
+                                    .tooltip("处理选项")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.generation_options_open =
                                             !this.generation_options_open;
@@ -1521,7 +1521,7 @@ impl Desktop {
                                         crate::icons::chevron_down()
                                     })
                                     .label(if self.show_preview_details {
-                                        "收起详情"
+                                        "收起技术详情"
                                     } else {
                                         "技术详情"
                                     })
@@ -1742,8 +1742,8 @@ impl Desktop {
             && (source.subtitle_request.is_some() || source.subtitle_read_error.is_some())
         {
             match &source.selected_subtitle {
-                Some(_) => "字幕尚未确认".into(),
-                None => "所选字幕尚未确认".into(),
+                Some(_) => "字幕还没读取完成".into(),
+                None => "字幕还没读取完成".into(),
             }
         } else if speech {
             "识别视频声音".into()
@@ -1757,7 +1757,7 @@ impl Desktop {
                 SubtitleEvidence::NoneFound | SubtitleEvidence::Unsupported { .. } => {
                     "尚未选择文字来源".into()
                 }
-                SubtitleEvidence::Failed { .. } => "字幕尚未确认".into(),
+                SubtitleEvidence::Failed { .. } => "字幕还没读取完成".into(),
             }
         };
         let mut view = v_flex().w_full().min_w_0().gap_3().child(
@@ -1857,7 +1857,7 @@ impl Desktop {
                     outline_pill("use-previous-subtitle")
                         .self_start()
                         .icon(icons::subtitles())
-                        .label("使用已读字幕")
+                        .label("继续使用之前的字幕")
                         .tooltip(old.label.clone())
                         .on_click(cx.listener(|this, _, _, cx| this.use_confirmed_subtitle(cx))),
                 );
@@ -1939,7 +1939,7 @@ impl Desktop {
             {
                 options = options.child(self.subtitle_issue(
                     "subtitle-warning",
-                    &format!("部分字幕尚未确认：{message}"),
+                    &format!("部分字幕无法读取：{message}"),
                     cx,
                 ));
             }
@@ -2266,7 +2266,7 @@ impl Desktop {
                                     .on_click(move |_, _, cx| {
                                         let _ = recheck.update(cx, |this, cx| this.refresh_model_diagnostics(cx));
                                     }))
-                                    .item(PopupMenuItem::new("模型设置与缓存详情")
+                                    .item(PopupMenuItem::new("模型设置")
                                         .icon(icons::settings())
                                         .on_click(move |_, window, cx| {
                                             let _ = settings.update(cx, |this, cx| this.open_settings(window, cx));
@@ -2686,7 +2686,7 @@ impl Desktop {
                     .line_height(rems(if compact { 36. / 14. } else { 44. / 14. })).font_weight(FontWeight::SEMIBOLD))
                 .child(div().text_center().text_size(rems(if compact { 14. / 14. } else { 16. / 14. }))
                     .line_height(rems(24. / 14.)).text_color(color(GRAY))
-                    .child("粘贴链接或拖入本地视频，自动生成带截图的 Markdown 笔记")))
+                    .child("粘贴链接或拖入本地视频，自动生成带截图的笔记")))
             .child(input);
         if let Some((id, message)) = cancelled_notice {
             view = view.child(info_callout(
@@ -2875,7 +2875,7 @@ impl Desktop {
                     .label(if issue.can_retry {
                         "重试保存生成选项"
                     } else {
-                        "保留原文件并重置生成选项"
+                        "重置处理选项"
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if !this.save_current_draft(cx) {
@@ -2945,7 +2945,7 @@ impl Desktop {
             let location = self
                 .course_location(&course)
                 .map(|library| library.name.clone())
-                .unwrap_or_else(|| "课程库".into());
+                .unwrap_or_else(|| "笔记库".into());
             inset = inset.child(info_callout(
                 "existing-note-notice",
                 format!("已有笔记，保存在「{location}」"),

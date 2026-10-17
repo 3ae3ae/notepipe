@@ -365,19 +365,19 @@ fn service_configuration_issue(message: &str) -> Option<&'static str> {
             .iter()
             .any(|hint| message.contains(hint))
     {
-        Some("AI 服务未接受凭据或权限")
+        Some("AI 服务拒绝了 API Key，请检查密钥或权限")
     } else if ["http 404", "model not found", "unknown model"]
         .iter()
         .any(|hint| lower.contains(hint))
         || message.contains("服务未找到此任务指定的接口或模型")
     {
-        Some("AI 服务找不到接口或模型")
+        Some("AI 服务地址或模型名称有误")
     } else if ["http 400", "http 422"]
         .iter()
         .any(|hint| lower.contains(hint))
         || message.contains("服务拒绝了请求参数")
     {
-        Some("AI 服务拒绝了请求设置")
+        Some("AI 服务不支持当前的模型设置")
     } else {
         None
     }
@@ -571,7 +571,7 @@ impl RenderOnce for TaskProcessingDetails {
                     icons::chevron_down()
                 })
                 .label(if open {
-                    "收起处理详情"
+                    "收起已完成的处理"
                 } else {
                     "查看已完成的处理"
                 })
@@ -1062,11 +1062,11 @@ impl Desktop {
         );
         ensure!(
             environment.ffmpeg && environment.ffprobe,
-            "缺少 FFmpeg"
+            "缺少视频处理组件，请在设置中查看"
         );
         ensure!(
             !online || environment.ytdlp,
-            "缺少 yt-dlp"
+            "缺少在线视频下载组件，请在设置中查看"
         );
         Ok(environment)
     }
@@ -1135,11 +1135,11 @@ impl Desktop {
         );
         ensure!(
             self.source_preview.is_some(),
-            "本次来源尚未确认，请重新读取视频"
+            "还没读取到视频信息，请重新预览"
         );
         ensure!(
             self.subtitle_error.is_none(),
-            "当前字幕尚未确认，请重新读取字幕，或明确选择其他文字来源"
+            "字幕还没读取完成，请重新读取，或改用语音识别"
         );
         let source = draft.source.clone().context("请先读取并确认视频")?;
         let environment = self.ensure_plan_environment(source.online)?;
@@ -1150,7 +1150,7 @@ impl Desktop {
         );
         ensure!(
             !source.identity.is_empty(),
-            "视频身份尚未确认，请重新读取视频"
+            "无法识别这个视频，请重新预览"
         );
         ensure!(!draft.title.trim().is_empty(), "请填写笔记名称");
         self.ensure_plan_storage(workspace, draft, validation)?;
@@ -1322,7 +1322,7 @@ impl Desktop {
         }
         if plans.is_empty() {
             self.message = Some(if skipped > 0 {
-                "选中的视频还无法确认身份，请单独打开后转换".into()
+                "选中的视频无法识别，请单独打开后转换".into()
             } else {
                 "选中的视频尚未加入队列，请重试".into()
             });
@@ -1357,7 +1357,7 @@ impl Desktop {
                     parts.push(format!("{duplicates} 个与进行中的任务相同，未重复加入"));
                 }
                 if skipped > 0 {
-                    parts.push(format!("{skipped} 个暂时无法确认身份，已跳过"));
+                    parts.push(format!("{skipped} 个无法识别，已跳过"));
                 }
                 self.message = Some(parts.join("；"));
                 if let Some(id) = first_id {
@@ -2429,7 +2429,7 @@ impl Desktop {
                 .child(
                     outline_pill("task-records-open-library")
                         .icon(icons::book_open())
-                        .label("前往我的笔记")
+                        .label("前往笔记库")
                         .self_start()
                         .on_click(cx.listener(|this, _, _, cx| this.navigate(Page::Library, cx))),
                 )
@@ -2580,7 +2580,7 @@ impl Desktop {
                 task.plan.title,
                 task_status_label(task),
                 if is_selected {
-                    "收起详情"
+                    "收起"
                 } else {
                     "查看详情"
                 }
@@ -3651,7 +3651,7 @@ fn request_scope(request: &workspace::BlockedRequest) -> String {
             _ if purpose == TRANSCRIPTION_PURPOSE => "语音识别",
             _ => "外部处理",
         };
-        format!("{name}：范围未记录")
+        format!("{name}（具体内容未记录）")
     }
 }
 
@@ -4127,7 +4127,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let location = crate::workspace::LibraryLocation {
             id: "library".into(),
-            name: "课程库".into(),
+            name: "笔记库".into(),
             root: directory.path().to_owned(),
             previous_roots: Vec::new(),
         };
