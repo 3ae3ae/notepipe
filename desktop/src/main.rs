@@ -648,6 +648,8 @@ impl Desktop {
         this.prepare_workbench_input(window, cx);
         this.restore_storage_state(cx);
         std::thread::spawn(source::prune_cache);
+        // Starts reading the scrollbar preference before the first frame needs it.
+        backend::scrollbars_always_visible();
         cx.set_reduce_motion(this.desktop_settings.reduce_motion);
         this.refresh_account(cx);
         this.refresh_environment(cx);
