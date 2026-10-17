@@ -26,8 +26,7 @@ fn month_day_for(lang: Lang, month: u32, day: u32) -> String {
     match lang {
         Lang::En => {
             const MONTHS: [&str; 12] = [
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
-                "Dec",
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
             ];
             let name = MONTHS
                 .get(month.saturating_sub(1) as usize)
