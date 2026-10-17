@@ -279,9 +279,6 @@ fn relocate_preview(preview: &mut crate::notes::Preview, old: &Path, new: &Path)
     if let Some(path) = &mut preview.course.thumbnail {
         storage::relocate_path(path, old, new);
     }
-    for path in &mut preview.frames {
-        storage::relocate_path(path, old, new);
-    }
     for block in &mut preview.blocks {
         if let crate::notes::PreviewBlock::Image(path) = block {
             storage::relocate_path(path, old, new);

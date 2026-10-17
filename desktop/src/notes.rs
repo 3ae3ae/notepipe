@@ -1,36 +1,40 @@
 //! Read published versions and isolate damaged library entries.
 use crate::backend::Completed;
 use anyhow::{Context, Result};
+use course2md::artifact;
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
     time::SystemTime,
 };
+
+const VERSION_DAMAGED: &str = "笔记版本信息已损坏";
+const BODY_UNREADABLE: &str = "笔记正文无法读取，原文件已保留";
+
 #[derive(Clone)]
 pub struct Course {
     pub dir: PathBuf,
     pub title: String,
     pub modified: SystemTime,
     pub slides: usize,
-    pub segments: usize,
     pub thumbnail: Option<PathBuf>,
-    pub manifest: Option<course2md::artifact::Manifest>,
+    pub manifest: Option<artifact::Manifest>,
     pub warning: Option<String>,
 }
 impl Course {
+    /// A just-published version. `read_preview` reads its manifest on open and
+    /// reports a failure there instead of opening an empty note.
     pub fn from_completed(done: &Completed) -> Self {
         Self {
             dir: done.out_dir.clone(),
             title: done.title.clone(),
             modified: SystemTime::now(),
             slides: done.slides,
-            segments: done.segments,
             thumbnail: None,
-            manifest: course2md::artifact::read_manifest(&done.out_dir.join("manifest.json")).ok(),
+            manifest: None,
             warning: None,
         }
     }
-    /// 内容元数据（不含待补全后缀）；列表用独立状态徽章表达补全状态（review4#7）
     pub fn content_description(&self) -> String {
         if self.slides > 0 {
             format!("含 {} 张截图", self.slides)
@@ -41,30 +45,19 @@ impl Course {
     pub fn incomplete(&self) -> bool {
         self.manifest.as_ref().is_some_and(has_incomplete_content)
     }
-    #[cfg(test)]
-    pub fn description(&self) -> String {
-        let content = self.content_description();
-        if self.incomplete() {
-            format!("{content} · 部分内容待补全")
-        } else {
-            content
-        }
-    }
+    /// Published versions live in `<note>/versions/<id>`; the note folder owns them.
     pub fn storage_dir(&self) -> PathBuf {
-        if self.manifest.is_some() {
-            self.dir
-                .parent()
-                .and_then(|p| p.parent())
-                .unwrap_or(&self.dir)
-                .to_path_buf()
-        } else {
-            self.dir.clone()
-        }
+        self.dir
+            .parent()
+            .filter(|parent| parent.file_name().is_some_and(|name| name == "versions"))
+            .and_then(Path::parent)
+            .unwrap_or(&self.dir)
+            .to_path_buf()
     }
 }
 /// Optional file exports describe a task's output, not the completeness of its note.
 /// Published manifests stay immutable when a later task successfully repairs exports.
-pub(crate) fn has_incomplete_content(manifest: &course2md::artifact::Manifest) -> bool {
+pub(crate) fn has_incomplete_content(manifest: &artifact::Manifest) -> bool {
     !processing_issues(manifest).is_empty()
 }
 pub struct LibraryScan {
@@ -72,77 +65,79 @@ pub struct LibraryScan {
     pub issues: Vec<String>,
 }
 
+/// Listing checks that each required file exists at its recorded size; content
+/// digests are verified when the note is opened.
+fn assets_present(dir: &Path, manifest: &artifact::Manifest) -> bool {
+    manifest
+        .assets
+        .iter()
+        .filter(|asset| !asset.path.starts_with("exports/"))
+        .all(|asset| {
+            artifact::safe_asset_path(dir, &asset.path)
+                .and_then(|path| Ok(std::fs::metadata(path)?.len()))
+                .is_ok_and(|bytes| bytes == asset.bytes)
+        })
+}
+
 fn version_course(dir: &Path) -> Result<Course> {
-    let manifest = course2md::artifact::read_manifest(&dir.join("manifest.json"))?;
-    let document: course2md::artifact::Document = serde_json::from_slice(&std::fs::read(
-        course2md::artifact::safe_asset_path(dir, &manifest.document)?,
-    )?)?;
+    let manifest = artifact::read_manifest(&dir.join("manifest.json"))?;
     anyhow::ensure!(
-        document.schema == 1 && course2md::artifact::has_readable_body(&document.sections),
-        "笔记正文无法读取"
+        artifact::safe_asset_path(dir, &manifest.document).is_ok_and(|path| path.is_file()),
+        BODY_UNREADABLE
     );
-    let warning = course2md::artifact::validate_version(dir, &manifest)
-        .err()
-        .map(|_| "部分笔记文件有变化或缺失，已显示当前可读内容。原文件已保留。".into());
-    let thumbnail = manifest
+    let images = manifest
         .frames
         .iter()
-        .find_map(|f| course2md::artifact::safe_asset_path(dir, &f.image).ok());
+        .filter_map(|frame| artifact::safe_asset_path(dir, &frame.image).ok())
+        .collect::<Vec<_>>();
     Ok(Course {
         dir: dir.to_path_buf(),
         title: manifest.title.clone(),
         modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(manifest.created_at_ms),
-        slides: manifest
-            .frames
-            .iter()
-            .filter(|f| course2md::artifact::safe_asset_path(dir, &f.image).is_ok())
-            .count(),
-        segments: document.sections.iter().map(|s| s.speech.len()).sum(),
-        thumbnail,
+        slides: images.len(),
+        thumbnail: images.into_iter().next(),
         manifest: Some(manifest),
-        warning,
+        warning: None,
     })
 }
 
 fn current_course(dir: &Path) -> Result<Course> {
-    let load = || -> Result<Course> {
-        let current: course2md::artifact::CurrentVersion =
+    let current = || -> Result<Course> {
+        let pointer: artifact::CurrentVersion =
             serde_json::from_slice(&std::fs::read(dir.join("current.json"))?)?;
-        anyhow::ensure!(current.schema == 1, "笔记版本暂不受支持");
-        let manifest_path = course2md::artifact::safe_asset_path(dir, &current.manifest)?;
-        let course = version_course(manifest_path.parent().context("版本位置无效")?)?;
-        let manifest = course
-            .manifest
-            .as_ref()
-            .context("笔记版本缺少有效清单，无法校验一致性")?;
         anyhow::ensure!(
-            manifest.course_id == current.course_id && manifest.version_id == current.version_id,
-            "笔记版本记录不一致"
+            pointer.schema == 1,
+            "这份笔记由更新版本的应用生成，请更新应用"
+        );
+        let manifest_path = artifact::safe_asset_path(dir, &pointer.manifest)?;
+        let course = version_course(manifest_path.parent().context(VERSION_DAMAGED)?)?;
+        anyhow::ensure!(
+            course.manifest.as_ref().is_some_and(|manifest| {
+                manifest.course_id == pointer.course_id && manifest.version_id == pointer.version_id
+            }),
+            VERSION_DAMAGED
         );
         Ok(course)
     };
-    match load() {
-        Ok(course) => Ok(course),
-        Err(error) => {
-            let mut previous = std::fs::read_dir(dir.join("versions"))
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                .filter_map(|e| version_course(&e.path()).ok())
-                .filter(|c| c.warning.is_none())
-                .collect::<Vec<_>>();
-            previous.sort_by_key(|c| c.manifest.as_ref().map(|m| m.revision));
-            if let Some(mut course) = previous.pop() {
-                course.warning = Some(
-                    "当前版本暂时无法读取；正在显示此前保存的完好版本，所有原文件已保留。".into(),
-                );
-                Ok(course)
-            } else {
-                Err(error)
-            }
-        }
-    }
+    current().or_else(|error| {
+        let mut intact = std::fs::read_dir(dir.join("versions"))
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter_map(|entry| version_course(&entry.path()).ok())
+            .filter(|course| {
+                course
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|manifest| assets_present(&course.dir, manifest))
+            })
+            .collect::<Vec<_>>();
+        intact.sort_by_key(|course| course.manifest.as_ref().map(|m| m.revision));
+        let mut course = intact.pop().ok_or(error)?;
+        course.warning = Some("最新版本无法读取，正在显示上一个完好的版本。".into());
+        Ok(course)
+    })
 }
 
 pub fn scan_library(root: &Path) -> Result<LibraryScan> {
@@ -196,8 +191,9 @@ pub fn scan_library(root: &Path) -> Result<LibraryScan> {
 }
 
 pub fn default_output() -> PathBuf {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-    PathBuf::from(home.unwrap_or_else(|| ".".into())).join("Documents/course2md")
+    course2md::config::home_dir()
+        .unwrap_or_else(|| ".".into())
+        .join("Documents/course2md")
 }
 
 #[derive(Clone)]
@@ -223,7 +219,7 @@ pub enum ProcessingStage {
 impl ProcessingStage {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Transcript => "部分文字",
+            Self::Transcript => "文字转写",
             Self::Screenshots => "截图",
             Self::Proofreading => "AI 校对",
             Self::Summary => "摘要",
@@ -233,9 +229,23 @@ impl ProcessingStage {
 #[derive(Clone)]
 pub struct ProcessingIssue {
     pub stage: ProcessingStage,
-    pub outcome: course2md::artifact::Outcome,
+    pub outcome: artifact::Outcome,
 }
-fn processing_issues(manifest: &course2md::artifact::Manifest) -> Vec<ProcessingIssue> {
+impl ProcessingIssue {
+    /// The recorded cause, without the English half of the engine's message.
+    pub fn detail(&self) -> Option<&str> {
+        self.outcome
+            .message
+            .as_deref()
+            .map(chinese_half)
+            .filter(|detail| !detail.is_empty())
+    }
+}
+/// Engine messages read 「中文 / English」; the desktop shows the Chinese half.
+pub(crate) fn chinese_half(message: &str) -> &str {
+    message.split(" / ").next().unwrap_or(message).trim()
+}
+fn processing_issues(manifest: &artifact::Manifest) -> Vec<ProcessingIssue> {
     [
         (ProcessingStage::Transcript, &manifest.outcomes.transcript),
         (ProcessingStage::Screenshots, &manifest.outcomes.screenshots),
@@ -249,7 +259,7 @@ fn processing_issues(manifest: &course2md::artifact::Manifest) -> Vec<Processing
     .filter(|(_, outcome)| {
         matches!(
             outcome.status,
-            course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
+            artifact::Status::Failed | artifact::Status::Partial
         )
     })
     .map(|(stage, outcome)| ProcessingIssue {
@@ -262,123 +272,115 @@ fn processing_issues(manifest: &course2md::artifact::Manifest) -> Vec<Processing
 pub struct Preview {
     pub course: Course,
     pub blocks: Vec<PreviewBlock>,
-    pub frames: Vec<PathBuf>,
     pub outputs: Vec<String>,
     pub plain_text: String,
     pub markdown_text: String,
-    pub document: Option<course2md::artifact::Document>,
-    pub metadata: Vec<(String, String)>,
+    pub document: artifact::Document,
+    /// Author and duration, in display order; the source link is `document.meta`.
+    pub facts: Vec<String>,
     pub issues: Vec<String>,
     /// Incomplete processing is recoverable through its task, never by re-reading files.
     pub processing_issues: Vec<ProcessingIssue>,
 }
 
 pub fn read_preview(mut course: Course) -> Result<Preview> {
-    if course.dir.join("manifest.json").is_file() {
-        let manifest = course2md::artifact::read_manifest(&course.dir.join("manifest.json"))?;
-        let path = course2md::artifact::safe_asset_path(&course.dir, &manifest.document)?;
-        let document: course2md::artifact::Document =
-            serde_json::from_slice(&std::fs::read(path)?)?;
-        anyhow::ensure!(
-            course2md::artifact::has_readable_body(&document.sections),
-            "笔记正文无法读取，原文件已保留"
-        );
-        let markdown = course2md::artifact::safe_asset_path(&course.dir, &manifest.markdown)
-            .and_then(|path| Ok(std::fs::read_to_string(path)?))
-            .unwrap_or_else(|_| {
-                course2md::render::render_markdown(&document.meta, &document.sections)
-            });
-        let mut plain_text = format!("{}\n\n", manifest.title);
-        let mut blocks = Vec::new();
-        if let Some(summary) = &document.summary {
-            blocks.push(PreviewBlock::Heading {
-                text: "摘要".into(),
-                anchor: "summary".into(),
-                seconds: None,
-            });
+    let manifest = match course.manifest.take() {
+        Some(manifest) => manifest,
+        None => {
+            artifact::read_manifest(&course.dir.join("manifest.json")).context(BODY_UNREADABLE)?
+        }
+    };
+    let document: artifact::Document = serde_json::from_slice(&std::fs::read(
+        artifact::safe_asset_path(&course.dir, &manifest.document)?,
+    )?)?;
+    anyhow::ensure!(
+        document.schema == 1 && artifact::has_readable_body(&document.sections),
+        BODY_UNREADABLE
+    );
+    let markdown = artifact::safe_asset_path(&course.dir, &manifest.markdown)
+        .and_then(|path| Ok(std::fs::read_to_string(path)?))
+        .unwrap_or_else(|_| course2md::render::render_markdown(&document.meta, &document.sections));
+    let mut plain_text = format!("{}\n\n", manifest.title);
+    let mut blocks = Vec::new();
+    if let Some(summary) = &document.summary {
+        blocks.push(PreviewBlock::Heading {
+            text: "摘要".into(),
+            anchor: "summary".into(),
+            seconds: None,
+        });
+        blocks.push(PreviewBlock::Paragraph {
+            text: summary.tldr.clone(),
+            anchor: "summary-tldr".into(),
+        });
+        plain_text.push_str(&summary.tldr);
+        plain_text.push_str("\n\n");
+        for (i, point) in summary.key_points.iter().enumerate() {
             blocks.push(PreviewBlock::Paragraph {
-                text: summary.tldr.clone(),
-                anchor: "summary-tldr".into(),
+                text: format!("• {point}"),
+                anchor: format!("key-point-{i}"),
             });
-            plain_text.push_str(&summary.tldr);
-            plain_text.push_str("\n\n");
-            for (i, point) in summary.key_points.iter().enumerate() {
-                blocks.push(PreviewBlock::Paragraph {
-                    text: format!("• {point}"),
-                    anchor: format!("key-point-{i}"),
-                });
-                plain_text.push_str(point);
-                plain_text.push('\n');
-            }
+            plain_text.push_str(point);
+            plain_text.push('\n');
         }
-        let mut issues = course.warning.clone().into_iter().collect::<Vec<_>>();
-        let processing_issues = processing_issues(&manifest);
-        let mut frames = Vec::new();
-        for frame in &manifest.frames {
-            match course2md::artifact::safe_asset_path(&course.dir, &frame.image) {
-                Ok(path) => frames.push(path),
-                Err(_) => issues.push(format!(
-                    "{} 的截图暂时无法读取",
-                    course2md::render::fmt_ts(frame.t)
-                )),
-            }
-        }
-        for (section_index, section) in document.sections.iter().enumerate() {
-            blocks.push(PreviewBlock::Heading {
-                text: course2md::render::fmt_ts(section.t),
-                anchor: format!("section-{section_index}"),
-                seconds: Some(section.t),
-            });
-            if !section.image.is_empty()
-                && manifest.frames.iter().any(|f| f.image == section.image)
-                && let Ok(path) = course2md::artifact::safe_asset_path(&course.dir, &section.image)
-            {
-                blocks.push(PreviewBlock::Image(path));
-            }
-            for (paragraph_index, paragraph) in section.speech.iter().enumerate() {
-                if !paragraph.text.trim().is_empty() {
-                    let anchor = format!("paragraph-{section_index}-{paragraph_index}");
-                    blocks.push(PreviewBlock::Paragraph {
-                        text: paragraph.text.clone(),
-                        anchor,
-                    });
-                    plain_text.push_str(&paragraph.text);
-                    plain_text.push_str("\n\n");
-                }
-            }
-        }
-        let mut metadata = Vec::new();
-        if !document.meta.uploader.is_empty() {
-            metadata.push(("作者".into(), document.meta.uploader.clone()));
-        }
-        if document.meta.duration > 0. {
-            metadata.push((
-                "时长".into(),
-                course2md::render::fmt_ts(document.meta.duration),
+    }
+    let mut issues = course.warning.clone().into_iter().collect::<Vec<_>>();
+    if artifact::validate_version(&course.dir, &manifest).is_err() {
+        issues.push("部分笔记文件缺失或已改动，先显示能读到的内容。".into());
+    }
+    for frame in &manifest.frames {
+        if artifact::safe_asset_path(&course.dir, &frame.image).is_err() {
+            issues.push(format!(
+                "{} 的截图无法读取",
+                course2md::render::fmt_ts(frame.t)
             ));
         }
-        if !document.meta.webpage_url.is_empty() {
-            metadata.push(("来源".into(), document.meta.webpage_url.clone()));
-        }
-        course.title = manifest.title.clone();
-        course.slides = manifest.frames.len();
-        course.segments = document.sections.iter().map(|s| s.speech.len()).sum();
-        course.manifest = Some(manifest.clone());
-        let markdown_text = without_image_references(&markdown);
-        return Ok(Preview {
-            course,
-            blocks,
-            frames,
-            outputs: manifest.outputs,
-            plain_text,
-            markdown_text,
-            document: Some(document),
-            metadata,
-            issues,
-            processing_issues,
-        });
     }
-    anyhow::bail!("笔记正文无法读取，原文件已保留")
+    for (section_index, section) in document.sections.iter().enumerate() {
+        blocks.push(PreviewBlock::Heading {
+            text: course2md::render::fmt_ts(section.t),
+            anchor: format!("section-{section_index}"),
+            seconds: Some(section.t),
+        });
+        if !section.image.is_empty()
+            && manifest.frames.iter().any(|f| f.image == section.image)
+            && let Ok(path) = artifact::safe_asset_path(&course.dir, &section.image)
+        {
+            blocks.push(PreviewBlock::Image(path));
+        }
+        for (paragraph_index, paragraph) in section.speech.iter().enumerate() {
+            if !paragraph.text.trim().is_empty() {
+                blocks.push(PreviewBlock::Paragraph {
+                    text: paragraph.text.clone(),
+                    anchor: format!("paragraph-{section_index}-{paragraph_index}"),
+                });
+                plain_text.push_str(&paragraph.text);
+                plain_text.push_str("\n\n");
+            }
+        }
+    }
+    let mut facts = Vec::new();
+    if !document.meta.uploader.trim().is_empty() {
+        facts.push(document.meta.uploader.clone());
+    }
+    if document.meta.duration > 0. {
+        facts.push(course2md::render::fmt_ts(document.meta.duration));
+    }
+    let processing_issues = processing_issues(&manifest);
+    course.title = manifest.title.clone();
+    course.slides = manifest.frames.len();
+    let outputs = manifest.outputs.clone();
+    course.manifest = Some(manifest);
+    Ok(Preview {
+        course,
+        blocks,
+        outputs,
+        plain_text,
+        markdown_text: without_image_references(&markdown),
+        document,
+        facts,
+        issues,
+        processing_issues,
+    })
 }
 
 /// Copy-friendly markdown: strips image spans and their reference definitions while
@@ -412,47 +414,60 @@ pub fn without_image_references(markdown: &str) -> String {
         .join("\n")
 }
 
+/// Published notes for tests: one frame and one paragraph per time.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod fixtures {
+    use super::Course;
+    use course2md::{
+        artifact,
+        fetch::VideoMeta,
+        timeline::{Section, TranscriptEvent},
+    };
+    use std::path::Path;
 
-    /// A published current-format note: one frame, one paragraph, no file exports.
-    fn fixture_note(root: &Path) -> Course {
-        use course2md::{
-            artifact,
-            fetch::VideoMeta,
-            timeline::{Section, TranscriptEvent},
-        };
-        let work = root.join("work");
+    pub(crate) fn published_note(
+        root: &Path,
+        revision: u64,
+        times: &[f64],
+        outcomes: artifact::Outcomes,
+    ) -> Course {
+        let work = root.join(format!("work-{revision}"));
         std::fs::create_dir_all(work.join("frames")).unwrap();
-        image::RgbImage::new(4, 3)
-            .save(work.join("frames/frame-0.png"))
-            .unwrap();
-        let sections = vec![Section {
-            t: 10.,
-            end: 20.,
-            image: "frames/frame-0.png".into(),
-            speech: vec![TranscriptEvent {
-                start: 10.,
-                end: 20.,
-                text: "真实正文".into(),
-                raw: None,
-            }],
-        }];
+        let sections = times
+            .iter()
+            .enumerate()
+            .map(|(index, time)| {
+                let relative = format!("frames/frame-{index}.png");
+                image::RgbImage::new(4 + revision as u32, 3)
+                    .save(work.join(&relative))
+                    .unwrap();
+                Section {
+                    t: *time,
+                    end: *time + 10.,
+                    image: relative,
+                    speech: vec![TranscriptEvent {
+                        start: *time,
+                        end: *time + 10.,
+                        text: format!("第 {revision} 版，{time} 秒的正文"),
+                        raw: None,
+                    }],
+                }
+            })
+            .collect::<Vec<_>>();
         let target = artifact::Target {
-            task_id: "task-1".into(),
-            course_id: "course-1".into(),
-            source_id: "source-1".into(),
-            version_id: "v1".into(),
-            course_dir: root.join("note"),
+            task_id: format!("task-{revision}"),
+            course_id: "fixture-course".into(),
+            source_id: "fixture-source".into(),
+            version_id: format!("v{revision}"),
+            course_dir: root.join("course"),
         };
         let meta = VideoMeta {
             title: "测试课程".into(),
-            uploader: String::new(),
-            duration: 0.,
-            webpage_url: String::new(),
-            extractor: "local".into(),
-            id: "source".into(),
+            uploader: "作者".into(),
+            duration: 90.,
+            webpage_url: "https://www.bilibili.com/video/BVfixture?p=2".into(),
+            extractor: "bilibili".into(),
+            id: "fixture".into(),
         };
         let manifest = smol::block_on(artifact::publish(
             &target,
@@ -461,69 +476,114 @@ mod tests {
             &sections,
             None,
             &[],
-            Default::default(),
+            outcomes,
         ))
         .unwrap();
         Course {
             dir: target.version_dir(),
             title: meta.title,
-            modified: SystemTime::now(),
-            slides: 1,
-            segments: 1,
+            modified: std::time::SystemTime::now(),
+            slides: times.len(),
             thumbnail: None,
             manifest: Some(manifest),
             warning: None,
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fixtures::published_note, *};
 
     #[test]
     fn optional_export_failure_does_not_describe_readable_content_as_incomplete() {
         let root = tempfile::tempdir().unwrap();
-        let note = fixture_note(root.path());
+        published_note(root.path(), 1, &[10.], Default::default());
         let mut course = scan_library(root.path()).unwrap().courses.remove(0);
-        assert_eq!(course.dir, note.dir);
         let manifest = course.manifest.as_mut().unwrap();
         manifest.partial = true;
-        manifest.outcomes.transcript = course2md::artifact::Outcome::succeeded();
-        manifest.outcomes.screenshots = course2md::artifact::Outcome::succeeded();
-        manifest.outcomes.proofreading = course2md::artifact::Outcome::succeeded();
-        manifest.outcomes.summary = course2md::artifact::Outcome::succeeded();
         manifest.outcomes.exports.insert(
             "html".into(),
-            course2md::artifact::Outcome::failed("destination unavailable"),
+            artifact::Outcome::failed("destination unavailable"),
         );
-        assert!(!has_incomplete_content(manifest));
-        assert!(!course.description().contains("待补全"));
+        assert!(!course.incomplete());
         course.manifest.as_mut().unwrap().outcomes.summary =
-            course2md::artifact::Outcome::failed("service unavailable");
-        assert!(course.description().contains("待补全"));
+            artifact::Outcome::failed("service unavailable");
+        assert!(course.incomplete());
     }
 
     #[test]
     fn library_discovers_published_notes_and_ignores_task_leftovers() {
         let root = tempfile::tempdir().unwrap();
-        let note = fixture_note(root.path());
+        let note = published_note(root.path(), 1, &[10.], Default::default());
         let leftover = root.path().join("failed");
         std::fs::create_dir_all(&leftover).unwrap();
         std::fs::write(leftover.join("run.json"), r#"{"success":false}"#).unwrap();
-        let first = scan_library(root.path()).unwrap();
-        assert_eq!(first.courses.len(), 1);
-        assert!(first.issues.is_empty());
+        let scan = scan_library(root.path()).unwrap();
+        assert_eq!(scan.courses.len(), 1);
+        assert!(scan.issues.is_empty());
+        assert_eq!(scan.courses[0].dir, note.dir);
         assert_eq!(
-            first.courses[0].storage_dir().canonicalize().unwrap(),
-            root.path().join("note").canonicalize().unwrap()
+            scan.courses[0].storage_dir().canonicalize().unwrap(),
+            root.path().join("course").canonicalize().unwrap()
         );
-        let preview = read_preview(first.courses[0].clone()).unwrap();
-        assert!(preview.plain_text.contains("真实正文"));
-        assert!(preview.document.is_some());
+        let preview = read_preview(scan.courses[0].clone()).unwrap();
+        assert!(preview.plain_text.contains("10 秒的正文"));
+        assert!(preview.issues.is_empty());
         assert!(
             preview
                 .blocks
                 .iter()
                 .any(|b| matches!(b,PreviewBlock::Heading{seconds:Some(t),..} if *t==10.))
         );
-        let second = scan_library(root.path()).unwrap();
-        assert_eq!(second.courses[0].dir, note.dir);
+    }
+
+    #[test]
+    fn a_damaged_latest_version_falls_back_to_the_last_intact_one() {
+        let root = tempfile::tempdir().unwrap();
+        let old = published_note(root.path(), 1, &[10.], Default::default());
+        let new = published_note(root.path(), 2, &[20.], Default::default());
+        std::fs::remove_file(new.dir.join("document.json")).unwrap();
+        let course = scan_library(root.path()).unwrap().courses.remove(0);
+        assert_eq!(course.dir, old.dir);
+        assert!(course.warning.is_some());
+        // A completed task's course reads its manifest on open.
+        let opened = read_preview(Course::from_completed(&Completed {
+            out_dir: old.dir.clone(),
+            ..Default::default()
+        }))
+        .unwrap();
+        assert_eq!(opened.course.storage_dir(), old.storage_dir());
+        assert!(
+            read_preview(Course::from_completed(&Completed {
+                out_dir: root.path().join("missing"),
+                ..Default::default()
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn opening_reports_changed_files_the_listing_did_not_hash() {
+        let root = tempfile::tempdir().unwrap();
+        let note = published_note(root.path(), 1, &[10.], Default::default());
+        let frame = note.dir.join("frames/frame-0.png");
+        let mut bytes = std::fs::read(&frame).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        std::fs::write(&frame, bytes).unwrap();
+        let course = scan_library(root.path()).unwrap().courses.remove(0);
+        assert!(course.warning.is_none());
+        assert_eq!(read_preview(course).unwrap().issues.len(), 1);
+    }
+
+    #[test]
+    fn processing_details_show_the_chinese_half() {
+        let issue = ProcessingIssue {
+            stage: ProcessingStage::Summary,
+            outcome: artifact::Outcome::failed("摘要尚未完成，已保留正文 / Summary incomplete"),
+        };
+        assert_eq!(issue.detail(), Some("摘要尚未完成，已保留正文"));
     }
 
     #[test]

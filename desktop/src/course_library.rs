@@ -2292,7 +2292,6 @@ mod tests {
             title: dir.into(),
             modified: SystemTime::UNIX_EPOCH,
             slides: 0,
-            segments: 0,
             thumbnail: None,
             manifest: None,
             warning: None,

@@ -101,7 +101,6 @@ fn update_published_course(
         title: manifest.title.clone(),
         modified: std::time::UNIX_EPOCH + std::time::Duration::from_millis(manifest.created_at_ms),
         slides: manifest.frames.len(),
-        segments: done.segments,
         thumbnail,
         manifest: Some(manifest.clone()),
         warning: None,
@@ -3934,7 +3933,6 @@ mod tests {
             title: "用户命名".into(),
             modified: UNIX_EPOCH + Duration::from_secs(1),
             slides: 0,
-            segments: 1,
             thumbnail: Some("/old-cover.jpg".into()),
             manifest: Some(old_manifest.clone()),
             warning: None,
@@ -3952,7 +3950,6 @@ mod tests {
         let done = Completed {
             out_dir: "/library/course/versions/repair".into(),
             title: repaired.title.clone(),
-            segments: 4,
             ..Default::default()
         };
         super::update_published_course(
@@ -3965,15 +3962,14 @@ mod tests {
         let current = &courses[0];
         assert_eq!(current.dir, done.out_dir);
         assert_eq!(current.title, "用户命名");
-        assert_eq!(current.segments, 4);
         assert_eq!(
             current.thumbnail.as_deref(),
             Some(std::path::Path::new("/new-cover.jpg"))
         );
-        assert!(!current.description().contains("部分内容待补全"));
+        assert!(!current.incomplete());
         assert_eq!(current.manifest.as_ref().unwrap().version_id, "repair");
         assert_eq!(courses[1].dir, other_library.dir);
-        assert!(courses[1].description().contains("部分内容待补全"));
+        assert!(courses[1].incomplete());
         assert!(old.manifest.as_ref().unwrap().partial);
     }
     use crate::workspace::{Intent, TaskState};

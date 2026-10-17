@@ -15,7 +15,6 @@ pub struct Completed {
     pub out_dir: PathBuf,
     pub title: String,
     pub slides: usize,
-    pub segments: usize,
     #[serde(default)]
     pub partial: Option<bool>,
     #[serde(default)]
@@ -676,7 +675,6 @@ mod tests {
             title: "course".into(),
             modified: SystemTime::now(),
             slides: 0,
-            segments: 1,
             thumbnail: None,
             manifest: Some(manifest),
             warning: None,
@@ -754,7 +752,6 @@ mod tests {
             title: "Course".into(),
             modified: SystemTime::now(),
             slides: 0,
-            segments: 0,
             thumbnail: None,
             manifest: None,
             warning: None,
@@ -767,12 +764,6 @@ mod tests {
                 .filter(|b| matches!(b, PreviewBlock::Image(_)))
                 .count(),
             0
-        );
-        assert!(
-            !preview
-                .frames
-                .iter()
-                .any(|path| path.ends_with("outside.jpg"))
         );
         assert!(!preview.issues.is_empty());
     }
