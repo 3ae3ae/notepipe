@@ -83,7 +83,7 @@ pub struct Journal {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Progress {
     pub message: String,
     pub completed: u64,
@@ -239,7 +239,7 @@ fn digest(path: &Path, cancel: &AtomicBool) -> Result<String> {
         .with_context(|| format!("无法校验 {}", path.display()))
 }
 
-pub fn inventory(
+fn inventory(
     root: &Path,
     message: &str,
     cancel: &AtomicBool,
@@ -276,7 +276,7 @@ pub fn save_journal(path: &Path, journal: &Journal) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     course2md::checkpoint::atomic_write(path, &serde_json::to_vec_pretty(journal)?)?;
-    sync_directory(path.parent().context("迁移记录缺少保存目录")?)
+    sync_directory(path.parent().context("移动记录缺少保存目录")?)
 }
 
 fn sync_directory(path: &Path) -> Result<()> {
@@ -311,7 +311,7 @@ fn validate_journal_paths(journal: &Journal) -> Result<()> {
                     && path.file_name().is_some_and(|name| name
                         .to_string_lossy()
                         .starts_with(".course2md-copy-"))),
-        "迁移记录包含无效文件位置，未修改任何内容"
+        "移动记录包含无效文件位置，未修改任何内容"
     );
     Ok(())
 }
@@ -400,31 +400,96 @@ pub fn prepare_move(
     copy_journal(path, journal, false, cancel, progress)
 }
 
+pub fn read_journal(path: &Path) -> Result<Journal> {
+    serde_json::from_slice(&std::fs::read(path)?).context("移动记录无法读取")
+}
+
+/// Marks an unfinished move as given up; the copy and the original both stay.
+pub fn abandon_move(path: &Path) -> Result<()> {
+    let mut journal = read_journal(path)?;
+    journal.phase = Phase::Abandoned;
+    save_journal(path, &journal)
+}
+
+/// What the move records on disk say, read once at startup and after each
+/// storage operation.
+#[derive(Default)]
+pub struct Records {
+    /// Moves that stopped before the new location was published.
+    pub pending: Vec<(PathBuf, Journal)>,
+    pub corrupt: Vec<PathBuf>,
+    /// Published moves whose model paths have not been updated yet.
+    pub settings_pending: Vec<(PathBuf, Journal)>,
+    /// Backups whose cleanup already finished.
+    pub cleaned: Vec<String>,
+}
+
+/// `libraries` are the registered (id, root) pairs.
+pub fn read_records(
+    directory: &Path,
+    libraries: &[(String, PathBuf)],
+    backups: &[BackupRecord],
+) -> Records {
+    let (mut pending, corrupt) = scan_journals(directory);
+    // A registry update that committed before the app closed leaves its record
+    // merely behind; never offer to replay or undo that copy.
+    pending.retain(|(path, journal)| {
+        let committed = libraries
+            .iter()
+            .any(|(id, root)| *id == journal.library_id && *root == journal.destination);
+        if committed {
+            let mut journal = journal.clone();
+            journal.phase = Phase::Committed;
+            let _ = save_journal(path, &journal);
+        }
+        !committed
+    });
+    let mut records = Records {
+        pending,
+        corrupt,
+        ..Records::default()
+    };
+    for backup in backups {
+        let Ok(journal) = backup.load_journal() else {
+            continue;
+        };
+        if journal.cleanup_complete {
+            records.cleaned.push(backup.id.clone());
+        }
+        if !journal.settings_relocated {
+            records
+                .settings_pending
+                .push((backup.journal_path.clone(), journal));
+        }
+    }
+    records
+}
+
 pub fn resume_move(
     path: &Path,
     cancel: &AtomicBool,
     progress: &impl Fn(Progress),
 ) -> Result<PreparedMove> {
-    let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
+    let journal = read_journal(path)?;
     ensure!(
         journal.schema == 1 && !matches!(journal.phase, Phase::Committed | Phase::Abandoned),
-        "这份迁移记录不能继续"
+        "这份移动记录不能继续"
     );
     ensure!(
         std::fs::canonicalize(&journal.source)? == journal.source
             && std::fs::canonicalize(&journal.destination)? == journal.destination,
-        "迁移位置已经变化，原数据和副本已保留"
+        "移动位置已经变化，原数据和副本已保留"
     );
     let marker: Journal = serde_json::from_slice(
         &std::fs::read(journal.destination.join(MOVE_MARKER_FILE))
-            .context("目标缺少这次迁移的识别记录，未修改目标内容")?,
+            .context("目标缺少这次移动的识别记录，未修改目标内容")?,
     )?;
     ensure!(
         marker.id == journal.id
             && marker.source == journal.source
             && marker.destination == journal.destination
             && marker.files == journal.files,
-        "目标不属于这次迁移，未修改目标内容"
+        "目标不属于这次移动，未修改目标内容"
     );
     copy_journal(path.to_owned(), journal, true, cancel, progress)
 }
@@ -467,7 +532,7 @@ fn copy_journal(
                         && owned.file_name().is_some_and(|name| name
                             .to_string_lossy()
                             .starts_with(".course2md-copy-")),
-                    "迁移临时文件位置发生变化，未修改内容"
+                    "移动临时文件位置发生变化，未修改内容"
                 );
                 std::fs::remove_file(owned)?;
             }
@@ -547,7 +612,7 @@ fn copy_journal(
                 output
                     .persist_noclobber(&destination)
                     .map_err(|error| error.error)
-                    .with_context(|| format!("无法保存迁移副本 {}", destination.display()))?;
+                    .with_context(|| format!("无法保存移动副本 {}", destination.display()))?;
             }
             completed += record.bytes;
             progress(Progress {
@@ -652,7 +717,7 @@ pub fn cleanup_backup(
     };
     ensure!(
         unchanged,
-        "旧位置备份在迁移后发生变化，未清理任何内容。请打开该位置检查新增或修改的文件。"
+        "旧位置备份在移动后发生变化，未清理任何内容。请打开该位置检查新增或修改的文件。"
     );
     check_cancel(cancel)?;
     journal.cleanup_started = true;

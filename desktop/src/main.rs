@@ -647,6 +647,7 @@ impl Desktop {
         this.restore_draft(window, cx);
         this.prepare_workbench_input(window, cx);
         this.restore_storage_state(cx);
+        std::thread::spawn(source::prune_cache);
         cx.set_reduce_motion(this.desktop_settings.reduce_motion);
         this.refresh_account(cx);
         this.refresh_environment(cx);
@@ -952,6 +953,7 @@ impl Desktop {
                 Event::Exit { success, cancelled } => {
                     immediate = true;
                     self.job = None;
+                    self.storage_ui.job_exited();
                     self.cancelling = false;
                     if let Some(id) = self.active_task.take() {
                         self.finish_task(&id, success, cancelled, cx);

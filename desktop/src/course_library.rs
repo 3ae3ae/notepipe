@@ -148,13 +148,23 @@ struct LibraryRowContext<'a> {
     layout: LibraryLayout,
 }
 
+/// A collapsed list of technical details under a short message.
 #[derive(IntoElement)]
-struct LibraryDiagnostics {
+pub(crate) struct IssueDetails {
     id: SharedString,
     messages: Vec<String>,
 }
 
-impl RenderOnce for LibraryDiagnostics {
+impl IssueDetails {
+    pub(crate) fn new(id: impl Into<SharedString>, messages: Vec<String>) -> Self {
+        Self {
+            id: id.into(),
+            messages,
+        }
+    }
+}
+
+impl RenderOnce for IssueDetails {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = window.use_keyed_state(
             SharedString::from(format!("library-diagnostics-state:{}", self.id)),
@@ -177,7 +187,7 @@ impl RenderOnce for LibraryDiagnostics {
                 } else {
                     crate::icons::info()
                 })
-                .label(if open { "收起诊断" } else { "查看诊断" })
+                .label(if open { "收起详情" } else { "查看详情" })
                 .on_click(move |_, _, cx| {
                     state.update(cx, |open, cx| {
                         *open = !*open;
@@ -643,7 +653,7 @@ impl Desktop {
                         ))
                         .child(row)
                         .when(!diagnostics.is_empty(), |view| {
-                            view.child(LibraryDiagnostics {
+                            view.child(IssueDetails {
                                 id: SharedString::from(format!("classification:{}", location.id)),
                                 messages: diagnostics,
                             })
@@ -709,7 +719,7 @@ impl Desktop {
                         ))
                         .child(row)
                         .when(!diagnostics.is_empty(), |view| {
-                            view.child(LibraryDiagnostics {
+                            view.child(IssueDetails {
                                 id: SharedString::from(format!("names:{}", location.id)),
                                 messages: diagnostics,
                             })
@@ -1048,7 +1058,7 @@ impl Desktop {
                         .loading(self.loading)
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_library(cx))),
                 )
-                .child(LibraryDiagnostics {
+                .child(IssueDetails {
                     id: "unread-content".into(),
                     messages: messages.clone(),
                 })
