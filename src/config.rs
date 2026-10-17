@@ -71,7 +71,7 @@ pub fn asr_endpoint(api: &crate::settings::AsrApi) -> AnyhowResult<String> {
             suffix,
             &["/audio/transcriptions", "/chat/completions"]
         ),
-        crate::tr!("服务地址与所选接口类型不一致 / Service endpoint and protocol do not match")
+        crate::tr!("服务地址与所选服务类型不一致 / Service endpoint and protocol do not match")
     );
     Ok(append_endpoint_suffix(base, suffix))
 }
@@ -95,6 +95,17 @@ pub enum AsrProvider {
 }
 
 impl AsrProvider {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "coreml" => Some(Self::Coreml),
+            "gpu" => Some(Self::Gpu),
+            "cpu" => Some(Self::Cpu),
+            "npu" => Some(Self::Npu),
+            "api" => Some(Self::Api),
+            _ => None,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Coreml => "coreml",

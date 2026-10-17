@@ -24,6 +24,7 @@ mod palettes;
 #[cfg(feature = "performance")]
 mod performance;
 mod preferences;
+mod provider_serde;
 mod reader_navigation;
 mod reader_ui;
 mod service_test;
@@ -111,32 +112,21 @@ pub(crate) fn provider_label(provider: Option<course2md::config::AsrProvider>) -
         .unwrap_or(course2md::tr!("自动"))
 }
 
-/// PROVIDERS 下标 → AsrProvider：索引与枚举映射的唯一实现（与 PROVIDERS 顺序同源）。
-pub(crate) fn asr_provider_from_index(index: usize) -> Option<course2md::config::AsrProvider> {
-    use course2md::config::AsrProvider;
-    match providers().get(index)?.0 {
-        "coreml" => Some(AsrProvider::Coreml),
-        "gpu" => Some(AsrProvider::Gpu),
-        "cpu" => Some(AsrProvider::Cpu),
-        "npu" => Some(AsrProvider::Npu),
-        "api" => Some(AsrProvider::Api),
-        _ => None,
-    }
+pub(crate) fn provider_from_id(id: &str) -> Option<course2md::config::AsrProvider> {
+    course2md::config::AsrProvider::from_id(id)
 }
 
-/// 云端 API 在 PROVIDERS 表中的下标：PROVIDERS[..CLOUD_PROVIDER_INDEX] 即本机引擎集合。
-pub(crate) const CLOUD_PROVIDER_INDEX: usize = 5;
-
 impl ConversionOptions {
-    /// 当前是否使用云端识别服务（provider == CLOUD_PROVIDER_INDEX）。
+    /// 当前是否使用云端识别服务。
     pub(crate) fn uses_cloud_provider(&self) -> bool {
-        self.provider == CLOUD_PROVIDER_INDEX
+        self.provider == Some(course2md::config::AsrProvider::Api)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct ConversionOptions {
-    provider: usize,
+    #[serde(with = "provider_serde")]
+    provider: Option<course2md::config::AsrProvider>,
     #[serde(with = "workspace::text_source_index")]
     source_mode: course2md::config::TranscriptSource,
     llm: bool,
@@ -150,16 +140,7 @@ struct ConversionOptions {
 
 impl ConversionOptions {
     fn from_config(config: &course2md::settings::ConfigFile) -> Self {
-        let provider = config
-            .defaults
-            .provider
-            .map(|p| {
-                providers()
-                    .iter()
-                    .position(|(id, _)| *id == p.as_str())
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0);
+        let provider = config.defaults.provider;
         let source_mode = config.defaults.transcript_source.unwrap_or_default();
         let llm = config.llm.enabled;
         let keep_video = config.defaults.keep_video.unwrap_or(false);
@@ -408,6 +389,16 @@ impl Desktop {
             && let Some(job) = &self.job
         {
             job.cancel();
+        }
+        if let Some(workspace) = &self.workspace
+            && let Err(error) = workspace.save()
+        {
+            self.workspace_error = Some(course2md::tr!(
+                "无法保存退出前的状态，窗口暂不关闭：{}",
+                format!("{error:#}")
+            ));
+            cx.notify();
+            return false;
         }
         self.message = Some(course2md::tr!("正在保存进度并退出…").into());
         cx.notify();

@@ -805,9 +805,9 @@ fn update_input_form(
         }
     }
     if !options.uses_cloud_provider() {
-        draft.local_provider = Some(options.provider);
+        draft.local_provider = options.provider;
     } else if !draft.options.uses_cloud_provider() {
-        draft.local_provider = Some(draft.options.provider);
+        draft.local_provider = draft.options.provider;
     }
     draft.options = options;
     draft.folder = folder;
@@ -3690,7 +3690,7 @@ fn task_badge_kind(state: TaskState) -> BadgeKind {
 impl ConversionOptions {
     pub fn apply_to(&self, config: &mut course2md::settings::ConfigFile) {
         use course2md::config::OutputFormat;
-        config.defaults.provider = crate::asr_provider_from_index(self.provider);
+        config.defaults.provider = self.provider;
         config.defaults.transcript_source = Some(self.source_mode);
         config.defaults.keep_video = Some(self.keep_video);
         config.defaults.resume = Some(true);
@@ -4281,7 +4281,7 @@ mod tests {
         let mut draft = crate::workspace::Draft::new(true, "library".into(), Default::default());
         draft.change_source("video".into());
         let mut options = draft.options.clone();
-        options.provider = 3;
+        options.provider = Some(course2md::config::AsrProvider::Cpu);
         update_input_form(
             &mut draft,
             "video".into(),
@@ -4291,8 +4291,11 @@ mod tests {
             None,
             0.,
         );
-        assert_eq!(draft.local_provider, Some(3));
-        options.provider = 5;
+        assert_eq!(
+            draft.local_provider,
+            Some(course2md::config::AsrProvider::Cpu)
+        );
+        options.provider = Some(course2md::config::AsrProvider::Api);
         update_input_form(
             &mut draft,
             "video".into(),
@@ -4302,10 +4305,16 @@ mod tests {
             None,
             0.,
         );
-        assert_eq!(draft.options.provider, crate::CLOUD_PROVIDER_INDEX);
-        assert_eq!(draft.local_provider, Some(3));
+        assert_eq!(
+            draft.options.provider,
+            Some(course2md::config::AsrProvider::Api)
+        );
+        assert_eq!(
+            draft.local_provider,
+            Some(course2md::config::AsrProvider::Cpu)
+        );
         let next = crate::workspace::Draft::new(true, "library".into(), Default::default());
-        assert_eq!(next.local_provider, Some(0));
+        assert_eq!(next.local_provider, None);
     }
 
     #[test]

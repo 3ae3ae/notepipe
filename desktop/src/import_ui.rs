@@ -2422,18 +2422,17 @@ impl Desktop {
         let entity = cx.entity().downgrade();
         let providers: Vec<_> = providers()
             .iter()
-            .enumerate()
-            .filter(|(index, _)| {
+            .filter_map(|(id, label)| {
                 use course2md::config::AsrProvider;
+                let provider = crate::provider_from_id(id);
                 // Automatic, CPU and the cloud service are always offered.
-                let provider = crate::asr_provider_from_index(*index);
-                matches!(provider, None | Some(AsrProvider::Cpu | AsrProvider::Api))
-                    || *index == current
+                (matches!(provider, None | Some(AsrProvider::Cpu | AsrProvider::Api))
+                    || provider == current
                     || provider
                         .zip(self.environment.as_ref())
-                        .is_some_and(|(provider, environment)| environment.supports(provider))
+                        .is_some_and(|(provider, environment)| environment.supports(provider)))
+                .then_some((provider, *label))
             })
-            .map(|(index, (_, label))| (index, *label))
             .collect();
         let selector = control("import-speech-location")
             .h(rems(56. / 14.))
@@ -2452,14 +2451,14 @@ impl Desktop {
             )
             .child(crate::icons::chevron_down().size_4())
             .dropdown_menu(move |menu, _, _| {
-                providers.iter().fold(menu, |menu, &(index, label)| {
+                providers.iter().fold(menu, |menu, &(provider, label)| {
                     let entity = entity.clone();
                     menu.item(
                         PopupMenuItem::new(label)
-                            .checked(index == current)
+                            .checked(provider == current)
                             .on_click(move |_, _, cx| {
                                 let _ = entity.update(cx, |this, cx| {
-                                    this.task_options.provider = index;
+                                    this.task_options.provider = provider;
                                     this.persist_task_options(cx);
                                 });
                             }),
@@ -2637,7 +2636,8 @@ impl Desktop {
 
     fn actual_local_provider(&self) -> course2md::config::AsrProvider {
         use course2md::config::AsrProvider;
-        crate::asr_provider_from_index(self.task_options.provider)
+        self.task_options
+            .provider
             .filter(|provider| *provider != AsrProvider::Api)
             .unwrap_or_else(|| self.recommended_local_provider())
     }

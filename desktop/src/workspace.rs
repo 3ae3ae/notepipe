@@ -5,7 +5,7 @@ use course2md::execution::Component;
 use course2md::settings::ConfigFile;
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -115,7 +115,8 @@ pub struct Draft {
     pub options: ConversionOptions,
     /// Remember the local branch when temporarily choosing a speech service.
     #[serde(default)]
-    pub local_provider: Option<usize>,
+    #[serde(with = "crate::provider_serde")]
+    pub local_provider: Option<course2md::config::AsrProvider>,
     #[serde(default)]
     pub overrides: BTreeSet<Override>,
     #[serde(default)]
@@ -147,7 +148,9 @@ impl Draft {
             custom_title: false,
             library_id,
             folder: None,
-            local_provider: (!defaults.uses_cloud_provider()).then_some(defaults.provider),
+            local_provider: (!defaults.uses_cloud_provider())
+                .then_some(defaults.provider)
+                .flatten(),
             options: defaults,
             overrides: BTreeSet::new(),
             subtitle: None,
@@ -1068,15 +1071,167 @@ pub struct Workspace {
     path: PathBuf,
     /// Last mirror attempt per task and registered location. A normal input
     /// save must not probe the disks holding every historical task.
-    mirror_snapshots: RefCell<BTreeMap<String, (TaskRecord, LibraryLocation)>>,
-    /// Last successful record write; high-frequency saves skip the disk until
+    mirror_snapshots: MirrorSnapshots,
+    /// Last successful record save; high-frequency saves skip the disk until
     /// this ages past their interval.
     last_write: Cell<Option<Instant>>,
+    writer: WorkspaceWriter,
+}
+
+type MirrorSnapshots =
+    std::sync::Arc<std::sync::Mutex<BTreeMap<String, (TaskRecord, LibraryLocation)>>>;
+
+struct WriterCache {
     /// Record bytes this process last wrote, so the backup copy needs no
     /// re-read of the file it replaces.
-    last_record: RefCell<Option<Vec<u8>>>,
+    last_record: Option<Vec<u8>>,
     /// Draft subtitle this process last wrote beside the record.
-    last_draft_subtitle: RefCell<Option<course2md::subtitle::CachedSubtitle>>,
+    last_draft_subtitle: Option<course2md::subtitle::CachedSubtitle>,
+}
+
+enum WriterSignal {
+    Wake,
+    Flush(std::sync::mpsc::Sender<Result<()>>),
+    Stop,
+}
+
+struct WorkspaceWriter {
+    path: PathBuf,
+    mirrors: MirrorSnapshots,
+    pending: std::sync::Arc<std::sync::Mutex<Option<State>>>,
+    signals: Option<std::sync::mpsc::Sender<WriterSignal>>,
+    error: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    sync_cache: Option<std::sync::Mutex<WriterCache>>,
+}
+
+impl WorkspaceWriter {
+    fn new(path: PathBuf, mirrors: MirrorSnapshots) -> Self {
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let error = std::sync::Arc::new(std::sync::Mutex::new(None));
+        // Unit tests keep the synchronous contract they assert against.
+        if cfg!(test) {
+            return Self {
+                path,
+                mirrors,
+                pending,
+                signals: None,
+                error,
+                sync_cache: Some(std::sync::Mutex::new(WriterCache {
+                    last_record: None,
+                    last_draft_subtitle: None,
+                })),
+            };
+        }
+        let (signals, rx) = std::sync::mpsc::channel();
+        let thread_path = path.clone();
+        let thread_mirrors = std::sync::Arc::clone(&mirrors);
+        let thread_pending = std::sync::Arc::clone(&pending);
+        let thread_error = std::sync::Arc::clone(&error);
+        std::thread::Builder::new()
+            .name("course2md-workspace-writer".into())
+            .spawn(move || {
+                let mut cache = WriterCache {
+                    last_record: None,
+                    last_draft_subtitle: None,
+                };
+                let mut write = |state: State, cache: &mut WriterCache| -> Result<()> {
+                    Workspace::write_state(&thread_path, &state, &thread_mirrors, cache)
+                };
+                while let Ok(signal) = rx.recv() {
+                    match signal {
+                        WriterSignal::Stop => {
+                            if let Some(state) =
+                                thread_pending.lock().ok().and_then(|mut p| p.take())
+                            {
+                                if let Err(error) = write(state, &mut cache) {
+                                    *thread_error.lock().unwrap() = Some(format!("{error:#}"));
+                                }
+                            }
+                            break;
+                        }
+                        WriterSignal::Wake => {
+                            if let Some(state) =
+                                thread_pending.lock().ok().and_then(|mut p| p.take())
+                            {
+                                if let Err(error) = write(state, &mut cache) {
+                                    *thread_error.lock().unwrap() = Some(format!("{error:#}"));
+                                }
+                            }
+                        }
+                        WriterSignal::Flush(ack) => {
+                            let result = thread_pending
+                                .lock()
+                                .ok()
+                                .and_then(|mut p| p.take())
+                                .map_or(Ok(()), |state| write(state, &mut cache));
+                            if let Err(error) = &result {
+                                *thread_error.lock().unwrap() = Some(format!("{error:#}"));
+                            }
+                            let _ = ack.send(result);
+                        }
+                    }
+                }
+            })
+            .expect("workspace writer thread");
+        Self {
+            path,
+            mirrors,
+            pending,
+            signals: Some(signals),
+            error,
+            sync_cache: None,
+        }
+    }
+
+    fn enqueue(&self, state: State) {
+        if let Some(cache) = &self.sync_cache {
+            let result = cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("workspace writer cache poisoned"))
+                .and_then(|mut cache| {
+                    Workspace::write_state(&self.path, &state, &self.mirrors, &mut cache)
+                });
+            if let Err(error) = result {
+                *self.error.lock().unwrap() = Some(format!("{error:#}"));
+            }
+            return;
+        }
+        if let Ok(mut pending) = self.pending.lock() {
+            *pending = Some(state);
+        }
+        if let Some(signals) = &self.signals {
+            let _ = signals.send(WriterSignal::Wake);
+        }
+    }
+
+    fn flush(&self) -> Result<()> {
+        if self.sync_cache.is_some() {
+            return match self.take_error() {
+                Some(error) => Err(anyhow::anyhow!(error)),
+                None => Ok(()),
+            };
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Some(signals) = &self.signals
+            && signals.send(WriterSignal::Flush(tx)).is_ok()
+            && let Ok(result) = rx.recv()
+        {
+            return result;
+        }
+        Ok(())
+    }
+
+    fn take_error(&self) -> Option<String> {
+        self.error.lock().ok().and_then(|mut error| error.take())
+    }
+}
+
+impl Drop for WorkspaceWriter {
+    fn drop(&mut self) {
+        if let Some(signals) = self.signals.take() {
+            let _ = signals.send(WriterSignal::Stop);
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1483,7 +1638,8 @@ impl Workspace {
         );
         create_library_marker(&library)?;
         self.mirror_snapshots
-            .borrow_mut()
+            .lock()
+            .expect("mirror snapshot lock")
             .retain(|_, (_, location)| location.id != id);
         Ok(())
     }
@@ -1721,14 +1877,15 @@ impl Workspace {
                 issues.join(course2md::tr!("；"))
             }
         );
+        let mirror_snapshots: MirrorSnapshots = Default::default();
+        let writer = WorkspaceWriter::new(path.clone(), std::sync::Arc::clone(&mirror_snapshots));
         Ok(Self {
             state,
             recovery: Some(recovery),
             path,
-            mirror_snapshots: Default::default(),
+            mirror_snapshots,
             last_write: Cell::new(None),
-            last_record: RefCell::new(None),
-            last_draft_subtitle: RefCell::new(None),
+            writer,
         })
     }
 
@@ -1836,14 +1993,15 @@ impl Workspace {
                 ));
             }
         }
+        let mirror_snapshots: MirrorSnapshots = Default::default();
+        let writer = WorkspaceWriter::new(path.clone(), std::sync::Arc::clone(&mirror_snapshots));
         Ok(Self {
             state,
             recovery,
             path,
-            mirror_snapshots: Default::default(),
+            mirror_snapshots,
             last_write: Cell::new(None),
-            last_record: RefCell::new(None),
-            last_draft_subtitle: RefCell::new(None),
+            writer,
         })
     }
 
@@ -1875,12 +2033,17 @@ impl Workspace {
         let result = edit(&mut next)?;
         store_task_subtitles(&mut next);
         compact_history(&mut next);
-        self.write(&next)?;
+        self.writer.enqueue(next.clone());
+        if let Some(error) = self.writer.take_error() {
+            return Err(anyhow::anyhow!(error));
+        }
         self.state = next;
         Ok(result)
     }
+    /// Durable save: enqueue the current state and wait for the writer.
     pub fn save(&self) -> Result<()> {
-        self.write(&self.state)
+        self.writer.enqueue(self.state.clone());
+        self.writer.flush()
     }
     /// Throttled progress save for the task event stream. Stage transitions,
     /// completion and exit flush through `save`; steady progress reaches the
@@ -1893,25 +2056,33 @@ impl Workspace {
         {
             return Ok(false);
         }
-        self.write(&self.state)?;
+        self.writer.enqueue(self.state.clone());
+        if let Some(error) = self.writer.take_error() {
+            anyhow::bail!(error);
+        }
         Ok(true)
     }
-    fn write(&self, state: &State) -> Result<()> {
-        let parent = self
-            .path
+
+    fn write_state(
+        path: &Path,
+        state: &State,
+        mirror_snapshots: &MirrorSnapshots,
+        cache: &mut WriterCache,
+    ) -> Result<()> {
+        let parent = path
             .parent()
             .context(course2md::tr!("任务记录缺少保存目录"))?;
         std::fs::create_dir_all(parent)?;
-        let _lock = course2md::runtime::lock_file(&self.path.with_extension("lock"))?;
+        let _lock = course2md::runtime::lock_file(&path.with_extension("lock"))?;
         // A mirror is recovery evidence, never authority to resume. The main record
         // remains unchanged if a required mirror write fails.
         for task in &state.tasks {
             let Some(library) = state.library(&task.plan.library_id) else {
                 continue;
             };
-            if self
-                .mirror_snapshots
-                .borrow()
+            if mirror_snapshots
+                .lock()
+                .expect("mirror snapshot lock")
                 .get(&task.id)
                 .is_some_and(|(previous, location)| previous == task && location == library)
             {
@@ -1920,8 +2091,9 @@ impl Workspace {
             if check_library(library).is_err() {
                 // Retry an unavailable location when the task/location changes,
                 // it is explicitly reassociated, or the application restarts.
-                self.mirror_snapshots
-                    .borrow_mut()
+                mirror_snapshots
+                    .lock()
+                    .expect("mirror snapshot lock")
                     .insert(task.id.clone(), (task.clone(), library.clone()));
                 continue;
             }
@@ -1936,8 +2108,9 @@ impl Workspace {
                 course2md::checkpoint::atomic_write(&mirror, &bytes)
                     .context(course2md::tr!("任务恢复副本未能保存，原任务记录仍保留"))?;
             }
-            self.mirror_snapshots
-                .borrow_mut()
+            mirror_snapshots
+                .lock()
+                .expect("mirror snapshot lock")
                 .insert(task.id.clone(), (task.clone(), library.clone()));
         }
         // The record refers to the draft subtitle by identity, so its events
@@ -1947,27 +2120,26 @@ impl Workspace {
             .and_then(|draft| draft.source.as_ref())
             .and_then(|source| source.selected_subtitle.as_ref())
             .filter(|subtitle| !subtitle.events.is_empty())
-            && self.last_draft_subtitle.borrow().as_ref() != Some(subtitle)
+            && cache.last_draft_subtitle.as_ref() != Some(subtitle)
         {
             course2md::checkpoint::atomic_write(
-                &draft_subtitle_path(&self.path),
+                &draft_subtitle_path(path),
                 &serde_json::to_vec(subtitle)?,
             )?;
-            *self.last_draft_subtitle.borrow_mut() = Some(subtitle.clone());
+            cache.last_draft_subtitle = Some(subtitle.clone());
         }
-        let backup = self.path.with_extension("json.bak");
-        let cached = self.last_record.borrow();
+        let backup = path.with_extension("json.bak");
+        let cached = &cache.last_record;
         if let Some(bytes) = cached.as_deref() {
             course2md::checkpoint::atomic_write(&backup, bytes)?;
-        } else if self.path.is_file() && Self::read(&self.path).is_ok() {
-            let bytes = std::fs::read(&self.path)?;
+        } else if path.is_file() && Workspace::read(path).is_ok() {
+            let bytes = std::fs::read(path)?;
             course2md::checkpoint::atomic_write(&backup, &bytes)?;
         }
-        drop(cached);
+
         let bytes = serde_json::to_vec(state)?;
-        course2md::checkpoint::atomic_write(&self.path, &bytes)?;
-        *self.last_record.borrow_mut() = Some(bytes);
-        self.last_write.set(Some(Instant::now()));
+        course2md::checkpoint::atomic_write(path, &bytes)?;
+        cache.last_record = Some(bytes);
         Ok(())
     }
     pub fn storage_path(&self) -> &Path {
@@ -2282,7 +2454,7 @@ mod tests {
         draft.title = "Current note".into();
         draft.custom_title = true;
         draft.folder = Some(42);
-        draft.options.provider = 2;
+        draft.options.provider = Some(course2md::config::AsrProvider::Gpu);
         draft.options.source_mode = course2md::config::TranscriptSource::Subtitle;
         draft.options.keep_video = true;
         draft.options.formats = [true, false, true];
