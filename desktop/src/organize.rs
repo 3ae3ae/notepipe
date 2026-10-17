@@ -29,9 +29,9 @@ pub fn relative_key(root: &Path, course: &Path) -> Result<PathBuf> {
             return Ok(key.to_path_buf());
         }
     }
-    let root = std::fs::canonicalize(root).context("课程库位置暂时无法访问")?;
+    let root = std::fs::canonicalize(root).context("笔记库文件夹暂时无法访问")?;
     let course = std::fs::canonicalize(course).context("笔记位置暂时无法访问")?;
-    let key = course.strip_prefix(root).context("笔记不在这个课程库中")?;
+    let key = course.strip_prefix(root).context("笔记不在这个笔记库中")?;
     ensure!(valid(key), "笔记位置无效");
     Ok(key.to_path_buf())
 }
@@ -49,7 +49,7 @@ fn save_with_backup(path: &Path, bytes: &[u8]) -> Result<()> {
     course2md::checkpoint::atomic_write(path, bytes)
 }
 
-/// Inspect only. A damaged classification file is never replaced during a read.
+/// Inspect only. A damaged folder record is never replaced during a read.
 pub fn recovery(root: &Path) -> Result<Option<Recovery>> {
     metadata_recovery::<Library>(root, FILE)
 }
@@ -62,7 +62,7 @@ fn metadata_recovery<T: serde::de::DeserializeOwned>(
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("无法读取分类记录，请检查保存位置的访问权限"),
+        Err(error) => return Err(error).context("无法读取文件夹信息，请检查保存位置的访问权限"),
     };
     if serde_json::from_slice::<T>(&bytes).is_ok() {
         return Ok(None);
@@ -85,13 +85,13 @@ fn recover_metadata<T: serde::de::DeserializeOwned + Serialize + Default>(
     filename: &str,
     rebuild: bool,
 ) -> Result<(T, PathBuf)> {
-    ensure!(root.is_dir(), "课程库位置暂时无法访问，请先重新连接");
+    ensure!(root.is_dir(), "笔记库文件夹暂时无法访问，请重新连接磁盘后再试");
     let path = root.join(filename);
     let _lock = course2md::runtime::lock_file(&path.with_extension("lock"))?;
     let original = std::fs::read(&path).context("无法读取并保留原记录，尚未恢复")?;
     ensure!(
         serde_json::from_slice::<T>(&original).is_err(),
-        "记录已恢复，请刷新课程库"
+        "记录已恢复，请重新扫描笔记库"
     );
     let library = if rebuild {
         T::default()
@@ -170,7 +170,7 @@ pub struct Library {
 }
 impl Library {
     pub fn load(root: &Path) -> Result<Self> {
-        ensure!(root.is_dir(), "课程库位置暂时无法访问，请先重新连接");
+        ensure!(root.is_dir(), "笔记库文件夹暂时无法访问，请重新连接磁盘后再试");
         match std::fs::read(root.join(FILE)) {
             Ok(bytes) => {
                 serde_json::from_slice(&bytes).context("文件夹信息损坏；原文件已保留，请修复后重试")
@@ -180,7 +180,7 @@ impl Library {
         }
     }
     pub fn edit(root: &Path, change: impl FnOnce(&mut Self) -> Result<()>) -> Result<Self> {
-        ensure!(root.is_dir(), "课程库位置暂时无法访问，请先重新连接");
+        ensure!(root.is_dir(), "笔记库文件夹暂时无法访问，请重新连接磁盘后再试");
         let _lock = course2md::runtime::lock_file(&root.join(".course2md-library.lock"))?;
         let mut library = Self::load(root)?;
         change(&mut library)?;
@@ -193,14 +193,14 @@ impl Library {
         ensure!(name.chars().count() <= 60, "文件夹名称最多 60 个字符");
         ensure!(
             name != "未分类",
-            "「未分类」是系统分类，请使用其他文件夹名称"
+            "「未分类」已被使用，请换一个文件夹名称"
         );
         ensure!(!self.folders.iter().any(|(key, value)| Some(*key) != id && value.to_lowercase() == name.to_lowercase()), "已有同名文件夹");
         let id = match id {
             Some(id) => {
                 ensure!(
                     self.folders.contains_key(&id),
-                    "文件夹已不存在，请刷新课程库"
+                    "文件夹已不存在，请重新扫描笔记库"
                 );
                 id
             }
