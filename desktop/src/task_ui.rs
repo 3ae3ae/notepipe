@@ -246,8 +246,7 @@ struct TaskStage {
 
 /// AI counters describe dispatched batches, including requests still in flight.
 /// Only the worker's stage result can move these stages into completed history.
-/// Token usage is the live signal instead: it arrives per completed response and
-/// keeps the stage visibly moving without inventing a fraction.
+/// A returned response is the live signal instead, without inventing a fraction.
 fn task_stage_progress(
     name: &str,
     done: bool,
@@ -258,8 +257,7 @@ fn task_stage_progress(
     if matches!(name, "llm" | "summary" | "summarize") {
         return (
             if !done && let Some(live) = live {
-                live.tokens_detail()
-                    .unwrap_or_else(|| "等待服务返回结果".into())
+                live.ai_detail().into()
             } else {
                 String::new()
             },
