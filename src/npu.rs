@@ -175,46 +175,34 @@ pub fn run_npu(
     let segs = crate::asr::ffmpeg_vad(wav, max_speech as f32)?;
     tracing::info!(segs = segs.len(), "npu vad");
     if segs.is_empty() {
-        tracing::warn!(
-            "未检测到语音，将仅保留截图 / No speech detected; keeping slides without a transcript"
-        );
-        return Ok(vec![]);
+        return Ok(crate::asr::no_speech_events());
     }
 
     let mut worker = NpuWorker::start(model_id)?;
     let (base, token) = (worker.base.clone(), worker.token.clone());
     let client = ureq::AgentBuilder::new().timeout(NPU_HTTP_TIMEOUT).build();
 
-    let r = crate::asr::run_chunks(
-        wav,
-        &segs,
-        cp,
-        worker.tmp.path(),
-        "npu asr",
-        |_i, _seg, chunk| {
-            let req_body = serde_json::json!({
-                "path": chunk.to_string_lossy(),
-            });
-            let resp = client
-                .post(&format!("{base}/audio/transcriptions"))
-                .set("X-Auth-Token", &token)
-                .send_json(req_body)
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Intel NPU 识别进程无响应 / Intel NPU worker did not respond: {e}"
-                    )
-                })?;
-            let v: serde_json::Value = resp.into_json().map_err(|e| {
-                anyhow::anyhow!("NPU 无法解析服务响应 / Could not parse the service response: {e}")
+    let r = crate::asr::run_chunks(wav, &segs, cp, worker.tmp.path(), "npu asr", |chunk| {
+        let req_body = serde_json::json!({
+            "path": chunk.to_string_lossy(),
+        });
+        let resp = client
+            .post(&format!("{base}/audio/transcriptions"))
+            .set("X-Auth-Token", &token)
+            .send_json(req_body)
+            .map_err(|e| {
+                anyhow::anyhow!("Intel NPU 识别进程无响应 / Intel NPU worker did not respond: {e}")
             })?;
-            if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
-                anyhow::bail!("NPU 识别失败 / NPU transcription failed: {e}");
-            }
-            let text = v["text"].as_str().unwrap_or("").trim().to_string();
-            let sanitized = crate::asr::sanitize_qwen_text(&text);
-            Ok((!sanitized.is_empty()).then_some(sanitized))
-        },
-    );
+        let v: serde_json::Value = resp.into_json().map_err(|e| {
+            anyhow::anyhow!("NPU 无法解析服务响应 / Could not parse the service response: {e}")
+        })?;
+        if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
+            anyhow::bail!("NPU 识别失败 / NPU transcription failed: {e}");
+        }
+        let text = v["text"].as_str().unwrap_or("").trim().to_string();
+        let sanitized = crate::asr::sanitize_qwen_text(&text);
+        Ok((!sanitized.is_empty()).then_some(sanitized))
+    });
 
     worker.stop();
 

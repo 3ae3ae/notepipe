@@ -22,6 +22,9 @@ const STEM_MAX_CHARS: usize = 40;
 /// Screenshot checkpoint files are digest-verified across this many parallel lanes.
 const FRAME_DIGEST_LANES: usize = 4;
 
+/// One message for an empty screenshot result; the desktop matches this value.
+pub const NO_SCREENSHOTS: &str = "未提取到截图";
+
 /// Traditional CLI entry. Its generated task directory is stable for compatible recovery.
 /// New settings or --no-resume use another work directory and never overwrite old notes.
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
@@ -144,9 +147,9 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
 }
 
 /// Desktop entry: all mutable configuration and credentials have already been resolved.
-pub async fn run_task(request: &execution::Request, cfg: &PipelineConfig) -> Result<()> {
+pub(crate) async fn run_task(request: &execution::Request, cfg: &PipelineConfig) -> Result<()> {
+    // The caller (`execution::run`) validates through `Request::resolve`.
     let started = Instant::now();
-    request.validate()?;
     let target = Target::from_request(request);
     std::fs::create_dir_all(&cfg.out_dir)?;
     let _lock = crate::runtime::lock_file(&cfg.out_dir.join(".task.lock"))?;
@@ -320,7 +323,9 @@ async fn reprocess(
                 matches!(c, Component::Proofreading | Component::Summary) && has(c)
             });
             let matching_service = request.service_versions.get("llm").map_or(
-                receipt.service_version.starts_with("snapshot:"),
+                receipt
+                    .service_version
+                    .starts_with(crate::dispatch::SNAPSHOT_PREFIX),
                 |version| version == &receipt.service_version,
             );
             if needed && matching_service && execution::valid_id(&receipt.stable_id) {
@@ -417,7 +422,7 @@ async fn reprocess(
             result => {
                 outcomes.screenshots = Outcome::failed(match result {
                     Err(error) => format!("{error:#}"),
-                    _ => crate::tr!("没有提取到截图 / No screenshots captured").into(),
+                    _ => crate::tr!(NO_SCREENSHOTS).into(),
                 });
                 if components.len() == 1 {
                     anyhow::bail!(crate::tr!(
@@ -452,16 +457,7 @@ async fn reprocess(
                     image: section.image.clone(),
                 })
                 .collect::<Vec<_>>();
-            document.sections = if frames.is_empty() {
-                vec![timeline::Section {
-                    t: 0.,
-                    end: document.meta.duration,
-                    image: String::new(),
-                    speech,
-                }]
-            } else {
-                timeline::merge(frames, speech, document.meta.duration)
-            };
+            document.sections = build_sections(frames, speech, document.meta.duration);
             timeline::coalesce_sections(&mut document.sections);
         } else {
             for event in document
@@ -817,7 +813,7 @@ async fn run_prepared(
                     }
                 };
                 // 全空转写不入缓存：空缓存会在下次运行时挡住重新识别
-                if cache.events.iter().any(|e| !e.text.trim().is_empty()) {
+                if crate::timeline::has_readable_events(&cache.events) {
                     crate::checkpoint::atomic_write(
                         &cache_path,
                         &serde_json::to_vec_pretty(&cache)?,
@@ -837,8 +833,7 @@ async fn run_prepared(
             frames
         }
         Ok(_) => {
-            outcomes.screenshots =
-                Outcome::failed(crate::tr!("未提取到截图 / No screenshots were captured"));
+            outcomes.screenshots = Outcome::failed(crate::tr!(NO_SCREENSHOTS));
             Vec::new()
         }
         Err(error) => {
@@ -847,7 +842,7 @@ async fn run_prepared(
         }
     };
     let transcript = match transcript_result {
-        Ok(cache) if cache.events.iter().any(|e| !e.text.trim().is_empty()) => {
+        Ok(cache) if crate::timeline::has_readable_events(&cache.events) => {
             outcomes.transcript = Outcome::succeeded();
             cache
         }
@@ -884,16 +879,7 @@ async fn run_prepared(
         }
     };
     save_materials(cfg, &frames, &transcript.events, &outcomes)?;
-    let mut sections = if frames.is_empty() {
-        vec![timeline::Section {
-            t: 0.,
-            end: meta.duration,
-            image: String::new(),
-            speech: transcript.events,
-        }]
-    } else {
-        timeline::merge(frames, transcript.events, meta.duration)
-    };
+    let mut sections = build_sections(frames, transcript.events, meta.duration);
     timeline::coalesce_sections(&mut sections);
     // Save the complete raw body before any optional request.
     crate::checkpoint::atomic_write(
@@ -1096,6 +1082,25 @@ pub fn all_speech(sections: &[timeline::Section]) -> Vec<timeline::TranscriptEve
         .collect()
 }
 
+/// Build sections from optional frames and a transcript, keeping the single
+/// "no screenshots" shape in one place.
+fn build_sections(
+    frames: Vec<timeline::FrameEvent>,
+    speech: Vec<timeline::TranscriptEvent>,
+    duration: f64,
+) -> Vec<timeline::Section> {
+    if frames.is_empty() {
+        vec![timeline::Section {
+            t: 0.,
+            end: duration,
+            image: String::new(),
+            speech,
+        }]
+    } else {
+        timeline::merge(frames, speech, duration)
+    }
+}
+
 /// Transcript scale shared by every "done" event.
 fn done_stats(sections: &[timeline::Section]) -> (usize, usize) {
     (
@@ -1117,7 +1122,7 @@ fn cached_transcript(cache_path: &Path) -> Result<Option<TranscriptCache>> {
     let cache: TranscriptCache = serde_json::from_slice(&std::fs::read(cache_path)?).context(
         crate::tr!("已保存的文字损坏，原文件已保留 / Saved transcript is damaged"),
     )?;
-    if cache.events.iter().any(|e| !e.text.trim().is_empty()) {
+    if crate::timeline::has_readable_events(&cache.events) {
         execution::validate_events(&cache.events)?;
         return Ok(Some(cache));
     }
@@ -1245,60 +1250,46 @@ impl FailureRecord<'_> {
     async fn around(&self, work: impl std::future::Future<Output = Result<()>>) -> Result<()> {
         let result = work.await;
         if let Err(error) = &result {
-            write_failure_run_json(
-                self.cfg,
-                self.is_local,
-                self.platform,
-                self.id,
-                error,
-                self.started,
-            );
+            self.write_run_json(error);
         }
         result
     }
-}
 
-/// 记录版本/来源/最终 provider/asr_model/错误全文/耗时；若 llama-server 已
-/// spawn 过，附带实际启动参数（GPU 卡死类问题的关键证据）。
-/// 写失败只告警：原错误才是主角，诊断记录不能反过来搞砸错误路径。
-fn write_failure_run_json(
-    cfg: &PipelineConfig,
-    is_local: bool,
-    platform: &str,
-    id: &str,
-    err: &anyhow::Error,
-    t_total: Instant,
-) {
-    let mut info = serde_json::json!({
-        "success": false,
-        "course2md_version": env!("CARGO_PKG_VERSION"),
-        "source": {
-            "kind": if is_local { "local" } else { "remote" },
-            "platform": platform,
-            "id": id,
-            "url": cfg.url,
-        },
-        "provider": cfg.provider.as_str(),
-        "asr_model": cfg.asr_model.clone().unwrap_or_else(|| "backend-default".into()),
-        "error": format!("{err:#}"),
-        "elapsed_secs": (t_total.elapsed().as_secs_f64() * 100.0).round() / 100.0,
-    });
-    if let Some(args) = crate::asr::last_llama_spawn_args() {
-        info["llama_server_args"] = serde_json::json!(args);
-    }
-    match serde_json::to_string_pretty(&info) {
-        Ok(s) => {
-            if let Err(e) =
-                crate::checkpoint::atomic_write(&cfg.out_dir.join("run.json"), s.as_bytes())
-            {
-                tracing::warn!(
-                    "写失败诊断 run.json 失败 / Failed to write failure diagnostics run.json: {e:#}"
-                );
-            }
+    /// Record version/source/final provider/asr_model/error text/elapsed time.
+    /// A failed write only warns: the original error is the outcome.
+    fn write_run_json(&self, err: &anyhow::Error) {
+        let cfg = self.cfg;
+        let mut info = serde_json::json!({
+            "success": false,
+            "course2md_version": env!("CARGO_PKG_VERSION"),
+            "source": {
+                "kind": if self.is_local { "local" } else { "remote" },
+                "platform": self.platform,
+                "id": self.id,
+                "url": cfg.url,
+            },
+            "provider": cfg.provider.as_str(),
+            "asr_model": cfg.asr_model.clone().unwrap_or_else(|| "backend-default".into()),
+            "error": format!("{err:#}"),
+            "elapsed_secs": (self.started.elapsed().as_secs_f64() * 100.0).round() / 100.0,
+        });
+        if let Some(args) = crate::asr::last_llama_spawn_args() {
+            info["llama_server_args"] = serde_json::json!(args);
         }
-        Err(e) => tracing::warn!(
-            "序列化失败诊断 run.json 失败 / Failed to serialize failure diagnostics run.json: {e:#}"
-        ),
+        match serde_json::to_string_pretty(&info) {
+            Ok(text) => {
+                if let Err(error) =
+                    crate::checkpoint::atomic_write(&cfg.out_dir.join("run.json"), text.as_bytes())
+                {
+                    tracing::warn!(
+                        "写失败诊断 run.json 失败 / Failed to write failure diagnostics run.json: {error:#}"
+                    );
+                }
+            }
+            Err(error) => tracing::warn!(
+                "序列化失败诊断失败 / Failed to serialize failure diagnostics: {error:#}"
+            ),
+        }
     }
 }
 

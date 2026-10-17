@@ -10,16 +10,8 @@ pub fn default_formats() -> Vec<config::OutputFormat> {
 /// 配置文件 + CLI 覆盖 -> 生效 LLM 设置。
 fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> llm::LlmSettings {
     let mut s = file.llm.clone();
-    if opts.no_llm {
-        s.enabled = false;
-    } else if opts.llm {
-        s.enabled = true;
-    }
-    if opts.no_llm_vision {
-        s.vision = false;
-    } else if opts.llm_vision {
-        s.vision = true;
-    }
+    s.enabled = config::resolve_flag(opts.llm, opts.no_llm, None, s.enabled);
+    s.vision = config::resolve_flag(opts.llm_vision, opts.no_llm_vision, None, s.vision);
     if let Some(v) = &opts.llm_base_url {
         s.base_url = v.clone();
     }
@@ -35,11 +27,7 @@ fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> llm::LlmSettings 
     if opts.no_llm_hint {
         s.disable_hint = true;
     }
-    if opts.no_summarize {
-        s.summarize = false;
-    } else if opts.summarize {
-        s.summarize = true;
-    }
+    s.summarize = config::resolve_flag(opts.summarize, opts.no_summarize, None, s.summarize);
     s
 }
 
@@ -111,17 +99,21 @@ pub fn resolve(
             .or_else(|| d.formats.clone())
             .unwrap_or_else(default_formats),
         model_dir: config::model_dir_from(opts.model_dir.as_deref().or(d.model_dir.as_deref())),
-        keep_video: !opts.no_keep_video && (opts.keep_video || d.keep_video.unwrap_or(false)),
+        keep_video: config::resolve_flag(opts.keep_video, opts.no_keep_video, d.keep_video, false),
         no_download: opts.no_download || d.no_download.unwrap_or(false),
-        resume: config::resolve_resume(opts.resume, opts.no_resume, d.resume),
+        resume: config::resolve_flag(opts.resume, opts.no_resume, d.resume, true),
         llm: resolve_llm(opts, file),
         asr_api: resolve_asr_api(opts, file),
         asr_model: opts.asr_model.clone().or_else(|| d.asr_model.clone()),
-        gpu_layers: config::resolve_gpu_layers(opts.gpu_layers, d.gpu_layers),
-        mmproj_offload: config::resolve_mmproj_offload(
+        gpu_layers: opts
+            .gpu_layers
+            .or(d.gpu_layers)
+            .unwrap_or(config::DEFAULT_GPU_LAYERS),
+        mmproj_offload: config::resolve_flag(
             opts.mmproj_offload,
             opts.no_mmproj_offload,
             d.mmproj_offload,
+            true,
         ),
         transcript_source: opts
             .transcript_source

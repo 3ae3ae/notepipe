@@ -188,12 +188,7 @@ pub fn failure_message(error: &anyhow::Error) -> String {
         .downcast_ref::<crate::dispatch::Failure>()
         .map(|failure| failure.message.clone())
         .unwrap_or_else(|| error.chain().last().unwrap_or(error.as_ref()).to_string());
-    message
-        .split(" / ")
-        .next()
-        .unwrap_or(&message)
-        .trim()
-        .to_string()
+    message.trim().to_string()
 }
 
 fn split_chunks(events: &[TranscriptEvent], char_limit: usize) -> Vec<Vec<TranscriptEvent>> {
@@ -271,49 +266,41 @@ pub async fn summarize(
         chars = total_chars,
         "summary map-reduce"
     );
-    let mut partials: Vec<Summary> = Vec::new();
-    for batch in chunks.chunks(SUMMARIZE_CONCURRENCY) {
-        let mut handles = Vec::with_capacity(batch.len());
-        for (offset, chunk) in batch.iter().enumerate() {
-            let t = format!("{ctx}{}", build_transcript(chunk));
-            let s2 = s.clone();
-            let agent = agent.clone();
-            let description = crate::tr!(
-                "生成第 {}/{} 部分摘要（{}–{}） / Generate summary part {}/{} ({}–{})",
-                partials.len() + offset + 1,
-                chunks.len(),
-                crate::render::fmt_ts(chunk.first().unwrap().start),
-                crate::render::fmt_ts(chunk.last().unwrap().end),
-                partials.len() + offset + 1,
-                chunks.len(),
-                crate::render::fmt_ts(chunk.first().unwrap().start),
-                crate::render::fmt_ts(chunk.last().unwrap().end)
-            );
-            handles.push(tokio::task::spawn_blocking(move || {
-                summarize_text(&agent, &s2, &t, &description)
-            }));
-        }
-        let mut failure = None;
-        // Join every started request so its confirmed result is saved, even if a peer failed.
-        for handle in handles {
-            match handle
-                .await
-                .context(crate::tr!("摘要工作进程中断 / Summary worker interrupted"))?
-            {
-                Ok(summary) => partials.push(summary),
-                Err(error) => {
-                    if failure.is_none() {
-                        failure = Some(error);
-                    }
-                }
-            }
-        }
-        if let Some(error) = failure {
-            return Err(error.context(crate::tr!(
-                "部分摘要尚未完成，没有生成不完整的整篇摘要 / Summary parts are incomplete"
-            )));
-        }
-    }
+    let total = chunks.len();
+    let settings = s.clone();
+    let map_agent = agent.clone();
+    let map_ctx = ctx.clone();
+    let partials = tokio::task::spawn_blocking(move || {
+        crate::runtime::map_pool(
+            chunks.into_iter().enumerate().collect(),
+            SUMMARIZE_CONCURRENCY,
+            |(index, chunk)| {
+                let first = chunk
+                    .first()
+                    .map(|event| crate::render::fmt_ts(event.start))
+                    .unwrap_or_default();
+                let last = chunk
+                    .last()
+                    .map(|event| crate::render::fmt_ts(event.end))
+                    .unwrap_or_default();
+                let transcript = format!("{map_ctx}{}", build_transcript(&chunk));
+                let description = crate::tr!(
+                    "生成第 {}/{} 部分摘要（{}–{}） / Generate summary part {}/{} ({}–{})",
+                    index + 1,
+                    total,
+                    first,
+                    last,
+                    index + 1,
+                    total,
+                    first,
+                    last
+                );
+                summarize_text(&map_agent, &settings, &transcript, &description)
+            },
+        )
+    })
+    .await
+    .context(crate::tr!("摘要工作进程中断 / Summary worker interrupted"))??;
     // 合并分段摘要
     let mut combiner_input = ctx.clone();
     for (idx, sm) in partials.iter().enumerate() {

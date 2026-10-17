@@ -70,7 +70,7 @@ pub enum TimelineEvent {
     Speech(TranscriptEvent),
 }
 
-/// 合并算法（见 docs/DESIGN.md §3.2）：
+/// 合并算法：
 /// 每条语音按中点归属「时间 ≤ 中点的最后一张截图」；首张之前的归首张。
 /// 跨截图边界的语音只在边界附近找到句读/空格时才拆分（保持图文对应）；
 /// 找不到自然断点则整段保留——宁可晚一页，也不按字符比例从词中间截断。
@@ -231,12 +231,28 @@ pub fn coalesce_sections(sections: &mut [Section]) {
     }
 }
 
+/// Whether a transcript has any text worth publishing or reusing.
+pub fn has_readable_events(events: &[TranscriptEvent]) -> bool {
+    events.iter().any(|event| !event.text.trim().is_empty())
+}
+
 /// 保留拉丁文字的词间/句间空格；中文、日文和连字符内的片段直接相连。
 fn append_text(paragraph: &mut String, next: &str) {
-    let latin_word = |c: char| {
-        c.is_ascii_alphanumeric()
-            || (c.is_alphabetic() && matches!(c, '\u{00c0}'..='\u{024f}' | '\u{1e00}'..='\u{1eff}'))
-    };
+    fn is_cjk(c: char) -> bool {
+        matches!(
+            c as u32,
+            0x3000..=0x303f
+                | 0x3040..=0x30ff
+                | 0x3400..=0x4dbf
+                | 0x4e00..=0x9fff
+                | 0xac00..=0xd7af
+                | 0xf900..=0xfaff
+                | 0xff00..=0xffef
+        )
+    }
+    // Spacing is needed between words in Latin, Cyrillic, Greek, etc.; CJK,
+    // kana and hangul are written without spaces.
+    let latin_word = |c: char| c.is_alphanumeric() && !is_cjk(c);
     let previous_is_word = paragraph
         .trim_end_matches(['.', ',', '!', '?', ':', ';', ')', ']', '}', '»', '”', '"'])
         .chars()

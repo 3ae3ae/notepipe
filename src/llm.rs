@@ -19,7 +19,7 @@ pub const DEFAULT_PROMPT: &str = "你是视频逐字稿校对器。输入的每�
 并修复不自然的断句和标点，使文字自然、书面化。不得概括、扩写、翻译、增删实质内容或改变原意；\
 保持原语言。若某条内容仅由语气词、口头禅或无实义片段构成（如单独的\"啊\"、\"对吧\"），\
 该条的 text 返回空字符串 \"\"（系统会删除该条）；有实质内容的条目不得删除。\
-输出与输入逐条对应的 JSON 对象 {\"segments\":[{\"id\":序号,\"text\":\"校对后的文本\"}]}，不要输出任何其他内容。";
+";
 
 /// 每次请求合并的语音段数。
 const BATCH: usize = 20;
@@ -149,31 +149,9 @@ pub(crate) fn chat_agent() -> ureq::Agent {
     crate::runtime::http_agent(Duration::from_secs(300))
 }
 
-/// chat/completions 公共参数：温度固定 0（校对/摘要都要求确定性输出）。
-pub(crate) const CHAT_TEMPERATURE: f64 = 0.0;
+const ERROR_BODY_LIMIT: u64 = 4 * 1024 * 1024;
 /// 单次请求输出 token 上限（校对与摘要共用）。
 pub(crate) const CHAT_MAX_TOKENS: u32 = 16384;
-
-/// 构造标准 chat/completions 请求体（temperature=0、json_object 结构化输出）。
-/// 校对与摘要共用，避免两处各自拼 body 参数漂移；
-/// `user` 传 &str 为纯文本消息，传 `serde_json::Value::Array` 为多模态内容块。
-pub(crate) fn chat_body(
-    model: &str,
-    system: &str,
-    user: impl Into<serde_json::Value>,
-    max_tokens: u32,
-) -> serde_json::Value {
-    serde_json::json!({
-        "model": model,
-        "temperature": CHAT_TEMPERATURE,
-        "max_tokens": max_tokens,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user.into()},
-        ]
-    })
-}
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PolishReport {
@@ -245,25 +223,21 @@ pub fn polish_sections_report(
         return Ok(PolishReport::default());
     }
     let warned = std::sync::atomic::AtomicBool::new(false);
-    // 逐节读图并检查任务控制文件：大课程读图期间暂停/取消也能及时生效。
-    // None = 该节截图不可用，整节保留原文。
-    let mut images: Vec<Option<Option<String>>> = Vec::with_capacity(sections.len());
+    // Paths only: the image is read and encoded once per request batch, not all up front.
+    let mut image_paths: Vec<Option<std::path::PathBuf>> = Vec::with_capacity(sections.len());
     for sec in sections.iter() {
         crate::dispatch::check_control()?;
-        images.push(if s.vision && !sec.speech.is_empty() {
-            section_image_b64(frames_root, sec, &warned).map(Some)
-        } else {
-            Some(None)
-        });
+        image_paths
+            .push((s.vision && !sec.speech.is_empty()).then(|| frames_root.join(&sec.image)));
     }
-    let mut chunks: Vec<(Option<&str>, Vec<&mut TranscriptEvent>)> = Vec::new();
+    let mut chunks: Vec<(Option<std::path::PathBuf>, Vec<&mut TranscriptEvent>)> = Vec::new();
     if s.vision {
-        for (sec, image) in sections.iter_mut().zip(&images) {
+        for (sec, image) in sections.iter_mut().zip(&image_paths) {
             let Some(image) = image else { continue };
             let mut refs: Vec<_> = sec.speech.iter_mut().collect();
             while !refs.is_empty() {
                 let rest = refs.split_off(refs.len().min(BATCH));
-                chunks.push((image.as_deref(), std::mem::replace(&mut refs, rest)));
+                chunks.push((Some(image.clone()), std::mem::replace(&mut refs, rest)));
             }
         }
     } else {
@@ -287,7 +261,19 @@ pub fn polish_sections_report(
         s.concurrency.clamp(1, MAX_CONCURRENCY),
         &succeeded,
         &pb,
-        &|(image, mut chunk)| polish_chunk(&agent, s, &mut chunk, image, &warned, &first_error),
+        &|(image_path, mut chunk)| {
+            let image = image_path
+                .as_deref()
+                .and_then(|path| section_image_b64(path, &warned));
+            polish_chunk(
+                &agent,
+                s,
+                &mut chunk,
+                image.as_deref(),
+                &warned,
+                &first_error,
+            )
+        },
     )?;
     pb.finish();
     // 删除「成功校对为空串」的纯语气词条目（全部 chunk 完成后统一过滤）
@@ -304,14 +290,10 @@ pub fn polish_sections_report(
 }
 
 /// 读取本节校对截图的 base64；None = 截图不可用（已告警）。
-fn section_image_b64(
-    frames_root: &Path,
-    sec: &Section,
-    warned: &std::sync::atomic::AtomicBool,
-) -> Option<String> {
+fn section_image_b64(path: &Path, warned: &std::sync::atomic::AtomicBool) -> Option<String> {
     use base64::Engine as _;
-    let p = frames_root.join(&sec.image);
-    match std::fs::read(&p) {
+    let p = path;
+    match std::fs::read(p) {
         Ok(bytes) => Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
         Err(e) => {
             warn_once(
@@ -817,7 +799,7 @@ pub fn test_connection(s: &LlmSettings) -> Result<()> {
         let mut bytes = Vec::new();
         use std::io::Read as _;
         resp.into_reader()
-            .take(4 * 1024 * 1024 + 1)
+            .take(ERROR_BODY_LIMIT + 1)
             .read_to_end(&mut bytes)
             .context(crate::tr!(
                 "服务响应接收中断 / Service response was interrupted"

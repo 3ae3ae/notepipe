@@ -132,9 +132,10 @@ pub fn sanitize_qwen_text(s: &str) -> String {
     if let Some(p) = t.rfind("<asr_text>") {
         t = t[p + "<asr_text>".len()..].trim();
     }
-    if t.get(..9)
-        .is_some_and(|p| p.eq_ignore_ascii_case("language "))
-        && let Some((_, rest)) = t[9..].split_once(char::is_whitespace)
+    const LANGUAGE_PREFIX: &str = "language ";
+    if t.get(..LANGUAGE_PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(LANGUAGE_PREFIX))
+        && let Some((_, rest)) = t[LANGUAGE_PREFIX.len()..].split_once(char::is_whitespace)
     {
         t = rest.trim();
     }
@@ -252,10 +253,7 @@ fn run_blocking(
     let segs = ffmpeg_vad(wav, max_speech)?;
     tracing::info!(segs = segs.len(), "vad");
     if segs.is_empty() {
-        tracing::warn!(
-            "未检测到语音，将仅保留截图 / No speech detected; keeping slides without a transcript"
-        );
-        return Ok(vec![]);
+        return Ok(no_speech_events());
     }
 
     let bin = find_llama_server()?;
@@ -338,7 +336,7 @@ fn run_blocking(
         .timeout(LLAMA_HTTP_TIMEOUT)
         .build();
     let tmp = crate::runtime::TempWorkDir::new("asr")?;
-    let r = run_chunks(wav, &segs, cp, tmp.path(), "asr", |_i, _seg, chunk| {
+    let r = run_chunks(wav, &segs, cp, tmp.path(), "asr", |chunk| {
         transcribe_file(&client, &base, chunk).map(|t| {
             let t = sanitize_qwen_text(&t);
             (!t.is_empty()).then_some(t)
@@ -364,6 +362,14 @@ fn run_blocking(
     Ok(events)
 }
 
+/// 所有后端共用的「VAD 后没有语音」收尾：只保留截图，并记录空结果。
+pub(crate) fn no_speech_events() -> Vec<TranscriptEvent> {
+    tracing::warn!(
+        "未检测到语音，将仅保留截图 / No speech detected; keeping slides without a transcript"
+    );
+    Vec::new()
+}
+
 /// 顺序 chunk 执行器：统一切音频、断点跳过、进度条、记录（含空结果）、
 /// chunk 清理与收尾排序。backend 只需提供「chunk 文件 → 文本」函数。
 /// Ok(None) = 后端确认无语音内容（同样记录完成，避免静音段反复重跑）。
@@ -377,7 +383,7 @@ pub(crate) fn run_chunks(
     cp: &mut crate::checkpoint::Checkpoint,
     tmp_dir: &Path,
     label: &str,
-    mut transcribe: impl FnMut(usize, Seg, &Path) -> Result<Option<String>>,
+    mut transcribe: impl FnMut(&Path) -> Result<Option<String>>,
 ) -> Result<Vec<TranscriptEvent>> {
     let pb = crate::progress::Bar::new("transcribe", segs.len() as u64).with_template(&format!(
         "{{spinner:.green}} {label} {{pos}}/{{len}} [{{bar:32.cyan/blue}}] {{elapsed}} {{eta}} {{msg}}"
@@ -423,7 +429,7 @@ pub(crate) fn run_chunks(
                     }),
                 ));
             }
-            match transcribe(i, seg, &chunk) {
+            match transcribe(&chunk) {
                 Ok(text) => {
                     let text = text.as_deref().unwrap_or("");
                     if let Err(e) = tracker.record_outcome(cp, start, end, text) {
@@ -469,10 +475,7 @@ fn run_api(
     let segs = ffmpeg_vad(wav, max_speech as f32)?;
     tracing::info!(segs = segs.len(), endpoint = %api.base_url, model = %api.model, "api vad");
     if segs.is_empty() {
-        tracing::warn!(
-            "未检测到语音，将仅保留截图 / No speech detected; keeping slides without a transcript"
-        );
-        return Ok(vec![]);
+        return Ok(no_speech_events());
     }
 
     let tmp = crate::runtime::TempWorkDir::new("asr")?;
@@ -1246,8 +1249,7 @@ pub fn normalize_segments(
                 s
             };
             let cut_end = if is_last_of_host {
-                let hi = if dur > 0.0 { speech_hi } else { e + PAD };
-                (e + PAD).min(hi)
+                (e + PAD).min(speech_hi)
             } else {
                 e
             };

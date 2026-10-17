@@ -1,6 +1,6 @@
 //! ASR checkpoint：逐 chunk 追加写 asr.jsonl，重跑时按精确时间边界跳过已完成段。
 //!
-//! v2 语义（1.0 起）：
+//! 语义：
 //! - **运行身份**：`.asr_identity` 记录 (schema 版本, provider, 模型, max_speech)。
 //!   身份不一致的旧进度（换模型/换后端/换切分长度）整体作废并重算，
 //!   杜绝「换模型后 resume 混用两个模型的转写」。
@@ -182,7 +182,7 @@ impl Checkpoint {
         Ok(cp)
     }
 
-    /// 磁盘上存的身份；文件不存在（1.0 前旧 checkpoint）返回 None。
+    /// 磁盘上存的身份；文件不存在时返回 None。
     fn stored_identity(path: &Path) -> Result<Option<AsrIdentity>> {
         if !path.is_file() {
             return Ok(None);
@@ -300,6 +300,7 @@ impl Checkpoint {
 
     /// 已完成且有文本的事件（含 resume 加载的历史 + 本次新增）。
     /// 空文本 chunk 是静音标记，不进时间线。
+    #[cfg(test)]
     pub fn events(&self) -> &[TranscriptEvent] {
         &self.events
     }
@@ -586,7 +587,7 @@ mod tests {
 
     #[test]
     fn truncated_tail_is_cut_before_resume_appends() {
-        // B2 回归：末行半截 → resume 后继续 record，不得把新行拼在残行后
+        // 末行半截 → resume 后继续 record，不得把新行拼在残行后
         // （否则形成中间损坏行，下次 resume 硬错误，进度自我污染）。
         let d = tmpdir("tailwrite");
         let ev = |s: f64, t: &str| {

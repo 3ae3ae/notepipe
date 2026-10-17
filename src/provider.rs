@@ -54,6 +54,21 @@ pub(crate) fn is_sse(s: &LlmSettings) -> bool {
     s.provider == LlmProvider::Codex
 }
 
+/// Standard OpenAI-compatible chat body. Temperature is fixed at 0 because
+/// proofreading and summaries require deterministic output.
+fn openai_chat_body(model: &str, system: &str, user: impl Into<Value>, max_tokens: u32) -> Value {
+    serde_json::json!({
+        "model": model,
+        "temperature": 0.0,
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user.into()},
+        ]
+    })
+}
+
 /// 构造请求体（结构化输出契约在两种方言中各自表达）。
 pub(crate) fn chat_body(
     s: &LlmSettings,
@@ -74,7 +89,7 @@ pub(crate) fn chat_body(
                 "text": {"format": {"type": "json_object"}},
             })
         }
-        _ => crate::llm::chat_body(&s.model, system, user.into(), max_tokens),
+        _ => openai_chat_body(&s.model, system, user.into(), max_tokens),
     }
 }
 
@@ -121,22 +136,22 @@ fn codex_content(user: Value) -> Value {
     Value::Array(parts)
 }
 
+fn structured_format_key(s: &LlmSettings) -> &'static str {
+    match s.provider {
+        LlmProvider::Codex => "text",
+        _ => "response_format",
+    }
+}
+
 /// 端点是否声明了结构化输出约束（400/422 降级重试的前提）。
 pub(crate) fn has_structured_format(s: &LlmSettings, body: &Value) -> bool {
-    match s.provider {
-        LlmProvider::Codex => body.get("text").is_some(),
-        _ => body.get("response_format").is_some(),
-    }
+    body.get(structured_format_key(s)).is_some()
 }
 
 /// 去掉结构化输出约束（端点明确不支持时降级重试一次）。
 pub(crate) fn strip_structured_format(s: &LlmSettings, body: &mut Value) {
-    let key = match s.provider {
-        LlmProvider::Codex => "text",
-        _ => "response_format",
-    };
     if let Some(obj) = body.as_object_mut() {
-        obj.remove(key);
+        obj.remove(structured_format_key(s));
     }
 }
 

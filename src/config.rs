@@ -606,34 +606,16 @@ pub fn expand_tilde(p: PathBuf) -> PathBuf {
     p
 }
 
-/// resume 三态解析：`--no-resume` > `--resume` > 配置文件 > 默认开启。
-/// 两级 CLI flag 互斥（clap conflicts_with），不会同时为 true。
-pub fn resolve_resume(cli_resume: bool, cli_no_resume: bool, file_resume: Option<bool>) -> bool {
-    if cli_no_resume {
-        return false;
-    }
-    if cli_resume {
-        return true;
-    }
-    file_resume.unwrap_or(true)
-}
-
-/// gpu_layers 三态解析：CLI > 配置文件 > 内置默认 99（全量卸载）。
-pub fn resolve_gpu_layers(cli: Option<u32>, file: Option<u32>) -> u32 {
-    cli.or(file).unwrap_or(DEFAULT_GPU_LAYERS)
-}
-
-/// mmproj_offload 三态解析：`--no-mmproj-offload` > `--mmproj-offload` > 配置文件 >
-/// 默认开启（llama-server 原生行为）。
-/// 两个 CLI flag 互斥（clap conflicts_with），不会同时为 true。
-pub fn resolve_mmproj_offload(cli_on: bool, cli_off: bool, file: Option<bool>) -> bool {
+/// Tri-state flag: an explicit off wins over on; otherwise the file value,
+/// then the built-in default.
+pub fn resolve_flag(cli_on: bool, cli_off: bool, file: Option<bool>, default: bool) -> bool {
     if cli_off {
-        return false;
+        false
+    } else if cli_on {
+        true
+    } else {
+        file.unwrap_or(default)
     }
-    if cli_on {
-        return true;
-    }
-    file.unwrap_or(true)
 }
 
 /// 平台默认后端提示（doctor 展示与 main 实际选择保持同一逻辑）。
@@ -955,16 +937,14 @@ mod tests {
     }
 
     #[test]
-    fn resume_priority() {
-        // --no-resume 压倒一切
-        assert!(!resolve_resume(true, true, Some(true)));
-        assert!(!resolve_resume(false, true, Some(true)));
-        // --resume 次之
-        assert!(resolve_resume(true, false, Some(false)));
-        // 都没传：回落配置文件
-        assert!(resolve_resume(false, false, Some(true)));
-        assert!(!resolve_resume(false, false, Some(false)));
-        assert!(resolve_resume(false, false, None));
+    fn flag_priority() {
+        // Explicit off beats on; then on; then the file; then the default.
+        assert!(!resolve_flag(true, true, Some(true), true));
+        assert!(!resolve_flag(false, true, Some(true), true));
+        assert!(resolve_flag(true, false, Some(false), false));
+        assert!(resolve_flag(false, false, Some(true), false));
+        assert!(!resolve_flag(false, false, Some(false), true));
+        assert!(resolve_flag(false, false, None, true));
     }
 
     #[test]
@@ -976,21 +956,6 @@ mod tests {
         c.validate().unwrap();
         c.gpu_layers = 99;
         c.validate().unwrap();
-    }
-
-    #[test]
-    fn gpu_offload_priority() {
-        // CLI > 配置文件 > 内置默认
-        assert_eq!(resolve_gpu_layers(Some(8), Some(4)), 8);
-        assert_eq!(resolve_gpu_layers(None, Some(4)), 4);
-        assert_eq!(resolve_gpu_layers(None, None), DEFAULT_GPU_LAYERS);
-
-        assert!(!resolve_mmproj_offload(true, true, Some(true)));
-        assert!(resolve_mmproj_offload(true, false, Some(false)));
-        assert!(!resolve_mmproj_offload(false, true, Some(true)));
-        assert!(!resolve_mmproj_offload(false, false, Some(false)));
-        assert!(resolve_mmproj_offload(false, false, Some(true)));
-        assert!(resolve_mmproj_offload(false, false, None));
     }
 
     #[test]

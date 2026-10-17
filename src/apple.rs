@@ -335,10 +335,7 @@ pub fn run_coreml(
     let segs = crate::asr::normalize_segments(raw, max_speech, wav, dur)?;
     tracing::info!(segs = segs.len(), engine = "silero-coreml", "vad");
     if segs.is_empty() {
-        tracing::warn!(
-            "未检测到语音，将仅保留截图 / No speech detected; keeping slides without a transcript"
-        );
-        return Ok(vec![]);
+        return Ok(crate::asr::no_speech_events());
     }
 
     ensure_metallib()?;
@@ -353,7 +350,7 @@ pub fn run_coreml(
         "coreml ready"
     );
 
-    let r = crate::asr::run_chunks(wav, &segs, cp, tmp_dir, "asr", |_i, _seg, chunk| {
+    let r = crate::asr::run_chunks(wav, &segs, cp, tmp_dir, "asr", |chunk| {
         asr.transcribe(chunk).map(|t| {
             let t = t.map(|s| crate::asr::sanitize_qwen_text(&s));
             t.filter(|s| !s.is_empty())
