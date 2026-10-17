@@ -496,36 +496,34 @@ fn clean_cue_text(line: &str) -> String {
 /// 在已有目录中挑一个字幕文件。新调用方会把确定的一条字幕抓取到独立目录；
 /// 这里绝不能选中属于其他来源的产物。
 pub fn pick_subtitle_file(dir: &Path) -> Option<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+    let files: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .flatten()
-        .map(|e| e.path())
-        // 与 is_subtitle_file 同一判定（大小写不敏感，含 vtt）
-        .filter(|p| is_subtitle_file(p))
+        .map(|entry| entry.path())
+        .filter(|path| is_subtitle_file(path))
         .collect();
     if files.is_empty() {
         return None;
     }
-    files.sort_by_key(|p| lang_rank(p));
-    files.into_iter().next()
-}
-
-/// 已有转换产物里的 SRT 文件名排序：中文优先，其次英文。
-fn lang_rank(p: &Path) -> (u8, String) {
-    let stem = p
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let lang = stem.rsplit('.').next().unwrap_or_default();
-    let rank = if lang.starts_with("zh") {
-        0
-    } else if lang.starts_with("en") {
-        1
-    } else {
-        2
-    };
-    (rank, stem)
+    let mut tracks: Vec<SubtitleTrack> = files
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let language = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .and_then(|stem| stem.split_once('.'))
+                .map(|(_, language)| language.to_owned());
+            let mut track = file_track(path, language);
+            track.source_order = index;
+            track
+        })
+        .collect();
+    sort_tracks(&mut tracks, &[], "zh", Some("en"));
+    tracks.into_iter().find_map(|track| match track.origin {
+        SubtitleOrigin::File { path } => Some(path),
+        _ => None,
+    })
 }
 
 /// 本地视频的同名字幕 sidecar（`lecture.srt`、`lecture.zh.vtt` 等，与桌面端同一发现规则），

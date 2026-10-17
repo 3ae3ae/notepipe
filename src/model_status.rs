@@ -190,7 +190,7 @@ pub fn inspect_at(
                     ],
                     false,
                 )?),
-                other => anyhow::bail!("未知的 Apple 模型 / Unknown Apple model: {other}"),
+                _ => unreachable!("canonical_model rejects unsupported Apple models"),
             }
             parts.push(apple_part(
                 apple_base,

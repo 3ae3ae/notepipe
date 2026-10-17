@@ -194,10 +194,14 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     &target.model,
                     &root,
                 ))??;
-                // 桌面按 done 事件判定完成；slides/segments 是该事件的必填字段
-                progress::emit(
-                    serde_json::json!({"type":"done", "out_dir":root, "title":status.model, "slides":0, "segments":0, "model_status":status}),
-                );
+                progress::emit(serde_json::json!({
+                    "type": "model_ready",
+                    "operation": "prepare",
+                    "dir": root,
+                    "provider": target.provider,
+                    "model": status.model,
+                    "status": status,
+                }));
                 if !json {
                     course2md::println_tr!("模型准备完成 / Model preparation finished.");
                     print_model_status(&status);
@@ -207,9 +211,11 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             ModelsCmd::Download { dir, json } => {
                 let root = configured_model_dir(dir.as_deref())?;
                 course2md::runtime::block_on(models::download_models(&root))??;
-                progress::emit(
-                    serde_json::json!({"type":"done", "model_dir": root.display().to_string()}),
-                );
+                progress::emit(serde_json::json!({
+                    "type": "model_ready",
+                    "operation": "download",
+                    "dir": root,
+                }));
                 if !json {
                     println!("模型已就绪 / Models ready: {}", root.display());
                 }

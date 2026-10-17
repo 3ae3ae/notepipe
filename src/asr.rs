@@ -300,7 +300,7 @@ fn run_blocking(
     if let Ok(mut g) = LAST_LLAMA_SPAWN_ARGS.lock() {
         *g = Some(args.clone());
     }
-    crate::progress::stage("model-load", "start");
+    crate::progress::stage("model/load", "start");
     let mut child = spawn_server(&bin, &args)?;
     let stderr_tail = child
         .take_stderr()
@@ -329,7 +329,7 @@ fn run_blocking(
         "server ready"
     );
 
-    crate::progress::stage("model-load", "done");
+    crate::progress::stage("model/load", "done");
 
     // 共享 agent：各 chunk 复用连接
     let client = ureq::AgentBuilder::new()

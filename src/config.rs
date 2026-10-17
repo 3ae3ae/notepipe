@@ -176,17 +176,10 @@ pub fn local_models(provider: AsrProvider) -> &'static [LocalModel] {
 
 /// 模型展示名；未知 id（如自定义仓库）原样返回。
 pub fn model_label(id: &str) -> &str {
-    [
-        QWEN3_1_7B,
-        QWEN3_0_6B,
-        WHISPER,
-        WHISPER_TINY,
-        WHISPER_BASE,
-        WHISPER_SMALL,
-    ]
-    .into_iter()
-    .find(|m| m.id == id)
-    .map_or(id, |m| m.label)
+    local_models(AsrProvider::Npu)
+        .iter()
+        .find(|model| model.id == id)
+        .map_or(id, |model| model.label)
 }
 
 /// 别名 → 规范 id（大小写不敏感）。空值表示默认模型。
@@ -252,6 +245,16 @@ pub enum SlideMode {
     First,
     #[default]
     Stable,
+}
+
+impl fmt::Display for TranscriptSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Auto => "auto",
+            Self::Subtitle => "subtitle",
+            Self::Asr => "asr",
+        })
+    }
 }
 
 impl fmt::Display for SlideMode {
@@ -335,7 +338,7 @@ pub struct PipelineConfig {
     pub out_root: PathBuf,
 }
 
-/// 感兴趣区域；坐标可为像素或比例（0.0-1.0）。
+/// 感兴趣区域；坐标以百分比表示（0–100%）。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Roi {
     pub x1: f64,
@@ -360,22 +363,10 @@ impl Roi {
         Ok(Self { x1, y1, x2, y2 })
     }
 
-    /// 按帧尺寸换算为像素矩形。约定：坐标值 ≤1.0 视为比例，>1.0 视为像素。
+    /// 按帧尺寸换算为像素矩形。
     pub fn pixels(&self, w: u32, h: u32) -> (u32, u32, u32, u32) {
-        let sx = |v: f64| {
-            if v <= 1.0 {
-                (v * w as f64).round() as u32
-            } else {
-                (v.round() as u32).min(w)
-            }
-        };
-        let sy = |v: f64| {
-            if v <= 1.0 {
-                (v * h as f64).round() as u32
-            } else {
-                (v.round() as u32).min(h)
-            }
-        };
+        let sx = |v: f64| (v * w as f64).round() as u32;
+        let sy = |v: f64| (v * h as f64).round() as u32;
         let (x1, x2) = (
             sx(self.x1).min(w.saturating_sub(1)),
             sx(self.x2).clamp(1, w),
@@ -397,16 +388,15 @@ fn parse_xy(pair: &str) -> anyhow::Result<(f64, f64)> {
 
 fn parse_coord(s: &str) -> anyhow::Result<f64> {
     let s = s.trim();
-    let v = if let Some(p) = s.strip_suffix('%') {
-        let percent: f64 = p.trim().parse()?;
-        anyhow::ensure!(
-            (0.0..=100.0).contains(&percent),
-            crate::tr!("ROI 百分比必须在 0–100 / ROI percentages must be between 0 and 100")
-        );
-        percent / 100.0
-    } else {
-        s.parse::<f64>()?
-    };
+    let p = s.strip_suffix('%').ok_or_else(|| {
+        anyhow::anyhow!("ROI 坐标必须使用百分比 / ROI coordinates must use percentages: {s:?}")
+    })?;
+    let percent: f64 = p.trim().parse()?;
+    anyhow::ensure!(
+        (0.0..=100.0).contains(&percent),
+        crate::tr!("ROI 百分比必须在 0–100 / ROI percentages must be between 0 and 100")
+    );
+    let v = percent / 100.0;
     anyhow::ensure!(
         v.is_finite() && v >= 0.0,
         crate::tr!(
@@ -626,7 +616,7 @@ pub fn default_provider_hint() -> AsrProvider {
         AsrProvider::Coreml
     } else if cfg!(target_os = "linux")
         && Path::new(crate::npu::NPU_DEVICE_PATH).exists()
-        && crate::error::require_cmd("llama-server").is_err()
+        && crate::runtime::which("llama-server").is_none()
     {
         AsrProvider::Npu
     } else {
@@ -727,19 +717,24 @@ pub fn bilibili_bvid(source: &str) -> Option<String> {
 }
 
 fn youtube_id(s: &str) -> Option<String> {
-    if let Some(rest) = s.split_once("v=").map(|(_, r)| r) {
-        let id = rest.split(['&', '#', '/']).next()?;
-        if id.len() >= 6 {
-            return Some(id.to_string());
-        }
+    let url = url::Url::parse(s)
+        .or_else(|_| url::Url::parse(&format!("https://{}", s.trim())))
+        .ok()?;
+    if known_video_site(url.as_str()) != Some("youtube") {
+        return None;
     }
-    if let Some(rest) = s.split_once("youtu.be/").map(|(_, r)| r) {
-        let id = rest.split(['?', '&', '#', '/']).next()?;
-        if !id.is_empty() {
-            return Some(id.to_string());
-        }
-    }
-    None
+    let id = if url.host_str()?.eq_ignore_ascii_case("youtu.be") {
+        url.path_segments()?.next()?.to_owned()
+    } else {
+        url.query_pairs()
+            .find(|(key, _)| key == "v")
+            .map(|(_, value)| value.into_owned())?
+    };
+    (id.len() >= 6
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    .then_some(id)
 }
 
 /// 路径组件的字符数上限（净化后的标题/平台名）：防止超长标题撑出超过

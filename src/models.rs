@@ -32,12 +32,18 @@ fn unsupported_model(status: &status::LocalModelStatus) -> anyhow::Error {
 }
 
 /// 下载缺失的模型文件（不加载）。`verify` 时额外用正式加载器验证 Apple/NPU 模型可离线加载。
+enum CoremlMode {
+    /// Download/repair files only; the later transcription loads the model.
+    Cache,
+    /// Load the model as the requested preparation step.
+    Prepare { cached: bool },
+}
+
 async fn fetch_model(
     provider: crate::config::AsrProvider,
     model: &str,
     root: &Path,
-    cached: bool,
-    verify: bool,
+    coreml: CoremlMode,
 ) -> Result<()> {
     use crate::config::AsrProvider;
     match provider {
@@ -47,11 +53,14 @@ async fn fetch_model(
             {
                 let model = model.to_owned();
                 tokio::task::spawn_blocking(move || {
-                    if !cached {
-                        crate::apple::prepare_cache(&model)?;
-                    }
-                    if verify {
-                        crate::apple::prepare_model(&model)?;
+                    match coreml {
+                        CoremlMode::Cache => crate::apple::prepare_cache(&model)?,
+                        CoremlMode::Prepare { cached } => {
+                            if !cached {
+                                crate::apple::prepare_cache(&model)?;
+                            }
+                            crate::apple::prepare_model(&model)?;
+                        }
                     }
                     Ok(())
                 })
@@ -62,7 +71,7 @@ async fn fetch_model(
             }
             #[cfg(not(apple_native))]
             {
-                let _ = (model, cached, verify);
+                let _ = (model, coreml);
                 Err(anyhow::anyhow!(crate::tr!(
                     "此程序未包含 Apple 原生识别运行时 / This build does not include the Apple native transcription runtime"
                 )))
@@ -97,7 +106,7 @@ pub async fn ensure_cache(
     ) {
         return Ok(());
     }
-    fetch_model(provider, &status.model, root, false, false).await
+    fetch_model(provider, &status.model, root, CoremlMode::Cache).await
 }
 
 /// Prepare the exact selected backend without sending course content or changing settings.
@@ -116,7 +125,13 @@ pub async fn prepare(
         before.state,
         status::CacheState::Cached | status::CacheState::Loaded
     );
-    let result = fetch_model(provider, &before.model, root, cached, true).await;
+    let result = fetch_model(
+        provider,
+        &before.model,
+        root,
+        CoremlMode::Prepare { cached },
+    )
+    .await;
     let after = status::inspect(provider, model, root).unwrap_or_else(|error| {
         tracing::warn!("模型二次检查失败，沿用准备前状态 / Post-prepare inspection failed; keeping the pre-prepare status: {error:#}");
         before
@@ -416,12 +431,14 @@ fn download_once(
     }
     fs::rename(tmp, dest)?;
     // manifest 记录 authoritative Content-Length，供后续启动校验（原子写，防半截 JSON）
-    let _ = crate::checkpoint::atomic_write(
+    if let Err(error) = crate::checkpoint::atomic_write(
         &dest.with_extension("manifest.json"),
         serde_json::json!({"size": if total > 0 { total } else { done }})
             .to_string()
             .as_bytes(),
-    );
+    ) {
+        tracing::warn!(path = %dest.display(), "模型清单未能写入 / Could not write the model manifest: {error:#}");
+    }
     pb.finish();
     tracing::info!(label = %label, bytes = done, "downloaded");
     Ok(())

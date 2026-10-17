@@ -41,37 +41,39 @@ try:
     import openvino_genai as ov_genai
     import numpy as np
 except ImportError as e:
-    sys.stderr.write("Error: 缺少 openvino_genai 或 numpy: " + str(e) + "\n请安装: pip install openvino-genai numpy 或使用 uv\n")
+    sys.stderr.write("错误 / Error: 缺少 openvino_genai 或 numpy: " + str(e) + "\n请安装 / Install: pip install openvino-genai numpy 或使用 uv / or use uv\n")
     sys.exit(1)
 
-model_arg = sys.argv[1] if len(sys.argv) > 1 else "dseditor/Qwen3-ASR-1.7B-INT8_OpenVINO"
-port = int(sys.argv[2])  # Rust 侧永远显式传参（free_port 动态分配），不留默认端口
-device = sys.argv[3] if len(sys.argv) > 3 else "NPU"
+model_arg = sys.argv[1]
+port = int(sys.argv[2])  # Rust 侧永远显式传参（free_port 动态分配）
+device = sys.argv[3]
+kind = sys.argv[4]
 # 会话令牌：本机任意进程不应能中断转写或占用推理（127.0.0.1 不等于可信）
-token = sys.argv[4] if len(sys.argv) > 4 else ""
+token = sys.argv[5]
 
 model_path = model_arg
 if not os.path.isdir(model_path):
     try:
         from huggingface_hub import snapshot_download
-        print("[NPU] 正在下载/加载 ASR 模型 " + model_arg + "...", flush=True)
+        sys.stderr.write("[NPU] 正在下载/加载 ASR 模型 " + model_arg + "...\n")
+        sys.stderr.flush()
         model_path = snapshot_download(model_arg)
     except Exception as e:
         # 不静默更换模型：请求什么模型就报什么错（换模型须用户显式 --asr-model）
-        sys.stderr.write("Error: 模型下载失败 " + model_arg + ": " + str(e) + "\n（可显式指定 --asr-model whisper 使用 Whisper）\n")
+        sys.stderr.write("错误 / Error: 模型下载失败 / model download failed " + model_arg + ": " + str(e) + "\n（可显式指定 --asr-model whisper 使用 Whisper / pass --asr-model whisper for Whisper）\n")
         sys.exit(1)
 
-print("[NPU] 正在将模型加载/编译至 " + device + "（首次编译可能需要 1~2 分钟）...", flush=True)
+sys.stderr.write("[NPU] 正在将模型加载/编译至 " + device + "（首次编译可能需要 1~2 分钟）...\n")
+sys.stderr.flush()
 t0 = time.time()
-is_qwen = "qwen" in str(model_arg).lower() or "qwen" in str(model_path).lower()
 
-if is_qwen and hasattr(ov_genai, "ASRPipeline"):
+if kind == "qwen" and hasattr(ov_genai, "ASRPipeline"):
     try:
         pipe = ov_genai.ASRPipeline(model_path, device)
         gen_cfg = getattr(ov_genai, "ASRGenerationConfig", lambda: None)()
     except Exception as e_qwen:
         # 加载失败直接报错退出，不回退到 Whisper（静默换模型会让转写来源不可追溯）
-        sys.stderr.write("Error: Qwen3 ASR 加载失败: " + str(e_qwen) + "\n（如需 Whisper 请显式指定 --asr-model whisper）\n")
+        sys.stderr.write("错误 / Error: Qwen3 ASR 加载失败 / load failed: " + str(e_qwen) + "\n（如需 Whisper 请显式指定 --asr-model whisper / pass --asr-model whisper for Whisper）\n")
         sys.exit(1)
 else:
     pipe = ov_genai.WhisperPipeline(model_path, device)
@@ -82,14 +84,15 @@ else:
         gen_cfg = ov_genai.WhisperGenerationConfig()
     # 语言由模型自动检测，不强制中文（硬编码 <|zh|> 会把英文课转成中文幻觉输出）
 
-print("[NPU] 模型在 " + device + " 就绪（耗时 " + f"{time.time()-t0:.2f}" + "s）", flush=True)
+sys.stderr.write("[NPU] 模型在 " + device + " 就绪（耗时 " + f"{time.time()-t0:.2f}" + "s）\n")
+sys.stderr.flush()
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
     def do_GET(self):
-        if self.path in ("/health", "/v1/health"):
+        if self.path == "/health":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -103,7 +106,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(403)
             self.end_headers()
             return
-        if self.path in ("/shutdown", "/v1/shutdown", "/exit"):
+        if self.path == "/shutdown":
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b'{"status":"bye"}')
@@ -136,7 +139,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(err_resp)
 
 server = http.server.HTTPServer(("127.0.0.1", port), Handler)
-print("[NPU] 监听 http://127.0.0.1:" + str(port), flush=True)
+sys.stderr.write("[NPU] 监听 http://127.0.0.1:" + str(port) + "\n")
+sys.stderr.flush()
 server.serve_forever()
 "#;
 
@@ -229,6 +233,14 @@ struct NpuWorker {
     token: String,
 }
 
+fn npu_kind(model_id: &str) -> &'static str {
+    if model_id.to_ascii_lowercase().contains("whisper") {
+        "whisper"
+    } else {
+        "qwen"
+    }
+}
+
 impl NpuWorker {
     fn start(model_id: &str) -> Result<Self> {
         let t0 = Instant::now();
@@ -240,8 +252,8 @@ impl NpuWorker {
         // 每次会话一个随机令牌：worker 的 127.0.0.1 服务不应被本机其他进程驱使
         let token = crate::random_b64url(32)?;
         tracing::info!(model = %model_id, port, "starting npu worker");
-        crate::progress::stage("model-load", "start");
-        let mut child = spawn_npu_worker(&script_path, model_id, port, &token)?;
+        crate::progress::stage("model/load", "start");
+        let mut child = spawn_npu_worker(&script_path, model_id, port, npu_kind(model_id), &token)?;
         let stderr = child
             .take_stderr()
             .map(|s| crate::runtime::drain_stderr(s, "npu_worker"))
@@ -264,7 +276,7 @@ impl NpuWorker {
             secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
             "npu ready"
         );
-        crate::progress::stage("model-load", "done");
+        crate::progress::stage("model/load", "done");
         Ok(Self {
             tmp,
             child,
@@ -305,6 +317,7 @@ fn spawn_npu_worker(
     script: &Path,
     model: &str,
     port: u16,
+    kind: &str,
     token: &str,
 ) -> Result<crate::runtime::ManagedChild> {
     // 优先使用 uv（自动处理隔离环境与依赖），若无则回退系统 python3
@@ -321,8 +334,11 @@ fn spawn_npu_worker(
             "python",
         ]);
         c
-    } else if crate::runtime::which("python3").is_some() {
-        Command::new("python3")
+    } else if let Some(python) = ["python3", "python"]
+        .into_iter()
+        .find(|python| crate::runtime::which(python).is_some())
+    {
+        Command::new(python)
     } else {
         anyhow::bail!(crate::tr!(
             "未找到 Python/uv，无法启动 NPU 识别 / Install Python or uv to use Intel NPU transcription"
@@ -338,6 +354,7 @@ fn spawn_npu_worker(
         .arg(model)
         .arg(port.to_string())
         .arg("NPU")
+        .arg(kind)
         .arg(token)
         .stdout(Stdio::null())
         // stderr 不能 inherit：脚本的输出会插进进度条重绘中间。piped + 后台 drain。

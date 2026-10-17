@@ -76,15 +76,15 @@ struct ImageAsset {
     sha256: String,
 }
 
-fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+fn image_mime(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
+        Some(("image/png", "png"))
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        Some("image/jpeg")
+        Some(("image/jpeg", "jpg"))
     } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        Some("image/gif")
+        Some(("image/gif", "gif"))
     } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
-        Some("image/webp")
+        Some(("image/webp", "webp"))
     } else {
         None
     }
@@ -99,14 +99,7 @@ fn images(root: &Path, document: &Document) -> Result<BTreeMap<String, ImageAsse
         let bytes = std::fs::read(artifact::safe_asset_path(root, &section.image)?)?;
         let sha256 = execution::digest(&bytes);
         let id = format!("image-{}", &sha256[..24]);
-        let mime =
-            image_mime(&bytes).context(crate::tr!("截图不是可识别的图片，原文件已保留 / Screenshot is not a recognized image; original file kept"))?;
-        let ext = match mime {
-            "image/png" => "png",
-            "image/gif" => "gif",
-            "image/webp" => "webp",
-            _ => "jpg",
-        };
+        let (mime, ext) = image_mime(&bytes).context(crate::tr!("截图不是可识别的图片，原文件已保留 / Screenshot is not a recognized image; original file kept"))?;
         images.insert(
             section.image.clone(),
             ImageAsset {

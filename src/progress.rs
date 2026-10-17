@@ -5,6 +5,7 @@
 //! - `{"type":"stage","stage":..,"status":"start"|"done"}`
 //! - `{"type":"progress","stage":..,"current":n,"total":n,"message":?}`
 //! - `{"type":"tokens","stage":..,"prompt":n,"completion":n}` — LLM 累计 token 用量
+//! - `{"type":"workers","stage":..,"workers":n}` — 本阶段并发 worker 数
 //! - `{"type":"done", ...}` / `{"type":"error","message":..}` — 由 pipeline/main 直接 emit
 //!
 //! human 模式下 [`emit`]/[`stage`] 全是 no-op，[`Bar`] 退化为普通可见进度条，
@@ -58,7 +59,7 @@ pub fn stage(name: &str, status: &str) {
     emit(stage_event(name, status));
     if !is_json() && !is_quiet() && status == "start" {
         let label = match name {
-            "model-load" | "model/apple" => {
+            "model/load" | "model/apple" => {
                 crate::tr!(
                     "加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)"
                 )
@@ -66,13 +67,12 @@ pub fn stage(name: &str, status: &str) {
             "fetch" => crate::tr!("读取视频信息 / Reading video information"),
             "subtitle" => crate::tr!("查找字幕 / Looking for subtitles"),
             "download" => crate::tr!("下载视频 / Downloading video"),
-            "scenes" => crate::tr!("提取截图 / Extracting slides"),
             "scenes/scan" => crate::tr!("扫描画面 / Scanning video frames"),
             "scenes/extract" => crate::tr!("生成截图 / Saving screenshots"),
             "audio" => crate::tr!("提取音频 / Extracting audio"),
-            "transcribe" | "asr" => crate::tr!("识别语音 / Transcribing speech"),
+            "transcribe" => crate::tr!("识别语音 / Transcribing speech"),
             "llm" => crate::tr!("校对文字 / Proofreading transcript"),
-            "summary" | "summarize" => crate::tr!("生成摘要 / Generating summary"),
+            "summary" => crate::tr!("生成摘要 / Generating summary"),
             "render" => crate::tr!("生成笔记 / Writing notes"),
             "model/prepare" => crate::tr!("检查识别模型 / Checking speech model"),
             name if name.starts_with("model/") => {

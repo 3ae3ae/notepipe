@@ -166,6 +166,7 @@ pub fn template() -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let api = AsrApi::default();
+    let llm = crate::llm::LlmSettings::default();
     [
         ("{OUT}", c::DEFAULT_OUT_DIR.to_string()),
         ("{SIMILARITY}", c::DEFAULT_SIMILARITY.to_string()),
@@ -183,6 +184,26 @@ pub fn template() -> String {
         ("{FORMATS}", formats),
         ("{API_BASE_URL}", api.base_url),
         ("{API_MODEL}", api.model),
+        ("{SLIDE_MODE}", c::SlideMode::default().to_string()),
+        (
+            "{PROVIDER}",
+            c::default_provider_hint().as_str().to_string(),
+        ),
+        ("{MMPROJ_OFFLOAD}", "true".to_string()),
+        ("{KEEP_VIDEO}", "false".to_string()),
+        ("{RESUME}", "true".to_string()),
+        (
+            "{TRANSCRIPT_SOURCE}",
+            c::TranscriptSource::default().to_string(),
+        ),
+        ("{MODEL_DIR}", c::model_dir_from(None).display().to_string()),
+        ("{LLM_ENABLED}", llm.enabled.to_string()),
+        ("{LLM_BASE_URL}", llm.base_url),
+        ("{LLM_MODEL}", llm.model),
+        ("{LLM_VISION}", llm.vision.to_string()),
+        ("{LLM_SUMMARIZE}", llm.summarize.to_string()),
+        ("{LLM_DISABLE_HINT}", llm.disable_hint.to_string()),
+        ("{LLM_CONCURRENCY}", llm.concurrency.to_string()),
     ]
     .into_iter()
     .fold(TEMPLATE.to_string(), |text, (key, value)| {
@@ -207,7 +228,7 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 # 下载视频最大高度 / Maximum downloaded video height
 #max_height = {MAX_HEIGHT}
 # first 立即截图，stable 等动画结束 / first: immediate; stable: wait for animations
-#slide_mode = "stable"
+#slide_mode = "{SLIDE_MODE}"
 #stable_secs = {STABLE_SECS}
 # 仅比较指定画面区域 / Compare only this region
 #roi = "40%,0%-100%,100%"
@@ -218,27 +239,27 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 # npu: Intel NPU，需要 OpenVINO / Intel NPU, requires OpenVINO
 # api: 云端识别，需要 API 密钥 / cloud transcription, requires an API key
 # 留空自动选择后端；course2md doctor 查看可用性 / Leave unset for automatic selection; check with course2md doctor
-#provider = "gpu"
+#provider = "{PROVIDER}"
 # GPU 卸载层数（0–99）；核显不稳定时可降低 / GPU offload layers; lower on unstable integrated GPUs
 #gpu_layers = {GPU_LAYERS}
 # 将多模态 projector 放到 GPU；false 留在 CPU / Offload projector to GPU; false keeps it on CPU
-#mmproj_offload = true
+#mmproj_offload = {MMPROJ_OFFLOAD}
 # 识别模型，需与后端兼容 / Speech model; must match the backend
 # gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b, qwen3-0.6b, whisper；npu: whisper 或 Hugging Face 仓库名 / or a Hugging Face repository
 #asr_model = "{ASR_MODEL}"
 # auto 优先字幕，无字幕再识别 / auto: subtitles first, then speech recognition
 # subtitle 仅字幕；asr 仅识别 / subtitle: subtitles only; asr: speech recognition only
-#transcript_source = "auto"
+#transcript_source = "{TRANSCRIPT_SOURCE}"
 # 每段语音最长秒数 (1–600) / Maximum speech segment length in seconds (1–600)
 #max_speech = {MAX_SPEECH}
 # 输出格式 / Output formats: md, html, json
 #formats = [{FORMATS}]
 # gpu/cpu 模型目录；默认使用系统缓存 / gpu/cpu model directory; platform cache by default
-#model_dir = "~/.cache/course2md/models"
+#model_dir = "{MODEL_DIR}"
 # 成功后保留下载的视频 / Keep downloaded video after success
-#keep_video = false
+#keep_video = {KEEP_VIDEO}
 # 继续上次中断的识别 / Continue interrupted transcription
-#resume = true
+#resume = {RESUME}
 
 [asr_api]
 # OpenAI 兼容语音服务 / OpenAI-compatible speech service
@@ -252,20 +273,20 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 
 [llm]
 # 可选 AI 校对；运行 course2md llm setup 配置 / Optional AI proofreading; configure with course2md llm setup
-enabled = false
-#base_url = "https://api.deepseek.com/v1"
+enabled = {LLM_ENABLED}
+#base_url = "{LLM_BASE_URL}"
 #api_key = ""
-#model = "deepseek-chat"
+#model = "{LLM_MODEL}"
 # 自定义校对要求 / Custom proofreading instructions
 #prompt = ""
 # 隐藏完成后的提示 / Hide the completion tip
-#disable_hint = false
+#disable_hint = {LLM_DISABLE_HINT}
 # 附截图辅助校对，需要视觉模型 / Attach slides; requires an image-capable model
-#vision = false
+#vision = {LLM_VISION}
 # 并发请求数 / Concurrent requests
-#concurrency = 8
+#concurrency = {LLM_CONCURRENCY}
 # 在笔记中加入 AI 摘要，需要 enabled = true / Add AI summaries; requires enabled = true
-#summarize = false
+#summarize = {LLM_SUMMARIZE}
 "#;
 
 /// 打印配置文件与内置默认合并后的设置（不含本次命令行与环境变量覆盖）。
@@ -298,10 +319,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
             "asr_model",
             r.asr_model.clone().unwrap_or_else(|| "-".into()),
         ),
-        (
-            "transcript_source",
-            format!("{:?}", r.transcript_source).to_ascii_lowercase(),
-        ),
+        ("transcript_source", r.transcript_source.to_string()),
         ("max_speech", r.max_speech.to_string()),
         (
             "formats",

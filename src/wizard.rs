@@ -12,7 +12,7 @@ pub fn is_first_run(opts_provider_is_none: bool, file: &crate::settings::ConfigF
     opts_provider_is_none
         && std::io::stdin().is_terminal()
         && std::io::stderr().is_terminal()
-        && (!crate::settings::config_path().is_file() || file.defaults.provider.is_none())
+        && file.defaults.provider.is_none()
 }
 
 /// 满足首次运行条件时执行向导并返回写盘后的新配置；否则原样返回。
@@ -189,9 +189,7 @@ fn pick_local_provider() -> Result<LocalPick> {
             if i == 0 {
                 Ok(LocalPick::Cloud)
             } else {
-                anyhow::bail!(crate::tr!(
-                    "已取消设置，未保存配置。 / Setup cancelled; no configuration saved."
-                ))
+                Err(ExitWizard.into())
             }
         });
     }
@@ -251,11 +249,7 @@ fn configure_cloud(cfg: &mut crate::settings::ConfigFile) -> Result<()> {
     if !cfg.asr_api.base_url.contains("://") {
         cfg.asr_api.base_url = format!("https://{}", cfg.asr_api.base_url);
     }
-    let endpoint = url::Url::parse(&cfg.asr_api.base_url)?;
-    anyhow::ensure!(
-        matches!(endpoint.scheme(), "http" | "https") && endpoint.host_str().is_some(),
-        crate::tr!("请输入完整的 HTTP(S) 服务地址。 / Enter a valid HTTP(S) base URL.")
-    );
+    crate::config::ensure_http_url(&cfg.asr_api.base_url)?;
     anyhow::ensure!(
         !cfg.asr_api.api_key.trim().is_empty() || crate::config::asr_api_key_from_env().is_some(),
         crate::tr!(

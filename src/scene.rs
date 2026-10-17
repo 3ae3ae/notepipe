@@ -73,12 +73,6 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
     let info = media::probe_video(media)
         .await
         .context(crate::tr!("无法读取视频尺寸，请检查文件是否可播放 / Could not read video dimensions; check that the file plays correctly"))?;
-    anyhow::ensure!(
-        cfg.sample_interval >= 0.2,
-        crate::tr!(
-            "画面采样间隔至少为 0.2 秒 / Frame sampling interval must be at least 0.2 seconds"
-        )
-    );
     let interval = cfg.sample_interval;
     let (tw, th) = scaled_wh(info.width, info.height, SAMPLE_WIDTH);
     let fps = 1.0 / interval;
@@ -186,7 +180,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
                     candidate = Some(cmp.into_owned());
                     candidate_first_t = Some(t);
                     candidate_last_t = Some(t);
-                } else if candidate_last_t.is_some() {
+                } else {
                     // 同一视觉状态的后续采样：更新代表帧时间（取稳定后的最后一帧）
                     candidate_last_t = Some(t);
                 }
@@ -266,11 +260,23 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
             set.spawn(async move { (i, extract_frame(&media, capture_t, &path).await) });
         }
         match set.join_next().await {
-            Some(Ok(item)) => {
-                if item.1.is_ok() {
-                    pb.inc(1);
-                }
-                results.push(item);
+            Some(Ok((i, Ok(())))) => {
+                pb.inc(1);
+                results.push((i, Ok(())));
+            }
+            Some(Ok((i, Err(error)))) => {
+                set.abort_all();
+                let (onset_t, _) = times[i];
+                return Err(error).with_context(|| {
+                    // 中文只写具体原因：界面已用「截图未生成」命名这项失败
+                    let secs = onset_t.max(0.) as u64;
+                    format!(
+                        "第 {n} 张截图（{}:{:02}）提取失败 / Could not extract slide {n} (t={onset_t:.1}s)",
+                        secs / 60,
+                        secs % 60,
+                        n = i + 1
+                    )
+                });
             }
             Some(Err(e)) => {
                 return Err(e).context(crate::tr!(

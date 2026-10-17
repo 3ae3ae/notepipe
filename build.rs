@@ -158,23 +158,26 @@ fn main() {
         );
     }
     // Swift 5 语言模式包的兼容钩子 + clang 运行时（___isPlatformVersionAtLeast 等）
-    if let Some(swift_lib) = toolchain_swift_lib_dir() {
+    let devdir = xcode_devdir();
+    if let Some(swift_lib) = devdir.as_deref().and_then(toolchain_swift_lib_dir) {
         println!("cargo:rustc-link-search=native={}", swift_lib.display());
         println!("cargo:rustc-link-lib=static=swiftCompatibility56");
     }
-    if let Some(rt) = find_clang_rt_osx() {
-        println!("cargo:rustc-link-search=native={}", rt.1.display());
+    if let Some(rt) = devdir.as_deref().and_then(find_clang_rt_osx_dir) {
+        println!("cargo:rustc-link-search=native={}", rt.display());
         println!("cargo:rustc-link-lib=static=clang_rt.osx");
     }
 }
 
-/// toolchain 的 usr/lib/swift/macosx 目录。
-fn toolchain_swift_lib_dir() -> Option<PathBuf> {
+fn xcode_devdir() -> Option<PathBuf> {
     let out = Command::new("xcode-select").arg("-p").output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let devdir = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    out.status
+        .success()
+        .then(|| PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
+}
+
+/// toolchain 的 usr/lib/swift/macosx 目录。
+fn toolchain_swift_lib_dir(devdir: &Path) -> Option<PathBuf> {
     if let Ok(rd) = std::fs::read_dir(devdir.join("Toolchains")) {
         for e in rd.flatten() {
             let d = e.path().join("usr/lib/swift/macosx");
@@ -186,30 +189,21 @@ fn toolchain_swift_lib_dir() -> Option<PathBuf> {
     None
 }
 
-/// 定位 toolchain 内的 libclang_rt.osx.a，返回 (文件, 目录)。
-fn find_clang_rt_osx() -> Option<(PathBuf, PathBuf)> {
-    let out = Command::new("xcode-select").arg("-p").output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let devdir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+/// 定位 toolchain 内的 libclang_rt.osx.a，返回其所在目录。
+fn find_clang_rt_osx_dir(devdir: &Path) -> Option<PathBuf> {
     let mut candidates = vec![];
     // clang 运行时位于 Toolchains/<TC>/usr/lib/clang/...（也兼容旧布局 usr/lib/clang）
-    if let Ok(rd) = std::fs::read_dir(PathBuf::from(&devdir).join("Toolchains")) {
+    if let Ok(rd) = std::fs::read_dir(devdir.join("Toolchains")) {
         for e in rd.flatten() {
             collect_a_files(&e.path().join("usr/lib/clang"), &mut candidates);
         }
     }
-    collect_a_files(
-        &PathBuf::from(&devdir).join("usr/lib/clang"),
-        &mut candidates,
-    );
+    collect_a_files(&devdir.join("usr/lib/clang"), &mut candidates);
     for p in candidates {
         let is_it = p.to_string_lossy().contains("darwin")
             && p.file_name().and_then(|s| s.to_str()) == Some("libclang_rt.osx.a");
         if is_it {
-            let dir = p.parent()?.to_path_buf();
-            return Some((p, dir));
+            return p.parent().map(Path::to_path_buf);
         }
     }
     None

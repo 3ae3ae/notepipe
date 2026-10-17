@@ -133,14 +133,15 @@ fn duration_args() -> [&'static str; 6] {
 }
 
 /// 从 ffprobe 输出解析时长（秒）；进程失败或输出非法均为 None（非致命）。
+fn parse_duration_text(text: &str) -> Option<f64> {
+    text.trim().parse::<f64>().ok()
+}
+
 fn parse_duration(out: &std::process::Output) -> Option<f64> {
-    if !out.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
-        .parse::<f64>()
-        .ok()
+    out.status
+        .success()
+        .then(|| parse_duration_text(&String::from_utf8_lossy(&out.stdout)))
+        .flatten()
 }
 
 /// 用 ffprobe 拿时长（秒）。失败时返回 None（非致命）。
@@ -154,8 +155,8 @@ pub fn probe_duration_blocking(media: &Path) -> Option<f64> {
     let mut cmd = std::process::Command::new("ffprobe");
     cmd.args(duration_args()).arg(media);
     let out = crate::runtime::run_bounded("ffprobe", &mut cmd, PROBE_TIMEOUT).ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    out.stdout.trim().parse::<f64>().ok()
+    out.status
+        .success()
+        .then(|| parse_duration_text(&out.stdout))
+        .flatten()
 }

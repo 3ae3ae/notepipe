@@ -55,6 +55,13 @@ pub struct VideoMeta {
     pub id: String,
 }
 
+impl VideoMeta {
+    /// Local-file metadata uses the `local` extractor marker.
+    pub fn is_local(&self) -> bool {
+        self.extractor == "local"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SourceCandidate {
     /// The extractor's concrete video URL, never the original playlist URL.
