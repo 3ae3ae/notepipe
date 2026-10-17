@@ -386,6 +386,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             } else {
                 wizard::maybe_run(&cli.opts, &file)?
             };
+            #[cfg_attr(not(apple_native), allow(unused_mut))]
             let mut cfg = course2md::options::resolve(source, &cli.opts, &file)?;
             // coreml 首次使用时先确定模型（可能交互询问），模型缓存准备与转写才会是同一个模型
             #[cfg(apple_native)]

@@ -31,6 +31,7 @@ mod ffi {
         ) -> *mut std::ffi::c_void;
         pub fn c2m_asr_prepare_cache(
             model: *const c_char,
+            manifest: *const c_char,
             err: *mut c_char,
             err_len: usize,
         ) -> c_int;
@@ -296,12 +297,36 @@ pub fn prepare_model(model: &str) -> Result<()> {
 }
 
 /// Cache-only preparation before downloading user media; inference loads weights once later.
+fn cache_manifest(model: &str) -> Result<String> {
+    let Some(parts) = crate::models::status::apple_parts(model) else {
+        anyhow::bail!(
+            "不支持的 Apple 模型 / Unsupported Apple model: {model}"
+        );
+    };
+    let items: Vec<serde_json::Value> = parts
+        .iter()
+        .chain(std::iter::once(&crate::models::status::APPLE_VAD))
+        .map(|part| {
+            let mut files: Vec<String> = part.files.iter().map(|file| (*file).to_string()).collect();
+            files.extend(part.bundles.iter().map(|bundle| format!("{bundle}/**")));
+            serde_json::json!({"repo": part.repo, "files": files})
+        })
+        .collect();
+    Ok(serde_json::to_string(&items)?)
+}
+
 pub fn prepare_cache(model: &str) -> Result<()> {
     ensure_metallib()?;
     let name = CString::new(model)?;
+    let manifest = CString::new(cache_manifest(model)?)?;
     let mut error = vec![0_u8; 4096];
     let status = unsafe {
-        ffi::c2m_asr_prepare_cache(name.as_ptr(), error.as_mut_ptr() as *mut _, error.len())
+        ffi::c2m_asr_prepare_cache(
+            name.as_ptr(),
+            manifest.as_ptr(),
+            error.as_mut_ptr() as *mut _,
+            error.len(),
+        )
     };
     if status != 0 {
         anyhow::bail!(

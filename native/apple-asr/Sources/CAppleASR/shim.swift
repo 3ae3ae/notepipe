@@ -128,30 +128,45 @@ final class AsrBox {
 // Cache-only preparation follows the same repositories and required files as the
 // actual loaders. It deliberately avoids constructing a second copy of ASR weights.
 @_cdecl("c2m_asr_prepare_cache")
-public func c2mAsrPrepareCache(_ model: UnsafePointer<CChar>, _ errBuf: UnsafeMutablePointer<CChar>, _ errLen: Int) -> Int32 {
+public func c2mAsrPrepareCache(
+    _ model: UnsafePointer<CChar>,
+    _ manifest: UnsafePointer<CChar>,
+    _ errBuf: UnsafeMutablePointer<CChar>,
+    _ errLen: Int
+) -> Int32 {
     let name = String(cString: model)
+    let manifestText = String(cString: manifest)
     do {
         try runSync {
             let offline = ProcessInfo.processInfo.environment["HF_HUB_OFFLINE"]
                 .map { ["1", "true", "yes", "on"].contains($0.lowercased()) } ?? false
-            var downloads: [(String, [String])] = []
-            switch name {
-            case "qwen3-1.7b":
-                downloads.append(("aufklarer/Qwen3-ASR-1.7B-MLX-8bit", ["vocab.json", "merges.txt", "tokenizer_config.json"]))
-            case "qwen3-0.6b":
-                downloads.append(("aufklarer/Qwen3-ASR-CoreML", ["encoder.mlmodelc/**", "embedding.mlmodelc/**", "decoder_part1.mlmodelc/**", "decoder_part2.mlmodelc/**", "config.json"]))
-                downloads.append(("aufklarer/Qwen3-ASR-0.6B-MLX-4bit", ["vocab.json", "merges.txt", "tokenizer_config.json"]))
-            case "whisper":
-                downloads.append(("aufklarer/Whisper-Large-v3-Turbo-CoreML", ["MelSpectrogram.mlmodelc/**", "AudioEncoder.mlmodelc/**", "TextDecoder.mlmodelc/**", "TextDecoderContextPrefill.mlmodelc/**", "generation_config.json", "manifest.json", "tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt"]))
-            default:
-                throw NSError(domain: "course2md", code: 1, userInfo: [NSLocalizedDescriptionKey: "不支持的 Apple 模型 / Unsupported Apple model: \(name)"])
+            let data = manifestText.data(using: .utf8)!
+            guard let items = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                throw NSError(domain: "course2md", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "模型清单无效 / Invalid model manifest",
+                ])
             }
-            downloads.append(("aufklarer/Silero-VAD-v6.2.1-CoreML", ["silero_vad.mlmodelc/**", "config.json"]))
+            let downloads: [(String, [String])] = try items.map { item in
+                guard let repo = item["repo"] as? String,
+                      let files = item["files"] as? [String] else {
+                    throw NSError(domain: "course2md", code: 1, userInfo: [
+                        NSLocalizedDescriptionKey: "模型清单无效 / Invalid model manifest",
+                    ])
+                }
+                return (repo, files)
+            }
             for (index, item) in downloads.enumerated() {
                 let directory = try HuggingFaceDownloader.getCacheDirectory(for: item.0)
-                try await HuggingFaceDownloader.downloadWeights(modelId: item.0, to: directory, additionalFiles: item.1, offlineMode: offline, progressHandler: { fraction in
-                    progressLog((Double(index) + fraction) / Double(downloads.count), "download", item.0)
-                })
+                try await HuggingFaceDownloader.downloadWeights(
+                    modelId: item.0,
+                    to: directory,
+                    additionalFiles: item.1,
+                    offlineMode: offline,
+                    progressHandler: { fraction in
+                        progressLog(
+                            (Double(index) + fraction) / Double(downloads.count),
+                            "download", item.0)
+                    })
             }
         }
         return 0

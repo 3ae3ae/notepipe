@@ -101,6 +101,75 @@ pub fn with_receipt(mut status: LocalModelStatus) -> LocalModelStatus {
     status
 }
 
+/// One Apple model cache repository and the files the loaders require.
+#[derive(Clone, Copy)]
+pub(crate) struct ApplePart {
+    pub repo: &'static str,
+    pub files: &'static [&'static str],
+    pub bundles: &'static [&'static str],
+    /// The loaders also require safetensors shards referenced by an index.
+    pub weights: bool,
+}
+
+const QWEN_17: &[ApplePart] = &[ApplePart {
+    repo: "aufklarer/Qwen3-ASR-1.7B-MLX-8bit",
+    files: &["config.json", "vocab.json", "merges.txt", "tokenizer_config.json"],
+    bundles: &[],
+    weights: true,
+}];
+const QWEN_06: &[ApplePart] = &[
+    ApplePart {
+        repo: "aufklarer/Qwen3-ASR-CoreML",
+        files: &["config.json"],
+        bundles: &[
+            "encoder.mlmodelc",
+            "embedding.mlmodelc",
+            "decoder_part1.mlmodelc",
+            "decoder_part2.mlmodelc",
+        ],
+        weights: false,
+    },
+    ApplePart {
+        repo: "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
+        files: &["vocab.json", "merges.txt", "tokenizer_config.json"],
+        bundles: &[],
+        weights: true,
+    },
+];
+const WHISPER: &[ApplePart] = &[ApplePart {
+    repo: "aufklarer/Whisper-Large-v3-Turbo-CoreML",
+    files: &[
+        "generation_config.json",
+        "manifest.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+    ],
+    bundles: &[
+        "MelSpectrogram.mlmodelc",
+        "AudioEncoder.mlmodelc",
+        "TextDecoder.mlmodelc",
+        "TextDecoderContextPrefill.mlmodelc",
+    ],
+    weights: false,
+}];
+pub(crate) const APPLE_VAD: ApplePart = ApplePart {
+    repo: "aufklarer/Silero-VAD-v6.2.1-CoreML",
+    files: &["config.json"],
+    bundles: &["silero_vad.mlmodelc"],
+    weights: false,
+};
+
+pub(crate) fn apple_parts(model: &str) -> Option<&'static [ApplePart]> {
+    match model {
+        "qwen3-1.7b" => Some(QWEN_17),
+        "qwen3-0.6b" => Some(QWEN_06),
+        "whisper" => Some(WHISPER),
+        _ => None,
+    }
+}
+
 /// Explicit roots make cache checks testable without inspecting the user's model directory.
 pub fn inspect_at(
     provider: AsrProvider,
@@ -140,57 +209,14 @@ pub fn inspect_at(
             parts.push(cache_part("Qwen3-ASR 1.7B Q8_0", path, missing)?);
         }
         AsrProvider::Coreml => {
-            match model {
-                "qwen3-1.7b" => parts.push(apple_part(
+            for part in apple_parts(model).unwrap_or(&[]) {
+                parts.push(apple_part(
                     apple_base,
-                    "aufklarer/Qwen3-ASR-1.7B-MLX-8bit",
-                    &[
-                        "config.json",
-                        "vocab.json",
-                        "merges.txt",
-                        "tokenizer_config.json",
-                    ],
-                    &[],
-                    true,
-                )?),
-                "qwen3-0.6b" => {
-                    parts.push(apple_part(
-                        apple_base,
-                        "aufklarer/Qwen3-ASR-CoreML",
-                        &["config.json"],
-                        &[
-                            "encoder.mlmodelc",
-                            "embedding.mlmodelc",
-                            "decoder_part1.mlmodelc",
-                            "decoder_part2.mlmodelc",
-                        ],
-                        false,
-                    )?);
-                    parts.push(apple_part(
-                        apple_base,
-                        "aufklarer/Qwen3-ASR-0.6B-MLX-4bit",
-                        &["vocab.json", "merges.txt", "tokenizer_config.json"],
-                        &[],
-                        true,
-                    )?);
-                }
-                "whisper" => parts.push(apple_part(
-                    apple_base,
-                    "aufklarer/Whisper-Large-v3-Turbo-CoreML",
-                    &[
-                        "generation_config.json",
-                        "tokenizer.json",
-                        "tokenizer_config.json",
-                    ],
-                    &[
-                        "MelSpectrogram.mlmodelc",
-                        "AudioEncoder.mlmodelc",
-                        "TextDecoder.mlmodelc",
-                        "TextDecoderContextPrefill.mlmodelc",
-                    ],
-                    false,
-                )?),
-                _ => unreachable!("canonical_model rejects unsupported Apple models"),
+                    part.repo,
+                    part.files,
+                    part.bundles,
+                    part.weights,
+                )?);
             }
             parts.push(apple_part(
                 apple_base,
