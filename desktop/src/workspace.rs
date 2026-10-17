@@ -508,6 +508,9 @@ pub struct ReadingPosition {
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct State {
     pub schema: u32,
+    /// In-memory change counter; never serialized as a protocol identity.
+    #[serde(default)]
+    pub revision: u64,
     pub libraries: Vec<LibraryLocation>,
     pub default_library: String,
     pub drafts: Vec<Draft>,
@@ -531,6 +534,7 @@ impl State {
         let draft = Draft::new(true, library.id.clone(), options);
         Self {
             schema: SCHEMA,
+            revision: 0,
             default_library: library.id.clone(),
             libraries: vec![library],
             current_draft: draft.id.clone(),
@@ -2050,6 +2054,7 @@ impl Workspace {
         let result = edit(&mut next)?;
         store_task_subtitles(&mut next);
         compact_history(&mut next);
+        next.revision = next.revision.wrapping_add(1);
         self.writer.enqueue(next.clone());
         if let Some(error) = self.writer.take_error() {
             return Err(anyhow::anyhow!(error));

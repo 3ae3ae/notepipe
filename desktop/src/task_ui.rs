@@ -2461,46 +2461,60 @@ impl Desktop {
     pub fn queue_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let rem = f32::from(window.rem_size());
         let mut items = Vec::new();
-        let mut tasks: Vec<TaskRecord> = Vec::new();
-        match &self.workspace {
-            None => items.push(QueueItem::Unavailable),
+        let tasks: Rc<Vec<TaskRecord>> = match &self.workspace {
+            None => {
+                items.push(QueueItem::Unavailable);
+                self.queue_cache = None;
+                Rc::new(Vec::new())
+            }
             Some(workspace) if workspace.state.tasks.is_empty() => {
                 items.push(QueueItem::Empty);
+                self.queue_cache = None;
+                Rc::new(Vec::new())
             }
             Some(workspace) => {
-                tasks = workspace.state.tasks.clone();
-                tasks.sort_by_key(|task| (task_group(task), std::cmp::Reverse(task.created)));
-                let history_open = window.use_keyed_state("task-history-open", cx, |_, _| false);
-                // 只有一种状态组时组头与页头汇总重复：此时不再重复分组行
-                let distinct_groups = tasks
-                    .iter()
-                    .map(task_group)
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len();
-                let mut previous_group = None;
-                for (index, task) in tasks.iter().enumerate() {
-                    let group = task_group(task);
-                    if previous_group != Some(group) {
-                        previous_group = Some(group);
-                        let count = tasks
-                            .iter()
-                            .filter(|task| task_group(task) == group)
-                            .count();
-                        if group == TaskGroup::History {
-                            items.push(QueueItem::HistoryToggle {
-                                count,
-                                open: history_open.clone(),
-                            });
-                        } else if distinct_groups > 1 {
-                            items.push(QueueItem::GroupLabel { group, count });
-                        }
-                    }
-                    if group == TaskGroup::History && !*history_open.read(cx) {
-                        continue;
-                    }
-                    items.push(QueueItem::Task(index));
+                if let Some((revision, tasks)) = &self.queue_cache
+                    && *revision == workspace.state.revision
+                {
+                    Rc::clone(tasks)
+                } else {
+                    let mut tasks = workspace.state.tasks.clone();
+                    tasks.sort_by_key(|task| (task_group(task), std::cmp::Reverse(task.created)));
+                    let tasks = Rc::new(tasks);
+                    self.queue_cache = Some((workspace.state.revision, Rc::clone(&tasks)));
+                    tasks
                 }
             }
+        };
+        let history_open = window.use_keyed_state("task-history-open", cx, |_, _| false);
+        // 只有一种状态组时组头与页头汇总重复：此时不再重复分组行
+        let distinct_groups = tasks
+            .iter()
+            .map(task_group)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        let mut previous_group = None;
+        for (index, task) in tasks.iter().enumerate() {
+            let group = task_group(task);
+            if previous_group != Some(group) {
+                previous_group = Some(group);
+                let count = tasks
+                    .iter()
+                    .filter(|task| task_group(task) == group)
+                    .count();
+                if group == TaskGroup::History {
+                    items.push(QueueItem::HistoryToggle {
+                        count,
+                        open: history_open.clone(),
+                    });
+                } else if distinct_groups > 1 {
+                    items.push(QueueItem::GroupLabel { group, count });
+                }
+            }
+            if group == TaskGroup::History && !*history_open.read(cx) {
+                continue;
+            }
+            items.push(QueueItem::Task(index));
         }
         let keys = items.iter().map(|item| item.key(&tasks)).collect();
         Self::reconcile_list_items(

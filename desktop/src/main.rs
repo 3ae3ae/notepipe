@@ -302,6 +302,7 @@ struct Desktop {
     // a persistent list state plus the identity keys and focus containers of
     // the items the state currently describes.
     queue_list: ListState,
+    queue_cache: Option<(u64, Rc<Vec<workspace::TaskRecord>>)>,
     queue_keys: Vec<String>,
     queue_focus: Vec<FocusHandle>,
     queue_rem: f32,
@@ -654,6 +655,7 @@ impl Desktop {
             reader_scroll: ScrollHandle::new(),
             reader_position_saved_at: None,
             queue_list: ListState::new(0, ListAlignment::Top, px(1000.)),
+            queue_cache: None,
             queue_keys: Vec::new(),
             queue_focus: Vec::new(),
             queue_rem: f32::NAN,

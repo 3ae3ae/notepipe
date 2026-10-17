@@ -2346,10 +2346,10 @@ impl Desktop {
                         && task.artifact.is_some()
                         && !crate::task_ui::task_component_failures(task).is_empty()))
             })
-            .cloned()
-            .collect();
+            .collect::<Vec<_>>();
         attention.sort_by_key(|task| std::cmp::Reverse(task.updated));
         attention.truncate(2);
+        let attention: Vec<crate::workspace::TaskRecord> = attention.into_iter().cloned().collect();
         let notes: Vec<Course> = self
             .courses
             .iter()
