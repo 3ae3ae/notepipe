@@ -2368,3 +2368,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 ，已选择	，已选择	, selected	，已選擇	、選択済み
 ，或 Hugging Face 仓库名（如 org/model）	，或 Hugging Face 仓库名（如 org/model）	, or Hugging Face repository name (such as org/model)	，或 Hugging Face 倉庫名（如 org/model）	、または Hugging Face リポジトリ名 (組織/モデルなど)
 ；	；	; 	；	;
+自动（紧凑）	自动	Auto	自動	自動
+仅字幕（紧凑）	仅字幕	Subtitles	僅字幕	字幕のみ
+语音识别（紧凑）	语音识别	Speech	語音辨識	音声認識

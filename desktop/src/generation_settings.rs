@@ -35,6 +35,19 @@ impl Desktop {
             [one] if SUBTITLE_LANGUAGES.iter().any(|(id, _)| id == one) => one.as_str(),
             _ => "",
         };
+        let source_labels = if f32::from(window.bounds().size.width) < 900.0 {
+            (
+                course2md::tr!("自动（紧凑）"),
+                course2md::tr!("仅字幕（紧凑）"),
+                course2md::tr!("语音识别（紧凑）"),
+            )
+        } else {
+            (
+                course2md::tr!("自动"),
+                course2md::tr!("仅字幕"),
+                course2md::tr!("语音识别"),
+            )
+        };
         let custom_language = value.preferred_subtitle_languages.len() > 1
             || value
                 .preferred_subtitle_languages
@@ -55,9 +68,9 @@ impl Desktop {
                 },
                 self.setting_choices("default-text-source", course2md::tr!("文字来源"))
                     .options([
-                        ("auto", course2md::tr!("自动")),
-                        ("subtitle", course2md::tr!("仅字幕")),
-                        ("asr", course2md::tr!("语音识别")),
+                        ("auto", source_labels.0),
+                        ("subtitle", source_labels.1),
+                        ("asr", source_labels.2),
                     ])
                     .icon("auto", icons::auto_fix())
                     .icon("subtitle", icons::subtitles())
