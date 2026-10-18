@@ -47,6 +47,8 @@ pub(super) fn settings_sidebar_width(window: &Window) -> f32 {
         260.
     } else if width >= 960. {
         220.
+    } else if scale > 1.0 {
+        72.
     } else {
         64.
     }) * scale
