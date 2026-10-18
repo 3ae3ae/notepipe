@@ -3,7 +3,7 @@ use super::*;
 use crate::theme::*;
 use gpui_component::{
     button::*,
-    menu::{DropdownMenu, PopupMenuItem},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
 };
 use std::rc::Rc;
 
@@ -315,6 +315,8 @@ pub(super) struct NoteSource {
     author: String,
     duration: Option<f64>,
     local: bool,
+    /// The video page an online note came from.
+    link: Option<String>,
 }
 
 /// The pieces of a note's meta line.
@@ -582,6 +584,7 @@ impl Desktop {
                                 duration: (source.duration.is_finite() && source.duration > 0.)
                                     .then_some(source.duration),
                                 local: !source.online,
+                                link: source.online.then(|| source.input.clone()),
                             },
                         )
                     })
@@ -691,73 +694,136 @@ impl Desktop {
     }
 
     fn course_actions(&self, course: Course, index: usize, cx: &mut Context<Self>) -> AnyElement {
-        let entity = cx.entity().downgrade();
+        let menu = self.course_menu(&course, false, cx);
         control(("course-actions", index))
             .ghost()
             .icon(crate::icons::ellipsis())
             .min_h(rems(2.))
             .tooltip(course2md::tr!("笔记操作"))
             .accessibility_label(course2md::tr!("《{}》的笔记操作", course.title))
-            .dropdown_menu(move |menu, window, cx| {
-                let rename = entity.clone();
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, window, cx| {
+                menu(popup, window, cx)
+            })
+            .into_any_element()
+    }
+
+    /// Every note offers the same commands wherever it appears, ordered
+    /// 打开 → 处理 → 管理. A right-click menu also leads with opening the note;
+    /// the ⋯ button sits on a row that already opens it.
+    pub(crate) fn course_menu(
+        &self,
+        course: &Course,
+        with_open: bool,
+        cx: &mut Context<Self>,
+    ) -> MenuBuilder {
+        let entity = cx.entity().downgrade();
+        let course = course.clone();
+        Rc::new(move |menu, window, cx| {
+            // Read when the menu opens, not for every row on every frame.
+            let Some(desktop) = entity.upgrade() else {
+                return menu;
+            };
+            let (link, folders) = {
+                let desktop = desktop.read(cx);
+                (
+                    desktop
+                        .note_source(&course)
+                        .and_then(|source| source.link.clone()),
+                    desktop.folder_context(Some(course.dir.clone())),
+                )
+            };
+            let path = course.storage_dir();
+            let menu = if with_open {
+                let open = entity.clone();
                 let selected = course.clone();
-                let path = course.storage_dir();
-                let mut menu = menu
-                    .item(
-                        PopupMenuItem::new(course2md::tr!("重命名笔记…"))
-                            .icon(icons::edit())
-                            .on_click(move |_, window, cx| {
-                                let _ = rename.update(cx, |this, cx| {
-                                    this.begin_course_rename(selected.clone(), window, cx)
-                                });
-                            }),
-                    )
-                    .item(
-                        PopupMenuItem::new(course2md::tr!("打开笔记保存位置"))
-                            .icon(crate::icons::folder_open())
-                            .on_click(move |_, _, cx| cx.open_with_system(&path)),
-                    )
-                    .separator();
-                for (format, label) in [
-                    (
-                        course2md::config::OutputFormat::Md,
-                        course2md::tr!("导出 Markdown 包…"),
-                    ),
-                    (
-                        course2md::config::OutputFormat::Html,
-                        course2md::tr!("导出网页文件…"),
-                    ),
-                    (
-                        course2md::config::OutputFormat::Json,
-                        course2md::tr!("导出结构化数据…"),
-                    ),
-                ] {
-                    let entity = entity.clone();
-                    let course = course.clone();
-                    menu = menu.item(PopupMenuItem::new(label).icon(icons::download()).on_click(
-                        move |_, window, cx| {
+                menu.item(
+                    PopupMenuItem::new(course2md::tr!("阅读笔记"))
+                        .icon(icons::book_open())
+                        .on_click(move |_, _, cx| {
+                            let _ =
+                                open.update(cx, |this, cx| this.open_course(selected.clone(), cx));
+                        }),
+                )
+            } else {
+                menu
+            };
+            let mut menu = menu.item(
+                PopupMenuItem::new(course2md::tr!("打开笔记保存位置"))
+                    .icon(crate::icons::folder_open())
+                    .on_click(move |_, _, cx| cx.open_with_system(&path)),
+            );
+            if let Some(link) = link {
+                menu = menu.item(
+                    PopupMenuItem::new(course2md::tr!("复制原视频链接"))
+                        .icon(icons::link())
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(link.clone()))
+                        }),
+                );
+            }
+            let exports = {
+                let entity = entity.clone();
+                let course = course.clone();
+                move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+                    [
+                        (
+                            course2md::config::OutputFormat::Md,
+                            course2md::tr!("Markdown 包…"),
+                        ),
+                        (
+                            course2md::config::OutputFormat::Html,
+                            course2md::tr!("网页文件…"),
+                        ),
+                        (
+                            course2md::config::OutputFormat::Json,
+                            course2md::tr!("结构化数据…"),
+                        ),
+                    ]
+                    .into_iter()
+                    .fold(menu, |menu, (format, label)| {
+                        let entity = entity.clone();
+                        let course = course.clone();
+                        menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
                             let _ = entity.update(cx, |this, cx| {
                                 this.export_course(course.clone(), format, window, cx)
                             });
-                        },
-                    ));
+                        }))
+                    })
                 }
-                // 归属修改收入溢出菜单：不与分组标题/筛选轨重复
-                let Some(context) = entity
-                    .upgrade()
-                    .map(|desktop| desktop.read(cx).folder_context(Some(course.dir.clone())))
-                else {
-                    return menu;
-                };
+            };
+            menu = menu.separator().submenu_with_icon(
+                Some(icons::download()),
+                course2md::tr!("导出为"),
+                window,
+                cx,
+                exports,
+            );
+            // 归属修改：与分组标题/筛选轨不重复，放进子菜单
+            menu = menu.submenu_with_icon(
+                Some(crate::icons::folder()),
+                course2md::tr!("移动到"),
+                window,
+                cx,
                 Desktop::folder_menu(
                     entity.clone(),
-                    context.origin,
-                    context.storage,
-                    context.folders,
-                    context.folder,
-                )(menu.separator(), window, cx)
-            })
-            .into_any_element()
+                    folders.origin,
+                    folders.storage,
+                    folders.folders,
+                    folders.folder,
+                ),
+            );
+            let rename = entity.clone();
+            let selected = course.clone();
+            menu.separator().item(
+                PopupMenuItem::new(course2md::tr!("重命名笔记…"))
+                    .icon(icons::edit())
+                    .on_click(move |_, window, cx| {
+                        let _ = rename.update(cx, |this, cx| {
+                            this.begin_course_rename(selected.clone(), window, cx)
+                        });
+                    }),
+            )
+        })
     }
 
     fn recover_library_folders(&mut self, root: PathBuf, rebuild: bool, cx: &mut Context<Self>) {
@@ -1944,7 +2010,8 @@ impl Desktop {
         scope: &'static str,
         with_actions: bool,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> AnyElement {
+        let menu = self.course_menu(course, true, cx);
         let open = |course: &Course| {
             let course = course.clone();
             cx.listener(move |this: &mut Self, _, _, cx| this.open_course(course.clone(), cx))
@@ -1992,43 +2059,50 @@ impl Desktop {
                     .child(course.title.clone()),
             )
             .on_click(open(course));
-        v_flex().flex_1().min_w_0().child(cover).child(
-            v_flex()
-                .w_full()
-                .min_w_0()
-                .pt(rems(10. / 14.))
-                .pb(rems(8. / 14.))
-                .gap(px(2.))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .gap_1()
-                        .items_center()
-                        .child(
-                            v_flex().flex_1().min_w_0().gap(px(2.)).child(title).child(
-                                div()
-                                    .w_full()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_size(TEXT_AUX)
-                                    .font_weight(FontWeight::NORMAL)
-                                    .text_color(color(GRAY))
-                                    .child(self.course_meta(course).line()),
-                            ),
-                        )
-                        .when(with_actions, |row| {
-                            row.child(self.course_actions(course.clone(), index, cx))
-                        }),
-                )
-                .when(course.incomplete(), |view| {
-                    view.child(incomplete_badge().pt_1())
-                })
-                .when(with_actions, |view| {
-                    view.children(self.course_read_error(course, index, cx))
-                        .children(self.course_export_feedback(course, cx))
-                }),
-        )
+        v_flex()
+            .id(SharedString::from(format!("{scope}-card-{index}")))
+            .flex_1()
+            .min_w_0()
+            .child(cover)
+            .child(
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .pt(rems(10. / 14.))
+                    .pb(rems(8. / 14.))
+                    .gap(px(2.))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                v_flex().flex_1().min_w_0().gap(px(2.)).child(title).child(
+                                    div()
+                                        .w_full()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_size(TEXT_AUX)
+                                        .font_weight(FontWeight::NORMAL)
+                                        .text_color(color(GRAY))
+                                        .child(self.course_meta(course).line()),
+                                ),
+                            )
+                            .when(with_actions, |row| {
+                                row.child(self.course_actions(course.clone(), index, cx))
+                            }),
+                    )
+                    .when(course.incomplete(), |view| {
+                        view.child(incomplete_badge().pt_1())
+                    })
+                    .when(with_actions, |view| {
+                        view.children(self.course_read_error(course, index, cx))
+                            .children(self.course_export_feedback(course, cx))
+                    }),
+            )
+            .context_menu(move |popup, window, cx| menu(popup, window, cx))
+            .into_any_element()
     }
 
     fn course_row_thumbnail(thumbnail: &std::path::Path) -> gpui::Img {
@@ -2059,9 +2133,14 @@ impl Desktop {
     }
 
     /// One course row in the list presentation.
-    fn library_list_row(&self, index: usize, layout: LibraryLayout, cx: &mut Context<Self>) -> Div {
+    fn library_list_row(
+        &self,
+        index: usize,
+        layout: LibraryLayout,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(course) = self.courses.get(index) else {
-            return div();
+            return div().into_any_element();
         };
         let mut read = h_flex().w_full().min_w_0().items_center().gap(px(12.));
         // Every row reserves the cover slot so titles share one left edge.
@@ -2143,7 +2222,9 @@ impl Desktop {
                     }),
             )
             .child(self.course_actions(course.clone(), index, cx));
+        let menu = self.course_menu(course, true, cx);
         v_flex()
+            .id(("library-row", index))
             .w_full()
             .min_w_0()
             .bg(color(SURFACE))
@@ -2166,6 +2247,8 @@ impl Desktop {
                 self.course_export_feedback(course, cx)
                     .map(|feedback| feedback.px_4().pb_3()),
             )
+            .context_menu(move |popup, window, cx| menu(popup, window, cx))
+            .into_any_element()
     }
 
     /// Every queued/running task remains visible without replacing the source input.
@@ -2294,8 +2377,10 @@ impl Desktop {
                         .object_fit(ObjectFit::Cover),
                 );
             }
+            let menu = self.task_menu(task, cx);
             list = list.child(
                 h_flex()
+                    .id(SharedString::from(format!("workbench-task-{id}")))
                     .w_full()
                     .min_w_0()
                     .p_4()
@@ -2311,7 +2396,8 @@ impl Desktop {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_task_intent(id.clone(), Intent::Cancel, cx);
                             })),
-                    ),
+                    )
+                    .context_menu(move |popup, window, cx| menu(popup, window, cx)),
             );
         }
         Some(
@@ -2332,7 +2418,10 @@ impl Desktop {
 
     /// Workbench "最近笔记": attention tasks first, then recent readable notes.
     /// First use keeps a compact explanation below the source input.
+    /// Notes waiting on the person stay listed even when recent notes are
+    /// turned off; only finished notes and the empty state follow the setting.
     pub fn recent_notes_section(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let show_notes = self.desktop_settings.home_recent_notes;
         let linked = self.current_input_task(cx).map(|task| task.id.clone());
         let mut attention: Vec<_> = self
             .workspace
@@ -2363,9 +2452,12 @@ impl Desktop {
                     .iter()
                     .any(|task| task.artifact.as_ref() == Some(&course.dir))
             })
-            .take(4)
+            .take(if show_notes { 4 } else { 0 })
             .cloned()
             .collect();
+        if attention.is_empty() && !show_notes {
+            return None;
+        }
         if attention.is_empty() && notes.is_empty() {
             let access = self.cached_library_access();
             let checking = self.loading || access.is_none();
@@ -2478,12 +2570,19 @@ impl Desktop {
                 .items_center()
                 .gap_2()
                 .child(
-                    theme::accessible_text("recent-title", course2md::tr!("最近的笔记"))
-                        .role(Role::Heading)
-                        .text_size(SECTION_TITLE)
-                        .line_height(SECTION_TITLE_LINE)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .flex_1(),
+                    theme::accessible_text(
+                        "recent-title",
+                        if show_notes {
+                            course2md::tr!("最近的笔记")
+                        } else {
+                            course2md::tr!("需要处理")
+                        },
+                    )
+                    .role(Role::Heading)
+                    .text_size(SECTION_TITLE)
+                    .line_height(SECTION_TITLE_LINE)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .flex_1(),
                 )
                 .child(
                     quiet("recent-all")
@@ -2730,8 +2829,15 @@ impl Desktop {
                 .on_click(
                     cx.listener(move |this, _, _, cx| this.open_course(selected.clone(), cx)),
                 );
+            let menu = self.course_menu(course, true, cx);
             list = list
-                .child(row)
+                .child(
+                    div()
+                        .id(("recent-note-menu", index))
+                        .w_full()
+                        .child(row)
+                        .context_menu(move |popup, window, cx| menu(popup, window, cx)),
+                )
                 .children(self.course_read_error(course, index, cx));
         }
         Some(section.child(list))

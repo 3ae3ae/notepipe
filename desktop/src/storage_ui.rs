@@ -5,7 +5,10 @@ use crate::{
     theme::*,
 };
 use anyhow::{Context as _, Result, ensure};
-use gpui_component::button::*;
+use gpui_component::{
+    button::*,
+    menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
+};
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -1695,31 +1698,6 @@ impl Desktop {
                                 .child(course2md::tr!("暂时不可访问")),
                         )
                     })
-                    .when(!default, |row| {
-                        row.child(
-                            outline_pill(("default-storage-location", index))
-                                .settings_text()
-                                .icon(icons::check_circle())
-                                .label(course2md::tr!("设为默认"))
-                                .disabled(
-                                    needs_relocation || needs_reassociation || self.storage_ui.busy,
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_default_library(id.clone(), cx)
-                                })),
-                        )
-                    })
-                    .when(!needs_relocation && !needs_reassociation, |row| {
-                        row.child(
-                            outline_pill(("move-storage-location", index))
-                                .settings_text()
-                                .label(course2md::tr!("移动笔记库…"))
-                                .disabled(self.storage_ui.busy)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.begin_library_move(move_id.clone(), window, cx)
-                                })),
-                        )
-                    })
                     .when(needs_reassociation, |row| {
                         row.child(
                             outline_pill(("reassociate-storage-location", index))
@@ -1748,10 +1726,72 @@ impl Desktop {
                                 })),
                         )
                     });
+                let menu = {
+                    let entity = cx.weak_entity();
+                    let root = root.clone();
+                    let busy = self.storage_ui.busy;
+                    let can_default =
+                        !default && !needs_relocation && !needs_reassociation && !busy;
+                    let can_move = !needs_relocation && !needs_reassociation && !busy;
+                    Rc::new(
+                        move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+                            let root = root.clone();
+                            let set_default = entity.clone();
+                            let default_id = id.clone();
+                            let relocate = entity.clone();
+                            let move_id = move_id.clone();
+                            menu.item(
+                                PopupMenuItem::new(course2md::tr!("打开位置"))
+                                    .icon(icons::folder_open())
+                                    .disabled(offline)
+                                    .on_click(move |_, _, cx| cx.open_with_system(&root)),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new(if default {
+                                    course2md::tr!("已是默认保存位置")
+                                } else {
+                                    course2md::tr!("设为默认保存位置")
+                                })
+                                .icon(icons::check_circle())
+                                .disabled(!can_default)
+                                .on_click(move |_, _, cx| {
+                                    let _ = set_default.update(cx, |this, cx| {
+                                        this.set_default_library(default_id.clone(), cx)
+                                    });
+                                }),
+                            )
+                            .item(
+                                PopupMenuItem::new(course2md::tr!("移动笔记库…"))
+                                    .icon(icons::storage())
+                                    .disabled(!can_move)
+                                    .on_click(move |_, window, cx| {
+                                        let _ = relocate.update(cx, |this, cx| {
+                                            this.begin_library_move(move_id.clone(), window, cx)
+                                        });
+                                    }),
+                            )
+                        },
+                    )
+                };
+                let row_menu = menu.clone();
+                let trailing = trailing.child(
+                    quiet(("storage-location-actions", index))
+                        .w(CONTROL_HEIGHT)
+                        .px_0()
+                        .icon(icons::ellipsis())
+                        .accessibility_label(course2md::tr!("{} 操作", library.name))
+                        .tooltip(course2md::tr!("笔记库操作"))
+                        .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, window, cx| {
+                            menu(popup, window, cx)
+                        }),
+                );
                 locations =
                     locations.child(
                         crate::settings_ui::setting_surface()
+                            .id(("storage-location", index))
                             .min_w_0()
+                            .context_menu(move |popup, window, cx| row_menu(popup, window, cx))
                             .child(
                                 h_flex()
                                     .w_full()

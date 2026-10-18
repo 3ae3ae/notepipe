@@ -2296,12 +2296,7 @@ impl Desktop {
                 ),
             ));
         if self.task_options.source_mode != TranscriptSource::Subtitle {
-            view = view.child(outlined_field_label(
-                "conversion-speech-label",
-                course2md::tr!("语音识别"),
-                TEXT_AUX,
-                self.import_speech_options(window, cx),
-            ));
+            view = view.child(self.import_speech_options(window, cx));
         }
         view
     }
@@ -2365,13 +2360,9 @@ impl Desktop {
                 )));
             }
             view = view.child(
+                // The service select carries its own floating label.
                 if self.selected_task_service(ServicePurpose::Ai).is_some() {
-                    outlined_field_label(
-                        "import-ai-service-label",
-                        course2md::tr!("AI 服务"),
-                        TEXT_AUX,
-                        service,
-                    )
+                    service
                 } else {
                     import_option_label(
                         "import-ai-service-label",
@@ -2442,37 +2433,23 @@ impl Desktop {
                 .then_some((provider, *label))
             })
             .collect();
-        let selector = control("import-speech-location")
-            .h(rems(56. / 14.))
-            .font_weight(FontWeight::NORMAL)
-            .text_size(TEXT_LEAD)
-            .rounded(RADIUS_SMALL)
-            .w_full()
-            .min_w_0()
-            .accessibility_label(course2md::tr!("语音识别方式"))
-            .child(div().flex_1().min_w_0().text_left().child(label))
-            .child(
-                div()
-                    .text_color(color(GRAY))
-                    .font_weight(FontWeight::NORMAL)
-                    .child(engine),
-            )
-            .child(crate::icons::chevron_down().size_4())
-            .dropdown_menu(move |menu, _, _| {
-                providers.iter().fold(menu, |menu, &(provider, label)| {
-                    let entity = entity.clone();
-                    menu.item(
-                        PopupMenuItem::new(label)
-                            .checked(provider == current)
-                            .on_click(move |_, _, cx| {
-                                let _ = entity.update(cx, |this, cx| {
-                                    this.task_options.provider = provider;
-                                    this.persist_task_options(cx);
-                                });
-                            }),
-                    )
-                })
-            });
+        let selector = SelectField::new("import-speech-location", label, move |menu, _, _| {
+            providers.iter().fold(menu, |menu, &(provider, label)| {
+                let entity = entity.clone();
+                menu.item(
+                    PopupMenuItem::new(label)
+                        .checked(provider == current)
+                        .on_click(move |_, _, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.task_options.provider = provider;
+                                this.persist_task_options(cx);
+                            });
+                        }),
+                )
+            })
+        })
+        .label(course2md::tr!("语音识别"))
+        .when(!engine.is_empty(), |field| field.trailing(engine));
         let mut view = v_flex().w_full().min_w_0().gap_2().child(selector);
         if cloud {
             view = view
@@ -2676,77 +2653,62 @@ impl Desktop {
                 .map(|library| library.name.clone())
                 .unwrap_or_else(|| course2md::tr!("选择保存位置").into());
             view = view.child(
-                control("import-library")
-                    .icon(crate::icons::folder_open())
-                    .w_full()
-                    .min_w_0()
-                    .accessibility_label(course2md::tr!("保存到：{}", label))
-                    .tooltip(label.clone())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(label),
-                    )
-                    .child(crate::icons::chevron_down().size_4().flex_shrink_0())
-                    .dropdown_menu(move |menu, _, _| {
-                        libraries.iter().fold(menu, |menu, library| {
-                            let id = library.id.clone();
-                            let entity = entity.clone();
-                            menu.item(
-                                PopupMenuItem::new(format!(
-                                    "{} · {}",
-                                    library.name,
-                                    library.root.display()
-                                ))
-                                .checked(current.as_ref() == Some(&id))
-                                .on_click(move |_, _, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        if !this.save_current_draft(cx) {
-                                            return;
-                                        }
-                                        if let Some(workspace) = &mut this.workspace {
-                                            match workspace.transaction(|state| {
-                                                if let Some(draft) = state.draft_mut() {
-                                                    draft.library_id = id.clone();
-                                                    draft.folder = None;
-                                                }
-                                                Ok(())
-                                            }) {
-                                                Ok(()) => {
-                                                    this.target_folder = None;
-                                                    this.advance_conversion_when_ready(cx);
-                                                }
-                                                Err(error) => {
-                                                    this.workspace_error = Some(course2md::tr!(
-                                                        "保存位置尚未更新：{}",
-                                                        format!("{error:#}")
-                                                    ))
-                                                }
+                SelectField::new("import-library", label, move |menu, _, _| {
+                    libraries.iter().fold(menu, |menu, library| {
+                        let id = library.id.clone();
+                        let entity = entity.clone();
+                        menu.item(
+                            PopupMenuItem::new(format!(
+                                "{} · {}",
+                                library.name,
+                                library.root.display()
+                            ))
+                            .checked(current.as_ref() == Some(&id))
+                            .on_click(move |_, _, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    if !this.save_current_draft(cx) {
+                                        return;
+                                    }
+                                    if let Some(workspace) = &mut this.workspace {
+                                        match workspace.transaction(|state| {
+                                            if let Some(draft) = state.draft_mut() {
+                                                draft.library_id = id.clone();
+                                                draft.folder = None;
+                                            }
+                                            Ok(())
+                                        }) {
+                                            Ok(()) => {
+                                                this.target_folder = None;
+                                                this.advance_conversion_when_ready(cx);
+                                            }
+                                            Err(error) => {
+                                                this.workspace_error = Some(course2md::tr!(
+                                                    "保存位置尚未更新：{}",
+                                                    format!("{error:#}")
+                                                ))
                                             }
                                         }
-                                        cx.notify();
-                                    });
-                                }),
-                            )
-                        })
-                    }),
+                                    }
+                                    cx.notify();
+                                });
+                            }),
+                        )
+                    })
+                })
+                .label(course2md::tr!("笔记库"))
+                .icon(crate::icons::folder_open()),
             );
         }
         view = view.child(
             h_flex()
                 .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(self.folder_picker(None, 0, cx)),
-                )
+                // Centered on the outlined field, below its floating label.
+                .items_end()
+                .child(div().flex_1().min_w_0().child(self.folder_picker(cx)))
                 .child(
                     outline_pill("import-new-folder")
                         .icon(icons::create_new_folder())
+                        .mb(rems(4. / 14.))
                         .w(HERO_CONTROL)
                         .h(HERO_CONTROL)
                         .px_0()
@@ -2771,12 +2733,7 @@ impl Desktop {
                     ),
                 ))
             })
-            .child(outlined_field_label(
-                "import-destination-label",
-                course2md::tr!("保存到"),
-                TEXT_AUX,
-                view,
-            ))
+            .child(view)
     }
 
     fn import_exports(&self, cx: &mut Context<Self>) -> Div {
@@ -3110,9 +3067,12 @@ impl Desktop {
                 .current_input_task(cx)
                 .is_none_or(|task| task.state.finished());
         let active = self.workbench_active_tasks_section(window, cx);
-        let recent = self.recent_notes_section(cx);
+        let recent = self
+            .recent_notes_section(cx)
+            .map(|recent| motion::enter("home-recent-notes", recent));
         let options = if show_options {
-            Some(
+            Some(motion::state_enter(
+                "generation-options-panel",
                 v_flex()
                     .w_full()
                     .min_w_0()
@@ -3166,10 +3126,12 @@ impl Desktop {
                                 ),
                         ),
                     ),
-            )
+            ))
         } else {
             None
         };
+        // With nothing below it, the input moves toward the optical center.
+        let quiet = recent.is_none() && active.is_none() && options.is_none();
         let mut lower = div()
             .flex()
             .w_full()
@@ -3177,6 +3139,8 @@ impl Desktop {
             .gap(SECTION_GAP)
             .items_start();
         if wide {
+            // Alone in the row, the options sit under the input they apply to.
+            lower = lower.when(recent.is_none(), |row| row.justify_center());
             if let Some(recent) = recent {
                 lower = lower.child(div().flex_1().min_w_0().child(recent));
             }
@@ -3201,10 +3165,21 @@ impl Desktop {
                 lower = lower.child(recent);
             }
         }
+        let hero_top = motion::value(
+            "home-hero-top",
+            match (quiet, compact) {
+                (true, true) => 96.,
+                (true, false) => 160.,
+                (false, true) => 40.,
+                (false, false) => 56.,
+            },
+            window,
+            cx,
+        );
         let mut view = v_flex()
             .w_full()
             .min_w_0()
-            .pt(rems(if compact { 40. / 14. } else { 56. / 14. }))
+            .pt(rems(hero_top / 14.))
             .gap(rems(if compact { 38. / 14. } else { 46. / 14. }))
             .child(view)
             .when_some(active, |view, active| view.child(active))

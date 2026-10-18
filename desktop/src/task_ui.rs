@@ -24,7 +24,10 @@ use crate::{
 use anyhow::{Context as _, Result, ensure};
 use course2md::config::TranscriptSource;
 use course2md::execution::Component;
-use gpui_component::button::*;
+use gpui_component::{
+    button::*,
+    menu::{ContextMenuExt, PopupMenuItem},
+};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -2652,7 +2655,13 @@ impl Desktop {
                     .as_ref()
                     .and_then(|workspace| workspace.state.selected_task.as_ref())
                     == Some(&task.id);
-                self.queue_task_card(task, task_group(task), is_selected, cx)
+                let menu = self.task_menu(task, cx);
+                div()
+                    .id(SharedString::from(format!("task-menu-{}", task.id)))
+                    .w_full()
+                    .child(self.queue_task_card(task, task_group(task), is_selected, cx))
+                    .context_menu(move |popup, window, cx| menu(popup, window, cx))
+                    .into_any_element()
             }
         };
         let mut wrapper = v_flex()
@@ -2666,6 +2675,84 @@ impl Desktop {
             wrapper = wrapper.track_focus(focus);
         }
         wrapper.into_any_element()
+    }
+
+    /// A task's commands on right-click: its note first, then the controls
+    /// that match its state, with cancelling last.
+    pub(crate) fn task_menu(&self, task: &TaskRecord, cx: &mut Context<Self>) -> MenuBuilder {
+        let entity = cx.weak_entity();
+        let id = task.id.clone();
+        let state = task.state;
+        let queued = state == TaskState::Queued && !self.is_running_task(&task.id);
+        let cancelling = state == TaskState::Pausing && task.intent == Intent::Cancel;
+        let artifact = task.artifact.clone();
+        Rc::new(move |menu, _, cx| {
+            // Looked up when the menu opens, not for every card on every frame.
+            let course = artifact.as_ref().and_then(|dir| {
+                let desktop = entity.upgrade()?;
+                let desktop = desktop.read(cx);
+                desktop
+                    .courses
+                    .iter()
+                    .find(|course| &course.dir == dir)
+                    .cloned()
+            });
+            let intent = |intent: Intent| {
+                let entity = entity.clone();
+                let id = id.clone();
+                move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                    let _ =
+                        entity.update(cx, |this, cx| this.set_task_intent(id.clone(), intent, cx));
+                }
+            };
+            let mut menu = menu;
+            if let Some(course) = course {
+                let entity = entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(course2md::tr!("阅读笔记"))
+                        .icon(icons::book_open())
+                        .on_click(move |_, _, cx| {
+                            let _ =
+                                entity.update(cx, |this, cx| this.open_course(course.clone(), cx));
+                        }),
+                );
+            }
+            if let Some(path) = artifact.clone() {
+                menu = menu.item(
+                    PopupMenuItem::new(course2md::tr!("打开笔记保存位置"))
+                        .icon(icons::folder_open())
+                        .on_click(move |_, _, cx| cx.open_with_system(&path)),
+                );
+            }
+            if !matches!(
+                state,
+                TaskState::Queued | TaskState::Running | TaskState::Pausing | TaskState::Paused
+            ) {
+                return menu;
+            }
+            menu = menu.separator();
+            if state == TaskState::Paused {
+                menu = menu.item(
+                    PopupMenuItem::new(course2md::tr!("继续生成"))
+                        .icon(icons::play_arrow())
+                        .on_click(intent(Intent::Run)),
+                );
+            } else if !queued && !cancelling {
+                menu = menu.item(
+                    PopupMenuItem::new(course2md::tr!("暂停"))
+                        .icon(icons::pause())
+                        .disabled(state == TaskState::Pausing)
+                        .on_click(intent(Intent::Pause)),
+                );
+            }
+            menu.item(
+                PopupMenuItem::new(course2md::tr!("取消任务"))
+                    .icon(icons::close())
+                    .danger(true)
+                    .disabled(cancelling)
+                    .on_click(intent(Intent::Cancel)),
+            )
+        })
     }
 
     /// 任务卡共享的暂停/取消动作组。队列卡与工作台卡仅按钮构造器、暂停文案与
