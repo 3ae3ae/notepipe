@@ -35,19 +35,21 @@ impl Desktop {
             [one] if SUBTITLE_LANGUAGES.iter().any(|(id, _)| id == one) => one.as_str(),
             _ => "",
         };
-        let source_labels = if f32::from(window.bounds().size.width) < 900.0 {
-            (
-                course2md::tr!("自动（紧凑）"),
-                course2md::tr!("仅字幕（紧凑）"),
-                course2md::tr!("语音识别（紧凑）"),
-            )
-        } else {
-            (
-                course2md::tr!("自动"),
-                course2md::tr!("仅字幕"),
-                course2md::tr!("语音识别"),
-            )
-        };
+        let source_labels =
+            if f32::from(window.bounds().size.width) / (f32::from(window.rem_size()) / 14.) < 700.0
+            {
+                (
+                    course2md::tr!("自动（紧凑）"),
+                    course2md::tr!("仅字幕（紧凑）"),
+                    course2md::tr!("语音识别（紧凑）"),
+                )
+            } else {
+                (
+                    course2md::tr!("自动"),
+                    course2md::tr!("仅字幕"),
+                    course2md::tr!("语音识别"),
+                )
+            };
         let custom_language = value.preferred_subtitle_languages.len() > 1
             || value
                 .preferred_subtitle_languages

@@ -1016,6 +1016,9 @@ impl Store {
             if result.result.is_ok() {
                 if latest {
                     self.clear_intent(result.group);
+                    self.issues.retain(|issue| {
+                        issue.group != result.group || issue.kind != SettingsIssueKind::SaveFailed
+                    });
                 }
             } else if let Err(error) = &result.result {
                 self.issues.push(SettingsIssue {
