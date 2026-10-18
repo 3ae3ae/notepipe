@@ -402,19 +402,32 @@ impl Desktop {
         self.account.invalidate();
         self.account.status_generation = self.account.status_generation.wrapping_add(1);
         self.account.checking = false;
-        match course2md::auth::clear_bilibili_login() {
-            Ok(_) => {
-                self.account.has_saved_login = false;
-                self.account.status = Some(AccountStatus::Disconnected);
-                self.account.status_error = None;
-                self.account.logout_failed = false;
-            }
-            Err(_) => {
-                self.account.status_error =
-                    Some(course2md::tr!("退出登录尚未完成，原登录状态已保留").into());
-                self.account.logout_failed = true;
-            }
-        }
+        let generation = self.account.status_generation;
+        // Removing the keychain/file credential can block; keep it off the UI thread.
+        let task = crate::spawn_blocking_io(course2md::auth::clear_bilibili_login);
+        cx.spawn(async move |this, cx| {
+            let result = task.recv().await;
+            let _ = this.update(cx, |this, cx| {
+                if this.account.status_generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(Ok(_)) => {
+                        this.account.has_saved_login = false;
+                        this.account.status = Some(AccountStatus::Disconnected);
+                        this.account.status_error = None;
+                        this.account.logout_failed = false;
+                    }
+                    _ => {
+                        this.account.status_error =
+                            Some(course2md::tr!("退出登录尚未完成，原登录状态已保留").into());
+                        this.account.logout_failed = true;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
