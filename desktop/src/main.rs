@@ -14,6 +14,7 @@ mod i18n;
 mod icons;
 mod import_ui;
 mod library_ui;
+mod math;
 mod model_discovery;
 mod motion;
 mod notes;

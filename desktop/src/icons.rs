@@ -105,6 +105,9 @@ pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        if let Some(formula) = crate::math::asset(path) {
+            return Ok(Some(formula));
+        }
         if let Some((_, bytes)) = ICONS
             .iter()
             .chain([&APP_ICON])
