@@ -377,10 +377,8 @@ impl RenderOnce for SingleChoiceGroup {
                 .child(
                     div()
                         .min_w_0()
-                        .when(segmented, |label| label.whitespace_normal().text_center())
-                        .when(!segmented, |label| {
-                            label.whitespace_nowrap().text_ellipsis()
-                        })
+                        .whitespace_nowrap()
+                        .text_ellipsis()
                         .when(cfg!(test), |label| {
                             label.debug_selector(move || {
                                 format!("{debug_kind}-choice-label-{index}")
