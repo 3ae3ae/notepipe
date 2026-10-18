@@ -406,7 +406,7 @@ impl Desktop {
                     .settings_text()
                     .w_full()
                     .h(px(56.))
-                    .rounded(RADIUS_SMALL)
+                    .rounded(FIELD_RADIUS)
                     .text_size(rems(16. / 14.))
                     .font_weight(FontWeight::NORMAL)
                     .accessibility_label(course2md::tr!("{}：{}", label, palette.name()))

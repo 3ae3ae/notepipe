@@ -104,19 +104,14 @@ impl Desktop {
                     .child(self.reveal_setting("default-subtitle-language-reveal", {
                         let current = language.to_owned();
                         let entity = cx.weak_entity();
-                        control("default-subtitle-language")
-                            .settings_text()
-                            .h(px(56.))
-                            .rounded(RADIUS_SMALL)
-                            .w_full()
-                            .label(if custom_language {
+                        SelectField::new(
+                            "default-subtitle-language",
+                            if custom_language {
                                 course2md::tr!("自定义优先级")
                             } else {
                                 subtitle_language_label(language)
-                            })
-                            .child(div().flex_1())
-                            .child(icons::chevron_down().size_4())
-                            .dropdown_menu(move |menu, _, _| {
+                            },
+                            move |menu, _, _| {
                                 SUBTITLE_LANGUAGES
                                     .into_iter()
                                     .map(|(id, label)| (id, course2md::tr!(label)))
@@ -148,7 +143,8 @@ impl Desktop {
                                                 }),
                                         )
                                     })
-                            })
+                            },
+                        )
                     }))
                     .child(
                         h_flex()
@@ -224,26 +220,14 @@ impl Desktop {
                 },
                 self.reveal_setting("default-asr-device-reveal", {
                     let entity = cx.weak_entity();
-                    control("default-asr-device")
-                        .settings_text()
-                        .h(px(56.))
-                        .rounded(RADIUS_SMALL)
-                        .w_full()
-                        .label(if online {
+                    SelectField::new(
+                        "default-asr-device",
+                        if online {
                             course2md::tr!("在线语音服务")
                         } else {
                             course2md::tr!("本机识别")
-                        })
-                        .child(div().flex_1())
-                        .when(!online, |button| {
-                            button.child(
-                                text("default-asr-engine-value", crate::provider_label(provider))
-                                    .text_color(color(GRAY))
-                                    .font_weight(FontWeight::NORMAL),
-                            )
-                        })
-                        .child(icons::chevron_down().size_4())
-                        .dropdown_menu(move |menu, _, _| {
+                        },
+                        move |menu, _, _| {
                             [
                                 (false, course2md::tr!("本机识别")),
                                 (true, course2md::tr!("在线语音服务")),
@@ -263,7 +247,11 @@ impl Desktop {
                                         }),
                                 )
                             })
-                        })
+                        },
+                    )
+                    .when(!online, |field| {
+                        field.trailing(crate::provider_label(provider))
+                    })
                 }),
             ));
         if online {
@@ -608,12 +596,10 @@ impl Desktop {
             let entity = cx.entity().downgrade();
             self.reveal_setting(
                 "default-local-model-menu-reveal",
-                control("default-local-model-menu")
-                    .settings_text()
-                    .w_full()
-                    .label(label.to_owned())
-                    .child(crate::icons::chevron_down().size_4())
-                    .dropdown_menu(move |menu, _, _| {
+                SelectField::new(
+                    "default-local-model-menu",
+                    label.to_owned(),
+                    move |menu, _, _| {
                         models.iter().fold(menu, |menu, model| {
                             let id = model.id;
                             let entity = entity.clone();
@@ -627,7 +613,8 @@ impl Desktop {
                                     }),
                             )
                         })
-                    }),
+                    },
+                ),
             )
             .into_any_element()
         } else {

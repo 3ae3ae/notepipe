@@ -359,21 +359,24 @@ impl RenderOnce for SingleChoiceGroup {
                 .min_w_0()
                 .gap(rems(8. / 14.))
                 .items_center()
-                .child(
-                    div()
-                        .w(icon_size)
-                        .h(icon_size)
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .when(cfg!(test), |icon| {
-                            icon.debug_selector(move || format!("{debug_kind}-choice-icon-{index}"))
-                        })
-                        .when_some(self.icons.get(&value).cloned(), |slot, icon| {
-                            slot.child(icon.size(icon_size))
-                        }),
-                )
+                // Text-only options center their label; no empty icon slot.
+                .when_some(self.icons.get(&value).cloned(), |content, icon| {
+                    content.child(
+                        div()
+                            .w(icon_size)
+                            .h(icon_size)
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(cfg!(test), |slot| {
+                                slot.debug_selector(move || {
+                                    format!("{debug_kind}-choice-icon-{index}")
+                                })
+                            })
+                            .child(icon.size(icon_size)),
+                    )
+                })
                 .child(
                     div()
                         .min_w_0()

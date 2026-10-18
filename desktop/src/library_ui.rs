@@ -2,7 +2,7 @@ use super::*;
 use crate::theme::*;
 use gpui_component::{
     button::*,
-    menu::{DropdownMenu, PopupMenu, PopupMenuItem},
+    menu::{PopupMenu, PopupMenuItem},
 };
 use std::sync::{
     Arc,
@@ -754,53 +754,29 @@ impl Desktop {
         }
     }
 
-    pub fn folder_picker(
-        &self,
-        course: Option<PathBuf>,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let has_course = course.is_some();
-        let context = self.folder_context(course);
+    pub fn folder_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let context = self.folder_context(None);
         let load_error = context.load_error.clone();
-        let label = context.label.clone();
-        let picker = control(("folder-picker", index))
-            .w_full()
-            .min_w_0()
-            .when(has_course, |button| button.ghost())
-            .h_auto()
-            .min_h(rems(2.6))
-            .when(!has_course, |button| {
-                button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL)
-            })
-            .py_2()
-            .disabled(self.loading || load_error.is_some())
-            .icon(crate::icons::folder())
-            .accessibility_label(course2md::tr!("保存到文件夹：{}", label))
-            .tooltip(label.clone())
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .whitespace_normal()
-                    .text_ellipsis()
-                    .line_clamp(2)
-                    .child(label),
-            )
-            .child(crate::icons::chevron_down().size_4().flex_shrink_0())
-            .dropdown_menu(Self::folder_menu(
+        let picker = SelectField::new(
+            "folder-picker",
+            context.label.clone(),
+            Self::folder_menu(
                 cx.entity().downgrade(),
                 context.origin,
                 context.storage,
                 context.folders,
                 context.folder,
-            ));
+            ),
+        )
+        .label(course2md::tr!("保存到"))
+        .icon(crate::icons::folder())
+        .disabled(self.loading || load_error.is_some());
         v_flex()
             .gap_1()
             .child(picker)
             .when_some(load_error, |view, error| {
                 view.child(
-                    accessible_text(("folder-picker-error", index), error)
+                    accessible_text("folder-picker-error", error)
                         .text_sm()
                         .text_color(color(DANGER)),
                 )

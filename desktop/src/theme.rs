@@ -6,6 +6,9 @@ use std::{cell::RefCell, time::Instant};
 #[path = "choice_group.rs"]
 mod choice_group;
 pub use choice_group::SingleChoiceGroup;
+#[path = "select_field.rs"]
+mod select_field;
+pub use select_field::{MenuBuilder, SelectField};
 
 macro_rules! tokens {
     ($($name:ident),+ $(,)?) => {
@@ -198,6 +201,38 @@ fn sync_component_theme(dark: bool, cx: &mut App) {
     colors.scrollbar = gpui::hsla(0., 0., 0., 0.);
     theme.tokens = theme.colors.into();
     Theme::sync_base(cx);
+    cx.set_global(menu_style(dark));
+}
+
+/// Every dropdown, context menu and submenu: one elevated container, 40px rows
+/// with a single 8% state layer, tonal checked rows and a short entrance.
+fn menu_style(dark: bool) -> gpui_component::menu::MenuStyle {
+    let ink = color(INK);
+    let layer = |alpha: f32| Rgba { a: alpha, ..ink };
+    gpui_component::menu::MenuStyle {
+        // M3 menus sit on surface-container; dark elevation reads as a lighter tone.
+        surface: if dark {
+            blend(color(SURFACE), ink, 0.06)
+        } else {
+            color(SURFACE)
+        }
+        .into(),
+        radius: MENU_RADIUS,
+        padding: px(6.),
+        item_height: CONTROL_HEIGHT.into(),
+        item_radius: px(10.),
+        item_padding: rems(12. / 14.).into(),
+        gap: rems(12. / 14.).into(),
+        text_size: TEXT_BODY.into(),
+        icon_size: rems(18. / 14.).into(),
+        icon_color: color(GRAY).into(),
+        highlight: layer(0.08).into(),
+        checked: color(SECONDARY_CONTAINER).into(),
+        checked_foreground: color(ON_SECONDARY_CONTAINER).into(),
+        danger: color(DANGER).into(),
+        separator: color(HAIRLINE).into(),
+        enter: std::time::Duration::from_millis(crate::motion::ENTER_MS),
+    }
 }
 
 /* ---------- 几何（px，不随字号缩放） ---------- */
@@ -207,6 +242,9 @@ pub const RADIUS_CARD: Pixels = px(16.);
 pub const SETTINGS_CARD_RADIUS: Pixels = px(24.);
 pub const RADIUS_HERO: Pixels = px(28.);
 pub const RADIUS_SMALL: Pixels = px(8.);
+/// Menus and the select fields that open them.
+pub const MENU_RADIUS: Pixels = px(16.);
+pub const FIELD_RADIUS: Pixels = px(12.);
 /// Ordinary controls share this height, including padding, at every text scale.
 pub const CONTROL_HEIGHT: Rems = rems(40. / 14.);
 /// Horizontal inset of an item inside a settings card.
@@ -1008,6 +1046,8 @@ pub enum BadgeKind {
     Danger,
     Progress,
     Neutral,
+    /// An identity rather than a status, e.g. 默认.
+    Tonal,
 }
 
 /// Icon, padding and label belong to one container; callers append the label.
@@ -1021,6 +1061,7 @@ pub fn badge(kind: BadgeKind) -> gpui::Div {
         BadgeKind::Progress => (ACCENT, SECONDARY_CONTAINER, Some(crate::icons::schedule())),
         // Neutral is a plain text chip without a status icon.
         BadgeKind::Neutral => (GRAY, INSET, None),
+        BadgeKind::Tonal => (ON_SECONDARY_CONTAINER, SECONDARY_CONTAINER, None),
     };
     let mut view = div()
         .flex()
