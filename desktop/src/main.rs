@@ -334,6 +334,16 @@ actions!(
 /// stage, error and completion transitions still repaint immediately.
 const EVENT_REPAINT_INTERVAL: Duration = Duration::from_millis(250);
 
+/// `Option<Instant>` orders `None` before every `Some`; polling needs the
+/// earliest concrete deadline and must ignore absent ones.
+fn earliest_deadline(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, b) => b,
+    }
+}
+
 impl Desktop {
     /// Splice a virtualized page list to a new item identity sequence, keeping
     /// the measured heights and scroll anchor of the unchanged prefix/suffix.
@@ -929,15 +939,15 @@ impl Desktop {
     /// The next instant the UI must run `poll` even without a job event.
     /// Returning `None` lets the loop sleep until an explicit wake.
     fn next_poll_deadline(&self) -> Option<Instant> {
-        let mut deadline = self.draft_deadline.min(self.quit_deadline);
+        let mut deadline = earliest_deadline(self.draft_deadline, self.quit_deadline);
         if let Some((_, shown)) = &self.transient_task_result {
-            deadline = deadline.min(Some(*shown + Duration::from_secs(8)));
+            deadline = earliest_deadline(deadline, Some(*shown + Duration::from_secs(8)));
         }
         if self.page == Page::Result {
-            deadline = deadline.min(Some(Instant::now() + Duration::from_secs(2)));
+            deadline = earliest_deadline(deadline, Some(Instant::now() + Duration::from_secs(2)));
         }
         if self.storage_ui.has_resume_task() {
-            deadline = deadline.min(Some(Instant::now()));
+            deadline = earliest_deadline(deadline, Some(Instant::now()));
         }
         deadline
     }
@@ -1727,5 +1737,23 @@ mod list_reconcile_tests {
         );
         assert_eq!(state.item_count(), 4);
         assert_eq!(state.logical_scroll_top().item_ix, 3);
+    }
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::earliest_deadline;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn absent_deadlines_do_not_hide_other_deadlines() {
+        let now = Instant::now();
+        assert_eq!(earliest_deadline(None, None), None);
+        assert_eq!(earliest_deadline(Some(now), None), Some(now));
+        assert_eq!(earliest_deadline(None, Some(now)), Some(now));
+        assert_eq!(
+            earliest_deadline(Some(now + Duration::from_secs(2)), Some(now)),
+            Some(now)
+        );
     }
 }
