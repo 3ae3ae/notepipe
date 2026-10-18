@@ -104,7 +104,7 @@ index 3152a15c..7ec67023 100644
  pub(crate) fn init(cx: &mut App) {
      app_menu_bar::init(cx);
 diff --git a/crates/component/src/menu/popup_menu.rs b/crates/component/src/menu/popup_menu.rs
-index 3b4ef1d3..67fc1531 100644
+index 3b4ef1d3..2e6cca06 100644
 --- a/crates/component/src/menu/popup_menu.rs
 +++ b/crates/component/src/menu/popup_menu.rs
 @@ -1,22 +1,60 @@
@@ -141,7 +141,7 @@ index 3b4ef1d3..67fc1531 100644
 +/// dropdown, context menu and submenu shares one container and item recipe:
 +/// checked items sit on a tonal container with a trailing check, pointer and
 +/// keyboard highlight is a single state layer that leaves the text color
-+/// alone, and the surface fades and slides in when it opens.
++/// alone, and the surface fades in when it opens.
 +#[derive(Clone, Copy)]
 +pub struct MenuStyle {
 +    pub surface: Hsla,
@@ -538,23 +538,22 @@ index 3b4ef1d3..67fc1531 100644
                      .when_some(self.min_width, |this, min_width| this.min_w(min_width))
                      .max_w(max_width)
                      .when(self.scrollable, |this| {
-@@ -1467,7 +1610,24 @@ impl Render for PopupMenu {
+@@ -1467,7 +1610,23 @@ impl Render for PopupMenu {
              .when(self.scrollable, |this| {
                  // TODO: When the menu is limited by `overflow_y_scroll`, the sub-menu will cannot be displayed.
                  this.vertical_scrollbar(&self.scroll_handle)
 -            })
 +            });
-+        // The same entrance as a dropdown surface: a short fade while sliding
-+        // out of the trigger's edge, with the shadow held back until the panel
-+        // can cover it. The entity id keys it, so it plays once per opening.
++        // A short fade with the shadow held back until the panel can cover it.
++        // No slide: a menu that flips above its trigger cannot tell which way
++        // it opened. The entity id keys it, so it plays once per opening.
 +        match style {
 +            Some(style) => menu
 +                .with_animation(
 +                    ("popup-menu-enter", cx.entity_id()),
 +                    Animation::new(style.enter).with_easing(ease_out_cubic),
 +                    move |menu, delta| {
-+                        menu.top(px(-6. * (1. - delta)))
-+                            .opacity(delta)
++                        menu.opacity(delta)
 +                            .shadow(popover_shadow(ring, delta * delta * delta))
 +                    },
 +                )

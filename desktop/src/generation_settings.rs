@@ -95,7 +95,6 @@ impl Desktop {
             ))
             .child(settings_outlined_row(
                 "subtitle-language-label",
-                course2md::tr!("字幕语言"),
                 "",
                 v_flex()
                     .w_full()
@@ -145,6 +144,7 @@ impl Desktop {
                                     })
                             },
                         )
+                        .label(course2md::tr!("字幕语言"))
                     }))
                     .child(
                         h_flex()
@@ -212,7 +212,6 @@ impl Desktop {
         let mut recognition =
             group("asr-default-settings", course2md::tr!("语音识别")).child(settings_outlined_row(
                 "asr-method-label",
-                course2md::tr!("识别方式"),
                 if online {
                     course2md::tr!("音频会发送到所选服务")
                 } else {
@@ -249,6 +248,7 @@ impl Desktop {
                             })
                         },
                     )
+                    .label(course2md::tr!("识别方式"))
                     .when(!online, |field| {
                         field.trailing(crate::provider_label(provider))
                     })

@@ -1059,7 +1059,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 收起测试详情	收起测试详情	Collapse test details	收起測試詳情	テストの詳細を折りたたむ
 收起目录	收起目录	Collapse table of contents	收起目錄	目次を折りたたむ
 收起笔记详情	收起笔记详情	Hide note details	收起筆記詳情	ノートの詳細を非表示にする
-收起诊断详情	收起诊断详情	Collapse diagnostic details	收起診斷詳情	診断の詳細を折りたたむ
 收起详情	收起详情	Collapse details	收起詳情	詳細を折りたたむ
 收起高级设置	收起高级设置	Collapse advanced settings	收起高階設定	詳細設定を折りたたむ
 改用云端 API / Use cloud API	改用云端 API	Use cloud API	改用雲端 API	クラウドAPIに切り替える
@@ -1460,7 +1459,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 查看测试详情	查看测试详情	View test details	檢視測試詳情	テストの詳細を表示する
 查看笔记库	查看笔记库	View note library	檢視筆記庫	ノートライブラリを表示する
 查看结果	查看结果	View results	檢視結果	結果を見る
-查看诊断详情	查看诊断详情	View diagnostics	檢視診斷詳情	診断の詳細を表示
 查看详情	查看详情	View details	檢視詳情	詳細を表示
 查看进度	查看进度	View progress	檢視進度	進行状況を表示
 校对	校对	Proofreading	校對	校正
@@ -2228,7 +2226,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 重新检查保存位置	重新检查保存位置	Recheck save location	重新檢查儲存位置	保存場所を再確認してください
 重新检查是否可用	重新检查是否可用	Recheck availability	重新檢查是否可用	空き状況を再確認する
 重新检查模型	重新检查模型	Recheck model	重新檢查模型	モデルの再チェック
-重新检查环境	重新检查环境	Check the environment again	重新檢查環境	環境を再確認
 重新生成已有摘要 / Regenerate existing summaries	重新生成已有摘要	Regenerate existing summaries	重新生成已有摘要	既存の要約を再生成する
 重新生成截图	重新生成截图	Regenerate screenshots	重新產生截圖	スクリーンショットを再生成
 重新生成摘要	重新生成摘要	Regenerate summary	重新產生摘要	要約を再生成
@@ -2379,3 +2376,5 @@ Markdown 包…	Markdown 包…	Markdown package…	Markdown 包…	Markdown パ
 正在检查本机的 Ollama…	正在检查本机的 Ollama…	Checking for Ollama on this computer…	正在檢查本機的 Ollama…	このコンピューターの Ollama を確認しています…
 未检测到 Ollama，请安装并打开 Ollama	未检测到 Ollama，请安装并打开 Ollama	Ollama was not found. Install and open Ollama.	未偵測到 Ollama，請安裝並開啟 Ollama	Ollama が見つかりません。Ollama をインストールして起動してください
 账号操作	账号操作	Account actions	帳號操作	アカウントの操作
+{} 项检查全部通过	{} 项检查全部通过	All {} checks passed	{} 項檢查全部通過	{} 件のチェックにすべて合格しました
+复制诊断信息	复制诊断信息	Copy diagnostics	複製診斷資訊	診断情報をコピー

@@ -733,61 +733,78 @@ impl Desktop {
             .pb_3();
         use crate::settings_ui::{SettingsGroup, setting_surface};
         // 连接字段与其他设置页同一组卡片：每个字段一项，项间内缩分隔线
-        // The type comes first: it decides which of the remaining fields exist.
-        let mut connection =
-            SettingsGroup::new("service-connection-heading", course2md::tr!("连接信息")).child(
-                setting_surface()
-                    .child(setting_label(
-                        "service-protocol-heading",
-                        course2md::tr!("服务类型"),
-                    ))
-                    .child(self.reveal_setting(
-                        "service-protocol-reveal",
-                        self.service_type_field(
-                            FormOwner::Editor,
-                            "service-protocol",
-                            awaiting_binding,
-                            cx,
-                        ),
-                    )),
-            );
+        // One card of outlined fields, as on the canvas. The type comes first:
+        // it decides which of the remaining fields exist.
+        let hint = |id: &'static str, message: String| {
+            text(id, message)
+                .px(rems(16. / 14.))
+                .text_size(TEXT_SETTINGS_AUX)
+                .text_color(color(GRAY))
+        };
+        let mut fields = v_flex().w_full().min_w_0().gap(rems(24. / 14.)).child(
+            self.reveal_setting(
+                "service-protocol-reveal",
+                self.service_type_field(
+                    FormOwner::Editor,
+                    "service-protocol",
+                    awaiting_binding,
+                    cx,
+                )
+                .label(course2md::tr!("服务类型")),
+            ),
+        );
         // Codex 账号连接：登录态决定模型目录与可用性
         if protocol == ServiceProtocol::CodexResponses {
-            connection = connection.child(setting_surface().child(self.codex_account_section(
-                crate::codex_ui::CodexSurface::Editor,
-                awaiting_binding,
-                cx,
-            )));
+            fields = fields.child(
+                div()
+                    .p(rems(16. / 14.))
+                    .rounded(RADIUS_CARD)
+                    .border_1()
+                    .border_color(color(HAIRLINE))
+                    .child(self.codex_account_section(
+                        crate::codex_ui::CodexSurface::Editor,
+                        awaiting_binding,
+                        cx,
+                    )),
+            );
         }
-        connection = connection.child(setting_surface().child(self.service_field(
+        fields = fields.child(self.service_field(
             FormField::Name,
             course2md::tr!("服务名称"),
             None,
-        )));
+            window,
+            cx,
+        ));
         // Codex 端点固定、凭据由登录态持有：不展示地址与认证编辑
         if protocol != ServiceProtocol::CodexResponses {
             let address = editor.form.value(FormField::Address, cx);
             let endpoint = preferences::normalize_endpoint(&address, protocol)
                 .ok()
                 .filter(|endpoint| endpoint != address.trim());
-            connection = connection.child(
-                setting_surface()
-                    .child(self.service_field(FormField::Address, course2md::tr!("服务地址"), None))
+            fields = fields.child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(self.service_field(
+                        FormField::Address,
+                        course2md::tr!("服务地址"),
+                        None,
+                        window,
+                        cx,
+                    ))
                     .when_some(endpoint, |item, endpoint| {
-                        item.child(
-                            text(
-                                "service-actual-endpoint",
-                                course2md::tr!("实际地址：{}", endpoint),
-                            )
-                            .text_size(TEXT_SETTINGS_AUX)
-                            .text_color(color(GRAY)),
-                        )
+                        item.child(hint(
+                            "service-actual-endpoint",
+                            course2md::tr!("实际地址：{}", endpoint),
+                        ))
                     }),
             );
         }
         if !protocol.keyless() {
-            connection = connection.child(
-                setting_surface()
+            fields = fields.child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
                     .child(setting_label(
                         "service-auth-heading",
                         course2md::tr!("认证方式"),
@@ -809,20 +826,24 @@ impl Desktop {
                     .service_key_visibility(FormOwner::Editor, "toggle-service-key", cx)
                     .settings_text()
                     .into_any_element();
-                let mut key = setting_surface().child(self.service_field(
+                let mut key = v_flex().w_full().gap_1().child(self.service_field(
                     FormField::Key,
                     "API Key",
                     Some(visibility),
+                    window,
+                    cx,
                 ));
                 if editor.form.draft.credential.is_some() {
-                    key = key.child(
-                        text(
-                            "service-key-existing",
-                            course2md::tr!("已保存密钥，留空则保留"),
-                        )
-                        .text_size(TEXT_SETTINGS_AUX)
-                        .text_color(color(GRAY)),
-                    );
+                    key = key.child(hint(
+                        "service-key-existing",
+                        course2md::tr!("已保存密钥，留空则保留").into(),
+                    ));
+                }
+                if let Some(source) = &editor.form.draft.credential_source {
+                    key = key.child(hint(
+                        "service-credential-source",
+                        course2md::tr!("密钥来源：{}", source),
+                    ));
                 }
                 for (index, name) in
                     preferences::Store::available_environment_credentials(protocol.purpose())
@@ -830,7 +851,7 @@ impl Desktop {
                         .enumerate()
                 {
                     key = key.child(
-                        control(("capture-environment-key", index))
+                        quiet(("capture-environment-key", index))
                             .settings_text()
                             .icon(icons::content_copy())
                             .label(course2md::tr!("使用环境变量 {}", name))
@@ -875,42 +896,28 @@ impl Desktop {
                             })),
                     );
                 }
-                connection = connection.child(key);
-            }
-            if let Some(source) = &editor.form.draft.credential_source {
-                connection = connection.detail(
-                    div().px(rems(20. / 14.)).pb(rems(1.)).child(
-                        text(
-                            "service-credential-source",
-                            course2md::tr!("密钥来源：{}", source),
-                        )
-                        .text_size(TEXT_SETTINGS_AUX)
-                        .text_color(color(GRAY)),
-                    ),
-                );
+                fields = fields.child(key);
             }
         }
-        connection = connection.child(
-            setting_surface().child(
-                self.reveal_setting(
-                    ("setting-field-reveal", 8 + FormField::Model as usize),
-                    v_flex()
-                        .w_full()
-                        .min_w_0()
-                        .gap_2()
-                        .child(setting_label(
-                            ("setting-field-label", 8 + FormField::Model as usize),
-                            course2md::tr!("模型 ID"),
-                        ))
-                        .child(self.service_model_field(
-                            FormOwner::Editor,
-                            "service-models",
-                            awaiting_binding,
-                            cx,
-                        )),
-                ),
+        let model_focused = editor
+            .form
+            .input(FormField::Model)
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window);
+        fields = fields.child(self.reveal_setting(
+            ("setting-field-reveal", 8 + FormField::Model as usize),
+            outlined_field_label(
+                ("setting-field-label", 8 + FormField::Model as usize),
+                course2md::tr!("模型 ID"),
+                TEXT_AUX,
+                color(if model_focused { ACCENT } else { GRAY }),
+                self.service_model_field(FormOwner::Editor, "service-models", awaiting_binding, cx),
             ),
-        );
+        ));
+        let mut connection =
+            SettingsGroup::new("service-connection-heading", course2md::tr!("连接信息"))
+                .child(setting_surface().pt(rems(24. / 14.)).child(fields));
         if editor.target.is_some() {
             connection = connection.child(
                 self.setting_preference(

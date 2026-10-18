@@ -402,6 +402,7 @@ impl Desktop {
                 ("palette-preset-field", usize::from(dark)),
                 course2md::tr!("主题"),
                 TEXT_SETTINGS_AUX,
+                color(GRAY),
                 control(("palette-preset", usize::from(dark)))
                     .settings_text()
                     .w_full()

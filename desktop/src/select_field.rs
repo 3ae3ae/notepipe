@@ -223,31 +223,28 @@ impl RenderOnce for SelectField {
                     cx.notify();
                 })
             });
+        let label_tone = if self.disabled {
+            faded(0.38)
+        } else if open {
+            color(ACCENT)
+        } else {
+            color(GRAY)
+        };
+        let field = match self.label {
+            Some(label) => outlined_field_label(
+                SharedString::from(format!("{:?}-label", self.id)),
+                label,
+                TEXT_AUX,
+                label_tone,
+                trigger,
+            ),
+            None => div().w_full().min_w_0().child(trigger),
+        };
         div()
-            .relative()
             .w_full()
             .min_w_0()
             .refine_style(&self.style)
-            .when(self.label.is_some(), |field| field.mt(rems(8. / 14.)))
-            .child(trigger)
-            .children(self.label.map(|label| {
-                div()
-                    .absolute()
-                    .top(rems(-8. / 14.))
-                    .left(rems(12. / 14.))
-                    .px(rems(4. / 14.))
-                    .bg(color(SURFACE))
-                    .text_size(TEXT_AUX)
-                    .line_height(rems(16. / 14.))
-                    .text_color(if self.disabled {
-                        faded(0.38)
-                    } else if open {
-                        color(ACCENT)
-                    } else {
-                        color(GRAY)
-                    })
-                    .child(label)
-            }))
+            .child(field)
             .on_prepaint(move |bounds, _, cx| {
                 state.update(cx, |state, _| state.width = bounds.size.width);
             })

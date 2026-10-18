@@ -306,32 +306,24 @@ pub(super) fn settings_stacked_row(
     )
 }
 
+/// A full-width control that labels itself (an outlined field), with an
+/// optional hint below it.
 pub(super) fn settings_outlined_row(
     id: impl Into<ElementId>,
-    label: &'static str,
     hint: &'static str,
     control: impl IntoElement,
 ) -> Div {
     let id = id.into();
-    setting_surface().child(
-        v_flex()
-            .w_full()
-            .min_w_0()
-            .gap_2()
-            .child(outlined_field_label(
-                id.clone(),
-                label,
-                TEXT_SETTINGS_AUX,
-                control,
-            ))
-            .when(!hint.is_empty(), |view| {
-                view.child(
-                    text(SharedString::from(format!("{id:?}-hint")), hint)
-                        .text_size(TEXT_SETTINGS_AUX)
-                        .text_color(color(GRAY)),
-                )
-            }),
-    )
+    setting_surface().child(v_flex().w_full().min_w_0().gap_2().child(control).when(
+        !hint.is_empty(),
+        |view| {
+            view.child(
+                text(SharedString::from(format!("{id:?}-hint")), hint)
+                    .text_size(TEXT_SETTINGS_AUX)
+                    .text_color(color(GRAY)),
+            )
+        },
+    ))
 }
 
 pub(super) fn settings_switch_row(label: &'static str, hint: &'static str, control: Switch) -> Div {
@@ -938,22 +930,71 @@ impl Desktop {
         self.input_field(field as usize, label, input, None, None)
     }
     /// A service editor input with its field error and an optional trailing action.
+    /// A connection field on the service form: outlined, its label floating
+    /// on the outline, an optional trailing action and its error below.
     fn service_field(
         &self,
         field: FormField,
         label: &'static str,
         action: Option<AnyElement>,
-    ) -> Div {
+        window: &Window,
+        cx: &App,
+    ) -> AnyElement {
         let Some(editor) = &self.settings_ui.editor else {
-            return div();
+            return div().into_any_element();
         };
-        let input = text_input(editor.form.input(field))
+        let state = editor.form.input(field);
+        let error = editor.form.error(field).map(str::to_owned);
+        let input = text_input(state)
+            .settings_text()
+            .w_full()
             .readonly(editor.pending_binding.is_some())
             .when(field == FormField::Key, |input| {
                 input.content_type(InputContentType::Password)
-            });
-        let error = editor.form.error(field).map(str::to_owned);
-        self.input_field(8 + field as usize, label, input, error, action)
+            })
+            .aria_label(
+                error
+                    .as_ref()
+                    .map(|error| course2md::tr!("{}，{}", label, error))
+                    .unwrap_or_else(|| label.to_owned()),
+            )
+            .when(error.is_some(), |input| input.border_color(color(DANGER)));
+        let index = 8 + field as usize;
+        let field = labeled_input(
+            ("setting-field-label", index),
+            label,
+            state,
+            input,
+            window,
+            cx,
+        );
+        self.reveal_setting(
+            ("setting-field-reveal", index),
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_1()
+                .child(match action {
+                    Some(action) => h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .gap_2()
+                        .items_end()
+                        .child(div().flex_1().min_w_0().child(field))
+                        .child(div().pb(rems(8. / 14.)).child(action))
+                        .into_any_element(),
+                    None => field.into_any_element(),
+                })
+                .when_some(error, |view, error| {
+                    view.child(
+                        text(("setting-error", index), error)
+                            .px(rems(16. / 14.))
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .text_color(color(DANGER)),
+                    )
+                }),
+        )
+        .into_any_element()
     }
     fn input_field(
         &self,

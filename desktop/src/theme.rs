@@ -555,16 +555,41 @@ pub fn control(id: impl Into<gpui::ElementId>) -> gpui_component::button::Button
 
 /// A framed single-line field. Multiline editors and embedded find text use
 /// their own content layout, without inventing another ordinary field size.
+/// The outlined field shared with selects: transparent, a control-strength
+/// outline and 12px corners; focus draws the accent ring.
 pub fn text_input(
     state: &gpui::Entity<gpui_component::input::InputState>,
 ) -> gpui_component::input::Input {
     use gpui::Styled;
     gpui_component::input::Input::new(state)
-        .h(CONTROL_HEIGHT)
-        .min_h(CONTROL_HEIGHT)
-        .rounded(RADIUS_PILL)
+        .h(rems(48. / 14.))
+        .min_h(rems(48. / 14.))
+        .rounded(FIELD_RADIUS)
+        .bg(gpui::transparent_black())
+        .border_color(color(CONTROL))
         .px(rems(16. / 14.))
         .text_size(TEXT_BODY)
+}
+
+/// A form field whose label floats on its outline, as on the canvas; the
+/// label turns accent while the field has focus.
+pub fn labeled_input(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+    state: &gpui::Entity<gpui_component::input::InputState>,
+    input: gpui_component::input::Input,
+    window: &gpui::Window,
+    cx: &App,
+) -> gpui::Div {
+    use gpui::{Focusable, Styled};
+    let focused = state.read(cx).focus_handle(cx).is_focused(window);
+    outlined_field_label(
+        id,
+        label,
+        TEXT_AUX,
+        if focused { color(ACCENT) } else { color(GRAY) },
+        input.h(rems(56. / 14.)).min_h(rems(56. / 14.)),
+    )
 }
 
 /* ---------- 共享控件 ---------- */
@@ -1095,6 +1120,7 @@ pub fn outlined_field_label(
     id: impl Into<gpui::ElementId>,
     label: impl Into<gpui::SharedString>,
     label_size: gpui::Rems,
+    tone: Rgba,
     content: impl gpui::IntoElement,
 ) -> gpui::Div {
     use gpui::{prelude::*, *};
@@ -1111,7 +1137,7 @@ pub fn outlined_field_label(
                 .left(rems(12. / 14.))
                 .px(rems(4. / 14.))
                 .bg(color(SURFACE))
-                .text_color(color(GRAY))
+                .text_color(tone)
                 .text_size(label_size)
                 .line_height(rems(16. / 14.))
                 .font_weight(FontWeight::NORMAL),
