@@ -303,7 +303,7 @@ impl Desktop {
             // The panel belongs to the model item above and shares its insets.
             let model_panel = setting_surface()
                 .pt_0()
-                .child(self.default_model_readiness_panel(window, cx));
+                .child(self.model_management_panel(window, cx));
             recognition = recognition.detail(crate::motion::disclosure(
                 "default-model-management",
                 self.settings_ui.model_details_open,

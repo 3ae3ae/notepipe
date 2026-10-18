@@ -11,27 +11,92 @@ impl Desktop {
         } else {
             course2md::tr!("{} · 构建 {}", env!("CARGO_PKG_VERSION"), commit)
         };
-        v_flex().w_full().min_w_0().gap(px(20.)).text_color(color(INK))
-            .child(h_flex().w_full().min_w_0().items_center().gap(px(16.))
-                .child(img("images/course2md.png").size(px(56.)).flex_shrink_0())
-                .child(v_flex().flex_1().min_w_0().gap_1()
-                    .child(accessible_text("about-name", "course2md").role(Role::Heading).text_size(TEXT_TITLE).font_weight(FontWeight::SEMIBOLD))
-                    .child(accessible_text("about-build", version).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY))))
-                .child(h_flex().gap_2().items_center().flex_wrap()
-                    .child(quiet("about-project").settings_text().icon(icons::external_link()).label(course2md::tr!("项目主页"))
-                        .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md")))
-                    .child(quiet("about-issue").settings_text().icon(icons::edit()).label(course2md::tr!("发送反馈"))
-                        .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/issues")))))
-            .child(div().w_full().h(px(1.)).bg(color(HAIRLINE)))
-            .child(v_flex().w_full().min_w_0().gap_3()
-                .child(accessible_text("about-license-title", course2md::tr!("开源许可")))
-                .child(h_flex().gap_2().flex_wrap()
-                    .child(settings_chip(outline_pill("about-license").settings_text()).icon(icons::code()).label("course2md · MIT")
-                        .on_click(|_, _, cx| cx.open_url("https://github.com/mizorewww/course2md/blob/main/LICENSE")))
-                    .child(settings_chip(outline_pill("about-lucide-license").settings_text()).icon(icons::code()).label("Lucide · ISC")
-                        .on_click(|_, _, cx| cx.open_url("https://github.com/lucide-icons/lucide/blob/main/LICENSE")))
-                    .child(settings_chip(outline_pill("about-icons-license").settings_text()).icon(icons::code()).label("Material Icons · Apache 2.0")
-                        .on_click(|_, _, cx| cx.open_url("https://github.com/google/material-design-icons/blob/master/LICENSE")))))
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .flex_wrap()
+            .gap(px(16.))
+            .text_color(color(INK))
+            .child(img("images/course2md.png").size(px(56.)).flex_shrink_0())
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(rems(200. / 14.))
+                    .gap_1()
+                    .child(
+                        accessible_text("about-name", "course2md")
+                            .role(Role::Heading)
+                            .text_size(TEXT_TITLE)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    )
+                    .child(
+                        accessible_text("about-build", version)
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .text_color(color(GRAY)),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .flex_wrap()
+                    .child(
+                        quiet("about-project")
+                            .settings_text()
+                            .text_color(color(ACCENT))
+                            .icon(icons::external_link())
+                            .label(course2md::tr!("项目主页"))
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://github.com/mizorewww/course2md")
+                            }),
+                    )
+                    .child(
+                        quiet("about-issue")
+                            .settings_text()
+                            .text_color(color(ACCENT))
+                            .icon(icons::edit())
+                            .label(course2md::tr!("发送反馈"))
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://github.com/mizorewww/course2md/issues")
+                            }),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The licenses the app ships under, each opening its text.
+    pub fn about_licenses(&self) -> AnyElement {
+        h_flex()
+            .gap_2()
+            .flex_wrap()
+            .justify_end()
+            .child(
+                settings_chip(outline_pill("about-license").settings_text())
+                    .icon(icons::code())
+                    .label("course2md · MIT")
+                    .on_click(|_, _, cx| {
+                        cx.open_url("https://github.com/mizorewww/course2md/blob/main/LICENSE")
+                    }),
+            )
+            .child(
+                settings_chip(outline_pill("about-lucide-license").settings_text())
+                    .icon(icons::code())
+                    .label("Lucide · ISC")
+                    .on_click(|_, _, cx| {
+                        cx.open_url("https://github.com/lucide-icons/lucide/blob/main/LICENSE")
+                    }),
+            )
+            .child(
+                settings_chip(outline_pill("about-icons-license").settings_text())
+                    .icon(icons::code())
+                    .label("Material Icons · Apache 2.0")
+                    .on_click(|_, _, cx| {
+                        cx.open_url(
+                            "https://github.com/google/material-design-icons/blob/master/LICENSE",
+                        )
+                    }),
+            )
             .into_any_element()
     }
 }

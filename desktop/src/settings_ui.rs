@@ -408,23 +408,125 @@ pub(super) fn setting_surface() -> Div {
         .gap_2()
 }
 
+/// Diagnostic facts as on the canvas: an accent heading over one inset block of
+/// label/value rows separated by hairlines. `after` holds actions that follow
+/// the block rather than belong to a row.
+#[derive(IntoElement)]
+pub(crate) struct DetailGroup {
+    id: ElementId,
+    icon: Icon,
+    title: &'static str,
+    rows: Vec<AnyElement>,
+    after: Vec<AnyElement>,
+}
+
 pub(super) fn settings_detail_group(
     id: impl Into<ElementId>,
     icon: Icon,
     title: &'static str,
-) -> Div {
-    v_flex().w_full().min_w_0().gap_3().child(
-        h_flex()
+) -> DetailGroup {
+    DetailGroup {
+        id: id.into(),
+        icon,
+        title,
+        rows: Vec::new(),
+        after: Vec::new(),
+    }
+}
+
+impl DetailGroup {
+    /// One fact: a quiet label on a common ruler and its value.
+    pub(crate) fn row(
+        mut self,
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        value: impl IntoElement,
+    ) -> Self {
+        self.rows.push(
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .flex_wrap()
+                .items_center()
+                .gap_x_4()
+                .gap_y_1()
+                .child(
+                    text(id, label)
+                        .flex_basis(rems(180. / 14.))
+                        .flex_shrink_0()
+                        .text_size(TEXT_SETTINGS_AUX)
+                        .text_color(color(GRAY)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex_basis(rems(200. / 14.))
+                        .min_w_0()
+                        .text_size(TEXT_SETTINGS_AUX)
+                        .child(value),
+                )
+                .into_any_element(),
+        );
+        self
+    }
+
+    pub(crate) fn after(mut self, element: impl IntoElement) -> Self {
+        self.after.push(element.into_any_element());
+        self
+    }
+}
+
+impl ParentElement for DetailGroup {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.rows.extend(elements);
+    }
+}
+
+impl RenderOnce for DetailGroup {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let mut block = v_flex()
+            .w_full()
             .min_w_0()
-            .items_center()
+            .rounded(FIELD_RADIUS)
+            .bg(color(INSET))
+            .overflow_hidden();
+        for (index, row) in self.rows.into_iter().enumerate() {
+            block = block.child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .min_h(CONTROL_HEIGHT)
+                    .px(rems(16. / 14.))
+                    .py(rems(8. / 14.))
+                    .flex()
+                    .items_center()
+                    .when(index > 0, |row| {
+                        row.border_t_1().border_color(color(CARD_LINE))
+                    })
+                    .child(row),
+            );
+        }
+        v_flex()
+            .w_full()
+            .min_w_0()
             .gap_2()
             .child(
-                icon.size(rems(20. / 14.))
-                    .flex_shrink_0()
-                    .text_color(color(GRAY)),
+                h_flex()
+                    .min_w_0()
+                    .items_center()
+                    .gap_2()
+                    .text_color(color(ACCENT))
+                    .child(self.icon.size(rems(18. / 14.)).flex_shrink_0())
+                    .child(
+                        text(self.id, self.title)
+                            .role(Role::Heading)
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .font_weight(FontWeight::MEDIUM),
+                    ),
             )
-            .child(field_label(id, title).role(Role::Heading).min_w_0()),
-    )
+            .child(block)
+            .children(self.after)
+    }
 }
 
 /// Shared skeleton of the Bilibili, Codex and Ollama account sections. The title
@@ -1186,7 +1288,7 @@ impl Desktop {
             SettingsTab::Generation => self.generation_settings_page(window, cx),
             SettingsTab::Services => self.services_settings_page(window, cx),
             SettingsTab::Storage => self.storage_settings_page(cx),
-            SettingsTab::Application => self.application_settings_page(window, cx),
+            SettingsTab::Application => self.application_settings_page(cx),
             SettingsTab::Appearance => self.appearance_page(window, cx),
         };
         let editing_service = self.settings_tab == SettingsTab::Services
@@ -2285,15 +2387,21 @@ impl Desktop {
                 ),
             )
     }
-    fn application_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn application_settings_page(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
             .w_full()
             .min_w_0()
             .gap_6()
-            .child(self.environment_page(window, cx))
+            .child(self.environment_page(cx))
             .child(
                 group("about-heading", course2md::tr!("关于"))
                     .child(setting_surface().child(self.about_page()))
+                    .child(settings_row(
+                        "about-license-title",
+                        course2md::tr!("开源许可"),
+                        "",
+                        self.about_licenses(),
+                    ))
                     .child(
                         setting_surface().child(
                             h_flex()
@@ -2351,124 +2459,166 @@ impl Desktop {
             }
         }
     }
-    fn environment_page(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        // 全部可用时只给一个结论；有问题时每项能力一个分组条目
-        let mut checks = group("diagnostics-heading", course2md::tr!("运行检查"));
-        let open = self.settings_ui.diagnostics_details_open;
-        let mut toggle_details = Some(cx.listener(|this, _, _, cx| {
-            this.settings_ui.diagnostics_details_open = !this.settings_ui.diagnostics_details_open;
-            cx.notify();
-        }));
-        if let Some(e) = &self.environment {
-            let provider = self
-                .preferences
+    /// Programs the app runs, and whether each was found.
+    fn program_facts(
+        &self,
+        environment: &crate::backend::Environment,
+    ) -> Vec<(&'static str, bool)> {
+        let mut tools = vec![
+            (course2md::tr!("转换程序"), environment.engine),
+            ("ffmpeg", environment.ffmpeg),
+            ("ffprobe", environment.ffprobe),
+            ("yt-dlp", environment.ytdlp),
+        ];
+        if matches!(
+            self.preferences
                 .generation()
                 .options
                 .provider
-                .unwrap_or_else(|| self.recommended_local_provider());
-            let speech_service = provider == course2md::config::AsrProvider::Api;
-            let local_ready = e.engine
-                && match provider {
-                    course2md::config::AsrProvider::Coreml => e.apple,
-                    course2md::config::AsrProvider::Gpu => e.llama && e.gpu.is_some(),
-                    course2md::config::AsrProvider::Cpu => e.llama,
-                    course2md::config::AsrProvider::Npu => e.npu,
-                    course2md::config::AsrProvider::Api => false,
-                };
-            let capabilities = [
-                (
-                    course2md::tr!("视频处理与导出"),
-                    e.engine && e.ffmpeg && e.ffprobe,
-                    false,
+                .unwrap_or_else(|| self.recommended_local_provider()),
+            course2md::config::AsrProvider::Cpu | course2md::config::AsrProvider::Gpu
+        ) {
+            tools.push(("llama-server", environment.llama));
+        }
+        tools
+    }
+
+    /// 运行检查 as on the canvas: one conclusion with the capabilities it
+    /// covers, or one row per capability while something needs repair, then
+    /// 诊断详情 with the facts behind it.
+    fn environment_page(&self, cx: &mut Context<Self>) -> SettingsGroup {
+        let mut checks = group("diagnostics-heading", course2md::tr!("运行检查"));
+        let Some(e) = &self.environment else {
+            return checks.child(
+                setting_surface().child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(crate::motion::spinner("diagnostic-checking-spinner", cx))
+                        .child(settings_value(
+                            "diagnostic-checking",
+                            course2md::tr!("正在检查本机能力…"),
+                        )),
                 ),
-                (course2md::tr!("读取在线视频"), e.ytdlp, false),
-                (course2md::tr!("本机识别环境"), local_ready, speech_service),
-            ];
-            let all_ready = capabilities
-                .iter()
-                .all(|(_, ready, optional)| *ready || *optional);
-            if all_ready {
-                // As on the canvas: one conclusion with its re-check, and the
-                // capabilities it covers as quiet chips on the label ruler.
-                checks = checks
+            );
+        };
+        let provider = self
+            .preferences
+            .generation()
+            .options
+            .provider
+            .unwrap_or_else(|| self.recommended_local_provider());
+        let speech_service = provider == course2md::config::AsrProvider::Api;
+        let local_ready = e.engine
+            && match provider {
+                course2md::config::AsrProvider::Coreml => e.apple,
+                course2md::config::AsrProvider::Gpu => e.llama && e.gpu.is_some(),
+                course2md::config::AsrProvider::Cpu => e.llama,
+                course2md::config::AsrProvider::Npu => e.npu,
+                course2md::config::AsrProvider::Api => false,
+            };
+        let capabilities = [
+            (
+                course2md::tr!("视频处理与导出"),
+                e.engine && e.ffmpeg && e.ffprobe,
+                false,
+            ),
+            (course2md::tr!("读取在线视频"), e.ytdlp, false),
+            (course2md::tr!("本机识别环境"), local_ready, speech_service),
+        ];
+        let checked = capabilities
+            .iter()
+            .filter(|(_, _, optional)| !optional)
+            .count();
+        let all_ready = capabilities
+            .iter()
+            .all(|(_, ready, optional)| *ready || *optional);
+        let recheck = quiet("refresh-environment")
+            .settings_text()
+            .mr(-QUIET_INSET)
+            .text_color(color(ACCENT))
+            .icon(icons::refresh())
+            .label(course2md::tr!("重新检查"))
+            .on_click(cx.listener(|this, _, _, cx| this.refresh_environment(cx)));
+        if all_ready {
+            checks = checks.child(
+                setting_surface()
+                    .gap_3()
                     .child(
-                        setting_surface()
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .items_center()
+                            .gap(rems(16. / 14.))
                             .child(
                                 h_flex()
-                                    .w_full()
-                                    .min_w_0()
-                                    .min_h(CONTROL_HEIGHT)
+                                    .size(px(40.))
+                                    .flex_shrink_0()
                                     .items_center()
-                                    .gap_4()
+                                    .justify_center()
+                                    .rounded_full()
+                                    .bg(color(SUCCESS_BG))
                                     .child(
-                                        h_flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .gap(px(16.))
-                                            .child(settings_resource_icon(
-                                                icons::check_circle().text_color(color(SUCCESS)),
-                                            ))
-                                            .child(
-                                                v_flex().flex_1().min_w_0().gap_1().child(
-                                                    text(
-                                                        "diagnostic-summary",
-                                                        course2md::tr!("一切正常"),
-                                                    )
-                                                    .font_weight(FontWeight::SEMIBOLD),
-                                                ),
-                                            ),
-                                    )
-                                    .child(
-                                        quiet("refresh-environment")
-                                            .settings_text()
-                                            .icon(icons::refresh())
-                                            .label(course2md::tr!("重新检查"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.refresh_environment(cx)
-                                            })),
+                                        icons::check_circle()
+                                            .size(px(22.))
+                                            .text_color(color(SUCCESS)),
                                     ),
                             )
                             .child(
-                                h_flex()
-                                    .w_full()
+                                v_flex()
+                                    .flex_1()
                                     .min_w_0()
-                                    .pl(px(56.))
-                                    .gap_2()
-                                    .flex_wrap()
-                                    .children(
-                                        capabilities
-                                            .iter()
-                                            .filter(|(_, _, optional)| !optional)
-                                            .map(|(label, _, _)| {
-                                                settings_chip(
-                                                    badge(BadgeKind::Neutral)
-                                                        .text_size(TEXT_SETTINGS_AUX),
-                                                )
-                                                .child(icons::check().size(px(14.)))
-                                                .child(*label)
-                                            }),
+                                    .gap(rems(2. / 14.))
+                                    .child(
+                                        text("diagnostic-summary", course2md::tr!("一切正常"))
+                                            .font_weight(FontWeight::MEDIUM),
+                                    )
+                                    .child(
+                                        text(
+                                            "diagnostic-summary-detail",
+                                            course2md::tr!("{} 项检查全部通过", checked),
+                                        )
+                                        .text_size(TEXT_SETTINGS_AUX)
+                                        .text_color(color(GRAY)),
                                     ),
-                            ),
+                            )
+                            .child(recheck),
                     )
-                    .child(setting_surface().py(rems(9. / 14.)).children(
-                        toggle_details.take().map(|toggle| {
-                            quiet("toggle-diagnostics-details")
-                                .settings_text()
-                                .w_full()
-                                .label(course2md::tr!("查看诊断详情"))
-                                .child(div().flex_1())
-                                .child(if open {
-                                    icons::chevron_up()
-                                } else {
-                                    icons::chevron_right()
-                                })
-                                .on_click(toggle)
-                        }),
-                    ));
-            }
-            for (index, (label, ready, optional)) in
-                capabilities.into_iter().enumerate().filter(|_| !all_ready)
-            {
+                    // The capabilities sit on the summary's text ruler.
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .pl(px(56.))
+                            .gap_2()
+                            .flex_wrap()
+                            .children(
+                                capabilities
+                                    .iter()
+                                    .filter(|(_, _, optional)| !optional)
+                                    .map(|(label, _, _)| {
+                                        h_flex()
+                                            .h(rems(32. / 14.))
+                                            .pl(rems(8. / 14.))
+                                            .pr(rems(12. / 14.))
+                                            .gap(rems(6. / 14.))
+                                            .items_center()
+                                            .rounded(RADIUS_SMALL)
+                                            .border_1()
+                                            .border_color(color(HAIRLINE))
+                                            .text_size(TEXT_SETTINGS_AUX)
+                                            .child(
+                                                icons::check()
+                                                    .size(px(16.))
+                                                    .text_color(color(SUCCESS)),
+                                            )
+                                            .child(*label)
+                                    }),
+                            ),
+                    ),
+            );
+        } else {
+            for (index, (label, ready, optional)) in capabilities.into_iter().enumerate() {
                 checks = checks.child(
                     setting_surface().child(settings_status_row(
                         ("diagnostic-capability", index),
@@ -2491,161 +2641,181 @@ impl Desktop {
                     )),
                 );
             }
-            if !e.engine {
-                checks = checks.child(
-                    setting_surface()
-                        .child(info_callout(
-                            "repair-bundled-engine",
-                            course2md::tr!("转换程序无法运行，重新安装应用后笔记仍会保留"),
-                        ))
-                        .child(
-                            control("download-repair-app")
-                                .settings_text()
-                                .icon(icons::download())
-                                .label(course2md::tr!("下载安装包"))
-                                .self_start()
-                                .on_click(|_, _, cx| {
-                                    cx.open_url("https://github.com/mizorewww/course2md/releases")
-                                }),
-                        ),
-                );
-            }
-        } else {
             checks = checks.child(
-                setting_surface().child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(crate::motion::spinner("diagnostic-checking-spinner", cx))
-                        .child(settings_value(
-                            "diagnostic-checking",
-                            course2md::tr!("正在检查本机能力…"),
-                        )),
-                ),
+                setting_surface()
+                    .py(rems(10. / 14.))
+                    .child(h_flex().w_full().justify_end().child(recheck)),
             );
         }
-        if let Some(toggle_details) = toggle_details {
+        if !e.engine {
             checks = checks.child(
-                setting_surface().child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .gap_2()
-                        .flex_wrap()
-                        .child(
-                            control("refresh-environment")
-                                .settings_text()
-                                .icon(icons::refresh())
-                                .label(course2md::tr!("重新检查环境"))
-                                .loading(self.environment.is_none())
-                                .disabled(self.environment.is_none())
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.refresh_environment(cx)),
-                                ),
-                        )
-                        .child(
-                            quiet("toggle-diagnostics-details")
-                                .settings_text()
-                                .icon(icons::info())
-                                .label(if open {
-                                    course2md::tr!("收起诊断详情")
-                                } else {
-                                    course2md::tr!("查看诊断详情")
-                                })
-                                .on_click(toggle_details),
-                        ),
-                ),
-            );
-        }
-        let mut details = v_flex().w_full().min_w_0().gap_6().pt_3();
-        if let Some(e) = &self.environment {
-            let mut programs = settings_detail_group(
-                "diagnostic-programs-heading",
-                icons::computer(),
-                course2md::tr!("所需程序"),
-            );
-            let needs_llama = matches!(
-                self.preferences
-                    .generation()
-                    .options
-                    .provider
-                    .unwrap_or_else(|| self.recommended_local_provider()),
-                course2md::config::AsrProvider::Cpu | course2md::config::AsrProvider::Gpu
-            );
-            let mut tools = vec![
-                (course2md::tr!("转换程序"), e.engine),
-                ("ffmpeg", e.ffmpeg),
-                ("ffprobe", e.ffprobe),
-                ("yt-dlp", e.ytdlp),
-            ];
-            if needs_llama {
-                tools.push(("llama-server", e.llama));
-            }
-            for (index, (name, found)) in tools.into_iter().enumerate() {
-                programs = programs.child(settings_detail_row(
-                    ("diagnostic-tool-label", index),
-                    name,
-                    settings_value(
-                        ("diagnostic-tool", index),
-                        if found {
-                            course2md::tr!("已安装")
-                        } else {
-                            course2md::tr!("未安装")
-                        },
+                setting_surface()
+                    .child(info_callout(
+                        "repair-bundled-engine",
+                        course2md::tr!("转换程序无法运行，重新安装应用后笔记仍会保留"),
+                    ))
+                    .child(
+                        control("download-repair-app")
+                            .settings_text()
+                            .icon(icons::download())
+                            .label(course2md::tr!("下载安装包"))
+                            .self_start()
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://github.com/mizorewww/course2md/releases")
+                            }),
                     ),
-                ));
-            }
-            if !e.ffmpeg || !e.ffprobe || !e.ytdlp {
-                let (help, command) = if cfg!(target_os = "macos") {
-                    (course2md::tr!("在终端运行"), "brew install ffmpeg yt-dlp")
-                } else if cfg!(target_os = "windows") {
-                    (
-                        course2md::tr!("在 PowerShell 运行"),
-                        "winget install Gyan.FFmpeg; winget install yt-dlp.yt-dlp",
-                    )
-                } else {
-                    (
-                        course2md::tr!("用系统包管理器安装 ffmpeg，再运行"),
-                        "pipx install yt-dlp",
-                    )
-                };
-                programs = programs.child(settings_detail_row(
-                    "media-tools-repair-label",
-                    course2md::tr!("修复方式"),
-                    v_flex()
-                        .w_full()
-                        .min_w_0()
-                        .gap_2()
-                        .child(settings_value("install-media-tools-help", help))
-                        .child(settings_value("install-media-tools-command", command))
-                        .child(
-                            quiet("copy-media-install-command")
-                                .settings_text()
-                                .icon(icons::content_copy())
-                                .label(course2md::tr!("复制安装命令"))
-                                .self_start()
-                                .on_click(move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(command.into()))
-                                }),
-                        ),
-                ));
-            }
-            details = details.child(programs);
+            );
         }
-        details = details.child(self.model_hardware_details(cx));
-        // Expanded details belong to the status item, not a divided item of
-        // their own; the model panel follows as its own section.
+        let open = self.settings_ui.diagnostics_details_open;
+        checks
+            .child(
+                quiet("toggle-diagnostics-details")
+                    .settings_text()
+                    .w_full()
+                    .h(rems(52. / 14.))
+                    .rounded_none()
+                    .px(SETTING_ITEM_INSET)
+                    .text_color(color(INK))
+                    .accessibility_label(course2md::tr!("诊断详情"))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .items_center()
+                            .font_weight(FontWeight::NORMAL)
+                            .child(div().flex_1().child(course2md::tr!("诊断详情")))
+                            .child(
+                                if open {
+                                    icons::chevron_up()
+                                } else {
+                                    icons::chevron_down()
+                                }
+                                .size(rems(20. / 14.))
+                                .text_color(color(GRAY)),
+                            ),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_ui.diagnostics_details_open =
+                            !this.settings_ui.diagnostics_details_open;
+                        cx.notify();
+                    })),
+            )
+            .detail(crate::motion::disclosure(
+                "diagnostics-detail-content",
+                open,
+                self.diagnostic_details(e, cx)
+                    .px(SETTING_ITEM_INSET)
+                    .pb(rems(16. / 14.)),
+            ))
+    }
+
+    fn diagnostic_details(
+        &self,
+        environment: &crate::backend::Environment,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let tools = self.program_facts(environment);
+        let mut programs = tools.iter().enumerate().fold(
+            settings_detail_group(
+                "diagnostic-programs-heading",
+                icons::code(),
+                course2md::tr!("所需程序"),
+            ),
+            |group, (index, (name, found))| {
+                let (icon, tone, state) = if *found {
+                    (icons::check(), SUCCESS, course2md::tr!("已安装"))
+                } else {
+                    (icons::warning(), WARNING, course2md::tr!("未安装"))
+                };
+                group.row(
+                    ("diagnostic-tool-label", index),
+                    *name,
+                    h_flex()
+                        .gap(rems(6. / 14.))
+                        .items_center()
+                        .text_color(color(tone))
+                        .child(icon.size(px(16.)))
+                        .child(text(("diagnostic-tool", index), state)),
+                )
+            },
+        );
+        if !environment.ffmpeg || !environment.ffprobe || !environment.ytdlp {
+            let (help, command) = if cfg!(target_os = "macos") {
+                (course2md::tr!("在终端运行"), "brew install ffmpeg yt-dlp")
+            } else if cfg!(target_os = "windows") {
+                (
+                    course2md::tr!("在 PowerShell 运行"),
+                    "winget install Gyan.FFmpeg; winget install yt-dlp.yt-dlp",
+                )
+            } else {
+                (
+                    course2md::tr!("用系统包管理器安装 ffmpeg，再运行"),
+                    "pipx install yt-dlp",
+                )
+            };
+            programs = programs.row(
+                "media-tools-repair-label",
+                course2md::tr!("修复方式"),
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_2()
+                    .child(settings_value("install-media-tools-help", help))
+                    .child(settings_value("install-media-tools-command", command))
+                    .child(
+                        quiet("copy-media-install-command")
+                            .settings_text()
+                            .ml(-QUIET_INSET)
+                            .icon(icons::content_copy())
+                            .label(course2md::tr!("复制安装命令"))
+                            .self_start()
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(command.into()))
+                            }),
+                    ),
+            );
+        }
+        // The copied text is what the page shows, one fact per line.
+        let hardware = self.hardware_facts();
+        let mut report = vec![course2md::tr!("所需程序").to_owned()];
+        report.extend(tools.iter().map(|(name, found)| {
+            format!(
+                "{name}: {}",
+                if *found {
+                    course2md::tr!("已安装")
+                } else {
+                    course2md::tr!("未安装")
+                }
+            )
+        }));
+        report.push(course2md::tr!("设备与运行时").to_owned());
+        report.extend(
+            hardware
+                .iter()
+                .map(|(_, label, value)| format!("{label}: {value}")),
+        );
+        let report = report.join("\n");
         v_flex()
             .w_full()
             .min_w_0()
-            .gap_6()
-            .child(checks.detail(crate::motion::disclosure(
-                "diagnostics-detail-content",
-                open,
-                details.px(SETTING_ITEM_INSET).pb(rems(16. / 14.)),
-            )))
-            .child(self.model_diagnostics_panel(window, cx))
+            .gap_5()
+            .pt_1()
+            .child(programs)
+            .children(self.model_hardware_details(cx))
+            .child(
+                h_flex().w_full().justify_end().child(
+                    quiet("copy-diagnostics")
+                        .settings_text()
+                        .mr(-QUIET_INSET)
+                        .text_color(color(ACCENT))
+                        .icon(icons::content_copy())
+                        .label(course2md::tr!("复制诊断信息"))
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(report.clone()))
+                        }),
+                ),
+            )
     }
+
     // Wrappers only while the other interface modules are being integrated.
     /// Service editor drafts are deliberately excluded: an existing published service
     /// continues to be usable. An unapplied failed ordinary commit must never be silently

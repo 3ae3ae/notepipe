@@ -1,5 +1,8 @@
 //! Model evidence is loaded in the background; preparation uses the existing model job.
-use super::{settings_detail_group, settings_detail_row, settings_status_row, settings_value};
+use super::{
+    DetailGroup, settings_detail_group, settings_detail_row, settings_status_row, settings_value,
+    text,
+};
 use crate::theme::*;
 use crate::*;
 use course2md::{
@@ -962,31 +965,25 @@ impl Desktop {
         (actions.child(recheck), extras)
     }
 
-    pub(super) fn model_diagnostics_panel(
+    /// 模型管理 under the default recognition model: its readiness, another
+    /// model being prepared, the last preparation's result and its log.
+    pub(super) fn model_management_panel(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let request = self.default_model_request();
-        // 使用语音服务识别时没有本地模型可检查：整组省略，而不是重述识别方式
-        let mut view = v_flex().w_full().min_w_0().gap_6();
-        if request.provider != AsrProvider::Api {
-            view = view.child(
-                crate::settings_ui::SettingsGroup::new(
-                    "model-diagnostic-default",
-                    course2md::tr!("默认识别模型"),
-                )
-                .child(crate::settings_ui::setting_surface().child(
-                    self.model_readiness_panel(
-                        request.provider,
-                        Some(&request.model),
-                        &request.root,
-                        window,
-                        cx,
-                    ),
-                )),
-            );
-        }
+        let mut view = v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_6()
+            .child(self.model_readiness_panel(
+                request.provider,
+                Some(&request.model),
+                &request.root,
+                window,
+                cx,
+            ));
         if let Some(active) = self.active_preparation()
             && active.key() != request.key()
         {
@@ -996,7 +993,7 @@ impl Desktop {
                     icons::storage(),
                     course2md::tr!("正在准备的模型"),
                 )
-                .child(self.model_readiness_panel(
+                .after(self.model_readiness_panel(
                     active.provider,
                     Some(&active.model),
                     &active.root,
@@ -1056,17 +1053,14 @@ impl Desktop {
         }
         view
     }
-    pub(super) fn model_hardware_details(&self, cx: &mut Context<Self>) -> Div {
+    /// Device and runtime facts behind local recognition, shown in 诊断详情
+    /// and copied with it.
+    pub(super) fn hardware_facts(&self) -> Vec<(&'static str, &'static str, String)> {
         let request = self.default_model_request();
         let Some(environment) = &self.environment else {
-            return v_flex();
+            return Vec::new();
         };
-        let mut hardware = settings_detail_group(
-            "model-hardware-heading",
-            icons::computer(),
-            course2md::tr!("设备与运行时"),
-        );
-        for (id, label, value) in [
+        let mut facts: Vec<_> = [
             (
                 "cpu-device",
                 course2md::tr!("CPU 架构"),
@@ -1130,76 +1124,73 @@ impl Desktop {
                 !cfg!(target_os = "macos") || request.provider == AsrProvider::Npu
             }
             _ => true,
-        }) {
-            hardware = hardware.child(settings_detail_row(
-                SharedString::from(format!("{id}-label")),
-                label,
-                settings_value(id, value.to_owned()),
-            ));
-        }
-        let alternatives =
-            LOCAL_ENGINES.map(|provider| (provider, device_issue(provider, environment).is_none()));
-        let available = alternatives
+        })
+        .map(|(id, label, value)| (id, label, value.to_owned()))
+        .collect();
+        let available = LOCAL_ENGINES
             .into_iter()
-            .filter(|(_, available)| *available)
-            .map(|(provider, _)| provider_name(provider))
+            .filter(|provider| device_issue(*provider, environment).is_none())
+            .map(provider_name)
             .collect::<Vec<_>>();
         if !available.is_empty() {
-            hardware = hardware.child(settings_detail_row(
-                "available-local-model-providers-label",
+            facts.push((
+                "available-local-model-providers",
                 course2md::tr!("可用识别方式"),
-                settings_value(
-                    "available-local-model-providers",
-                    available.join(course2md::tr!("、")),
-                ),
+                available.join(course2md::tr!("、")),
             ));
         }
-        if self.model_device_issue(request.provider).is_some() {
-            hardware = hardware.child(
-                h_flex().gap_2().flex_wrap().children(
-                    alternatives
-                        .into_iter()
-                        .filter(|(provider, available)| *available && *provider != request.provider)
-                        .map(|(provider, _)| {
-                            control(SharedString::from(format!(
-                                "choose-available-model-{}",
-                                provider.as_str()
-                            )))
-                            .settings_text()
-                            .icon(icons::mic())
-                            .label(course2md::tr!("默认改用 {}", provider_name(provider)))
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    let mut value = this.generation_edit_base();
-                                    value.select_provider(Some(provider));
-                                    value.options.asr_model =
-                                        Some(course2md::config::DEFAULT_ASR_MODEL.into());
-                                    if this.commit_generation(value, cx) {
-                                        this.refresh_model_diagnostics(cx);
-                                    }
-                                },
-                            ))
-                        }),
-                ),
-            );
-        }
-        hardware
-    }
-    pub(super) fn default_model_readiness_panel(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let request = self.default_model_request();
-        self.model_readiness_panel(
-            request.provider,
-            Some(&request.model),
-            &request.root,
-            window,
-            cx,
-        )
+        facts
     }
 
+    pub(super) fn model_hardware_details(&self, cx: &mut Context<Self>) -> Option<DetailGroup> {
+        let request = self.default_model_request();
+        let environment = self.environment.as_ref()?;
+        let hardware = self.hardware_facts().into_iter().fold(
+            settings_detail_group(
+                "model-hardware-heading",
+                icons::computer(),
+                course2md::tr!("设备与运行时"),
+            ),
+            |group, (id, label, value)| {
+                group.row(
+                    SharedString::from(format!("{id}-label")),
+                    label,
+                    text(id, value),
+                )
+            },
+        );
+        if self.model_device_issue(request.provider).is_none() {
+            return Some(hardware);
+        }
+        let alternatives = LOCAL_ENGINES.into_iter().filter(|provider| {
+            *provider != request.provider && device_issue(*provider, environment).is_none()
+        });
+        Some(
+            hardware.after(
+                h_flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .children(alternatives.map(|provider| {
+                        control(SharedString::from(format!(
+                            "choose-available-model-{}",
+                            provider.as_str()
+                        )))
+                        .settings_text()
+                        .icon(icons::mic())
+                        .label(course2md::tr!("默认改用 {}", provider_name(provider)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let mut value = this.generation_edit_base();
+                            value.select_provider(Some(provider));
+                            value.options.asr_model =
+                                Some(course2md::config::DEFAULT_ASR_MODEL.into());
+                            if this.commit_generation(value, cx) {
+                                this.refresh_model_diagnostics(cx);
+                            }
+                        }))
+                    })),
+            ),
+        )
+    }
     /// One-line readiness conclusion for the generation group main flow; the full
     /// panel stays behind 技术详情.
     pub(super) fn default_model_conclusion(&self) -> (bool, String) {
