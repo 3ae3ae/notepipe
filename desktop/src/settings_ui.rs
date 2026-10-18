@@ -95,8 +95,8 @@ pub(crate) struct State {
     feedback_details: BTreeMap<PreferenceGroup, String>,
     expanded_feedback: std::collections::BTreeSet<PreferenceGroup>,
     generation_block_messages: std::collections::BTreeSet<String>,
-    pending_generation: Option<GenerationPreferences>,
-    pending_application: Option<ApplicationPreferences>,
+    pub(crate) pending_generation: Option<GenerationPreferences>,
+    pub(crate) pending_application: Option<ApplicationPreferences>,
     /// Typed text not yet written to disk; flushed after a pause, on blur and on exit.
     unsaved_text: Option<GenerationPreferences>,
     text_flush: Option<Task<()>>,
@@ -1810,7 +1810,7 @@ impl Desktop {
         self.commit_generation(next, cx);
     }
     /// Shows a group's result. A success notice clears itself after a few seconds.
-    fn set_settings_feedback(
+    pub(crate) fn set_settings_feedback(
         &mut self,
         group: PreferenceGroup,
         message: String,
@@ -1844,7 +1844,7 @@ impl Desktop {
         }
         self.settings_ui.feedback.insert(group, (message, error));
     }
-    fn set_settings_save_failure(
+    pub(crate) fn set_settings_save_failure(
         &mut self,
         group: PreferenceGroup,
         error: &anyhow::Error,
@@ -2247,7 +2247,12 @@ impl Desktop {
                 cx.set_reduce_motion(self.desktop_settings.reduce_motion);
                 self.set_settings_feedback(
                     PreferenceGroup::Application,
-                    course2md::tr!("已保存").into(),
+                    if self.preferences.is_pending(PreferenceGroup::Application) {
+                        course2md::tr!("正在保存…")
+                    } else {
+                        course2md::tr!("已保存")
+                    }
+                    .into(),
                     false,
                     cx,
                 );
@@ -2485,12 +2490,12 @@ impl Desktop {
             );
             let mut tools = vec![
                 (course2md::tr!("转换程序"), e.engine),
-                ("ffmpeg".into(), e.ffmpeg),
-                ("ffprobe".into(), e.ffprobe),
-                ("yt-dlp".into(), e.ytdlp),
+                ("ffmpeg", e.ffmpeg),
+                ("ffprobe", e.ffprobe),
+                ("yt-dlp", e.ytdlp),
             ];
             if needs_llama {
-                tools.push(("llama-server".into(), e.llama));
+                tools.push(("llama-server", e.llama));
             }
             for (index, (name, found)) in tools.into_iter().enumerate() {
                 programs = programs.child(settings_detail_row(
@@ -2754,7 +2759,14 @@ impl Desktop {
         if let Some(next) = self.settings_ui.pending_application.clone() {
             self.commit_application(next, cx);
         }
-        if !self.preferences.unsaved_intents_are_preserved() {
+        self.preferences.flush();
+        let failed = self
+            .preferences
+            .process_writes()
+            .into_iter()
+            .any(|(_, result)| result.is_err());
+        self.preferences.flush();
+        if failed || !self.preferences.unsaved_intents_are_preserved() {
             self.message = Some(course2md::tr!("修改暂时无法保存，请重试").into());
             cx.notify();
             return false;

@@ -799,34 +799,73 @@ struct PreferenceWriter {
     signals: std::sync::mpsc::Sender<PreferenceSignal>,
 }
 
+struct PreferenceWriteResult {
+    group: PreferenceGroup,
+    revision: u64,
+    result: Result<(), String>,
+}
+
 enum PreferenceSignal {
     Write {
         path: PathBuf,
         bytes: Vec<u8>,
         group: PreferenceGroup,
+        revision: u64,
+    },
+    Recovery {
+        path: PathBuf,
+        bytes: Vec<u8>,
+    },
+    Remove {
+        path: PathBuf,
     },
     Flush(std::sync::mpsc::Sender<()>),
-    Stop,
 }
 
 impl PreferenceWriter {
-    fn new(root: PathBuf, error: Arc<std::sync::Mutex<Option<(PreferenceGroup, String)>>>) -> Self {
+    fn new(
+        root: PathBuf,
+        results: std::sync::mpsc::Sender<PreferenceWriteResult>,
+        wake: Arc<std::sync::Mutex<Option<smol::channel::Sender<()>>>>,
+    ) -> Self {
         let (signals, receiver) = std::sync::mpsc::channel();
-        let thread_error = Arc::clone(&error);
+        let thread_wake = Arc::clone(&wake);
         std::thread::Builder::new()
             .name("course2md-preferences-writer".into())
             .spawn(move || {
                 while let Ok(signal) = receiver.recv() {
+                    let notify = || {
+                        if let Some(wake) = thread_wake.lock().ok().and_then(|wake| wake.clone()) {
+                            let _ = wake.try_send(());
+                        }
+                    };
                     match signal {
-                        PreferenceSignal::Stop => break,
                         PreferenceSignal::Flush(ack) => {
                             let _ = ack.send(());
+                            notify();
                         }
-                        PreferenceSignal::Write { path, bytes, group } => {
-                            let result = write_preference_file(&root, &path, &bytes);
-                            if let Err(error) = result {
-                                *thread_error.lock().unwrap() = Some((group, format!("{error:#}")));
-                            }
+                        PreferenceSignal::Recovery { path, bytes } => {
+                            let _ = atomic_write_with_retry(&path, &bytes);
+                            notify();
+                        }
+                        PreferenceSignal::Remove { path } => {
+                            let _ = std::fs::remove_file(path);
+                            notify();
+                        }
+                        PreferenceSignal::Write {
+                            path,
+                            bytes,
+                            group,
+                            revision,
+                        } => {
+                            let result = write_preference_file(&root, &path, &bytes)
+                                .map_err(|error| format!("{error:#}"));
+                            let _ = results.send(PreferenceWriteResult {
+                                group,
+                                revision,
+                                result,
+                            });
+                            notify();
                         }
                     }
                 }
@@ -835,9 +874,32 @@ impl PreferenceWriter {
         Self { signals }
     }
 
-    fn enqueue(&self, path: PathBuf, bytes: Vec<u8>, group: PreferenceGroup) -> Result<()> {
+    fn enqueue(
+        &self,
+        path: PathBuf,
+        bytes: Vec<u8>,
+        group: PreferenceGroup,
+        revision: u64,
+    ) -> Result<()> {
         self.signals
-            .send(PreferenceSignal::Write { path, bytes, group })
+            .send(PreferenceSignal::Write {
+                path,
+                bytes,
+                group,
+                revision,
+            })
+            .map_err(|_| anyhow!(course2md::tr!("设置保存线程已停止")))
+    }
+
+    fn enqueue_recovery(&self, path: PathBuf, bytes: Vec<u8>) -> Result<()> {
+        self.signals
+            .send(PreferenceSignal::Recovery { path, bytes })
+            .map_err(|_| anyhow!(course2md::tr!("设置保存线程已停止")))
+    }
+
+    fn enqueue_remove(&self, path: PathBuf) -> Result<()> {
+        self.signals
+            .send(PreferenceSignal::Remove { path })
             .map_err(|_| anyhow!(course2md::tr!("设置保存线程已停止")))
     }
 
@@ -876,16 +938,29 @@ pub struct Store {
     application_intent: Option<ApplicationPreferences>,
     recovery_drafts: BTreeSet<ServiceDraftId>,
     writer: Option<PreferenceWriter>,
-    write_error: Arc<std::sync::Mutex<Option<(PreferenceGroup, String)>>>,
+    write_results: Option<std::sync::mpsc::Receiver<PreferenceWriteResult>>,
+    pending_writes: BTreeMap<PreferenceGroup, u64>,
+    wake: Arc<std::sync::Mutex<Option<smol::channel::Sender<()>>>>,
 }
 
 impl Store {
     /// Loading a broken group never makes reading notes or unrelated settings unavailable.
     pub fn open(root: impl Into<PathBuf>, vault: Arc<dyn CredentialVault>) -> Self {
         let root = root.into();
-        let write_error = Arc::new(std::sync::Mutex::new(None));
-        let writer =
-            (!cfg!(test)).then(|| PreferenceWriter::new(root.clone(), Arc::clone(&write_error)));
+        let wake = Arc::new(std::sync::Mutex::new(None));
+        let (writer, write_results) = if cfg!(test) {
+            (None, None)
+        } else {
+            let (results, receiver) = std::sync::mpsc::channel();
+            (
+                Some(PreferenceWriter::new(
+                    root.clone(),
+                    results,
+                    Arc::clone(&wake),
+                )),
+                Some(receiver),
+            )
+        };
         let mut store = Self {
             root,
             vault,
@@ -899,7 +974,9 @@ impl Store {
             application_intent: None,
             recovery_drafts: BTreeSet::new(),
             writer,
-            write_error,
+            write_results,
+            pending_writes: BTreeMap::new(),
+            wake,
         };
         store.generation = store.load_group(PreferenceGroup::Generation);
         store.application = store.load_group(PreferenceGroup::Application);
@@ -912,16 +989,62 @@ impl Store {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    pub fn set_wake_sender(&self, sender: smol::channel::Sender<()>) {
+        if let Ok(mut wake) = self.wake.lock() {
+            *wake = Some(sender);
+        }
+    }
     pub fn flush(&self) {
         if let Some(writer) = &self.writer {
             writer.flush();
         }
     }
-    pub fn take_write_error(&self) -> Option<(PreferenceGroup, String)> {
-        self.write_error
-            .lock()
-            .ok()
-            .and_then(|mut error| error.take())
+    pub fn is_pending(&self, group: PreferenceGroup) -> bool {
+        self.pending_writes.contains_key(&group)
+    }
+    /// Drain writer completions. The UI calls this from its event poll.
+    pub fn process_writes(&mut self) -> Vec<(PreferenceGroup, Result<(), String>)> {
+        let mut completed = Vec::new();
+        let Some(receiver) = self.write_results.take() else {
+            return completed;
+        };
+        while let Ok(result) = receiver.try_recv() {
+            let latest = self.pending_writes.get(&result.group) == Some(&result.revision);
+            if latest {
+                self.pending_writes.remove(&result.group);
+            }
+            if result.result.is_ok() {
+                if latest {
+                    self.clear_intent(result.group);
+                }
+            } else if let Err(error) = &result.result {
+                self.issues.push(SettingsIssue {
+                    group: result.group,
+                    kind: SettingsIssueKind::SaveFailed,
+                    message: save_failure_message(result.group, &anyhow!(error.clone())),
+                    detail: Some(error.clone()),
+                });
+            }
+            completed.push((result.group, result.result));
+        }
+        self.write_results = Some(receiver);
+        completed
+    }
+    fn clear_intent(&mut self, group: PreferenceGroup) {
+        let (file, present) = match group {
+            PreferenceGroup::Generation => {
+                self.generation_intent = None;
+                ("generation-intent.json", true)
+            }
+            PreferenceGroup::Application => {
+                self.application_intent = None;
+                ("application-intent.json", true)
+            }
+            PreferenceGroup::Services => ("", false),
+        };
+        if present && let Some(writer) = &self.writer {
+            let _ = writer.enqueue_remove(self.recovery_root().join(file));
+        }
     }
     pub fn vault(&self) -> Arc<dyn CredentialVault> {
         Arc::clone(&self.vault)
@@ -1216,6 +1339,23 @@ impl Store {
     where
         T: Serialize + DeserializeOwned + Validate + Clone,
     {
+        if let Some(writer) = &self.writer {
+            let revision = self.revisions.get(&group).copied().unwrap_or(0) + 1;
+            let intent = Envelope {
+                schema: SCHEMA,
+                revision,
+                value: value.clone(),
+            };
+            let bytes = serde_json::to_vec_pretty(&intent)?;
+            writer.enqueue_recovery(self.recovery_root().join(file), bytes)?;
+            if let Err(error) = self.persist(group, &value) {
+                *intent_slot(self) = Some(value);
+                return Err(error);
+            }
+            *slot(self) = value.clone();
+            *intent_slot(self) = Some(value);
+            return Ok(());
+        }
         if let Err(error) = self.persist(group, &value) {
             let intent = Envelope {
                 schema: SCHEMA,
@@ -1790,8 +1930,9 @@ impl Store {
                 value,
             })?;
             if let Some(writer) = &self.writer {
-                writer.enqueue(path, bytes, group)?;
+                writer.enqueue(path, bytes, group, revision)?;
                 self.revisions.insert(group, revision);
+                self.pending_writes.insert(group, revision);
                 return Ok(());
             }
             if let Ok(Some(previous)) = read_envelope::<T>(&path) {
@@ -2753,17 +2894,69 @@ mod tests {
     fn background_preferences_writer_serializes_and_flushes() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("generation.json");
-        let error = Arc::new(std::sync::Mutex::new(None));
-        let writer = PreferenceWriter::new(root.path().to_path_buf(), Arc::clone(&error));
+        let (results, _receiver) = std::sync::mpsc::channel();
+        let wake = Arc::new(std::sync::Mutex::new(None));
+        let writer = PreferenceWriter::new(root.path().to_path_buf(), results, wake);
         writer
             .enqueue(
                 path.clone(),
                 b"{\"ok\":true}".to_vec(),
                 PreferenceGroup::Generation,
+                1,
             )
             .unwrap();
         writer.flush();
         assert_eq!(std::fs::read(&path).unwrap(), b"{\"ok\":true}");
-        assert!(error.lock().unwrap().is_none());
+    }
+    fn store_with_async_writer(root: &std::path::Path) -> Store {
+        let mut store = Store::open(
+            root.to_path_buf(),
+            Arc::new(crate::credentials::MemoryCredentialVault::new()),
+        );
+        let (results, receiver) = std::sync::mpsc::channel();
+        let wake = Arc::new(std::sync::Mutex::new(None));
+        store.writer = Some(PreferenceWriter::new(
+            root.to_path_buf(),
+            results,
+            Arc::clone(&wake),
+        ));
+        store.write_results = Some(receiver);
+        store.wake = wake;
+        store
+    }
+
+    #[test]
+    fn async_generation_save_reports_pending_until_written() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = store_with_async_writer(root.path());
+        let value = store.generation().clone();
+        store.save_generation(value).unwrap();
+        assert!(store.is_pending(PreferenceGroup::Generation));
+        assert!(store.generation_intent().is_some());
+        store.flush();
+        let completed = store.process_writes();
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].1.is_ok());
+        assert!(!store.is_pending(PreferenceGroup::Generation));
+        assert!(store.generation_intent().is_none());
+        store.flush();
+        assert!(root.path().join("generation.json").is_file());
+        assert!(!root.path().join("generation-intent.json").exists());
+    }
+
+    #[test]
+    fn failed_async_save_keeps_the_recovery_intent() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = store_with_async_writer(root.path());
+        std::fs::create_dir(root.path().join("generation.json")).unwrap();
+        let value = store.generation().clone();
+        store.save_generation(value).unwrap();
+        store.flush();
+        let completed = store.process_writes();
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].1.is_err());
+        assert!(!store.is_pending(PreferenceGroup::Generation));
+        assert!(store.generation_intent().is_some());
+        assert!(store.unsaved_intents_are_preserved());
     }
 }

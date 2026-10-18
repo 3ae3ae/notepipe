@@ -757,11 +757,7 @@ impl Desktop {
                     setting_surface()
                         .child(setting_label(
                             "service-protocol-heading",
-                            if protocol.purpose() == ServicePurpose::Speech {
-                                course2md::tr!("服务类型")
-                            } else {
-                                course2md::tr!("服务类型")
-                            },
+                            course2md::tr!("服务类型"),
                         ))
                         .child(
                             self.service_protocol_choices(
@@ -1458,18 +1454,9 @@ impl Desktop {
         let required: Vec<_> = [TestKind::Proofread, TestKind::Summary, TestKind::Vision]
             .into_iter()
             .filter(|kind| match kind {
-                TestKind::Proofread => components
-                    .iter()
-                    .any(|component| *component == Component::Proofreading),
-                TestKind::Vision => {
-                    uses_vision
-                        && components
-                            .iter()
-                            .any(|component| *component == Component::Proofreading)
-                }
-                TestKind::Summary => components
-                    .iter()
-                    .any(|component| *component == Component::Summary),
+                TestKind::Proofread => components.contains(&Component::Proofreading),
+                TestKind::Vision => uses_vision && components.contains(&Component::Proofreading),
+                TestKind::Summary => components.contains(&Component::Summary),
                 TestKind::Speech => false,
             })
             .map(TestKind::contract)
@@ -1836,7 +1823,12 @@ impl Desktop {
                 self.settings_ui.pending_generation = None;
                 self.set_settings_feedback(
                     PreferenceGroup::Generation,
-                    course2md::tr!("已保存").into(),
+                    if self.preferences.is_pending(PreferenceGroup::Generation) {
+                        course2md::tr!("正在保存…")
+                    } else {
+                        course2md::tr!("已保存")
+                    }
+                    .into(),
                     false,
                     cx,
                 );

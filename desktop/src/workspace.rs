@@ -1154,20 +1154,18 @@ impl WorkspaceWriter {
                         WriterSignal::Stop => {
                             if let Some(state) =
                                 thread_pending.lock().ok().and_then(|mut p| p.take())
+                                && let Err(error) = write(state, &mut cache)
                             {
-                                if let Err(error) = write(state, &mut cache) {
-                                    *thread_error.lock().unwrap() = Some(format!("{error:#}"));
-                                }
+                                *thread_error.lock().unwrap() = Some(format!("{error:#}"));
                             }
                             break;
                         }
                         WriterSignal::Wake => {
                             if let Some(state) =
                                 thread_pending.lock().ok().and_then(|mut p| p.take())
+                                && let Err(error) = write(state, &mut cache)
                             {
-                                if let Err(error) = write(state, &mut cache) {
-                                    *thread_error.lock().unwrap() = Some(format!("{error:#}"));
-                                }
+                                *thread_error.lock().unwrap() = Some(format!("{error:#}"));
                             }
                         }
                         WriterSignal::Flush(ack) => {
@@ -2266,6 +2264,7 @@ impl Workspace {
         })
     }
 
+    #[cfg(test)]
     pub fn register_library(
         &mut self,
         root: PathBuf,

@@ -23,6 +23,7 @@ pub struct Completed {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     Log {
         message: String,

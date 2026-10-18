@@ -2214,18 +2214,18 @@ impl Desktop {
     }
     fn update_reader_matches(&mut self, cx: &mut Context<Self>) {
         let query = self.reader_ui.find.read(cx).value().to_string();
-        if let Some(preview) = &self.preview {
-            if self.reader_ui.search_index.len() != preview.blocks.len() {
-                self.reader_ui.search_index = preview
-                    .blocks
-                    .iter()
-                    .map(|block| {
-                        block_text(block)
-                            .map(nav::prepare_text)
-                            .unwrap_or_else(|| nav::prepare_text(""))
-                    })
-                    .collect();
-            }
+        if let Some(preview) = &self.preview
+            && self.reader_ui.search_index.len() != preview.blocks.len()
+        {
+            self.reader_ui.search_index = preview
+                .blocks
+                .iter()
+                .map(|block| {
+                    block_text(block)
+                        .map(nav::prepare_text)
+                        .unwrap_or_else(|| nav::prepare_text(""))
+                })
+                .collect();
         }
         self.reader_ui.matches = self
             .preview

@@ -407,7 +407,7 @@ fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
     let blocked = task
         .blocked
         .iter()
-        .filter_map(|request| ai_component(request.purpose.as_deref()?).and_then(|_| request.kind));
+        .filter_map(|request| ai_component(request.purpose.as_deref()?).and(request.kind));
     components
         .filter_map(|outcome| outcome.kind)
         .chain(blocked)
@@ -3111,11 +3111,7 @@ impl Desktop {
         style
             .button("resume", &task.id, Emphasis::Primary)
             .icon(icons::play_arrow())
-            .label(if task.state == TaskState::Paused {
-                course2md::tr!("继续生成")
-            } else {
-                course2md::tr!("继续生成")
-            })
+            .label(course2md::tr!("继续生成"))
             .on_click(
                 cx.listener(move |this, _, _, cx| {
                     this.set_task_intent(id.clone(), Intent::Run, cx)

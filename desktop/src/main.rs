@@ -584,6 +584,7 @@ impl Desktop {
                 ),
             };
         let (event_wake_tx, event_wake_rx) = smol::channel::bounded(1);
+        preferences.set_wake_sender(event_wake_tx.clone());
         let settings_ui = settings_ui::State::new(window, cx);
         let onboarding = onboarding::State::new(window, cx);
         let reader_ui = reader_ui::State::new(window, cx);
@@ -955,13 +956,28 @@ impl Desktop {
         deadline
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
-        if let Some((group, error)) = self.preferences.take_write_error() {
-            self.workspace_error = Some(course2md::tr!(
-                "设置尚未保存（{}）：{}",
-                group.filename(),
-                error
-            ));
-            cx.notify();
+        for (group, result) in self.preferences.process_writes() {
+            match result {
+                Ok(()) => {
+                    self.set_settings_feedback(group, course2md::tr!("已保存").into(), false, cx)
+                }
+                Err(error) => {
+                    match group {
+                        crate::preferences::PreferenceGroup::Generation => {
+                            if let Some(intent) = self.preferences.generation_intent().cloned() {
+                                self.settings_ui.pending_generation = Some(intent);
+                            }
+                        }
+                        crate::preferences::PreferenceGroup::Application => {
+                            if let Some(intent) = self.preferences.application_intent().cloned() {
+                                self.settings_ui.pending_application = Some(intent);
+                            }
+                        }
+                        crate::preferences::PreferenceGroup::Services => {}
+                    }
+                    self.set_settings_save_failure(group, &anyhow::anyhow!(error), cx);
+                }
+            }
         }
         if self
             .transient_task_result

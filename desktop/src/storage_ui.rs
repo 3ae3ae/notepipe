@@ -5,7 +5,6 @@ use crate::{
     theme::*,
 };
 use anyhow::{Context as _, Result, ensure};
-use course2md::execution::Component;
 use gpui_component::button::*;
 use std::{
     collections::BTreeMap,
@@ -1964,7 +1963,6 @@ mod tests {
         relocate_preview, scan_locations, validate_registered_destination,
     };
     use crate::{ConversionOptions, source, storage, workspace};
-    use course2md::execution::Component;
     use std::{path::PathBuf, sync::atomic::AtomicBool};
 
     fn test_location(root: PathBuf) -> workspace::LibraryLocation {
@@ -2429,7 +2427,7 @@ mod tests {
         let plan = workspace::TaskPlan {
             operation: course2md::execution::Operation::Reprocess {
                 base_version_dir: old.join("note/versions/old-version"),
-                components: vec![Component::Summary],
+                components: vec![course2md::execution::Component::Summary],
                 prior_work_dir: Some(old.join(".course2md/work/old-task")),
             },
             source: source.clone(),
