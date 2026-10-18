@@ -57,6 +57,22 @@ pub fn state_enter<E: IntoElement + Styled + 'static>(
     .into_any_element()
 }
 
+/// A destination, settings category or secondary page arrives as one unit:
+/// a short fade while rising into place. Navigation and the app bar stay put.
+pub fn page_enter<E: IntoElement + Styled + 'static>(
+    id: impl Into<ElementId>,
+    view: E,
+) -> AnyElement {
+    view.with_animation(
+        id,
+        Animation::new(Duration::from_millis(VALUE_MS))
+            .with_easing(ease_out)
+            .with_max_fps(60.),
+        |view, t| view.relative().top(px(12. * (1. - t))).opacity(t),
+    )
+    .into_any_element()
+}
+
 pub fn spinner(id: impl Into<ElementId>, cx: &App) -> AnyElement {
     let icon = crate::icons::loader_circle()
         .small()

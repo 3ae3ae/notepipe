@@ -24,6 +24,7 @@ Downloaded icons and the upstream license are pinned to Lucide commit `d672fc43d
 | `circle-check.svg` | `circle-check` | desktop/.deps/component/crates/assets/assets/icons/circle-check.svg |
 | `info.svg` | `info` | desktop/.deps/component/crates/assets/assets/icons/info.svg |
 | `triangle-alert.svg` | `triangle-alert` | desktop/.deps/component/crates/assets/assets/icons/triangle-alert.svg |
+| `house.svg` | `house` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/house.svg |
 | `link.svg` | `link` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/link.svg |
 | `search.svg` | `search` | desktop/.deps/component/crates/assets/assets/icons/search.svg |
 | `download.svg` | `download` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/download.svg |

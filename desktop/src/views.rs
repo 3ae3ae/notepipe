@@ -94,9 +94,6 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 impl Desktop {
     /// Keep task results reachable while the user is on another page.
     fn shell_topbar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
-        if self.page == Page::Settings {
-            return apply_shell_title_bar_chrome(TitleBar::new().h(px(28.)));
-        }
         let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
             workspace.state.tasks.iter().any(|task| {
                 task.handled_by.is_none()
@@ -112,27 +109,15 @@ impl Desktop {
             crate::task_ui::actionable_task_count(&workspace.state.tasks)
         });
         // macOS draws the traffic lights inside the title bar's leading edge.
-        let leading = if cfg!(target_os = "macos") { 80. } else { 12. };
+        let leading = if cfg!(target_os = "macos") { 88. } else { 12. };
         let page = self.page;
-        let brand = div()
-            .id("brand-home")
-            .flex()
-            .items_center()
-            .px(rems(6. / 14.))
-            .h(CONTROL_HEIGHT)
-            .rounded(RADIUS_PILL)
-            .cursor_pointer()
-            // A brand link, not a destination: no pill, so it never reads as selected.
-            .hover(|style| style.opacity(0.8))
-            .role(Role::Link)
-            .aria_label(course2md::tr!("course2md，生成笔记"))
-            .child(
-                div()
-                    .text_size(rems(24. / 14.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(color(INK))
-                    .child("course2md"),
-            )
+        // Home is the workbench; its icon is the leading destination.
+        let home = nav_action("nav-home", page == Page::New, cx)
+            .w(CONTROL_HEIGHT)
+            .px_0()
+            .icon(icons::home())
+            .accessibility_label(course2md::tr!("主页"))
+            .tooltip(course2md::tr!("主页"))
             .on_click(cx.listener(|this, _, window, cx| {
                 if this.prepare_workbench_input(window, cx) {
                     this.navigate(Page::New, cx);
@@ -175,21 +160,36 @@ impl Desktop {
             })
             .accessibility_label(course2md::tr!("设置"))
             .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)));
-        apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window))).child(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .h_full()
-                .pl(px(leading))
-                .pr(px(16.))
-                .gap(px(4.))
-                .items_center()
-                .child(brand)
-                .child(div().flex_1())
+        let bar = h_flex()
+            .w_full()
+            .min_w_0()
+            .h_full()
+            .pl(px(leading))
+            .pr(px(16.))
+            .gap(px(4.))
+            .items_center()
+            .child(home);
+        // Settings is a place of its own: the bar names it instead of offering
+        // the other destinations, and home is the way out.
+        let bar = if page == Page::Settings {
+            bar.child(
+                icons::chevron_right()
+                    .size(rems(18. / 14.))
+                    .text_color(color(GRAY)),
+            )
+            .child(
+                accessible_text("settings-page-title", course2md::tr!("设置"))
+                    .role(Role::Heading)
+                    .text_size(rems(18. / 14.))
+                    .font_weight(FontWeight::MEDIUM),
+            )
+        } else {
+            bar.child(div().flex_1())
                 .child(library)
                 .children(tasks)
-                .child(settings),
-        )
+                .child(settings)
+        };
+        apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window))).child(bar)
     }
 
     fn task_result_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -431,6 +431,14 @@ impl Render for Desktop {
                 },
             )
             .child(content);
+        // Keyed by destination, so arriving at a page plays once and later
+        // renders of the same page stay still. Settings animates its category
+        // panel instead, so its navigation stays a landmark.
+        let content = if self.page == Page::Settings {
+            content.into_any_element()
+        } else {
+            crate::motion::page_enter(("page-content", self.page as usize), content)
+        };
         let topbar = self.shell_topbar(window, cx);
         let task_notice = self.task_result_notice(cx);
         let model_notice = self.onboarding_background_notice(cx);

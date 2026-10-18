@@ -45,6 +45,7 @@ icons! {
     file_upload => "outline" / "file-upload";
     folder => "outline" / "folder";
     folder_open => "outline" / "folder-open";
+    home => "outline" / "house";
     info => "outline" / "info";
     link => "outline" / "link";
     login => "outline" / "login";
