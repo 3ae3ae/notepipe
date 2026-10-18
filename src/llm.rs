@@ -21,6 +21,13 @@ pub const DEFAULT_PROMPT: &str = "你是视频逐字稿校对器。输入的每�
 该条的 text 返回空字符串 \"\"（系统会删除该条）；有实质内容的条目不得删除。\
 ";
 
+/// 公式书写约定：校对与摘要输出共用，系统自动追加，自定义 prompt 无法覆盖。
+/// 阅读器与导出按 `$` / `$$` 识别公式并排版。
+pub const MATH_RULE: &str = "数学公式、符号与表达式一律写成 LaTeX：行内公式用 $...$ 包围，\
+独立成行的公式用 $$...$$ 包围（如 $f(x)=x^2$、$$\\int_a^b f(x)\\,dx$$）；\
+口述的公式（如“x 的平方”“从 a 到 b 积分”）同样改写为 LaTeX；没有公式时不要添加 $。\
+JSON 字符串里的反斜杠必须写成 \\\\（如 \\\\frac）。";
+
 /// 每次请求合并的语音段数。
 const BATCH: usize = 20;
 
@@ -444,10 +451,13 @@ fn build_chat_body(
     } else {
         ""
     };
-    let system = crate::tr!(
-        "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{}",
-        effective_prompt(s),
-        vision_note
+    let system = format!(
+        "{} {MATH_RULE}",
+        crate::tr!(
+            "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{}",
+            effective_prompt(s),
+            vision_note
+        )
     );
     let mut content = vec![serde_json::json!({
         "type": "text",
@@ -529,11 +539,49 @@ pub fn parse_id_text_pairs(content: &str) -> Option<Vec<(usize, String)>> {
     lenient_scan(slice)
 }
 
+/// A model that writes `\frac` or `\times` unescaped in JSON gets a form feed
+/// or tab back from the parser. Those characters never belong in a transcript,
+/// so before a letter they are restored to the LaTeX command they came from;
+/// a newline is restored only inside a `$` formula, where it cannot be prose.
+pub(crate) fn restore_latex(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_math = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let letter_follows = chars.peek().is_some_and(char::is_ascii_alphabetic);
+        let escape = match c {
+            '\u{8}' => Some('b'),
+            '\u{c}' => Some('f'),
+            '\t' => Some('t'),
+            '\r' => Some('r'),
+            '\n' if in_math => Some('n'),
+            _ => None,
+        };
+        match escape {
+            Some(letter) if letter_follows => {
+                out.push('\\');
+                out.push(letter);
+            }
+            _ => {
+                if c == '$' && !out.ends_with('\\') {
+                    // `$$` opens or closes one display formula.
+                    if chars.peek() == Some(&'$') {
+                        out.push(chars.next().unwrap_or('$'));
+                    }
+                    in_math = !in_math;
+                }
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
 fn parse_items(v: &[serde_json::Value]) -> Option<Vec<(usize, String)>> {
     let mut out = vec![];
     for item in v {
         let id = item.get("id")?.as_u64()? as usize;
-        let text = item.get("text")?.as_str()?.to_string();
+        let text = restore_latex(item.get("text")?.as_str()?);
         out.push((id, text));
     }
     if out.is_empty() { None } else { Some(out) }
@@ -608,9 +656,7 @@ fn lenient_scan(s: &str) -> Option<Vec<(usize, String)>> {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[obj_start..end])
             && let (Some(id), Some(text)) = (
                 v.get("id").and_then(|x| x.as_u64()).map(|x| x as usize),
-                v.get("text")
-                    .and_then(|x| x.as_str())
-                    .map(|t| t.to_string()),
+                v.get("text").and_then(|x| x.as_str()).map(restore_latex),
             )
         {
             out.push((id, text));
@@ -977,6 +1023,19 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(&settings).is_ok());
+    }
+
+    #[test]
+    fn unescaped_latex_commands_survive_json_parsing() {
+        // `{"text":"$\frac{a}{b}\times c$"}` written without escaping the backslashes.
+        let content = "{\"segments\":[{\"id\":0,\"text\":\"面积 $\\frac{a}{b}\\times c$ 与 $$\\neq 0$$\\n下一句\"}]}";
+        let parsed = parse_segments(content).unwrap();
+        assert_eq!(
+            parsed[0].1,
+            "面积 $\\frac{a}{b}\\times c$ 与 $$\\neq 0$$\n下一句"
+        );
+        // Properly escaped LaTeX is left as written.
+        assert_eq!(restore_latex("$\\frac{1}{2}$"), "$\\frac{1}{2}$");
     }
 
     #[test]

@@ -46,6 +46,12 @@ const SYSTEM_PROMPT: &str = "你是视频内容摘要助手。根据提供的带
 2) 对不确定的信息宁可省略也不要猜测；3) 使用视频原语言输出；\
 4) 只输出一个合法 JSON 对象，不要代码围栏、不要任何多余文字。";
 
+/// The summary rules plus the shared formula convention, which a summary of a
+/// mathematical lecture needs as much as its transcript does.
+fn system_prompt() -> String {
+    format!("{SYSTEM_PROMPT} {}", llm::MATH_RULE)
+}
+
 fn build_transcript(events: &[TranscriptEvent]) -> String {
     let mut out = String::new();
     for e in events {
@@ -92,16 +98,17 @@ pub(crate) fn parse_summary(content: &str) -> Option<Summary> {
     let tldr = parsed
         .get("tldr")
         .and_then(|x| x.as_str())
-        .unwrap_or("")
+        .map(llm::restore_latex)
+        .unwrap_or_default()
         .trim()
         .to_string();
     let mut key_points = vec![];
     if let Some(arr) = parsed.get("key_points").and_then(|v| v.as_array()) {
         for v in arr {
             if let Some(s) = v.as_str() {
-                let s = s.trim();
+                let s = llm::restore_latex(s.trim());
                 if !s.is_empty() {
-                    key_points.push(s.to_string());
+                    key_points.push(s);
                 }
             }
         }
@@ -112,13 +119,15 @@ pub(crate) fn parse_summary(content: &str) -> Option<Summary> {
             let title = v
                 .get("title")
                 .and_then(|x| x.as_str())
-                .unwrap_or("")
+                .map(llm::restore_latex)
+                .unwrap_or_default()
                 .trim()
                 .to_string();
             let detail = v
                 .get("detail")
                 .and_then(|x| x.as_str())
-                .unwrap_or("")
+                .map(llm::restore_latex)
+                .unwrap_or_default()
                 .trim()
                 .to_string();
             let t = parse_time(v.get("t"));
@@ -172,7 +181,7 @@ fn summarize_text(
     let content = chat_once(
         agent,
         s,
-        SYSTEM_PROMPT,
+        &system_prompt(),
         &user_prompt(transcript),
         description,
     )?;
@@ -322,7 +331,7 @@ pub async fn summarize(
         chat_once(
             &agent,
             &s2,
-            SYSTEM_PROMPT,
+            &system_prompt(),
             &format!(
                 "以下是各分段的摘要（时间已按原视频绝对秒数标注）：\n\n{input}\n\n\
 请合并为整个视频的最终摘要，输出 JSON：{{\"tldr\": \"不超过150字的一句话概述\", \
