@@ -300,7 +300,10 @@ impl Desktop {
                                 })),
                         ),
                     ));
-            let model_panel = self.default_model_readiness_panel(window, cx);
+            // The panel belongs to the model item above and shares its insets.
+            let model_panel = setting_surface()
+                .pt_0()
+                .child(self.default_model_readiness_panel(window, cx));
             recognition = recognition.detail(crate::motion::disclosure(
                 "default-model-management",
                 self.settings_ui.model_details_open,
@@ -519,40 +522,45 @@ impl Desktop {
                         "export-format-label",
                         course2md::tr!("同时导出"),
                         "",
-                        h_flex().w_full().gap_3().flex_wrap().children(
-                            [
-                                (course2md::config::OutputFormat::Md, "Markdown"),
-                                (
-                                    course2md::config::OutputFormat::Html,
-                                    course2md::tr!("网页"),
-                                ),
-                                (course2md::config::OutputFormat::Json, "JSON"),
-                            ]
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, (format, label))| {
-                                filter_chip(
-                                    ("default-export", index),
-                                    selected.contains(&format),
-                                    cx,
-                                )
-                                .settings_text()
-                                .label(label)
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        let mut next = this.generation_edit_base();
-                                        let formats =
-                                            next.options.formats.get_or_insert_with(Vec::new);
-                                        if formats.contains(&format) {
-                                            formats.retain(|value| *value != format);
-                                        } else {
-                                            formats.push(format);
-                                        }
-                                        this.commit_generation(next, cx);
-                                    },
-                                ))
-                            }),
-                        ),
+                        h_flex()
+                            .w_full()
+                            .justify_end()
+                            .gap_3()
+                            .flex_wrap()
+                            .children(
+                                [
+                                    (course2md::config::OutputFormat::Md, "Markdown"),
+                                    (
+                                        course2md::config::OutputFormat::Html,
+                                        course2md::tr!("网页"),
+                                    ),
+                                    (course2md::config::OutputFormat::Json, "JSON"),
+                                ]
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, (format, label))| {
+                                    filter_chip(
+                                        ("default-export", index),
+                                        selected.contains(&format),
+                                        cx,
+                                    )
+                                    .settings_text()
+                                    .label(label)
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            let mut next = this.generation_edit_base();
+                                            let formats =
+                                                next.options.formats.get_or_insert_with(Vec::new);
+                                            if formats.contains(&format) {
+                                                formats.retain(|value| *value != format);
+                                            } else {
+                                                formats.push(format);
+                                            }
+                                            this.commit_generation(next, cx);
+                                        },
+                                    ))
+                                }),
+                            ),
                     ))
                     .child(
                         setting_surface().child(settings_switch_row(

@@ -773,12 +773,12 @@ impl Desktop {
                         .child(part_details),
                 );
             }
+            // One unit in the action row, which does the wrapping.
             cache_action = Some(
                 h_flex()
-                    .w_auto()
-                    .min_w_0()
+                    .flex_shrink_0()
+                    .items_center()
                     .gap_3()
-                    .flex_wrap()
                     .child(
                         quiet(SharedString::from(format!("model-cache-details-{key}")))
                             .settings_text()
@@ -810,6 +810,9 @@ impl Desktop {
                                 SharedString::from(format!("model-cached-size-{key}")),
                                 course2md::tr!("占用空间 {}", crate::activity::bytes(status.bytes)),
                             )
+                            // Sized by its text, not the row it wraps in.
+                            .w_auto()
+                            .whitespace_nowrap()
                             .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                         )
