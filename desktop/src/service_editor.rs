@@ -17,7 +17,8 @@ impl Desktop {
             (false, false) => course2md::tr!("添加 AI 服务"),
             (false, true) => course2md::tr!("编辑 AI 服务"),
         };
-        // A secondary page of 服务与账号: the way back names where it leads.
+        // A secondary page: the way back names where it leads.
+        let parent = editor.origin_tab.unwrap_or(SettingsTab::Services).label();
         let header = h_flex()
             .flex_shrink_0()
             .items_center()
@@ -29,7 +30,7 @@ impl Desktop {
                     .px_0()
                     .text_color(color(INK))
                     .icon(icons::arrow_left())
-                    .accessibility_label(course2md::tr!("返回服务与账号"))
+                    .accessibility_label(course2md::tr!("返回「{}」", parent))
                     .on_click(
                         cx.listener(|this, _, window, cx| this.close_service_editor(window, cx)),
                     ),
@@ -38,7 +39,7 @@ impl Desktop {
                 v_flex()
                     .min_w_0()
                     .child(
-                        text("service-editor-parent", SettingsTab::Services.label())
+                        text("service-editor-parent", parent)
                             .text_size(TEXT_AUX)
                             .text_color(color(GRAY)),
                     )
@@ -246,11 +247,18 @@ impl Desktop {
                     )
                     .separator()
                     .item(
-                        PopupMenuItem::new(match purpose {
-                            ServicePurpose::Speech => course2md::tr!("添加或管理语音服务…"),
-                            ServicePurpose::Ai => course2md::tr!("添加或管理 AI 服务…"),
+                        // The menu's way out is an action, drawn in the accent.
+                        PopupMenuItem::element(move |_, _| {
+                            h_flex()
+                                .gap(rems(12. / 14.))
+                                .text_color(color(ACCENT))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(icons::plus().size(rems(18. / 14.)))
+                                .child(match purpose {
+                                    ServicePurpose::Speech => course2md::tr!("添加或管理语音服务…"),
+                                    ServicePurpose::Ai => course2md::tr!("添加或管理 AI 服务…"),
+                                })
                         })
-                        .icon(icons::plus())
                         .on_click(move |_, window, cx| {
                             let _ = manage.update(cx, |this, cx| this.manage_services(window, cx));
                         }),
@@ -267,7 +275,11 @@ impl Desktop {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(self.reveal_setting(("service-choice-reveal", index), field)),
+                    .when(!current_task, |slot| slot.flex().justify_end())
+                    .child(
+                        self.reveal_setting(("service-choice-reveal", index), field)
+                            .when(!current_task, |field| field.max_w(INLINE_SELECT_WIDTH)),
+                    ),
             )
         };
         view = view.child(controls);
@@ -725,7 +737,10 @@ impl Desktop {
         let mut connection =
             SettingsGroup::new("service-connection-heading", course2md::tr!("连接信息")).child(
                 setting_surface()
-                    .py(rems(20. / 14.))
+                    .child(setting_label(
+                        "service-protocol-heading",
+                        course2md::tr!("服务类型"),
+                    ))
                     .child(self.reveal_setting(
                         "service-protocol-reveal",
                         self.service_type_field(

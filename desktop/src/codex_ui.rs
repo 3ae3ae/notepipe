@@ -62,6 +62,25 @@ impl CodexUi {
         self.working.is_some()
     }
 
+    /// The account's one status badge, shared by every place that shows it.
+    pub(crate) fn badge(&self) -> (BadgeKind, &'static str) {
+        match (self.working, &self.status) {
+            (Some(CodexWork::Checking), _) => (BadgeKind::Progress, course2md::tr!("正在检查")),
+            (Some(CodexWork::LoggingOut), _) => (BadgeKind::Progress, course2md::tr!("正在退出")),
+            (Some(_), _) => (BadgeKind::Progress, course2md::tr!("正在连接")),
+            (_, Some(LoginStatus::Connected)) => (BadgeKind::Success, course2md::tr!("已连接")),
+            (_, Some(LoginStatus::Expired)) => (BadgeKind::Warning, course2md::tr!("登录已失效")),
+            _ => (BadgeKind::Neutral, course2md::tr!("未连接")),
+        }
+    }
+
+    /// The last action's result, shown only where that action started.
+    pub(crate) fn notice_on(&self, surface: CodexSurface) -> Option<(String, bool)> {
+        self.notice
+            .clone()
+            .filter(|_| self.surface == Some(surface))
+    }
+
     pub(crate) fn cancel_authorization(&self) {
         if let Some(cancel) = &self.authorize_cancel {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -358,26 +377,14 @@ impl Desktop {
     ) -> Div {
         let id = match surface {
             CodexSurface::Editor => "codex-account",
-            CodexSurface::Onboarding => "setup-codex-account",
-            CodexSurface::Settings => "settings-codex-account",
+            _ => "setup-codex-account",
         };
         let working = self.codex.working;
         let busy = working.is_some();
-        let (kind, label) = match (working, &self.codex.status) {
-            (Some(CodexWork::Checking), _) => (BadgeKind::Progress, course2md::tr!("正在检查")),
-            (Some(CodexWork::LoggingOut), _) => (BadgeKind::Progress, course2md::tr!("正在退出")),
-            (Some(_), _) => (BadgeKind::Progress, course2md::tr!("正在连接")),
-            (_, Some(LoginStatus::Connected)) => (BadgeKind::Success, course2md::tr!("已连接")),
-            (_, Some(LoginStatus::Expired)) => (BadgeKind::Warning, course2md::tr!("登录已失效")),
-            _ => (BadgeKind::Neutral, course2md::tr!("未连接")),
-        };
-        let detail = match &self.codex.status {
-            Some(LoginStatus::Connected) => None,
-            _ => None,
-        };
+        let (kind, label) = self.codex.badge();
         let connected = matches!(self.codex.status, Some(LoginStatus::Connected))
             && !matches!(working, Some(CodexWork::LoggingOut));
-        let notice = self.codex.notice.clone();
+        let notice = self.codex.notice_on(surface);
         let authorizing = working == Some(CodexWork::Authorizing);
         let mut lines = vec![(
             "policy",
@@ -396,10 +403,6 @@ impl Desktop {
         if authorizing {
             actions.push(
                 quiet(SharedString::from(format!("{id}-cancel-authorize")))
-                    .when(
-                        surface == CodexSurface::Settings,
-                        SettingsText::settings_text,
-                    )
                     .icon(icons::close())
                     .label(course2md::tr!("取消授权"))
                     .disabled(disabled)
@@ -417,7 +420,7 @@ impl Desktop {
             icon: icons::sparkles(),
             title: course2md::tr!("Codex 账号"),
             status: (kind, label),
-            detail,
+            detail: None,
             busy,
             lines,
             actions: if !connected {
@@ -425,10 +428,6 @@ impl Desktop {
                     let mut buttons = actions;
                     buttons.push(
                         quiet(SharedString::from(format!("{id}-authorize")))
-                            .when(
-                                surface == CodexSurface::Settings,
-                                SettingsText::settings_text,
-                            )
                             .icon(icons::external_link())
                             .label(course2md::tr!("浏览器授权"))
                             .disabled(disabled || busy)
@@ -441,10 +440,6 @@ impl Desktop {
                     );
                     buttons.push(
                         tonal_pill(SharedString::from(format!("{id}-import")), cx)
-                            .when(
-                                surface == CodexSurface::Settings,
-                                SettingsText::settings_text,
-                            )
                             .icon(icons::login())
                             .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
                                 course2md::tr!("重新导入 Codex 登录")
@@ -463,10 +458,6 @@ impl Desktop {
                 // 与 Bilibili 账号同序：重新检查在前、退出登录在后
                 vec![
                     quiet(SharedString::from(format!("{id}-recheck")))
-                        .when(
-                            surface == CodexSurface::Settings,
-                            SettingsText::settings_text,
-                        )
                         .icon(icons::refresh())
                         .label(course2md::tr!("重新检查"))
                         .disabled(disabled || busy)
@@ -477,10 +468,6 @@ impl Desktop {
                         )
                         .into_any_element(),
                     quiet(SharedString::from(format!("{id}-logout")))
-                        .when(
-                            surface == CodexSurface::Settings,
-                            SettingsText::settings_text,
-                        )
                         .icon(icons::logout())
                         .label(course2md::tr!("退出登录"))
                         .disabled(disabled || busy)

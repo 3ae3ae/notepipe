@@ -260,6 +260,8 @@ struct Desktop {
     window: AnyWindowHandle,
     page: Page,
     result_origin: Page,
+    /// Where Settings was opened from, and the control to refocus on return.
+    settings_origin: Option<(Page, Option<FocusHandle>)>,
     result_tab: usize,
     settings_tab: settings_ui::SettingsTab,
     source_editor_open: bool,
@@ -644,6 +646,7 @@ impl Desktop {
             folder_error: None,
             window: window.window_handle(),
             result_origin: Page::Library,
+            settings_origin: None,
             result_tab: 0,
             settings_tab: settings_ui::SettingsTab::Appearance,
             source_editor_open: false,

@@ -967,11 +967,26 @@ impl Desktop {
     }
 
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page != Page::Settings {
+            self.settings_origin = Some((self.page, window.focused(cx)));
+        }
         self.navigate(Page::Settings, cx);
         // Event-time preparation, not a render side effect: tab stops, first
         // hydration of inputs and the deduplicated model check.
         self.prepare_settings_view(window, cx);
         self.settings_ui.tab_focus[self.settings_tab.index()].focus(window, cx);
+    }
+
+    /// Settings returns to where it was opened from, refocusing what opened it.
+    pub(crate) fn leave_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (page, focus) = self.settings_origin.take().unwrap_or((Page::New, None));
+        if page == Page::New && !self.prepare_workbench_input(window, cx) {
+            return;
+        }
+        self.navigate(page, cx);
+        if let Some(focus) = focus {
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
     }
 
     pub(crate) fn prepare_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1366,16 +1381,23 @@ impl Desktop {
         .filter(|default| default.service_id == version.service_id);
         let is_default = default_version.is_some_and(|default| default.id == version.id);
         let outdated_default = default_version.filter(|default| default.id != version.id);
-        let (kind, status) = self.service_status(version);
+        let tests = self.service_tests(version);
+        let (kind, status) = self.service_status(version, &tests);
+        // An account action started here reports here.
+        let notice = (protocol == ServiceProtocol::CodexResponses)
+            .then(|| {
+                self.codex
+                    .notice_on(crate::codex_ui::CodexSurface::Settings)
+            })
+            .flatten();
         let mut detail = vec![protocol.choice_label().to_owned()];
         let host = version.config.host();
         if protocol != ServiceProtocol::CodexResponses && !host.is_empty() {
             detail.push(host);
         }
         detail.push(version.config.model.clone());
-        let failures: Vec<_> = self
-            .service_tests(version)
-            .into_iter()
+        let failures: Vec<_> = tests
+            .iter()
             .filter(|(_, evidence)| evidence.outcome != preferences::TestOutcome::Passed)
             .map(|(kind, evidence)| course2md::tr!("{}：{}", kind.label(), evidence.message))
             .collect();
@@ -1439,6 +1461,21 @@ impl Desktop {
                             .text_color(color(GRAY)),
                         )
                     })
+                    .when_some(notice, |column, (message, failed)| {
+                        column.child(
+                            text(
+                                SharedString::from(format!("saved-service-notice-{id}")),
+                                message,
+                            )
+                            .whitespace_normal()
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .text_color(color(if failed {
+                                DANGER
+                            } else {
+                                GRAY
+                            })),
+                        )
+                    })
                     .when(!failures.is_empty(), |column| {
                         column.child(
                             text(
@@ -1493,20 +1530,14 @@ impl Desktop {
 
     /// One badge per service: an account's sign-in state, otherwise what its
     /// tests established.
-    fn service_status(&self, version: &ServiceVersion) -> (BadgeKind, &'static str) {
+    fn service_status(
+        &self,
+        version: &ServiceVersion,
+        tests: &[(TestKind, &preferences::ServiceTestEvidence)],
+    ) -> (BadgeKind, &'static str) {
         if version.config.protocol == ServiceProtocol::CodexResponses {
-            return match &self.codex.status {
-                Some(course2md::login::codex::LoginStatus::Connected) => {
-                    (BadgeKind::Success, course2md::tr!("已连接"))
-                }
-                Some(course2md::login::codex::LoginStatus::Expired) => {
-                    (BadgeKind::Warning, course2md::tr!("登录已失效"))
-                }
-                None if self.codex.busy() => (BadgeKind::Progress, course2md::tr!("正在检查")),
-                _ => (BadgeKind::Neutral, course2md::tr!("未连接")),
-            };
+            return self.codex.badge();
         }
-        let tests = self.service_tests(version);
         if tests.is_empty() {
             (BadgeKind::Neutral, course2md::tr!("尚未测试"))
         } else if tests
@@ -2182,6 +2213,7 @@ impl Desktop {
                                     },
                                 )
                             })
+                            .max_w(INLINE_SELECT_WIDTH)
                             .when(
                                 current == crate::preferences::InterfaceLanguage::System,
                                 |field| field.trailing(current.resolve().native_name()),
@@ -2241,7 +2273,7 @@ impl Desktop {
                         .py(rems(10. / 14.))
                         .child(settings_switch_row(
                             course2md::tr!("显示最近的笔记"),
-                            course2md::tr!("关闭后主页只保留输入区和正在处理的任务"),
+                            course2md::tr!("关闭后主页不显示已完成的笔记"),
                             Switch::new("app-home-recent-notes")
                                 .checked(self.preferences.application().desktop.home_recent_notes)
                                 .on_click(cx.listener(|this, enabled, _, cx| {

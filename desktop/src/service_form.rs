@@ -194,10 +194,20 @@ impl ServiceForm {
         let current = current.trim().trim_end_matches('/').to_owned();
         let name = self.current_draft(cx).name;
         let previous_host = preferences::service_host(&current, self.draft.protocol);
-        if name.trim().is_empty() || Some(name.trim()) == previous_host.as_deref() {
-            self.draft.name.clear();
+        // A name the app supplied follows the type: an account or local service
+        // is named after its type, any other after its address once saved.
+        let derived = name.trim().is_empty()
+            || Some(name.trim()) == previous_host.as_deref()
+            || name.trim() == self.draft.protocol.choice_label();
+        if derived {
+            let name = if protocol.keyless() {
+                protocol.choice_label()
+            } else {
+                ""
+            };
+            self.draft.name = name.into();
             if let Some(input) = self.inputs.get(&FormField::Name) {
-                input.update(cx, |input, cx| input.set_value("", window, cx));
+                input.update(cx, |input, cx| input.set_value(name, window, cx));
             }
         }
         let kind_changed =
@@ -218,9 +228,7 @@ impl ServiceForm {
         .contains(&current.as_str());
         let address = match protocol {
             ServiceProtocol::CodexResponses => Some(preferences::CODEX_ADDRESS),
-            ServiceProtocol::OllamaChat if current.is_empty() || codex_address => {
-                Some(preferences::OLLAMA_DEFAULT_ADDRESS)
-            }
+            // Ollama's address comes from detecting the local service.
             // The fixed Codex address is not the user's; other input stays.
             _ if codex_address => Some(""),
             _ => None,
@@ -344,6 +352,7 @@ impl Desktop {
 
     /// The service type select for this form's purpose: one menu grouped by
     /// how each type is reached, each entry saying what choosing it means.
+    /// Each form labels it the way it labels its other fields.
     pub(crate) fn service_type_field(
         &self,
         owner: FormOwner,
@@ -354,12 +363,10 @@ impl Desktop {
         let current = self
             .service_form(owner)
             .map_or(ServiceProtocol::AiChat, |form| form.draft.protocol);
-        let detected = self.ollama_detected();
+        let ollama = self.ollama.status_line();
         let detail = move |protocol: ServiceProtocol| -> SharedString {
-            match (&detected, protocol) {
-                (Some((host, count)), ServiceProtocol::OllamaChat) => {
-                    course2md::tr!("已在 {} 检测到 {} 个模型", host, count).into()
-                }
+            match (&ollama, protocol) {
+                (Some(line), ServiceProtocol::OllamaChat) => line.clone().into(),
                 _ => protocol.choice_detail().into(),
             }
         };
@@ -390,7 +397,6 @@ impl Desktop {
                 })
             }
         })
-        .label(course2md::tr!("服务类型"))
         .icon(protocol_icon(current))
         .detail(detail(current))
         .disabled(disabled)

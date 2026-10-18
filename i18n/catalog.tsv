@@ -23,7 +23,6 @@ zh	zh_hans	en	zh_hant	ja
   缺失：{}	  缺失：{}	  Missing: {}	  缺失：{}	  欠落：{}
  · 当前使用修改前的配置	 · 当前使用修改前的配置	· Currently using the configuration before modification	 · 當前使用修改前的配置	・現在は変更前の構成を使用しています
  · 部分完成	 · 部分完成	 · Partially completed	 · 部分完成	 ・部分的に完成しました
- · 默认服务	 · 默认服务	 · Default service	 · 預設服務	 · デフォルトのサービス
  消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。	 消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。	 The message is accompanied by a screenshot of the courseware corresponding to the paragraph. It is only used to correct the spelling of terms and proper nouns. Do not describe or comment on the picture itself.	 訊息附帶該段對應的課件截圖，僅用於校正術語拼寫與專有名詞，不要描述或評論圖片本身。	 メッセージには、その段落に対応するコースウェアのスクリーンショットが添付されています。用語や固有名詞のスペルを修正するためにのみ使用されます。画像自体について説明したりコメントしたりしないでください。
 ! GPU  无法检查设备：{}	! GPU  无法检查设备：{}	! GPU failed to check device: {}	! GPU  無法檢查裝置：{}	！ GPU がデバイスをチェックできませんでした: {}
 ! coreml  缺少 Metal 着色器资源，请重新安装 / Metal shader resources missing; reinstall course2md	! coreml  缺少 Metal 着色器资源，请重新安装	Metal shader resources missing; reinstall course2md	! coreml  缺少 Metal 著色器資源，請重新安裝	！ coreml にメタル シェーダ リソースがありません。再インストールしてください。
@@ -59,7 +58,6 @@ AI 服务响应缺少正文 / AI response is missing text	AI 服务响应缺少�
 AI 服务地址或模型名称有误	AI 服务地址或模型名称有误	The AI service address or model name is incorrect	AI 服務地址或模型名稱有誤	AIサービスのアドレスまたはモデル名が間違っています
 AI 服务拒绝了 API Key，请检查密钥或权限	AI 服务拒绝了 API Key，请检查密钥或权限	API Key rejected by AI service, please check the key or permissions	AI 服務拒絕了 API Key，請檢查金鑰或許可權	API キーが AI サービスによって拒否されました。キーまたは権限を確認してください。
 AI 服务没有返回内容 / The AI service returned no content	AI 服务没有返回内容	The AI service returned no content	AI 服務沒有返回內容	AI サービスはコンテンツを返しませんでした
-AI 服务类型	AI 服务类型	AI service type	AI 服務型別	AIサービスの種類
 AI 服务返回了错误 / The AI service returned an error	AI 服务返回了错误	The AI service returned an error	AI 服務返回了錯誤	AI サービスがエラーを返しました
 AI 校对	AI 校对	AI proofreading	AI 校對	AI 校正
 AI 校对 / AI proofreading	AI 校对	AI proofreading	AI 校對	AI校正
@@ -149,7 +147,6 @@ codex CLI 的登录已失效。改用浏览器授权登录（ChatGPT 账号）�
 course2md — 将视频转换为图文笔记	course2md — 将视频转换为图文笔记	course2md — Turn videos into illustrated notes	course2md — 將影片轉換為圖文筆記	course2md — 動画をグラフィックノートに変換する
 course2md — 将视频转换为图文笔记 / Turn videos into illustrated notes\n	course2md — 将视频转换为图文笔记	Turn videos into illustrated notes	course2md — 將影片轉換為圖文筆記	course2md — 動画をグラフィックノートに変換する
 course2md 工作台	course2md 工作台	course2md workbench	course2md 工作臺	コース2MDワークベンチ
-course2md，生成笔记	course2md，生成笔记	course2md, create note	course2md，產生筆記	course2md、ノートを作成
 llama-server --help 探测失败，按旧版处理（仅 -ngl）	llama-server --help 探测失败，按旧版处理（仅 -ngl）	llama-server --help detection failed, processed according to the old version (only -ngl)	llama-server --help 探測失敗，按舊版處理（僅 -ngl）	llama-server --help 検出に失敗しました。古いバージョンに従って処理されました (-ngl のみ)
 llama-server flag 探测	llama-server flag 探测	llama-server flag detection	llama-server flag 探測	ラマサーバーフラグ検出
 stable 模式的画面稳定时间（秒）/ Seconds to wait for a stable frame	stable 模式的画面稳定时间（秒）/ Seconds to wait for a stable frame	The picture stabilization time in stable mode (seconds)/Seconds to wait for a stable frame	stable 模式的畫面穩定時間（秒）/ Seconds to wait for a stable frame	安定モードでの画像の安定化時間 (秒)/安定したフレームを待機する秒数
@@ -189,13 +186,10 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 {} / {} 段	{} / {} 段	{} / {} segment	{} / {} 段	{} / {} セグメント
 {} {name}，{} 篇笔记	{} {name}，{} 篇笔记	{} {name}, {} notes	{} {name}，{} 篇筆記	{} {name}、{} ノート
 {} {}，{} 篇笔记	{} {}，{} 篇笔记	{} {}, {} notes	{} {}，{} 篇筆記	{} {}、{} ノート
-{} · {} 个模型：{}	{} · {} 个模型：{}	{} · {} models: {}	{} · {} 個模型：{}	{} · {} モデル: {}
-{} · {} 个模型：{} 等	{} · {} 个模型：{} 等	{} · {} models: {} etc.	{} · {} 個模型：{} 等	{}・{}モデル：{}など
 {} · 待下载	{} · 待下载	{} · To be downloaded	{} · 待下載	{} · ダウンロード予定
 {} · 未分类	{} · 未分类	{} · Uncategorized	{} · 未分類	{} · 未分類
 {} · 构建 {commit}	{} · 构建 {commit}	{} · Build {commit}	{} · 構建 {commit}	{} · {commit} をビルドする
 {} · 构建 {}	{} · 构建 {}	{} · Build {}	{} · 構建 {}	{} · {} をビルドする
-{} · 还没有已下载的模型	{} · 还没有已下载的模型	{} · There are no downloaded models yet	{} · 還沒有已下載的模型	{} · ダウンロードされたモデルはまだありません
 {} 不支持“{}”，已改用 {}。	{} 不支持“{}”，已改用 {}。	{} does not support "{}" and has been replaced with {}.	{} 不支援“{}”，已改用 {}。	{} は「{}」をサポートしていないため、{} に置き換えられました。
 {} 不支持「{}」，已改用 {}。	{} 不支持「{}」，已改用 {}。	{} does not support “{}”; switched to {}.	{} 不支援「{}」，已改用 {}。	{} は「{}」に対応していないため、{} に切り替えました。
 {} 个与进行中的任务相同，未重复加入	{} 个与进行中的任务相同，未重复加入	{} are the same as the ongoing tasks and have not been added repeatedly.	{} 個與進行中的任務相同，未重複加入	{} は進行中のタスクと同じであり、繰り返し追加されていません。
@@ -464,9 +458,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 保存位置：{}\n\n	保存位置：{}\n\n	Save location: {}\n\n	儲存位置：{}\n\n	保存先：{}\n\n
 保存到	保存到	save to	儲存到	に保存する
 保存到文件夹：{label}	保存到文件夹：{label}	Save to folder: {label}	儲存到資料夾：{label}	フォルダーに保存: {label}
-保存到文件夹：{}	保存到文件夹：{}	Save to folder: {}	儲存到資料夾：{}	フォルダーに保存: {}
 保存到：{label}	保存到：{label}	Save to: {label}	儲存到：{label}	保存先: {label}
-保存到：{}	保存到：{}	Save to: {}	儲存到：{}	保存先: {}
 保存名称	保存名称	save name	儲存名稱	名前を保存する
 保存并继续	保存并继续	Save and continue	儲存並繼續	保存して続行
 保存并补做	保存并补做	Save and redo	儲存並補做	保存してやり直す
@@ -546,7 +538,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 创建文件夹	创建文件夹	Create folder	建立資料夾	フォルダーの作成
 创建目录 {} / Failed to create directory {}	创建目录 {}	Failed to create directory {}	建立目錄 {}	ディレクトリ {} を作成します
 删除	删除	Delete	刪除	削除
-删除…	删除…	Delete…	刪除…	削除…
 删除「{name}」文件夹？	删除「{name}」文件夹？	Delete the "{name}" folder?	刪除「{name}」資料夾？	「{name}」フォルダを削除しますか?
 删除「{}」文件夹？	删除「{}」文件夹？	Delete the "{}" folder?	刪除「{}」資料夾？	「{}」フォルダを削除しますか?
 删除文件夹	删除文件夹	delete folder	刪除資料夾	フォルダを削除する
@@ -711,7 +702,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 导入视频	导入视频	Import video	匯入影片	動画をインポート
 导出	导出	Export	匯出	書き出し
 导出 JSON 数据…	导出 JSON 数据…	Export JSON data…	匯出 JSON 資料…	JSONデータをエクスポート…
-导出 Markdown 包…	导出 Markdown 包…	Export Markdown package…	匯出 Markdown 包…	Markdown パッケージをエクスポート…
 导出 Markdown（含截图，.zip）…	导出 Markdown（含截图，.zip）…	Export Markdown (with screenshot, .zip)…	匯出 Markdown（含截圖，.zip）…	Markdown をエクスポート (スクリーンショット、.zip)…
 导出位置与任务记录不匹配	导出位置与任务记录不匹配	The export location does not match the task record	匯出位置與任務記錄不匹配	エクスポート場所がタスク レコードと一致しません
 导出位置已有不同文件，未覆盖 / Existing export differs; not overwritten	导出位置已有不同文件，未覆盖	Existing export differs; not overwritten	匯出位置已有不同檔案，未覆蓋	別のファイルがエクスポート場所にすでに存在しており、上書きされませんでした。
@@ -723,7 +713,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 导出文件已被修改，原文件已保留 / Export file changed; original retained	导出文件已被修改，原文件已保留	Export file changed; original retained	匯出檔案已被修改，原檔案已保留	エクスポートされたファイルは変更されており、元のファイルは保持されています。
 导出时意外中断，请重试	导出时意外中断，请重试	Export interrupted unexpectedly, please try again	匯出時意外中斷，請重試	エクスポートが予期せず中断されました。もう一度お試しください。
 导出未完成	导出未完成	Export not completed	匯出未完成	エクスポートが完了していません
-导出结构化数据…	导出结构化数据…	Export structured data…	匯出結構化資料…	構造化データをエクスポート…
 导出结果记录不完整	导出结果记录不完整	Export result record is incomplete	匯出結果記錄不完整	エクスポート結果レコードが不完全です
 导出结果记录为空	导出结果记录为空	The export result record is empty	匯出結果記錄為空	エクスポート結果レコードが空です
 导出网页文件…	导出网页文件…	Export web page file…	匯出網頁檔案…	Web ページ ファイルをエクスポート…
@@ -746,11 +735,9 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 尚未打开任务调整选项：{}	尚未打开任务调整选项：{}	Task adjustment option has not been turned on: {}	尚未開啟任務調整選項：{}	タスク調整オプションがオンになっていません: {}
 尚未放弃这次移动：{error:#}	尚未放弃这次移动：{error:#}	Not given up on this move yet: {error:#}	尚未放棄這次移動：{error:#}	まだこの動きを諦めていません: {error:#}
 尚未放弃这次移动：{}	尚未放弃这次移动：{}	Not given up on this move yet: {}	尚未放棄這次移動：{}	まだこの動きを諦めていません: {}
-尚未检查	尚未检查	Not checked yet	尚未檢查	まだチェックされていません
 尚未检查字幕，请重新读取视频信息 / Subtitles not checked yet; probe the video info again	尚未检查字幕，请重新读取视频信息	Subtitles not checked yet; probe the video info again	尚未檢查字幕，請重新讀取影片資訊	字幕はまだチェックされていません。動画情報をもう一度読んでください。
 尚未检查识别模型	尚未检查识别模型	Recognition model has not been checked yet	尚未檢查識別模型	認識モデルはまだチェックされていません
 尚未测试	尚未测试	Not tested yet	尚未測試	まだテストされていません
-尚未添加语音服务	尚未添加语音服务	No voice service has been added yet	尚未新增語音服務	音声サービスはまだ追加されていません
 尚未添加，校对和摘要需要先添加一个服务	尚未添加，校对和摘要需要先添加一个服务	Not added yet, proofreading and summarization need to add a service first	尚未新增，校對和摘要需要先新增一個服務	まだ追加されていません。校正と要約を行うには、まずサービスを追加する必要があります
 尚未添加，请先添加一个语音服务	尚未添加，请先添加一个语音服务	Not added yet, please add a voice service first	尚未新增，請先新增一個語音服務	まだ追加されていません。まず音声サービスを追加してください
 尚未登录 Bilibili。/ No Bilibili login saved.	尚未登录 Bilibili。/ No Bilibili login saved.	Not logged into Bilibili yet. / No Bilibili login saved.	尚未登入 Bilibili。/ No Bilibili login saved.	まだBilibiliにログインしていません。 / Bilibili ログインは保存されません。
@@ -850,7 +837,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已检查 {} 张画面	已检查 {} 张画面	{} frames checked	已檢查 {} 張畫面	{} フレームがチェックされました
 已检测到	已检测到	Detected	已檢測到	検出されました
 已检测到设备	已检测到设备	Device detected	已檢測到裝置	デバイスが検出されました
-已添加	已添加	Added	已新增	追加されました
 已添加存储位置	已添加存储位置	Storage location added	已新增儲存位置	保存場所が追加されました
 已添加笔记库位置	已添加笔记库位置	Note library location added	已新增筆記庫位置	ノートライブラリの場所を追加しました
 已清除 Bilibili 本地登录状态。/ Bilibili login removed.	已清除 Bilibili 本地登录状态。/ Bilibili login removed.	Bilibili local login status has been cleared. /Bilibili login removed.	已清除 Bilibili 本地登入狀態。/ Bilibili login removed.	Bilibili ローカル ログイン ステータスがクリアされました。 /Bilibili ログインが削除されました。
@@ -908,10 +894,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 当前任务还在处理，请先暂停并等候当前步骤结束	当前任务还在处理，请先暂停并等候当前步骤结束	The current task is still being processed, please pause and wait for the current step to end.	當前任務還在處理，請先暫停並等候當前步驟結束	現在のタスクはまだ処理中です。一時停止して、現在のステップが終了するまでお待ちください。
 当前任务还在处理，请先暂停并等候当前步骤结束。	当前任务还在处理，请先暂停并等候当前步骤结束。	The current task is still being processed, please pause and wait for the current step to end.	當前任務還在處理，請先暫停並等候當前步驟結束。	現在のタスクはまだ処理中です。一時停止して、現在のステップが終了するまでお待ちください。
 当前任务还在处理，请等候当前操作结束。	当前任务还在处理，请等候当前操作结束。	The current task is still being processed, please wait for the current operation to end.	當前任務還在處理，請等候當前操作結束。	現在のタスクはまだ処理中です。現在の操作が終了するまでお待ちください。
-当前使用	当前使用	currently in use	當前使用	現在使用中
-当前使用修改前的配置	当前使用修改前的配置	Currently using the configuration before modification	當前使用修改前的配置	現在は変更前の構成を使用しています
-当前使用在线语音服务	当前使用在线语音服务	Currently using online voice service	當前使用線上語音服務	現在オンライン音声サービスを利用中
-当前使用本机识别	当前使用本机识别	Currently using native recognition	當前使用本機識別	現在ネイティブ認識を使用しています
 当前尚未设置默认服务	当前尚未设置默认服务	No default service is currently set	當前尚未設定預設服務	現在デフォルトのサービスは設定されていません
 当前平台不适用	当前平台不适用	Not applicable to the current platform	當前平臺不適用	現在のプラットフォームには適用されません
 当前服务暂不可用：{error:#}	当前服务暂不可用：{error:#}	The current service is temporarily unavailable: {error:#}	當前服務暫不可用：{error:#}	現在のサービスは一時的に利用できません: {error:#}
@@ -1307,7 +1289,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 最新版本无法读取，正在显示上一个完好的版本。	最新版本无法读取，正在显示上一个完好的版本。	The latest version cannot be read, the last good version is being displayed.	最新版本無法讀取，正在顯示上一個完好的版本。	最新バージョンを読み込めません。最新の正常なバージョンが表示されます。
 最近备份也无法读取，原记录已保留	最近备份也无法读取，原记录已保留	The latest backup cannot be read, and the original record has been retained.	最近備份也無法讀取，原記錄已保留	最新のバックアップを読み取ることができず、元のレコードが保持されています。
 最近备份无法读取，原记录已保留	最近备份无法读取，原记录已保留	The latest backup cannot be read, the original record has been retained	最近備份無法讀取，原記錄已保留	最新のバックアップを読み取ることができません。元の記録は保持されています。
-最近测试：{} · {}	最近测试：{} · {}	Recent tests: {} · {}	最近測試：{} · {}	最近のテスト: {} · {}
 最近的笔记	最近的笔记	Recent notes	最近的筆記	最近のノート
 最近笔记	最近笔记	Recent notes	最近筆記	最近のノート
 有 {affected} 个未完成任务引用此服务；相关后续请求会停止派发	有 {affected} 个未完成任务引用此服务；相关后续请求会停止派发	There are {affected} unfinished tasks referencing this service; related subsequent requests will stop being dispatched	有 {affected} 個未完成任務引用此服務；相關後續請求會停止派發	このサービスを参照している未完了のタスクが {affected} 個あります。関連する後続のリクエストのディスパッチが停止されます
@@ -1411,7 +1392,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 未检测到	未检测到	not detected	未檢測到	検出されませんでした
 未检测到 Intel NPU	未检测到 Intel NPU	Intel NPU not detected	未檢測到 Intel NPU	インテル NPU が検出されない
 未检测到 Intel NPU，请改用其他方式	未检测到 Intel NPU，请改用其他方式	Intel NPU not detected, please try another method	未檢測到 Intel NPU，請改用其他方式	Intel NPU が検出されませんでした。別の方法をお試しください。
-未检测到 Ollama，请安装并打开 Ollama 后重新检查	未检测到 Ollama，请安装并打开 Ollama 后重新检查	Ollama is not detected, please install and open Ollama and check again	未檢測到 Ollama，請安裝並開啟 Ollama 後重新檢查	Ollama が検出されません。Ollama をインストールして開いて、もう一度確認してください
 未检测到可用显卡	未检测到可用显卡	No available graphics card detected	未檢測到可用顯示卡	利用可能なグラフィックス カードが検出されませんでした
 未检测到可用显卡，可改用 CPU	未检测到可用显卡，可改用 CPU	No available graphics card detected, CPU can be used instead	未檢測到可用顯示卡，可改用 CPU	利用可能なグラフィックス カードが検出されませんでした。代わりに CPU を使用できます
 未检测到设备	未检测到设备	Device not detected	未檢測到裝置	デバイスが検出されない
@@ -1425,7 +1405,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 未设置 AI 模型 / AI model is not set. Run: course2md llm setup	未设置 AI 模型	AI model is not set. Run: course2md llm setup	未設定 AI 模型	AIモデルが設定されていません
 未读到笔记。\n	未读到笔记。\n	No notes found.\n	未讀到筆記。\n	ノートが見つかりません。\n
 未连接	未连接	Not connected	未連線	接続されていません
-未通过	未通过	failed	未透過	失敗しました
 未采样到任何帧 / No frames sampled	未采样到任何帧	No frames sampled	未取樣到任何幀	フレームがサンプリングされていません
 本地文件	本地文件	Local file	本地檔案	ローカルファイル
 本地模型目录 / Local model directory (default: platform cache)	本地模型目录	Local model directory (default: platform cache)	本地模型目錄	ローカルモデルディレクトリ
@@ -1476,7 +1455,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 查看技术详情	查看技术详情	View technical details	檢視技術詳情	技術的な詳細を表示する
 查看文字	查看文字	View text	檢視文字	テキストを表示する
 查看新版	查看新版	View new version	檢視新版	新しいバージョンを表示
-查看服务	查看服务	View services	檢視服務	サービスを見る
 查看未完成部分	查看未完成部分	View unfinished parts	檢視未完成部分	未完成のパーツを表示する
 查看模型文件	查看模型文件	View model files	檢視模型檔案	モデルファイルを表示する
 查看测试详情	查看测试详情	View test details	檢視測試詳情	テストの詳細を表示する
@@ -1678,7 +1656,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 浅色主题	浅色主题	Light theme	淺色主題	ライトテーマ
 测试{test_label}	测试{test_label}	Test{test_label}	測試{test_label}	テスト{test_label}
 测试{}	测试{}	Test{}	測試{}	テスト{}
-测试…	测试…	Test…	測試…	テスト…
 测试已取消，尚未发送请求	测试已取消，尚未发送请求	Test cancelled, request not sent yet	測試已取消，尚未傳送請求	テストはキャンセルされましたが、リクエストはまだ送信されていません
 测试时间：{}	测试时间：{}	Test time: {}	測試時間：{}	テスト時間: {}
 测试服务	测试服务	Test service	測試服務	サービスをテスト
@@ -1694,8 +1671,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 深色主题	深色主题	Dark theme	深色主題	ダークテーマ
 添加	添加	Add	新增	追加
 添加 AI 服务	添加 AI 服务	Add AI service	新增 AI 服務	AIサービスを追加する
-添加 Ollama 服务	添加 Ollama 服务	Add Ollama service	新增 Ollama 服務	オラマサービスを追加
-添加其他 AI 服务	添加其他 AI 服务	Add other AI services	新增其他 AI 服務	他の AI サービスを追加する
 添加存储位置	添加存储位置	Add storage location	新增儲存位置	保管場所を追加する
 添加笔记库位置	添加笔记库位置	Add note library location	新增筆記庫位置	ノートライブラリの場所を追加
 添加语音服务	添加语音服务	Add speech service	新增語音服務	音声サービスを追加
@@ -1736,7 +1711,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 生成选项的修改尚未保存，当前输入已保留	生成选项的修改尚未保存，当前输入已保留	Modifications to build options have not been saved, current input has been retained	生成選項的修改尚未儲存，當前輸入已保留	ビルド オプションへの変更は保存されていません。現在の入力は保持されています。
 生成配置模板（--force 覆盖已有配置）/ Create a template; --force replaces existing settings	生成配置模板（--force 覆盖已有配置）/ Create a template; --force replaces existing settings	Generate configuration template (--force replaces existing settings)/Create a template; --force replaces existing settings	生成配置模板（--force 覆蓋已有配置）/ Create a template; --force replaces existing settings	構成テンプレートを生成します (--force は既存の設定を置き換えます)/テンプレートを作成します。 --force は既存の設定を置き換えます
 用于以后生成	用于以后生成	for later generation	用於以後生成	後の世代のために
-用于以后生成…	用于以后生成…	for later generation…	用於以後生成…	後世のために…
 用法：	用法：	Usage:	用法：	使用法:
 用系统包管理器安装 ffmpeg，再运行	用系统包管理器安装 ffmpeg，再运行	Use the system package manager to install ffmpeg and then run	用系統包管理器安裝 ffmpeg，再執行	システム パッケージ マネージャーを使用して ffmpeg をインストールし、実行します。
 用途：{}	用途：{}	Purpose: {}	用途：{}	目的: {}
@@ -1873,7 +1847,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 纯语气词被置空，随后由调用方删除	纯语气词被置空，随后由调用方删除	Pure modal particles are left blank and subsequently deleted by the caller	純語氣詞被置空，隨後由呼叫方刪除	純粋なモーダル粒子は空白のままになり、その後呼び出し元によって削除されます。
 终端输出 / Terminal output	终端输出	Terminal output	終端輸出	端子出力
 结果尚未确认	结果尚未确认	Results are not yet confirmed	結果尚未確認	結果はまだ確認されていません
-结果未确认	结果未确认	The result is not confirmed	結果未確認	結果は未確認
 继续	继续	Continue	繼續	続行
 继续上次中断的识别（默认开启）/ Continue interrupted transcription (on by default)	继续上次中断的识别（默认开启）/ Continue interrupted transcription (on by default)	Continue interrupted transcription (on by default)/Continue interrupted transcription (on by default)	繼續上次中斷的識別（預設開啟）/ Continue interrupted transcription (on by default)	中断された文字起こしを続行 (デフォルトでオン)/中断された文字起こしを続行 (デフォルトでオン)
 继续任务	继续任务	continue task	繼續任務	タスクを継続する
@@ -1886,9 +1859,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 继续移动	继续移动	keep moving	繼續移動	動き続ける
 继续阅读	继续阅读	Continue reading	繼續閱讀	続きを読む
 编译识别模型	编译识别模型	Compile recognition model	編譯識別模型	認識モデルをコンパイルする
-编辑	编辑	Edit	編輯	編集
 编辑 AI 服务	编辑 AI 服务	Edit AI service	編輯 AI 服務	AIサービスの編集
-编辑服务	编辑服务	Editing services	編輯服務	編集サービス
 编辑语音服务	编辑语音服务	Edit voice service	編輯語音服務	音声サービスの編集
 缩小	缩小	zoom out	縮小	ズームアウト
 缩小 · −	缩小 · −	Zoom out · −	縮小 · −	ズームアウト · −
@@ -1976,7 +1947,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 记录尚未重建，原件仍保留：{error:#}	记录尚未重建，原件仍保留：{error:#}	The record has not been reconstructed and the original remains: {error:#}	記錄尚未重建，原件仍保留：{error:#}	レコードは再構築されておらず、オリジナルのままです: {error:#}
 记录尚未重建，原件仍保留：{}	记录尚未重建，原件仍保留：{}	The record has not been reconstructed and the original remains: {}	記錄尚未重建，原件仍保留：{}	レコードは再構築されておらず、オリジナルのままです: {}
 记录已恢复，请重新扫描笔记库	记录已恢复，请重新扫描笔记库	The record has been restored, please scan the note library again	記錄已恢復，請重新掃描筆記庫	記録が復元されました。ノート ライブラリをもう一度スキャンしてください
-设为默认	设为默认	Set as default	設為預設	デフォルトとして設定
 设备与运行时	设备与运行时	Devices and runtime	裝置與執行時	デバイスとランタイム
 设备状态	设备状态	Device status	裝置狀態	デバイスのステータス
 设置	设置	Settings	設定	設定
@@ -2018,13 +1988,11 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 语音接口类型	语音接口类型	Voice interface type	語音介面型別	音声インターフェースの種類
 语音服务	语音服务	Speech service	語音服務	音声サービス
 语音服务没有返回文字 / The speech service returned no text	语音服务没有返回文字	The speech service returned no text	語音服務沒有返回文字	音声サービスがテキストを返さない
-语音服务类型	语音服务类型	Speech service type	語音服務類型	音声サービスの種類
 语音服务返回了错误 / The speech service returned an error	语音服务返回了错误	The speech service returned an error	語音服務返回了錯誤	音声サービスがエラーを返しました
 语音检测返回了空结果指针 / Speech detection returned null result pointers	语音检测返回了空结果指针	Speech detection returned null result pointers	語音檢測返回了空結果指標	音声検出により null 結果ポインタが返されました
 语音识别	语音识别	Speech recognition	語音辨識	音声認識
 语音识别 / Speech recognition	语音识别	Speech recognition	語音識別	音声認識
 语音识别任务未能完成 / Speech recognition task did not complete	语音识别任务未能完成	Speech recognition task did not complete	語音識別任務未能完成	音声認識タスクを完了できませんでした
-语音识别方式	语音识别方式	Voice recognition method	語音識別方式	音声認識方式
 语音识别服务	语音识别服务	Speech recognition service	語音辨識服務	音声認識サービス
 语音识别模型	语音识别模型	speech recognition model	語音識別模型	音声認識モデル
 语音识别线程数（至少 1）/ Speech recognition threads (minimum 1)	语音识别线程数（至少 1）/ Speech recognition threads (minimum 1)	Speech recognition threads (minimum 1)	語音識別執行緒數（至少 1）/ Speech recognition threads (minimum 1)	音声認識スレッド (最小 1)
@@ -2213,7 +2181,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 选择课程视频	选择课程视频	Select course video	選擇課程影片	コース動画を選択してください
 选择这个笔记库移动后的文件夹	选择这个笔记库移动后的文件夹	Select the folder to which this note library is moved	選擇這個筆記庫移動後的資料夾	このノートライブラリの移動先フォルダーを選択してください
 选项：	选项：	Options:	選項：	オプション:
-通过	通过	Pass	透過	パス
 速度	速度	speed	速度	速度
 速度 {speed}	速度 {speed}	Speed {speed}	速度 {speed}	速度 {speed}
 速度 {}	速度 {}	Speed {}	速度 {}	速度 {}
@@ -2258,7 +2225,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 重新开始整理（保留损坏文件）	重新开始整理（保留损坏文件）	Restart decluttering (keep damaged files)	重新開始整理（保留損壞檔案）	整理整頓を再開します (破損したファイルを保持します)
 重新扫描笔记库	重新扫描笔记库	Rescan the note library	重新掃描筆記庫	ノートライブラリを再スキャンする
 重新检查	重新检查	Check again	重新檢查	再確認
-重新检查 Ollama	重新检查 Ollama	Recheck Ollama	重新檢查 Ollama	オラマを再確認してください
 重新检查保存位置	重新检查保存位置	Recheck save location	重新檢查儲存位置	保存場所を再確認してください
 重新检查是否可用	重新检查是否可用	Recheck availability	重新檢查是否可用	空き状況を再確認する
 重新检查模型	重新检查模型	Recheck model	重新檢查模型	モデルの再チェック
@@ -2364,7 +2330,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 （输入隐藏；回车保留已保存的密钥） / API key (hidden; Enter keeps the saved key)	（输入隐藏；回车保留已保存的密钥）	API key (hidden; Enter keeps the saved key)	（輸入隱藏；回車保留已儲存的金鑰）	(非表示にするには Enter を押します。保存したキーを保持するには Enter を押します)
 （输入隐藏；无密钥的本地服务可留空） / API key (hidden; leave blank for a local service without authentication)	（输入隐藏；无密钥的本地服务可留空）	API key (hidden; leave blank for a local service without authentication)	（輸入隱藏；無金鑰的本地服務可留空）	(入力は非表示になります。キーのないローカル サービスは空白のままにすることができます)
 （输出 json）	（输出 json）	(output json)	（輸出 json）	(出力json)
-，{}	，{}	, {}	，{}	,{}
 ，已选择	，已选择	, selected	，已選擇	、選択済み
 ，或 Hugging Face 仓库名（如 org/model）	，或 Hugging Face 仓库名（如 org/model）	, or Hugging Face repository name (such as org/model)	，或 Hugging Face 倉庫名（如 org/model）	、または Hugging Face リポジトリ名 (組織/モデルなど)
 ；	；	; 	；	;
@@ -2383,7 +2348,6 @@ Markdown 包…	Markdown 包…	Markdown package…	Markdown 包…	Markdown パ
 使用 ChatGPT 订阅，不需要 API Key	使用 ChatGPT 订阅，不需要 API Key	Uses your ChatGPT subscription; no API key needed	使用 ChatGPT 訂閱，不需要 API Key	ChatGPT のサブスクリプションを使用し、API キーは不要です
 使用本机运行的模型，不需要 API Key	使用本机运行的模型，不需要 API Key	Uses models running on this computer; no API key needed	使用本機執行的模型，不需要 API Key	このコンピューターで動くモデルを使用し、API キーは不要です
 修改前的配置	修改前的配置	Previous configuration	修改前的設定	変更前の設定
-关闭后主页只保留输入区和正在处理的任务	关闭后主页只保留输入区和正在处理的任务	When off, the home page shows only the input and tasks in progress	關閉後首頁只保留輸入區和正在處理的任務	オフにすると、ホームには入力欄と処理中のタスクだけが表示されます
 删除服务…	删除服务…	Delete service…	刪除服務…	サービスを削除…
 填写接口地址和 API Key，适用于大多数云端服务	填写接口地址和 API Key，适用于大多数云端服务	Enter an endpoint and API key; works with most cloud services	填寫介面位址和 API Key，適用於大多數雲端服務	エンドポイントと API キーを入力します。多くのクラウドサービスで使えます
 复制原视频链接	复制原视频链接	Copy video link	複製原影片連結	元の動画リンクをコピー
@@ -2408,6 +2372,10 @@ Markdown 包…	Markdown 包…	Markdown package…	Markdown 包…	Markdown パ
 网页文件…	网页文件…	Web page…	網頁檔案…	Web ページ…
 设为默认保存位置	设为默认保存位置	Set as default location	設為預設儲存位置	既定の保存先にする
 设为默认服务…	设为默认服务…	Set as default service…	設為預設服務…	既定のサービスにする…
-返回服务与账号	返回服务与账号	Back to Services & accounts	返回服務與帳號	サービスとアカウントに戻る
 退出 ChatGPT 账号	退出 ChatGPT 账号	Sign out of ChatGPT	登出 ChatGPT 帳號	ChatGPT からサインアウト
 默认	默认	Default	預設	既定
+关闭后主页不显示已完成的笔记	关闭后主页不显示已完成的笔记	When off, finished notes are not listed on the home page	關閉後首頁不顯示已完成的筆記	オフにすると、完了したノートはホームに表示されません
+返回「{}」	返回「{}」	Back to {}	返回「{}」	「{}」に戻る
+正在检查本机的 Ollama…	正在检查本机的 Ollama…	Checking for Ollama on this computer…	正在檢查本機的 Ollama…	このコンピューターの Ollama を確認しています…
+未检测到 Ollama，请安装并打开 Ollama	未检测到 Ollama，请安装并打开 Ollama	Ollama was not found. Install and open Ollama.	未偵測到 Ollama，請安裝並開啟 Ollama	Ollama が見つかりません。Ollama をインストールして起動してください
+账号操作	账号操作	Account actions	帳號操作	アカウントの操作

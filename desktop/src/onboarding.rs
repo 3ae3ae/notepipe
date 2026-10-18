@@ -1426,11 +1426,16 @@ impl Desktop {
         let busy = service.running.is_some() || service.pending_version.is_some();
         let mut body = v_flex().w_full().min_w_0().gap_4().child(self.setup_reveal(
             format!("setup-protocol-reveal-{}", purpose as usize),
-            self.service_type_field(
-                owner,
-                SharedString::from(format!("setup-protocol-{}", purpose as usize)),
-                busy,
-                cx,
+            stacked_field(
+                format!("setup-protocol-label-{}", purpose as usize),
+                course2md::tr!("服务类型"),
+                icons::cloud(),
+                self.service_type_field(
+                    owner,
+                    SharedString::from(format!("setup-protocol-{}", purpose as usize)),
+                    busy,
+                    cx,
+                ),
             ),
         ));
         let codex = draft.protocol == preferences::ServiceProtocol::CodexResponses;

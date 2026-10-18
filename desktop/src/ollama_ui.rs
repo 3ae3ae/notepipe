@@ -13,9 +13,25 @@ pub(crate) struct OllamaUi {
 }
 
 impl OllamaUi {
-    /// 已经有过检测结果（或正在检测）：进入设置页时不重复发起
-    pub(crate) fn checked(&self) -> bool {
-        self.working || self.status.is_some()
+    /// A found service is reused; a failed check is retried on the next form.
+    fn found(&self) -> bool {
+        matches!(self.status, Some(Ok(_)))
+    }
+
+    /// What the check established, for the Ollama entry of the type select.
+    pub(crate) fn status_line(&self) -> Option<String> {
+        if self.working {
+            return Some(course2md::tr!("正在检查本机的 Ollama…").into());
+        }
+        match &self.status {
+            Some(Ok((host, models))) => Some(course2md::tr!(
+                "已在 {} 检测到 {} 个模型",
+                host,
+                models.len()
+            )),
+            Some(Err(message)) => Some(message.clone()),
+            None => None,
+        }
     }
 }
 
@@ -30,9 +46,8 @@ impl Desktop {
         let generation = self.ollama.generation;
         // The engine error names `ollama serve`; the page offers its own action.
         let task = crate::spawn_blocking_io(|| {
-            course2md::login::ollama::discover_for_desktop().map_err(|_| {
-                course2md::tr!("未检测到 Ollama，请安装并打开 Ollama 后重新检查").to_owned()
-            })
+            course2md::login::ollama::discover_for_desktop()
+                .map_err(|_| course2md::tr!("未检测到 Ollama，请安装并打开 Ollama").to_owned())
         });
         cx.spawn(async move |this, cx| {
             let result = task
@@ -53,18 +68,10 @@ impl Desktop {
         cx.notify();
     }
 
-    /// The detected local address and model count, once a check found one.
-    pub(crate) fn ollama_detected(&self) -> Option<(String, usize)> {
-        match &self.ollama.status {
-            Some(Ok((host, models))) => Some((host.clone(), models.len())),
-            _ => None,
-        }
-    }
-
-    /// Ollama forms read the local service: a check runs once, later forms
-    /// reuse its result.
+    /// Ollama forms read the local service: a found service is reused, a
+    /// missing one is checked again.
     pub(crate) fn ollama_prepare_form(&mut self, cx: &mut Context<Self>) {
-        if self.ollama.checked() {
+        if self.ollama.found() {
             self.ollama_apply_catalog(cx);
         } else {
             self.ollama_refresh(cx);
@@ -72,10 +79,15 @@ impl Desktop {
     }
 
     /// Detected models become candidates on every form still editing an Ollama
-    /// service; an empty address or model is filled, typed values stay.
+    /// service; an empty address or model is filled, typed values stay. Without
+    /// a detected service the address falls back to Ollama's default.
     pub(crate) fn ollama_apply_catalog(&mut self, cx: &mut Context<Self>) {
-        let Some(Ok((host, models))) = self.ollama.status.clone() else {
-            return;
+        let (host, models) = match self.ollama.status.clone() {
+            Some(Ok(found)) => found,
+            _ => (
+                crate::preferences::OLLAMA_DEFAULT_ADDRESS.to_owned(),
+                Vec::new(),
+            ),
         };
         let window = self.window;
         for owner in [FormOwner::Editor, FormOwner::Setup(ServicePurpose::Ai)] {
@@ -85,7 +97,9 @@ impl Desktop {
             else {
                 continue;
             };
-            form.models.prime(models.clone());
+            if !models.is_empty() {
+                form.models.prime(models.clone());
+            }
             let address = form.input(FormField::Address).clone();
             let model = form.input(FormField::Model).clone();
             crate::codex_ui::autofill_input(window, address, Some(host.clone()), cx);

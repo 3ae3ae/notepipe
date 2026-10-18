@@ -111,6 +111,50 @@ impl Desktop {
         // macOS draws the traffic lights inside the title bar's leading edge.
         let leading = if cfg!(target_os = "macos") { 88. } else { 12. };
         let page = self.page;
+        let bar = h_flex()
+            .w_full()
+            .min_w_0()
+            .h_full()
+            .pl(px(leading))
+            .pr(px(16.))
+            .gap(px(4.))
+            .items_center();
+        // Settings is a place of its own: the bar names it instead of offering
+        // the other destinations, and its leading crumb returns where it was
+        // opened from.
+        if page == Page::Settings {
+            let origin = self
+                .settings_origin
+                .as_ref()
+                .map_or(Page::New, |(page, _)| *page);
+            let (icon, name) = match origin {
+                Page::Library | Page::Result => (icons::book_open(), course2md::tr!("笔记库")),
+                Page::Task => (icons::task(), course2md::tr!("任务")),
+                _ => (icons::home(), course2md::tr!("主页")),
+            };
+            let crumb = nav_action("settings-origin", false, cx)
+                .w(CONTROL_HEIGHT)
+                .px_0()
+                .icon(icon)
+                .accessibility_label(course2md::tr!("返回「{}」", name))
+                .tooltip(name)
+                .on_click(cx.listener(|this, _, window, cx| this.leave_settings(window, cx)));
+            return apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window)))
+                .child(
+                    bar.child(crumb)
+                        .child(
+                            icons::chevron_right()
+                                .size(rems(18. / 14.))
+                                .text_color(color(GRAY)),
+                        )
+                        .child(
+                            accessible_text("settings-page-title", course2md::tr!("设置"))
+                                .role(Role::Heading)
+                                .text_size(rems(18. / 14.))
+                                .font_weight(FontWeight::MEDIUM),
+                        ),
+                );
+        }
         // Home is the workbench; its icon is the leading destination.
         let home = nav_action("nav-home", page == Page::New, cx)
             .w(CONTROL_HEIGHT)
@@ -160,35 +204,12 @@ impl Desktop {
             })
             .accessibility_label(course2md::tr!("设置"))
             .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx)));
-        let bar = h_flex()
-            .w_full()
-            .min_w_0()
-            .h_full()
-            .pl(px(leading))
-            .pr(px(16.))
-            .gap(px(4.))
-            .items_center()
-            .child(home);
-        // Settings is a place of its own: the bar names it instead of offering
-        // the other destinations, and home is the way out.
-        let bar = if page == Page::Settings {
-            bar.child(
-                icons::chevron_right()
-                    .size(rems(18. / 14.))
-                    .text_color(color(GRAY)),
-            )
-            .child(
-                accessible_text("settings-page-title", course2md::tr!("设置"))
-                    .role(Role::Heading)
-                    .text_size(rems(18. / 14.))
-                    .font_weight(FontWeight::MEDIUM),
-            )
-        } else {
-            bar.child(div().flex_1())
-                .child(library)
-                .children(tasks)
-                .child(settings)
-        };
+        let bar = bar
+            .child(home)
+            .child(div().flex_1())
+            .child(library)
+            .children(tasks)
+            .child(settings);
         apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window))).child(bar)
     }
 

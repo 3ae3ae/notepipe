@@ -2,7 +2,10 @@
 use super::*;
 use crate::theme::*;
 use course2md::auth::{AccountProfile, AccountStatus, QrPoll, QrSession};
-use gpui_component::button::*;
+use gpui_component::{
+    button::*,
+    menu::{DropdownMenu, PopupMenuItem},
+};
 use std::sync::Arc;
 
 #[derive(Default)]
@@ -276,23 +279,38 @@ impl Desktop {
                     .into_any_element(),
             );
         }
-        // Only a saved login has anything to re-verify.
+        // Only a saved login has anything to re-verify or sign out of; like
+        // every resource row, its commands sit in one ⋯ menu.
         if saved {
+            let entity = cx.weak_entity();
+            let checking = self.account.checking;
             actions.push(
-                quiet("account-refresh")
-                    .settings_text()
-                    .icon(icons::refresh())
-                    .label(course2md::tr!("重新检查"))
-                    .disabled(self.account.checking)
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh_account(cx)))
-                    .into_any_element(),
-            );
-            actions.push(
-                quiet("account-logout")
-                    .settings_text()
-                    .icon(icons::logout())
-                    .label(course2md::tr!("退出登录"))
-                    .on_click(cx.listener(|this, _, _, cx| this.clear_account(cx)))
+                quiet("account-actions")
+                    .w(CONTROL_HEIGHT)
+                    .px_0()
+                    .icon(icons::ellipsis())
+                    .accessibility_label(course2md::tr!("{} 操作", course2md::tr!("Bilibili 账号")))
+                    .tooltip(course2md::tr!("账号操作"))
+                    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                        let refresh = entity.clone();
+                        let logout = entity.clone();
+                        menu.item(
+                            PopupMenuItem::new(course2md::tr!("重新检查"))
+                                .icon(icons::refresh())
+                                .disabled(checking)
+                                .on_click(move |_, _, cx| {
+                                    let _ = refresh.update(cx, |this, cx| this.refresh_account(cx));
+                                }),
+                        )
+                        .separator()
+                        .item(
+                            PopupMenuItem::new(course2md::tr!("退出登录"))
+                                .icon(icons::logout())
+                                .on_click(move |_, _, cx| {
+                                    let _ = logout.update(cx, |this, cx| this.clear_account(cx));
+                                }),
+                        )
+                    })
                     .into_any_element(),
             );
         }
