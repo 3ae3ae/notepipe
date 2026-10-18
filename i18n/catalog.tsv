@@ -2377,3 +2377,37 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 原笔记已关闭；服务正在保存，但未用于其他笔记	原笔记已关闭；服务正在保存，但未用于其他笔记	The original note is closed; the service is still being saved and was not used for other notes	原筆記已關閉；服務正在儲存，但未用於其他筆記	元のノートは閉じられています。サービスは保存中で、他のノートには使用されていません
 服务正在保存，本次选择尚未保存：{}	服务正在保存，本次选择尚未保存：{}	The service is still being saved; this selection was not saved: {}	服務正在儲存，本次選擇尚未儲存：{}	サービスは保存中です。今回の選択は保存されていません: {}
 服务正在保存，补做任务尚未创建。请重试补做。	服务正在保存，补做任务尚未创建。请重试补做。	The service is still being saved; the repair task has not been created. Retry the repair.	服務正在儲存，補做任務尚未建立。請重試補做。	サービスは保存中です。補修タスクはまだ作成されていません。再度お試しください。
+Markdown 包…	Markdown 包…	Markdown package…	Markdown 包…	Markdown パッケージ…
+上传音频，返回转写文字	上传音频，返回转写文字	Uploads audio and returns a transcript	上傳音訊，傳回轉寫文字	音声をアップロードし、文字起こしを返します
+主页	主页	Home	首頁	ホーム
+使用 ChatGPT 订阅，不需要 API Key	使用 ChatGPT 订阅，不需要 API Key	Uses your ChatGPT subscription; no API key needed	使用 ChatGPT 訂閱，不需要 API Key	ChatGPT のサブスクリプションを使用し、API キーは不要です
+使用本机运行的模型，不需要 API Key	使用本机运行的模型，不需要 API Key	Uses models running on this computer; no API key needed	使用本機執行的模型，不需要 API Key	このコンピューターで動くモデルを使用し、API キーは不要です
+修改前的配置	修改前的配置	Previous configuration	修改前的設定	変更前の設定
+关闭后主页只保留输入区和正在处理的任务	关闭后主页只保留输入区和正在处理的任务	When off, the home page shows only the input and tasks in progress	關閉後首頁只保留輸入區和正在處理的任務	オフにすると、ホームには入力欄と処理中のタスクだけが表示されます
+删除服务…	删除服务…	Delete service…	刪除服務…	サービスを削除…
+填写接口地址和 API Key，适用于大多数云端服务	填写接口地址和 API Key，适用于大多数云端服务	Enter an endpoint and API key; works with most cloud services	填寫介面位址和 API Key，適用於大多數雲端服務	エンドポイントと API キーを入力します。多くのクラウドサービスで使えます
+复制原视频链接	复制原视频链接	Copy video link	複製原影片連結	元の動画リンクをコピー
+导出为	导出为	Export as	匯出為	エクスポート形式
+已在 {} 检测到 {} 个模型	已在 {} 检测到 {} 个模型	{}: found {} models	已在 {} 偵測到 {} 個模型	{} で {} 個のモデルを検出しました
+已是默认保存位置	已是默认保存位置	Already the default location	已是預設儲存位置	既定の保存先です
+已是默认服务	已是默认服务	Already the default service	已是預設服務	既定のサービスです
+已添加的服务	已添加的服务	Added services	已新增的服務	追加済みのサービス
+{} 操作	{} 操作	{} actions	{} 操作	{} の操作
+支持音频输入的对话模型	支持音频输入的对话模型	A chat model that accepts audio input	支援音訊輸入的對話模型	音声入力に対応した対話モデル
+显示最近的笔记	显示最近的笔记	Show recent notes	顯示最近的筆記	最近のノートを表示
+服务操作	服务操作	Service actions	服務操作	サービスの操作
+测试连接	测试连接	Test connection	測試連線	接続をテスト
+测试通过	测试通过	Test passed	測試通過	テスト合格
+添加或管理 AI 服务…	添加或管理 AI 服务…	Add or manage AI services…	新增或管理 AI 服務…	AI サービスを追加・管理…
+添加或管理语音服务…	添加或管理语音服务…	Add or manage speech services…	新增或管理語音服務…	音声サービスを追加・管理…
+用账号登录	用账号登录	Sign in with an account	用帳號登入	アカウントでサインイン
+移动到	移动到	Move to	移動到	移動先
+笔记库操作	笔记库操作	Library actions	筆記庫操作	ノートライブラリの操作
+结构化数据…	结构化数据…	Structured data…	結構化資料…	構造化データ…
+编辑…	编辑…	Edit…	編輯…	編集…
+网页文件…	网页文件…	Web page…	網頁檔案…	Web ページ…
+设为默认保存位置	设为默认保存位置	Set as default location	設為預設儲存位置	既定の保存先にする
+设为默认服务…	设为默认服务…	Set as default service…	設為預設服務…	既定のサービスにする…
+返回服务与账号	返回服务与账号	Back to Services & accounts	返回服務與帳號	サービスとアカウントに戻る
+退出 ChatGPT 账号	退出 ChatGPT 账号	Sign out of ChatGPT	登出 ChatGPT 帳號	ChatGPT からサインアウト
+默认	默认	Default	預設	既定
