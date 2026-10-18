@@ -12,7 +12,7 @@
 //! - 常见安装目录兜底：Finder/桌面会话启动的进程拿不到登录 shell 的 PATH，
 //!   mise/asdf/conda/Nix/Scoop/Python user-base 等位置只能逐个枚举。
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// 显式指定 yt-dlp 二进制的环境变量；指向不可执行文件时忽略并继续按清单搜索。
