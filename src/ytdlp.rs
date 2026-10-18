@@ -131,27 +131,41 @@ fn fallback_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// 按优先级返回第一个可执行的 yt-dlp。
+/// A candidate that exits successfully for `--version`. A bundled one-file
+/// PyInstaller build can be present and executable yet fail after macOS signing
+/// (the extracted Python has a different Team ID); treat that as unavailable and
+/// continue to the user's PATH/Homebrew installation.
+fn runs(path: &Path) -> bool {
+    let mut command = std::process::Command::new(path);
+    command.arg("--version");
+    crate::runtime::run_bounded("yt-dlp", &mut command, std::time::Duration::from_secs(3))
+        .is_ok_and(|output| output.status.success())
+}
+
+fn candidates_in(path: Option<&OsStr>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(custom) = std::env::var_os(ENV_OVERRIDE).filter(|v| !v.is_empty()) {
+        candidates.push(PathBuf::from(custom));
+    }
+    candidates.extend(bundled_candidates());
+    let name = binary_name();
+    if let Some(path) = path {
+        candidates.extend(std::env::split_paths(path).map(|dir| dir.join(&name)));
+    } else if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|dir| dir.join(&name)));
+    }
+    candidates.extend(fallback_candidates());
+    candidates
+}
+
+/// 按优先级返回第一个存在、可执行且能运行 `--version` 的 yt-dlp。
 /// `path` 为 None 时用进程继承的 PATH；桌面端传入 `tool_path()` 的扩展版本。
 pub fn resolve_in(path: Option<&OsStr>) -> Option<PathBuf> {
-    if let Some(custom) = std::env::var_os(ENV_OVERRIDE).filter(|v| !v.is_empty()) {
-        let p = PathBuf::from(custom);
-        if is_exec(&p) {
-            return Some(p);
-        }
-    }
-    if let Some(found) = bundled_candidates().into_iter().find(|p| is_exec(p)) {
-        return Some(found);
-    }
-    let name = OsString::from(binary_name());
-    let on_path = match path {
-        Some(p) => which::which_in(&name, Some(p), ".").ok(),
-        None => which::which(&name).ok(),
-    };
-    if on_path.is_some() {
-        return on_path;
-    }
-    fallback_candidates().into_iter().find(|p| is_exec(p))
+    let mut seen = std::collections::BTreeSet::new();
+    candidates_in(path)
+        .into_iter()
+        .filter(|candidate| seen.insert(candidate.clone()))
+        .find(|candidate| is_exec(candidate) && runs(candidate))
 }
 
 /// 继承 PATH 的版本（CLI/终端调用）。
@@ -198,5 +212,22 @@ mod tests {
         std::fs::write(&plain, b"#!/bin/sh\n").unwrap();
         assert!(!is_exec(&plain));
         assert!(!is_exec(&dir.path().join("missing")));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn broken_first_path_entry_falls_back_to_a_runnable_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let broken = tempfile::tempdir().unwrap();
+        let working = tempfile::tempdir().unwrap();
+        let broken_path = broken.path().join("yt-dlp");
+        std::fs::write(&broken_path, b"#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&broken_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let working_path = make_exec(working.path(), "yt-dlp");
+        let path = std::env::join_paths([broken.path(), working.path()]).unwrap();
+        assert_eq!(
+            resolve_in(Some(path.as_os_str())),
+            Some(working_path),
+            "a broken bundled/earlier candidate must not hide a working installation"
+        );
     }
 }
