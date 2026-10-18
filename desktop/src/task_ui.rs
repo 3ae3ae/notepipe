@@ -3462,18 +3462,11 @@ impl Desktop {
     }
 
     fn task_cover(&self, task: &TaskRecord) -> Option<PathBuf> {
-        task.plan.source.cover.clone().or_else(|| {
-            self.courses
-                .iter()
-                .find(|course| {
-                    task.artifact.as_ref() == Some(&course.dir)
-                        || course
-                            .manifest
-                            .as_ref()
-                            .is_some_and(|manifest| manifest.source_id == task.plan.source_id)
-                })
-                .and_then(|course| course.thumbnail.clone())
-        })
+        task.plan
+            .source
+            .cover
+            .clone()
+            .or_else(|| self.cover_by_source.get(&task.plan.source_id).cloned())
     }
 
     fn task_heading(&self, task: &TaskRecord) -> Div {

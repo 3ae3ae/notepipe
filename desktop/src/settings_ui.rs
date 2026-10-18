@@ -2457,17 +2457,16 @@ impl Desktop {
                     .unwrap_or_else(|| self.recommended_local_provider()),
                 course2md::config::AsrProvider::Cpu | course2md::config::AsrProvider::Gpu
             );
-            for (index, (name, found)) in [
+            let mut tools = vec![
                 (course2md::tr!("转换程序"), e.engine),
-                ("ffmpeg", e.ffmpeg),
-                ("ffprobe", e.ffprobe),
-                ("yt-dlp", e.ytdlp),
-                ("llama-server", e.llama),
-            ]
-            .into_iter()
-            .filter(|(name, _)| *name != "llama-server" || needs_llama)
-            .enumerate()
-            {
+                ("ffmpeg".into(), e.ffmpeg),
+                ("ffprobe".into(), e.ffprobe),
+                ("yt-dlp".into(), e.ytdlp),
+            ];
+            if needs_llama {
+                tools.push(("llama-server".into(), e.llama));
+            }
+            for (index, (name, found)) in tools.into_iter().enumerate() {
                 programs = programs.child(settings_detail_row(
                     ("diagnostic-tool-label", index),
                     name,

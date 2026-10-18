@@ -31,6 +31,14 @@ enum QrDialogState {
     Success(AccountProfile),
 }
 
+enum QrPollResult {
+    Waiting,
+    Confirming,
+    Expired,
+    Authenticated(Result<AccountProfile>),
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct QrLayout {
     dialog_width: f32,
@@ -513,7 +521,9 @@ impl Desktop {
                 _ => {
                     let _ = this.update(cx, |this, cx| {
                         if this.account.current(generation) {
-                            this.account.dialog = Some(QrDialogState::Error(course2md::tr!("获取二维码失败，请检查网络后重试").into()));
+                            this.account.dialog = Some(QrDialogState::Error(
+                                course2md::tr!("获取二维码失败，请检查网络后重试").into(),
+                            ));
                             cx.notify();
                         }
                     });
@@ -521,17 +531,29 @@ impl Desktop {
                 }
             };
             let modules = Arc::new(session.modules());
-            let active = this.update(cx, |this, cx| {
-                if !this.account.current(generation) { return false; }
-                this.account.modules = Some(modules);
-                this.account.dialog = Some(QrDialogState::Waiting(session.remaining().as_secs()));
-                cx.notify();
-                true
-            }).unwrap_or(false);
-            if !active { return; }
+            let active = this
+                .update(cx, |this, cx| {
+                    if !this.account.current(generation) {
+                        return false;
+                    }
+                    this.account.modules = Some(modules);
+                    this.account.dialog =
+                        Some(QrDialogState::Waiting(session.remaining().as_secs()));
+                    cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            if !active {
+                return;
+            }
             loop {
                 smol::Timer::after(Duration::from_secs(2)).await;
-                if !this.update(cx, |this, _| this.account.current(generation)).unwrap_or(false) { break; }
+                if !this
+                    .update(cx, |this, _| this.account.current(generation))
+                    .unwrap_or(false)
+                {
+                    break;
+                }
                 let task = crate::spawn_blocking_io(move || {
                     let result = session.poll();
                     (session, result)
@@ -539,7 +561,8 @@ impl Desktop {
                 let Ok((next, result)) = task.recv().await else {
                     let _ = this.update(cx, |this, cx| {
                         if this.account.current(generation) {
-                            this.account.dialog = Some(QrDialogState::Error(crate::interrupted().into()));
+                            this.account.dialog =
+                                Some(QrDialogState::Error(crate::interrupted().into()));
                             cx.notify();
                         }
                     });
@@ -547,38 +570,74 @@ impl Desktop {
                 };
                 session = next;
                 let remaining = session.remaining().as_secs();
-                let keep_polling = this.update(cx, |this, cx| {
-                    if !this.account.current(generation) { return false; }
-                    let (state, keep_polling) = match result {
-                        Ok(QrPoll::Waiting) => (QrDialogState::Waiting(remaining), true),
-                        Ok(QrPoll::AwaitingConfirmation) => (QrDialogState::Confirming(remaining), true),
-                        Ok(QrPoll::Expired) => (QrDialogState::Expired, false),
-                        Ok(QrPoll::Authenticated(login)) => {
-                            // The generation check and atomic credential commit happen together on
-                            // the UI thread. A cancelled request can never save a late result.
-                            match login.save() {
-                                Ok(profile) => {
-                                    this.account.status_generation = this.account.status_generation.wrapping_add(1);
-                                    this.account.checking = false;
-                                    this.account.has_saved_login = true;
-                                    this.account.status = Some(AccountStatus::Connected(profile.clone()));
-                                    this.account.status_error = None;
-                                    this.account.logout_failed = false;
-                                    (QrDialogState::Success(profile), false)
-                                }
-                                Err(_) => (QrDialogState::Error(course2md::tr!("账号已确认，但保存登录状态失败。请检查本地权限后重新扫码。").into()), false),
-                            }
+                let result = match result {
+                    Ok(QrPoll::Waiting) => QrPollResult::Waiting,
+                    Ok(QrPoll::AwaitingConfirmation) => QrPollResult::Confirming,
+                    Ok(QrPoll::Expired) => QrPollResult::Expired,
+                    Ok(QrPoll::Authenticated(login)) => {
+                        // The credential commit touches the keychain/file store; do it
+                        // off the UI thread, then re-check the generation below.
+                        let save = crate::spawn_blocking_io(move || login.save());
+                        QrPollResult::Authenticated(match save.recv().await {
+                            Ok(result) => result,
+                            Err(_) => Err(anyhow::anyhow!(crate::interrupted())),
+                        })
+                    }
+                    Err(_) => QrPollResult::Failed,
+                };
+                let keep_polling = this
+                    .update(cx, |this, cx| {
+                        if !this.account.current(generation) {
+                            return false;
                         }
-                        Err(_) => (QrDialogState::Error(course2md::tr!("登录请求失败，请检查网络后重新获取二维码").into()), false),
-                    };
-                    if !keep_polling { this.account.modules = None; }
-                    this.account.dialog = Some(state);
-                    cx.notify();
-                    keep_polling
-                }).unwrap_or(false);
-                if !keep_polling { break; }
+                        let (state, keep_polling) = match result {
+                            QrPollResult::Waiting => (QrDialogState::Waiting(remaining), true),
+                            QrPollResult::Confirming => {
+                                (QrDialogState::Confirming(remaining), true)
+                            }
+                            QrPollResult::Expired => (QrDialogState::Expired, false),
+                            QrPollResult::Authenticated(Ok(profile)) => {
+                                this.account.status_generation =
+                                    this.account.status_generation.wrapping_add(1);
+                                this.account.checking = false;
+                                this.account.has_saved_login = true;
+                                this.account.status =
+                                    Some(AccountStatus::Connected(profile.clone()));
+                                this.account.status_error = None;
+                                this.account.logout_failed = false;
+                                (QrDialogState::Success(profile), false)
+                            }
+                            QrPollResult::Authenticated(Err(_)) => (
+                                QrDialogState::Error(
+                                    course2md::tr!(
+                                        "账号已确认，但保存登录状态失败。请检查本地权限后重新扫码。"
+                                    )
+                                    .into(),
+                                ),
+                                false,
+                            ),
+                            QrPollResult::Failed => (
+                                QrDialogState::Error(
+                                    course2md::tr!("登录请求失败，请检查网络后重新获取二维码")
+                                        .into(),
+                                ),
+                                false,
+                            ),
+                        };
+                        if !keep_polling {
+                            this.account.modules = None;
+                        }
+                        this.account.dialog = Some(state);
+                        cx.notify();
+                        keep_polling
+                    })
+                    .unwrap_or(false);
+                if !keep_polling {
+                    break;
+                }
             }
-        }).detach();
+        })
+        .detach();
         cx.notify();
     }
 

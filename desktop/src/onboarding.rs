@@ -24,6 +24,28 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SetupAiUse {
+    Proofread,
+    Summary,
+}
+
+impl SetupAiUse {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Proofread => "proofread",
+            Self::Summary => "summary",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Proofread => course2md::tr!("自动校对文字"),
+            Self::Summary => course2md::tr!("生成课程摘要"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
     Engine,
@@ -1472,20 +1494,16 @@ impl Desktop {
             body.child(self.setup_input_row(purpose, FormField::Model, course2md::tr!("模型"), cx));
         if purpose == ServicePurpose::Ai {
             let mut uses = h_flex().w_full().min_w_0().flex_wrap().gap_4();
-            for (id, label, checked, icon) in [
-                (
-                    "proofread",
-                    course2md::tr!("自动校对文字"),
-                    self.onboarding.ai_proofread,
-                    icons::auto_fix(),
-                ),
-                (
-                    "summary",
-                    course2md::tr!("生成课程摘要"),
-                    self.onboarding.ai_summary,
-                    icons::summarize(),
-                ),
-            ] {
+            for use_kind in [SetupAiUse::Proofread, SetupAiUse::Summary] {
+                let id = use_kind.id();
+                let checked = match use_kind {
+                    SetupAiUse::Proofread => self.onboarding.ai_proofread,
+                    SetupAiUse::Summary => self.onboarding.ai_summary,
+                };
+                let icon = match use_kind {
+                    SetupAiUse::Proofread => icons::auto_fix(),
+                    SetupAiUse::Summary => icons::summarize(),
+                };
                 uses = uses.child(
                     h_flex()
                         .flex_1()
@@ -1495,7 +1513,9 @@ impl Desktop {
                         .items_center()
                         .gap_2()
                         .child(icon.size_4().flex_shrink_0().text_color(color(GRAY)))
-                        .child(field_label(format!("setup-ai-{id}-label"), label).min_w_0())
+                        .child(
+                            field_label(format!("setup-ai-{id}-label"), use_kind.label()).min_w_0(),
+                        )
                         .child(crate::focus_scroll::FocusRing::new(
                             format!("setup-ai-{id}-focus"),
                             preference_switch(
@@ -1503,10 +1523,13 @@ impl Desktop {
                                     .checked(checked)
                                     .disabled(busy)
                                     .on_click(cx.listener(move |this, enabled, _, cx| {
-                                        if id == "proofread" {
-                                            this.onboarding.ai_proofread = *enabled;
-                                        } else {
-                                            this.onboarding.ai_summary = *enabled;
+                                        match use_kind {
+                                            SetupAiUse::Proofread => {
+                                                this.onboarding.ai_proofread = *enabled
+                                            }
+                                            SetupAiUse::Summary => {
+                                                this.onboarding.ai_summary = *enabled
+                                            }
                                         }
                                         cx.notify();
                                     })),

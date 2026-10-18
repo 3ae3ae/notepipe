@@ -289,6 +289,7 @@ struct Desktop {
     pending_done: Option<Completed>,
     completed: Option<Completed>,
     courses: Vec<Course>,
+    cover_by_source: BTreeMap<String, PathBuf>,
     loading: bool,
     preview: Option<Rc<backend::Preview>>,
     read_generation: u64,
@@ -656,6 +657,7 @@ impl Desktop {
             pending_done: None,
             completed: None,
             courses: vec![],
+            cover_by_source: BTreeMap::new(),
             loading: false,
             preview: None,
             read_generation: 0,
@@ -1123,6 +1125,7 @@ impl Desktop {
                 }
                 this.loading = false;
                 this.courses.clear();
+                this.cover_by_source.clear();
                 this.library_issues.clear();
                 this.library_indexes.clear();
                 this.library_view_cache = Default::default();
@@ -1130,6 +1133,16 @@ impl Desktop {
                     this.library_view_cache.merge(cache);
                     match scan {
                         Ok(scan) => {
+                            for course in &scan.courses {
+                                if let Some(cover) = &course.thumbnail
+                                    && let Some(source_id) = course
+                                        .manifest
+                                        .as_ref()
+                                        .map(|manifest| manifest.source_id.clone())
+                                {
+                                    this.cover_by_source.insert(source_id, cover.clone());
+                                }
+                            }
                             this.courses.extend(scan.courses);
                             this.library_issues
                                 .extend(scan.issues.into_iter().map(|message| {

@@ -14,14 +14,11 @@ const SUBTITLE_LANGUAGES: [(&str, &str); 5] = [
 ];
 
 fn subtitle_language_label(id: &str) -> &'static str {
-    match id {
-        "custom" => course2md::tr!("自定义优先级"),
-        id => SUBTITLE_LANGUAGES
-            .iter()
-            .find(|(language, _)| *language == id)
-            .map(|(_, label)| course2md::tr!(label))
-            .unwrap_or_else(|| course2md::tr!("自动")),
-    }
+    SUBTITLE_LANGUAGES
+        .iter()
+        .find(|(language, _)| *language == id)
+        .map(|(_, label)| course2md::tr!(label))
+        .unwrap_or_else(|| course2md::tr!("自动"))
 }
 use course2md::config::{AsrProvider, local_models, model_label};
 
@@ -35,10 +32,14 @@ impl Desktop {
         let provider = value.options.provider;
         let online = provider == Some(AsrProvider::Api);
         let language = match value.preferred_subtitle_languages.as_slice() {
-            [] => "",
-            [one] if ["zh-Hans", "zh-Hant", "en", "ja"].contains(&one.as_str()) => one.as_str(),
-            _ => "custom",
+            [one] if SUBTITLE_LANGUAGES.iter().any(|(id, _)| id == one) => one.as_str(),
+            _ => "",
         };
+        let custom_language = value.preferred_subtitle_languages.len() > 1
+            || value
+                .preferred_subtitle_languages
+                .first()
+                .is_some_and(|one| !SUBTITLE_LANGUAGES.iter().any(|(id, _)| id == one));
         let languages = group("language-settings", course2md::tr!("字幕与识别"))
             .child(settings_stacked_row(
                 "default-text-source-label",
@@ -93,7 +94,11 @@ impl Desktop {
                             .h(px(56.))
                             .rounded(RADIUS_SMALL)
                             .w_full()
-                            .label(subtitle_language_label(language))
+                            .label(if custom_language {
+                                course2md::tr!("自定义优先级")
+                            } else {
+                                subtitle_language_label(language)
+                            })
                             .child(div().flex_1())
                             .child(icons::chevron_down().size_4())
                             .dropdown_menu(move |menu, _, _| {
@@ -152,7 +157,7 @@ impl Desktop {
                                     },
                                 )),
                             )
-                            .when(language == "custom", |row| {
+                            .when(custom_language, |row| {
                                 row.child(
                                     text(
                                         "subtitle-custom-summary",
@@ -616,7 +621,7 @@ impl Desktop {
                 .fold(
                     self.setting_choices("default-local-model", course2md::tr!("默认识别模型"))
                         .options(models.iter().map(|model| (model.id, model.label))),
-                    |choices, model| choices.icon(model.id, icons::mic()),
+                    |choices, _| choices,
                 )
                 .full_width()
                 .selected(canonical.clone().unwrap_or_default())
