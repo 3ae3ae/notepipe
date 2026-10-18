@@ -1394,8 +1394,22 @@ impl Desktop {
             let Ok(evidence) = task.recv().await else {
                 return;
             };
+            let evidence_for_disk = evidence.clone();
+            let persistence = this.update(cx, |this, _| {
+                let root = this.preferences.root().to_path_buf();
+                let vault = this.preferences.vault();
+                crate::spawn_blocking_io(move || {
+                    crate::preferences::Store::persist_test_evidence(root, vault, evidence_for_disk)
+                })
+            });
+            let persisted = match persistence {
+                Ok(task) => task.recv().await.ok().is_some_and(|result| result.is_ok()),
+                Err(_) => false,
+            };
             let _ = this.update(cx, |this, cx| {
-                let persisted = this.preferences.record_test(evidence.clone()).is_ok();
+                if persisted {
+                    this.preferences.record_test_memory(evidence.clone());
+                }
                 let key_unchanged = this
                     .settings_ui
                     .editor

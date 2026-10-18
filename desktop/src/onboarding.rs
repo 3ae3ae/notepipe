@@ -640,10 +640,33 @@ impl Desktop {
             let Ok(results) = task.recv().await else {
                 return;
             };
+            let evidence_for_disk: Vec<_> = results
+                .iter()
+                .map(|(_, evidence)| evidence.clone())
+                .collect();
+            let persistence = this.update(cx, |this, _| {
+                let root = this.preferences.root().to_path_buf();
+                let vault = this.preferences.vault();
+                crate::spawn_blocking_io(move || {
+                    for evidence in evidence_for_disk {
+                        crate::preferences::Store::persist_test_evidence(
+                            root.clone(),
+                            vault.clone(),
+                            evidence,
+                        )?;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })
+            });
+            let persisted = match persistence {
+                Ok(task) => task.recv().await.ok().is_some_and(|result| result.is_ok()),
+                Err(_) => false,
+            };
             let _ = this.update(cx, |this, cx| {
-                let mut persisted = true;
-                for (_, evidence) in &results {
-                    persisted &= this.preferences.record_test(evidence.clone()).is_ok();
+                if persisted {
+                    for (_, evidence) in &results {
+                        this.preferences.record_test_memory(evidence.clone());
+                    }
                 }
                 if this.onboarding.session != session
                     || this.onboarding.service(purpose).test_serial != serial

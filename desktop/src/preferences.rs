@@ -1514,6 +1514,24 @@ impl Store {
         Ok(())
     }
 
+    /// Disk half of `record_test`, for callers that must not write on the UI thread.
+    /// A fresh store reads the current services file, inserts one result, and writes it.
+    pub fn persist_test_evidence(
+        root: impl Into<PathBuf>,
+        vault: Arc<dyn CredentialVault>,
+        evidence: ServiceTestEvidence,
+    ) -> Result<()> {
+        let mut store = Self::open(root, vault);
+        store.record_test(evidence)
+    }
+
+    /// Memory half of `record_test`; used after the background write succeeded.
+    pub fn record_test_memory(&mut self, evidence: ServiceTestEvidence) {
+        self.services
+            .tests
+            .insert(evidence.fingerprint.clone(), evidence);
+    }
+
     /// Only the explicitly affected group is reset. Originals and the last backup are copied
     /// before publication, and failure leaves the old files and effective state untouched.
     pub fn reset_group(&mut self, group: PreferenceGroup) -> Result<()> {
