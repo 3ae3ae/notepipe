@@ -2374,3 +2374,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 正在保存…	正在保存…	Saving…	正在儲存…	保存中…
 设置保存线程已停止	设置保存线程已停止	The settings save thread has stopped	設定儲存執行緒已停止	設定保存スレッドが停止しました
 没有待保存的服务设置	没有待保存的服务设置	There are no service settings waiting to be saved	沒有待儲存的服務設定	保存待ちのサービス設定はありません
+原笔记已关闭；服务正在保存，但未用于其他笔记	原笔记已关闭；服务正在保存，但未用于其他笔记	The original note is closed; the service is still being saved and was not used for other notes	原筆記已關閉；服務正在儲存，但未用於其他筆記	元のノートは閉じられています。サービスは保存中で、他のノートには使用されていません
+服务正在保存，本次选择尚未保存：{}	服务正在保存，本次选择尚未保存：{}	The service is still being saved; this selection was not saved: {}	服務正在儲存，本次選擇尚未儲存：{}	サービスは保存中です。今回の選択は保存されていません: {}
+服务正在保存，补做任务尚未创建。请重试补做。	服务正在保存，补做任务尚未创建。请重试补做。	The service is still being saved; the repair task has not been created. Retry the repair.	服務正在儲存，補做任務尚未建立。請重試補做。	サービスは保存中です。補修タスクはまだ作成されていません。再度お試しください。

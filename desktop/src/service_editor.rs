@@ -1546,7 +1546,7 @@ impl Desktop {
                             .iter_mut()
                             .find(|draft| draft.id == target)
                             .context(course2md::tr!(
-                                "原笔记已关闭；服务已保存，但未用于其他笔记"
+                                "原笔记已关闭；服务正在保存，但未用于其他笔记"
                             ))?;
                         let selected =
                             (scope == BindingScope::CurrentTask).then(|| version.id.clone());
@@ -1561,7 +1561,7 @@ impl Desktop {
                 if let Some(editor) = &mut self.settings_ui.editor {
                     editor.pending_binding = Some(version);
                     editor.status = Some(course2md::tr!(
-                        "服务已保存，本次选择尚未保存：{}",
+                        "服务正在保存，本次选择尚未保存：{}",
                         format!("{error:#}")
                     ));
                 }
@@ -1575,7 +1575,7 @@ impl Desktop {
             if let Some(editor) = &mut self.settings_ui.editor {
                 editor.pending_binding = Some(version);
                 editor.status =
-                    Some(course2md::tr!("服务已保存，补做任务尚未创建。请重试补做。").into());
+                    Some(course2md::tr!("服务正在保存，补做任务尚未创建。请重试补做。").into());
             }
             cx.notify();
             return;

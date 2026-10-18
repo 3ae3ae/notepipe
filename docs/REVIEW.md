@@ -25,7 +25,7 @@
 2. 宽窗口下侧栏标签曾被 `w_full` 推到轨道中央。仅窄轨标签使用整行居中，宽侧栏恢复图标紧邻标签。
 3. 英文标签大小写/语法统一：Appearance mode、Subtitle language、Local file、Light、Subtitles will be used directly。
 4. 760px 窄窗/150% 下转录来源分段标签改用紧凑文案（Auto/Subtitles/Speech），不再省略号截断。
-5. 设置写入改为带确认的后台队列：入队时显示「正在保存…」，落盘成功后由事件唤醒并显示「已保存」；失败保留恢复 intent、设置可重试的 pending 值并在下一轮 poll 显示错误。退出前 flush 两次（写入、清理 intent）后才允许关闭。添加笔记库的身份读取、可写探测、身份文件创建和注册全部移到后台准备，提交只更新内存。
+5. 设置写入改为带确认的后台队列：入队时显示「正在保存…」，落盘成功后由事件唤醒并显示「已保存」；失败保留恢复 intent、设置可重试的 pending 值并在下一轮 poll 显示错误。Generation/Application 与 Services 都走同一完成事件；服务发布失败时保留草稿恢复文件与 services intent，可重试。退出前 flush 两次（写入、清理 intent）后才允许关闭。添加笔记库的身份读取、可写探测、身份文件创建和注册全部移到后台准备，提交只更新内存。
 
 复现命令：
 
