@@ -1285,7 +1285,11 @@ impl Store {
         }
         self.services = next;
         self.recovery_drafts.remove(&draft.id);
-        let _ = std::fs::remove_file(self.recovery_root().join(format!("{}.json", draft.id)));
+        // The recovery copy is only cleanup now that the durable write is queued.
+        let recovery = self.recovery_root().join(format!("{}.json", draft.id));
+        std::thread::spawn(move || {
+            let _ = std::fs::remove_file(recovery);
+        });
         Ok(draft)
     }
 
