@@ -106,6 +106,7 @@ impl RenderOnce for SelectField {
             (color(CONTROL), color(GRAY))
         };
         let has_icon = self.icon.is_some();
+        let has_detail = self.detail.is_some();
         let tall = self.label.is_some() || self.detail.is_some() || self.icon.is_some();
         // A 2px open outline must not move the content: trade the extra pixel
         // for one pixel of padding.
@@ -202,7 +203,13 @@ impl RenderOnce for SelectField {
             )
             .w_full()
             .h_auto()
-            .min_h(rems(if tall { 56. } else { 48. } / 14.))
+            .min_h(rems(
+                match (has_detail, tall) {
+                    (true, _) => 60.,
+                    (false, true) => 56.,
+                    (false, false) => 48.,
+                } / 14.,
+            ))
             .py(if tall { inset(8.) } else { inset(0.) })
             .pl(inset(if has_icon { 12. } else { 16. }))
             .pr(inset(12.))

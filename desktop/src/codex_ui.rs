@@ -275,7 +275,10 @@ impl Desktop {
                     }
                     Err(error) => {
                         let message = if login_required(&error) {
-                            course2md::tr!("Codex 登录已失效，请先连接 Codex 账号").to_string()
+                            // The service refused the saved login: the account
+                            // state follows, so sign-in is offered again.
+                            this.codex.status = Some(LoginStatus::Expired);
+                            course2md::tr!("ChatGPT 登录已失效，请重新登录").to_string()
                         } else {
                             course2md::tr!("暂时无法获取 Codex 模型目录：{}", format!("{error:#}"))
                         };
@@ -418,7 +421,7 @@ impl Desktop {
         crate::settings_ui::AccountCard {
             id,
             icon: icons::sparkles(),
-            title: course2md::tr!("Codex 账号"),
+            title: course2md::tr!("ChatGPT 账号"),
             status: (kind, label),
             detail: None,
             busy,
@@ -426,21 +429,11 @@ impl Desktop {
             actions: if !connected {
                 {
                     let mut buttons = actions;
+                    // As on the canvas: importing an existing login is the quiet
+                    // alternative; signing in through the browser is the primary way.
                     buttons.push(
-                        quiet(SharedString::from(format!("{id}-authorize")))
-                            .icon(icons::external_link())
-                            .label(course2md::tr!("浏览器授权"))
-                            .disabled(disabled || busy)
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    this.codex_authorize(surface, cx)
-                                }),
-                            )
-                            .into_any_element(),
-                    );
-                    buttons.push(
-                        tonal_pill(SharedString::from(format!("{id}-import")), cx)
-                            .icon(icons::login())
+                        quiet(SharedString::from(format!("{id}-import")))
+                            .text_color(color(ACCENT))
                             .label(if matches!(self.codex.status, Some(LoginStatus::Expired)) {
                                 course2md::tr!("重新导入 Codex 登录")
                             } else {
@@ -449,6 +442,18 @@ impl Desktop {
                             .disabled(disabled || busy)
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.codex_import(surface, cx)),
+                            )
+                            .into_any_element(),
+                    );
+                    buttons.push(
+                        primary_pill(SharedString::from(format!("{id}-authorize")))
+                            .icon(icons::external_link())
+                            .label(course2md::tr!("在浏览器中登录"))
+                            .disabled(disabled || busy)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.codex_authorize(surface, cx)
+                                }),
                             )
                             .into_any_element(),
                     );

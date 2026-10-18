@@ -72,10 +72,10 @@ impl ServiceForm {
             .map(|&field| {
                 let input = cx.new(|cx| {
                     InputState::new(window, cx)
-                        .placeholder(if field == FormField::Address {
-                            "https://api.example.com/v1"
-                        } else {
-                            ""
+                        .placeholder(match field {
+                            FormField::Address => "https://api.example.com/v1",
+                            FormField::Name => course2md::tr!("例如：我的 API"),
+                            _ => "",
                         })
                         .masked(field == FormField::Key)
                 });
@@ -126,7 +126,20 @@ impl ServiceForm {
         }
         draft.address = self.value(FormField::Address, cx);
         draft.model = self.value(FormField::Model, cx);
+        draft.authentication = self.authentication(cx);
         draft
+    }
+
+    /// A service is called with a key exactly when it has one: a saved key or
+    /// one typed now. Keyless types never send one.
+    fn authentication(&self, cx: &App) -> Authentication {
+        if !self.draft.protocol.keyless()
+            && (self.draft.credential.is_some() || !self.typed_key(cx).trim().is_empty())
+        {
+            Authentication::ApiKey
+        } else {
+            Authentication::None
+        }
     }
 
     /// Shows `draft` with an empty, masked key field.
@@ -172,6 +185,7 @@ impl ServiceForm {
     }
     /// Validates the staged draft and focuses the first invalid field.
     pub(crate) fn validate(&mut self, window: &mut Window, cx: &mut App) -> bool {
+        self.draft.authentication = self.authentication(cx);
         self.errors = self.draft.validate();
         match self.errors.first() {
             Some(error) => {
@@ -400,36 +414,6 @@ impl Desktop {
         .icon(protocol_icon(current))
         .detail(detail(current))
         .disabled(disabled)
-    }
-
-    pub(crate) fn service_auth_choices(
-        &self,
-        owner: FormOwner,
-        group: SingleChoiceGroup,
-        cx: &mut Context<Self>,
-    ) -> SingleChoiceGroup {
-        let api_key = self
-            .service_form(owner)
-            .is_some_and(|form| form.draft.authentication == Authentication::ApiKey);
-        group
-            .options([("api_key", "API Key"), ("none", course2md::tr!("无需认证"))])
-            .icon("api_key", icons::shield())
-            .icon("none", icons::web())
-            .selected(if api_key { "api_key" } else { "none" })
-            .on_change(cx.listener(move |this, id: &SharedString, _, cx| {
-                let Some(form) = this.service_form_mut(owner) else {
-                    return;
-                };
-                form.draft.authentication = if id.as_ref() == "api_key" {
-                    Authentication::ApiKey
-                } else {
-                    Authentication::None
-                };
-                form.errors.clear();
-                form.models.invalidate();
-                this.service_form_edited(owner, true);
-                cx.notify();
-            }))
     }
 
     /// The trailing 显示/隐藏 action of the key input.

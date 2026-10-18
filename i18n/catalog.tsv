@@ -106,12 +106,10 @@ CPU（较慢）	CPU（较慢）	CPU (slower)	CPU（較慢）	CPU (低速)
 Codex 模型目录无法解析 / Cannot parse the Codex model catalog	Codex 模型目录无法解析	Cannot parse the Codex model catalog	Codex 模型目錄無法解析	Codex モデル ディレクトリを解析できません
 Codex 模型目录缺少 models / Codex model catalog is missing models	Codex 模型目录缺少 models	Codex model catalog is missing models	Codex 模型目錄缺少 models	Codex モデル ディレクトリにモデルがありません
 Codex 登录已失效或尚未连接，请重新连接账号	Codex 登录已失效或尚未连接，请重新连接账号	Codex login has expired or has not been connected. Please reconnect your account.	Codex 登入已失效或尚未連線，請重新連線賬號	Codex ログインの有効期限が切れているか、接続されていません。アカウントを再接続してください。
-Codex 登录已失效，请先连接 Codex 账号	Codex 登录已失效，请先连接 Codex 账号	Codex login has expired, please connect to Codex account first	Codex 登入已失效，請先連線 Codex 賬號	Codex ログインの有効期限が切れています。まず Codex アカウントに接続してください
 Codex 登录已失效，请重新连接	Codex 登录已失效，请重新连接	Codex login has expired, please reconnect.	Codex 登入已失效，請重新連線	Codex のログイン期限が切れました。再接続してください。
 Codex 登录成功，可以关闭此页。/ Login successful; you may close this page.	Codex 登录成功，可以关闭此页。/ Login successful; you may close this page.	Codex login is successful and you can close this page. / Login successful; you may close this page.	Codex 登入成功，可以關閉此頁。/ Login successful; you may close this page.	Codex へのログインが成功したので、このページを閉じても問題ありません。 / ログイン成功;このページを閉じても構いません。
 Codex 登录状态损坏，请重新登录 / Codex login state is damaged; log in again	Codex 登录状态损坏，请重新登录	Codex login state is damaged; log in again	Codex 登入狀態損壞，請重新登入	Codex のログイン ステータスが破損しています。再度ログインしてください。
 Codex 登录缺失或已失效，请重新登录 / Codex login is missing or has expired; log in again	Codex 登录缺失或已失效，请重新登录	Codex login is missing or has expired; log in again	Codex 登入缺失或已失效，請重新登入	Codex ログインが見つからないか無効です。もう一度ログインしてください。
-Codex 账号	Codex 账号	Codex account	Codex 賬號	Codexアカウント
 CoreML 模型加载失败 / CoreML model loading failed	CoreML 模型加载失败	CoreML model loading failed	CoreML 模型載入失敗	CoreML モデルの読み込みに失敗しました
 Debian/Ubuntu: sudo apt install {}；Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {}；Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {}; Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {}；Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {};アーチ: sudo pacman -S {}
 HTTP {status}；响应超过 128 KiB，未读取其余内容	HTTP {status}；响应超过 128 KiB，未读取其余内容	HTTP {status}; response exceeds 128 KiB, remainder not read	HTTP {status}；響應超過 128 KiB，未讀取其餘內容	HTTP {status};応答が 128 KiB を超えているため、残りは読み取られていません
@@ -622,7 +620,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 同一进程不能同时执行两个任务 / Another task is already active	同一进程不能同时执行两个任务	Another task is already active	同一程序不能同時執行兩個任務	同じプロセスで 2 つのタスクを同時に実行することはできません
 同时导出	同时导出	Also export	同時匯出	同時に書き出す
 同时清除云端语音识别密钥 / Also clear the cloud speech API key	同时清除云端语音识别密钥	Also clear the cloud speech API key	同時清除雲端語音識別金鑰	クラウド音声認識キーもクリア
-同时设为默认服务	同时设为默认服务	Also set as default service	同時設為預設服務	デフォルトのサービスとしても設定されます
 名称	名称	Name	名稱	名前
 名称尚未恢复：{error:#}	名称尚未恢复：{error:#}	Name not yet restored: {error:#}	名稱尚未恢復：{error:#}	名前はまだ復元されていません: {error:#}
 名称尚未恢复：{}	名称尚未恢复：{}	Name not yet restored: {}	名稱尚未恢復：{}	名前はまだ復元されていません: {}
@@ -1218,7 +1215,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 无法选择文件夹：{}	无法选择文件夹：{}	Unable to select folder: {}	無法選擇資料夾：{}	フォルダーを選択できません: {}
 无法验证账号状态，请稍后重试 / Cannot verify account status; retry later	无法验证账号状态，请稍后重试	Cannot verify account status; retry later	無法驗證賬號狀態，請稍後重試	アカウントのステータスを確認できません。後でもう一度お試しください。
 无错误时所有槽位均已写入	无错误时所有槽位均已写入	All slots have been written when there are no errors	無錯誤時所有槽位均已寫入	エラーがない場合はすべてのスロットが書き込まれています
-无需认证	无需认证	No certification required	無需認證	認証は必要ありません
 日本語	日本語	Japanese	日本語	日本語
 日语	日语	Japanese	日語	日本語
 旧位置备份	旧位置备份	Old location backup	舊位置備份	古い場所のバックアップ
@@ -1306,7 +1302,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 服务修复只能用于未完成的校对或摘要	服务修复只能用于未完成的校对或摘要	Service repair can only be used for incomplete proofreading or abstracts	服務修復只能用於未完成的校對或摘要	サービス修復は、不完全な校正または抄録に対してのみ使用できます。
 服务凭据尚未就绪，请重新打开服务设置保存一次	服务凭据尚未就绪，请重新打开服务设置保存一次	Service credentials are not ready yet, please reopen service settings to save once	服務憑據尚未就緒，請重新開啟服務設定儲存一次	サービス資格情報の準備がまだ整っていません。サービス設定をもう一度開いて保存してください
 服务可能已处理这些内容，重新发送可能产生额外费用	服务可能已处理这些内容，重新发送可能产生额外费用	The service may have processed the content and resending may incur additional charges	服務可能已處理這些內容，重新傳送可能產生額外費用	サービスがコンテンツを処理した可能性があり、再送信には追加料金が発生する可能性があります
-服务名称	服务名称	Service name	服務名稱	サービス名
 服务响应接收中断 / Service response was interrupted	服务响应接收中断	Service response was interrupted	服務響應接收中斷	サービス応答受信割り込み
 服务响应超过接收上限 / Service response exceeds the receiving limit	服务响应超过接收上限	Service response exceeds the receiving limit	服務響應超過接收上限	サービスレスポンスが受信制限を超えています
 服务地址	服务地址	Service address	服務地址	サービスアドレス
@@ -1342,8 +1337,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 服务版本记录不完整	服务版本记录不完整	Service version record is incomplete	服務版本記錄不完整	サービスのバージョン記録が不完全です
 服务类型	服务类型	Service type	服務類型	サービスの種類
 服务编辑已发生变化，请重新打开服务后再试	服务编辑已发生变化，请重新打开服务后再试	The service editor has changed, please reopen the service and try again	服務編輯已發生變化，請重新開啟服務後再試	The service editor has changed, please reopen the service and try again
-服务认证	服务认证	Service certification	服務認證	サービス認定
-服务认证方式	服务认证方式	Service authentication method	服務認證方式	サービスの認証方式
 服务记录暂时不可用，已保留原文件	服务记录暂时不可用，已保留原文件	The service record is temporarily unavailable and the original file has been retained.	服務記錄暫時不可用，已保留原檔案	The service record is temporarily unavailable and the original file has been retained.
 服务设置记录不完整	服务设置记录不完整	Incomplete record of service settings	服務設定記錄不完整	サービス設定の記録が不完全
 服务请求次数达到限制，请稍后重试。 / The service rate limit was reached; try again later.	服务请求次数达到限制，请稍后重试。	The service rate limit was reached; try again later.	服務請求次數達到限制，請稍後重試。	The number of service requests has reached the limit, please try again later.
@@ -1661,7 +1654,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 测试未通过	测试未通过	test failed	測試未透過	テストは失敗しました
 测试结果尚未保存	测试结果尚未保存	Test results have not been saved yet	測試結果尚未儲存	テスト結果はまだ保存されていません
 浏览全部笔记	浏览全部笔记	View all notes	瀏覽全部筆記	すべてのノートを表示
-浏览器授权	浏览器授权	Browser authorization	瀏覽器授權	ブラウザの認証
 浏览器授权未完成：{error:#}	浏览器授权未完成：{error:#}	Browser authorization not completed: {error:#}	瀏覽器授權未完成：{error:#}	ブラウザの認証が完了していません: {error:#}
 浏览器授权未完成：{}	浏览器授权未完成：{}	Browser authorization not completed: {}	瀏覽器授權未完成：{}	ブラウザの認証が完了していません: {}
 浏览器授权超时，请重试 / Browser authorization timed out; please retry	浏览器授权超时，请重试	Browser authorization timed out; please retry	瀏覽器授權超時，請重試	ブラウザの認証がタイムアウトしました。もう一度お試しください。
@@ -1936,7 +1928,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 计算中	计算中	Calculating	計算中	計算中
 认证	认证	Certification	認證	認証
 认证失败	认证失败	Authentication failed	認證失敗	認証に失敗しました
-认证方式	认证方式	Authentication method	認證方式	認証方式
 认证被拒绝	认证被拒绝	Authentication denied	認證被拒絕	認証が拒否されました
 记录仍无法读取，原件已保留：{error:#}	记录仍无法读取，原件已保留：{error:#}	The record still cannot be read, the original has been retained: {error:#}	記錄仍無法讀取，原件已保留：{error:#}	レコードはまだ読み取れません。オリジナルは保持されています: {error:#}
 记录仍无法读取，原件已保留：{}	记录仍无法读取，原件已保留：{}	The record still cannot be read, the original has been retained: {}	記錄仍無法讀取，原件已保留：{}	レコードはまだ読み取れません。オリジナルは保持されています: {}
@@ -2378,3 +2369,13 @@ Markdown 包…	Markdown 包…	Markdown package…	Markdown 包…	Markdown パ
 账号操作	账号操作	Account actions	帳號操作	アカウントの操作
 {} 项检查全部通过	{} 项检查全部通过	All {} checks passed	{} 項檢查全部通過	{} 件のチェックにすべて合格しました
 复制诊断信息	复制诊断信息	Copy diagnostics	複製診斷資訊	診断情報をコピー
+ChatGPT 登录已失效，请重新登录	ChatGPT 登录已失效，请重新登录	Your ChatGPT sign-in has expired. Sign in again.	ChatGPT 登入已失效，請重新登入	ChatGPT のサインインが期限切れです。もう一度サインインしてください
+接口地址	接口地址	Endpoint	介面位址	エンドポイント
+本机运行的 Ollama 会自动填好	本机运行的 Ollama 会自动填好	Filled in from Ollama running on this computer	本機執行的 Ollama 會自動填好	このコンピューターの Ollama から自動で入力されます
+保存在系统钥匙串里，不会写进配置文件	保存在系统钥匙串里，不会写进配置文件	Stored in the system keychain, never in the config file	儲存在系統鑰匙圈裡，不會寫進設定檔	システムのキーチェーンに保存され、設定ファイルには書き込まれません
+已保存在系统钥匙串里，留空则保留	已保存在系统钥匙串里，留空则保留	Saved in the system keychain; leave empty to keep it	已儲存在系統鑰匙圈裡，留空則保留	システムのキーチェーンに保存済みです。空欄のままなら保持されます
+设为默认服务	设为默认服务	Use as default service	設為預設服務	既定のサービスにする
+新笔记默认使用这个服务	新笔记默认使用这个服务	New notes use this service by default	新筆記預設使用這個服務	新しいノートはこのサービスを既定で使います
+在浏览器中登录	在浏览器中登录	Sign in with browser	在瀏覽器中登入	ブラウザでサインイン
+ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウント
+例如：我的 API	例如：我的 API	e.g. My API	例如：我的 API	例：マイ API

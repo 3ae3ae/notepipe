@@ -2,8 +2,8 @@
 //! use the same persistence and execution paths as Settings.
 use crate::credentials::Secret;
 use crate::preferences::{
-    Authentication, BindingScope, GenerationPreferences, PreferenceGroup, ServiceConfiguration,
-    ServiceDraft, ServicePurpose, ServiceTestEvidence, ServiceVersion, TestOutcome,
+    BindingScope, GenerationPreferences, PreferenceGroup, ServiceConfiguration, ServiceDraft,
+    ServicePurpose, ServiceTestEvidence, ServiceVersion, TestOutcome,
 };
 use crate::service_test::{self, TestKind};
 use crate::settings_ui::model_diagnostics::{
@@ -1448,29 +1448,7 @@ impl Desktop {
             ));
         }
         if !draft.protocol.keyless() {
-            body = body.child(
-                self.setup_reveal(
-                    format!("setup-auth-reveal-{}", purpose as usize),
-                    stacked_field(
-                        format!("setup-auth-label-{}", purpose as usize),
-                        course2md::tr!("认证方式"),
-                        icons::shield(),
-                        self.service_auth_choices(
-                            owner,
-                            SingleChoiceGroup::new(
-                                format!("setup-auth-{}", purpose as usize),
-                                course2md::tr!("服务认证"),
-                            )
-                            .full_width(),
-                            cx,
-                        )
-                        .disabled(busy),
-                    ),
-                ),
-            );
-            if draft.authentication == Authentication::ApiKey {
-                body = body.child(self.setup_input_row(purpose, FormField::Key, "API Key", cx));
-            }
+            body = body.child(self.setup_input_row(purpose, FormField::Key, "API Key", cx));
         }
         if codex {
             body = body.child(self.codex_account_section(

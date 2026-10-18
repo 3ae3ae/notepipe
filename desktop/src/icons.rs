@@ -90,7 +90,6 @@ icons! {
     summarize => "material" / "summarize";
     task => "material" / "task";
     toc => "material" / "format-list-bulleted";
-    web => "material" / "web";
     zoom_in => "material" / "zoom-in";
     zoom_out => "material" / "zoom-out";
 

@@ -630,6 +630,8 @@ pub enum BindingScope {
     Defaults,
     /// The caller binds the returned ID to exactly one generation draft.
     CurrentTask,
+    /// Saved for later choice; defaults and drafts are unchanged.
+    Saved,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

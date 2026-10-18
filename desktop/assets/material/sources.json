@@ -19,7 +19,6 @@
     "zoom-out": "action/zoom_out",
     "fit-screen": "action/fit_screen",
     "subtitles": "av/subtitles",
-    "web": "av/web",
     "arrow-up": "navigation/arrow_upward",
     "arrow-down": "navigation/arrow_downward",
     "ellipsis": "navigation/more_horiz",

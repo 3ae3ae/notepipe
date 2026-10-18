@@ -812,46 +812,6 @@ pub(crate) fn settings_card() -> Div {
         .rounded(SETTINGS_CARD_RADIUS)
         .overflow_hidden()
 }
-pub(super) fn preference(label: &'static str, hint: &'static str, control: Switch) -> Div {
-    setting_surface().child(
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .items_start()
-            .gap_4()
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_1()
-                    .child(
-                        v_flex()
-                            .min_h(CONTROL_HEIGHT)
-                            .justify_center()
-                            .child(setting_label(
-                                SharedString::from(format!("preference-label-{label}")),
-                                label,
-                            )),
-                    )
-                    .when(!hint.is_empty(), |view| {
-                        view.child(theme::supporting_info(
-                            SharedString::from(format!("preference-hint-{label}")),
-                            hint,
-                        ))
-                    }),
-            )
-            .child(
-                h_flex()
-                    .min_h(CONTROL_HEIGHT)
-                    .flex_shrink_0()
-                    .items_center()
-                    .child(crate::focus_scroll::FocusRing::new(
-                        SharedString::from(format!("preference-focus-{label}")),
-                        preference_switch(control).accessibility_label(label).py_1(),
-                    )),
-            ),
-    )
-}
 
 impl Desktop {
     fn generation_edit_base(&self) -> GenerationPreferences {
@@ -918,12 +878,6 @@ impl Desktop {
                     editor_scroll.unwrap_or_else(|| self.scrolls[Page::Settings as usize].clone()),
                 )
             })
-    }
-    fn setting_preference(&self, label: &'static str, hint: &'static str, control: Switch) -> Div {
-        self.reveal_setting(
-            SharedString::from(format!("preference-reveal-{label}")),
-            preference(label, hint, control),
-        )
     }
     fn setting_field(&self, field: EditField, label: &'static str) -> Div {
         let input = text_input(&self.settings_ui.inputs[&field]);

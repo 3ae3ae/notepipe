@@ -571,12 +571,16 @@ impl Desktop {
             ServicePurpose::Speech => defaults.asr,
             ServicePurpose::Ai => defaults.llm,
         };
+        // New notes follow a service when nothing else is the default yet, or
+        // when it already is the default being edited.
         let also_default = default
             .as_deref()
             .and_then(|id| self.preferences.version(id))
             .is_none_or(|version| {
-                self.preferences
-                    .service_retired_in_snapshot(&version.service_id)
+                version.service_id == draft.service_id
+                    || self
+                        .preferences
+                        .service_retired_in_snapshot(&version.service_id)
             });
         let draft_protocol = draft.protocol;
         let origin_tab =
@@ -676,7 +680,6 @@ impl Desktop {
             return div().into_any_element();
         };
         let protocol = editor.form.draft.protocol;
-        let auth = editor.form.draft.authentication;
         let busy = editor.test_running.is_some();
         let awaiting_binding = editor.pending_binding.is_some();
         let configuration_saved = editor.saved_configuration.is_some() || awaiting_binding;
@@ -731,34 +734,30 @@ impl Desktop {
             // 滚动容器为首末卡片的阴影与焦点外绘留出空间（system.md：clipped container 需预留 outward paint）
             .pt_1()
             .pb_3();
-        use crate::settings_ui::{SettingsGroup, setting_surface};
-        // 连接字段与其他设置页同一组卡片：每个字段一项，项间内缩分隔线
-        // One card of outlined fields, as on the canvas. The type comes first:
-        // it decides which of the remaining fields exist.
+        use crate::settings_ui::{settings_card, settings_switch_row};
+        // One card as on the canvas: the type select, the fields that type
+        // needs, then whether new notes use this service.
         let hint = |id: &'static str, message: String| {
             text(id, message)
                 .px(rems(16. / 14.))
                 .text_size(TEXT_SETTINGS_AUX)
                 .text_color(color(GRAY))
         };
-        let mut fields = v_flex().w_full().min_w_0().gap(rems(24. / 14.)).child(
-            self.reveal_setting(
-                "service-protocol-reveal",
-                self.service_type_field(
-                    FormOwner::Editor,
-                    "service-protocol",
-                    awaiting_binding,
-                    cx,
-                )
-                .label(course2md::tr!("服务类型")),
-            ),
-        );
+        let divider = || {
+            div()
+                .h(px(1.))
+                .mx(SETTING_ITEM_INSET)
+                .flex_shrink_0()
+                .bg(color(HAIRLINE))
+        };
+        let mut fields = v_flex().w_full().min_w_0().gap(rems(24. / 14.));
         // Codex 账号连接：登录态决定模型目录与可用性
         if protocol == ServiceProtocol::CodexResponses {
             fields = fields.child(
                 div()
                     .p(rems(16. / 14.))
                     .rounded(RADIUS_CARD)
+                    .bg(blend(color(SURFACE), color(INK), 0.03))
                     .border_1()
                     .border_color(color(HAIRLINE))
                     .child(self.codex_account_section(
@@ -770,29 +769,40 @@ impl Desktop {
         }
         fields = fields.child(self.service_field(
             FormField::Name,
-            course2md::tr!("服务名称"),
+            course2md::tr!("名称"),
             None,
             window,
             cx,
         ));
-        // Codex 端点固定、凭据由登录态持有：不展示地址与认证编辑
+        // Codex 端点固定、凭据由登录态持有：不展示地址与密钥
         if protocol != ServiceProtocol::CodexResponses {
             let address = editor.form.value(FormField::Address, cx);
             let endpoint = preferences::normalize_endpoint(&address, protocol)
                 .ok()
                 .filter(|endpoint| endpoint != address.trim());
+            let ollama = protocol == ServiceProtocol::OllamaChat;
             fields = fields.child(
                 v_flex()
                     .w_full()
                     .gap_1()
                     .child(self.service_field(
                         FormField::Address,
-                        course2md::tr!("服务地址"),
+                        if ollama {
+                            course2md::tr!("地址")
+                        } else {
+                            course2md::tr!("接口地址")
+                        },
                         None,
                         window,
                         cx,
                     ))
-                    .when_some(endpoint, |item, endpoint| {
+                    .when(ollama, |item| {
+                        item.child(hint(
+                            "service-ollama-address",
+                            course2md::tr!("本机运行的 Ollama 会自动填好").into(),
+                        ))
+                    })
+                    .when_some(endpoint.filter(|_| !ollama), |item, endpoint| {
                         item.child(hint(
                             "service-actual-endpoint",
                             course2md::tr!("实际地址：{}", endpoint),
@@ -801,103 +811,80 @@ impl Desktop {
             );
         }
         if !protocol.keyless() {
-            fields = fields.child(
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(setting_label(
-                        "service-auth-heading",
-                        course2md::tr!("认证方式"),
-                    ))
-                    .child(
-                        self.service_auth_choices(
-                            FormOwner::Editor,
-                            self.setting_choices(
-                                "service-auth-mode",
-                                course2md::tr!("服务认证方式"),
-                            ),
-                            cx,
-                        )
-                        .disabled(awaiting_binding),
-                    ),
-            );
-            if auth == Authentication::ApiKey {
-                let visibility = self
-                    .service_key_visibility(FormOwner::Editor, "toggle-service-key", cx)
-                    .settings_text()
-                    .into_any_element();
-                let mut key = v_flex().w_full().gap_1().child(self.service_field(
-                    FormField::Key,
-                    "API Key",
-                    Some(visibility),
-                    window,
-                    cx,
+            let visibility = self
+                .service_key_visibility(FormOwner::Editor, "toggle-service-key", cx)
+                .settings_text()
+                .into_any_element();
+            let mut key = v_flex()
+                .w_full()
+                .gap_1()
+                .child(self.service_field(FormField::Key, "API Key", Some(visibility), window, cx))
+                .child(hint(
+                    "service-key-storage",
+                    if editor.form.draft.credential.is_some() {
+                        course2md::tr!("已保存在系统钥匙串里，留空则保留").into()
+                    } else {
+                        course2md::tr!("保存在系统钥匙串里，不会写进配置文件").into()
+                    },
                 ));
-                if editor.form.draft.credential.is_some() {
-                    key = key.child(hint(
-                        "service-key-existing",
-                        course2md::tr!("已保存密钥，留空则保留").into(),
-                    ));
-                }
-                if let Some(source) = &editor.form.draft.credential_source {
-                    key = key.child(hint(
-                        "service-credential-source",
-                        course2md::tr!("密钥来源：{}", source),
-                    ));
-                }
-                for (index, name) in
-                    preferences::Store::available_environment_credentials(protocol.purpose())
-                        .into_iter()
-                        .enumerate()
-                {
-                    key = key.child(
-                        quiet(("capture-environment-key", index))
-                            .settings_text()
-                            .icon(icons::content_copy())
-                            .label(course2md::tr!("使用环境变量 {}", name))
-                            .disabled(awaiting_binding)
-                            .self_start()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                let Some(draft) = this
-                                    .settings_ui
-                                    .editor
-                                    .as_ref()
-                                    .map(|editor| editor.form.current_draft(cx))
-                                else {
-                                    return;
-                                };
-                                match this.preferences.capture_environment_credential(draft, name) {
-                                    Ok(draft) => {
-                                        if let Some(editor) = &mut this.settings_ui.editor {
-                                            editor.form.draft = draft;
-                                            editor.form.models.invalidate();
-                                            editor.form.clear_key(window, cx);
-                                            editor.evidence = None;
-                                            editor.saved_configuration = None;
-                                            editor.save_failed = false;
-                                            editor.status = Some(
-                                                course2md::tr!(
-                                                    "已使用环境变量中的密钥，点击保存后生效"
-                                                )
-                                                .into(),
-                                            );
-                                        }
-                                    }
-                                    Err(error) => {
-                                        if let Some(editor) = &mut this.settings_ui.editor {
-                                            editor.status = Some(course2md::tr!(
-                                                "凭据尚未保存：{}",
-                                                format!("{error:#}")
-                                            ));
-                                        }
+            if let Some(source) = &editor.form.draft.credential_source {
+                key = key.child(hint(
+                    "service-credential-source",
+                    course2md::tr!("密钥来源：{}", source),
+                ));
+            }
+            for (index, name) in
+                preferences::Store::available_environment_credentials(protocol.purpose())
+                    .into_iter()
+                    .enumerate()
+            {
+                key = key.child(
+                    quiet(("capture-environment-key", index))
+                        .settings_text()
+                        .icon(icons::content_copy())
+                        .label(course2md::tr!("使用环境变量 {}", name))
+                        .disabled(awaiting_binding)
+                        .self_start()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let Some(draft) = this
+                                .settings_ui
+                                .editor
+                                .as_ref()
+                                .map(|editor| editor.form.current_draft(cx))
+                            else {
+                                return;
+                            };
+                            match this.preferences.capture_environment_credential(draft, name) {
+                                Ok(draft) => {
+                                    if let Some(editor) = &mut this.settings_ui.editor {
+                                        editor.form.draft = draft;
+                                        editor.form.models.invalidate();
+                                        editor.form.clear_key(window, cx);
+                                        editor.evidence = None;
+                                        editor.saved_configuration = None;
+                                        editor.save_failed = false;
+                                        editor.status = Some(
+                                            course2md::tr!(
+                                                "已使用环境变量中的密钥，点击保存后生效"
+                                            )
+                                            .into(),
+                                        );
                                     }
                                 }
-                                cx.notify();
-                            })),
-                    );
-                }
-                fields = fields.child(key);
+                                Err(error) => {
+                                    if let Some(editor) = &mut this.settings_ui.editor {
+                                        editor.status = Some(course2md::tr!(
+                                            "凭据尚未保存：{}",
+                                            format!("{error:#}")
+                                        ));
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        })),
+                );
             }
+            fields = fields.child(key);
         }
         let model_focused = editor
             .form
@@ -909,30 +896,56 @@ impl Desktop {
             ("setting-field-reveal", 8 + FormField::Model as usize),
             outlined_field_label(
                 ("setting-field-label", 8 + FormField::Model as usize),
-                course2md::tr!("模型 ID"),
+                course2md::tr!("模型"),
                 TEXT_AUX,
                 color(if model_focused { ACCENT } else { GRAY }),
                 self.service_model_field(FormOwner::Editor, "service-models", awaiting_binding, cx),
             ),
         ));
-        let mut connection =
-            SettingsGroup::new("service-connection-heading", course2md::tr!("连接信息"))
-                .child(setting_surface().pt(rems(24. / 14.)).child(fields));
-        if editor.target.is_some() {
-            connection = connection.child(
-                self.setting_preference(
-                    course2md::tr!("同时设为默认服务"),
-                    "",
-                    Switch::new("service-also-default")
-                        .checked(editor.also_default)
-                        .disabled(awaiting_binding)
-                        .on_click(cx.listener(|this, value, _, cx| {
-                            if let Some(editor) = &mut this.settings_ui.editor {
-                                editor.also_default = *value;
-                            }
-                            cx.notify();
-                        })),
-                ),
+        let mut connection = settings_card()
+            .child(
+                div()
+                    .px(SETTING_ITEM_INSET)
+                    .pt(rems(24. / 14.))
+                    .pb(rems(20. / 14.))
+                    .child(
+                        self.reveal_setting(
+                            "service-protocol-reveal",
+                            self.service_type_field(
+                                FormOwner::Editor,
+                                "service-protocol",
+                                awaiting_binding,
+                                cx,
+                            )
+                            .label(course2md::tr!("服务类型")),
+                        ),
+                    ),
+            )
+            .child(divider())
+            .child(
+                div()
+                    .px(SETTING_ITEM_INSET)
+                    .py(rems(24. / 14.))
+                    .child(fields),
+            );
+        if editor.repair_task.is_none() {
+            connection = connection.child(divider()).child(
+                div()
+                    .px(SETTING_ITEM_INSET)
+                    .py(rems(10. / 14.))
+                    .child(settings_switch_row(
+                        course2md::tr!("设为默认服务"),
+                        course2md::tr!("新笔记默认使用这个服务"),
+                        Switch::new("service-also-default")
+                            .checked(editor.also_default)
+                            .disabled(awaiting_binding)
+                            .on_click(cx.listener(|this, value, _, cx| {
+                                if let Some(editor) = &mut this.settings_ui.editor {
+                                    editor.also_default = *value;
+                                }
+                                cx.notify();
+                            })),
+                    )),
             );
         }
         view = view.child(connection);
@@ -944,16 +957,18 @@ impl Desktop {
         {
             view = view.child(text("service-editor-status", status.clone()).text_sm());
         }
+        // As on the canvas: the form's actions sit together at its trailing edge.
+        let adding = inline && editor.form.draft.based_on.is_none();
         let actions = h_flex()
             .w_full()
             .flex_shrink_0()
             .gap_2()
             .flex_wrap()
+            .justify_end()
             .child(
                 quiet("close-service-editor")
                     .settings_text()
-                    .ml(-crate::theme::QUIET_INSET)
-                    .icon(icons::close())
+                    .text_color(color(ACCENT))
                     .label(if configuration_saved {
                         course2md::tr!("关闭")
                     } else {
@@ -966,7 +981,6 @@ impl Desktop {
                         }
                     })),
             )
-            .child(div().flex_1())
             .child(
                 outline_pill("run-service-test")
                     .settings_text()
@@ -991,7 +1005,7 @@ impl Desktop {
                                 | preferences::TestOutcome::ContractMismatch
                                 | preferences::TestOutcome::SampleMismatch,
                             ) => course2md::tr!("{}未通过 · 重试", test_label),
-                            _ => course2md::tr!("测试{}", test_label),
+                            _ => course2md::tr!("测试连接").into(),
                         }
                     })
                     .loading(busy)
@@ -1014,11 +1028,12 @@ impl Desktop {
             })
             .child(
                 primary_pill("save-service")
-                    .icon(icons::save())
                     .label(if editor.repair_task.is_some() {
                         repair_submit_label
                     } else if awaiting_binding {
                         course2md::tr!("重试保存本次选择")
+                    } else if adding {
+                        course2md::tr!("添加")
                     } else {
                         course2md::tr!("保存")
                     })
@@ -1488,10 +1503,12 @@ impl Desktop {
             return;
         }
         let inline = target.is_none() && !repairing;
-        let scope = if !repairing && (target.is_none() || editor.also_default) {
+        let scope = if repairing || (target.is_some() && !editor.also_default) {
+            BindingScope::CurrentTask
+        } else if editor.also_default {
             BindingScope::Defaults
         } else {
-            BindingScope::CurrentTask
+            BindingScope::Saved
         };
         let result = if let Some(version) = editor
             .pending_binding
