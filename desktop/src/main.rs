@@ -929,6 +929,9 @@ impl Desktop {
         }
         cx.notify();
     }
+    fn wake_poll(&self) {
+        let _ = self.event_wake_tx.try_send(());
+    }
     fn schedule_wake(&self, after: Duration) {
         let wake = self.event_wake_tx.clone();
         std::thread::spawn(move || {
@@ -946,12 +949,20 @@ impl Desktop {
         if self.page == Page::Result {
             deadline = earliest_deadline(deadline, Some(Instant::now() + Duration::from_secs(2)));
         }
-        if self.storage_ui.has_resume_task() {
+        if self.storage_ui.resume_ready() {
             deadline = earliest_deadline(deadline, Some(Instant::now()));
         }
         deadline
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
+        if let Some((group, error)) = self.preferences.take_write_error() {
+            self.workspace_error = Some(course2md::tr!(
+                "设置尚未保存（{}）：{}",
+                group.filename(),
+                error
+            ));
+            cx.notify();
+        }
         if self
             .transient_task_result
             .as_ref()

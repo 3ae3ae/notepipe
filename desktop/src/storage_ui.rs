@@ -199,8 +199,10 @@ where
 }
 
 impl State {
-    pub fn has_resume_task(&self) -> bool {
-        self.resume_task.is_some()
+    /// Only ask the event loop to poll when the resume request can be consumed;
+    /// while a move is busy, the storage callbacks wake the loop instead.
+    pub fn resume_ready(&self) -> bool {
+        self.resume_task.is_some() && !self.busy
     }
 
     pub(super) fn begin_location_checks(
@@ -607,6 +609,7 @@ impl Desktop {
                     };
                     let _ = this.update_in(cx, |this, window, cx| {
                         this.storage_ui.busy = false;
+                        this.wake_poll();
                         this.storage_ui.error = Some(message);
                         this.open_storage_dialog(window, cx);
                         cx.notify();
@@ -617,6 +620,7 @@ impl Desktop {
             let Some(destination) = destination else {
                 let _ = this.update_in(cx, |this, _, cx| {
                     this.storage_ui.busy = false;
+                    this.wake_poll();
                     this.start_next_task(cx);
                     cx.notify();
                 });
@@ -648,6 +652,7 @@ impl Desktop {
                     Ok(located)
                 });
                 this.storage_ui.busy = false;
+                this.wake_poll();
                 this.storage_ui.cancel = None;
                 this.storage_ui.progress = Progress::default();
                 match result {
@@ -766,6 +771,7 @@ impl Desktop {
                 let message = result.unwrap_err().to_string();
                 let _ = this.update_in(cx, |this, _, cx| {
                     this.storage_ui.busy = false;
+                    this.wake_poll();
                     this.storage_ui.cancel = None;
                     this.storage_ui.progress = Progress::default();
                     this.storage_ui.error = Some(message);
@@ -814,6 +820,7 @@ impl Desktop {
             let accepted = answer.await.ok() == Some(0);
             let _ = this.update_in(cx, |this, window, cx| {
                 this.storage_ui.busy = false;
+                this.wake_poll();
                 this.storage_ui.progress = Progress::default();
                 this.storage_ui.cancel = None;
                 if !accepted {
@@ -1257,6 +1264,7 @@ impl Desktop {
                         // A record left behind is marked committed at the next start.
                         let _ = storage::save_journal(&prepared.path, &prepared.journal);
                         this.storage_ui.busy = false;
+                        this.wake_poll();
                         this.storage_ui.cancel = None;
                         this.storage_ui.progress = Progress {
                             message: course2md::tr!(
@@ -1289,6 +1297,7 @@ impl Desktop {
 
     fn finish_storage_error(&mut self, message: String, cx: &mut Context<Self>) {
         self.storage_ui.busy = false;
+        self.wake_poll();
         self.storage_ui.cancel = None;
         self.storage_ui.error = Some(message);
         self.restore_storage_state(cx);
@@ -1916,6 +1925,7 @@ impl Desktop {
                 .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
             let _ = this.update_in(cx, |this, _, cx| {
                 this.storage_ui.busy = false;
+                this.wake_poll();
                 this.storage_ui.cancel = None;
                 this.storage_ui.progress = Progress::default();
                 match result {

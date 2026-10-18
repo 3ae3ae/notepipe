@@ -77,7 +77,7 @@ pub enum PreferenceGroup {
 }
 
 impl PreferenceGroup {
-    fn filename(self) -> &'static str {
+    pub(crate) fn filename(self) -> &'static str {
         match self {
             Self::Generation => "generation.json",
             Self::Application => "application.json",
@@ -795,6 +795,74 @@ impl Validate for ServicesState {
     }
 }
 
+struct PreferenceWriter {
+    signals: std::sync::mpsc::Sender<PreferenceSignal>,
+}
+
+enum PreferenceSignal {
+    Write {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        group: PreferenceGroup,
+    },
+    Flush(std::sync::mpsc::Sender<()>),
+    Stop,
+}
+
+impl PreferenceWriter {
+    fn new(root: PathBuf, error: Arc<std::sync::Mutex<Option<(PreferenceGroup, String)>>>) -> Self {
+        let (signals, receiver) = std::sync::mpsc::channel();
+        let thread_error = Arc::clone(&error);
+        std::thread::Builder::new()
+            .name("course2md-preferences-writer".into())
+            .spawn(move || {
+                while let Ok(signal) = receiver.recv() {
+                    match signal {
+                        PreferenceSignal::Stop => break,
+                        PreferenceSignal::Flush(ack) => {
+                            let _ = ack.send(());
+                        }
+                        PreferenceSignal::Write { path, bytes, group } => {
+                            let result = write_preference_file(&root, &path, &bytes);
+                            if let Err(error) = result {
+                                *thread_error.lock().unwrap() = Some((group, format!("{error:#}")));
+                            }
+                        }
+                    }
+                }
+            })
+            .expect("preferences writer thread");
+        Self { signals }
+    }
+
+    fn enqueue(&self, path: PathBuf, bytes: Vec<u8>, group: PreferenceGroup) -> Result<()> {
+        self.signals
+            .send(PreferenceSignal::Write { path, bytes, group })
+            .map_err(|_| anyhow!(course2md::tr!("设置保存线程已停止")))
+    }
+
+    fn flush(&self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if self.signals.send(PreferenceSignal::Flush(tx)).is_ok() {
+            let _ = rx.recv();
+        }
+    }
+}
+
+fn write_preference_file(root: &Path, path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Ok(previous) = std::fs::read(path) {
+        if serde_json::from_slice::<serde_json::Value>(&previous).is_ok() {
+            atomic_write_with_retry(&path.with_extension("json.bak"), &previous)
+                .context(course2md::tr!("无法保存此组设置的恢复副本"))?;
+        } else {
+            // Never replace the last good backup with a corrupt primary file.
+            preserve_original(root, path)?;
+        }
+    }
+    atomic_write_with_retry(path, bytes).context(course2md::tr!("无法保存此组设置"))?;
+    Ok(())
+}
+
 pub struct Store {
     root: PathBuf,
     vault: Arc<dyn CredentialVault>,
@@ -807,13 +875,19 @@ pub struct Store {
     generation_intent: Option<GenerationPreferences>,
     application_intent: Option<ApplicationPreferences>,
     recovery_drafts: BTreeSet<ServiceDraftId>,
+    writer: Option<PreferenceWriter>,
+    write_error: Arc<std::sync::Mutex<Option<(PreferenceGroup, String)>>>,
 }
 
 impl Store {
     /// Loading a broken group never makes reading notes or unrelated settings unavailable.
     pub fn open(root: impl Into<PathBuf>, vault: Arc<dyn CredentialVault>) -> Self {
+        let root = root.into();
+        let write_error = Arc::new(std::sync::Mutex::new(None));
+        let writer =
+            (!cfg!(test)).then(|| PreferenceWriter::new(root.clone(), Arc::clone(&write_error)));
         let mut store = Self {
-            root: root.into(),
+            root,
             vault,
             generation: GenerationPreferences::default(),
             application: ApplicationPreferences::default(),
@@ -824,6 +898,8 @@ impl Store {
             generation_intent: None,
             application_intent: None,
             recovery_drafts: BTreeSet::new(),
+            writer,
+            write_error,
         };
         store.generation = store.load_group(PreferenceGroup::Generation);
         store.application = store.load_group(PreferenceGroup::Application);
@@ -835,6 +911,17 @@ impl Store {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+    pub fn flush(&self) {
+        if let Some(writer) = &self.writer {
+            writer.flush();
+        }
+    }
+    pub fn take_write_error(&self) -> Option<(PreferenceGroup, String)> {
+        self.write_error
+            .lock()
+            .ok()
+            .and_then(|mut error| error.take())
     }
     pub fn vault(&self) -> Arc<dyn CredentialVault> {
         Arc::clone(&self.vault)
@@ -1716,6 +1803,11 @@ impl Store {
                 revision,
                 value,
             })?;
+            if let Some(writer) = &self.writer {
+                writer.enqueue(path, bytes, group)?;
+                self.revisions.insert(group, revision);
+                return Ok(());
+            }
             if let Ok(Some(previous)) = read_envelope::<T>(&path) {
                 let previous = serde_json::to_vec_pretty(&previous)?;
                 atomic_write_with_retry(&path.with_extension("json.bak"), &previous)
@@ -2670,5 +2762,22 @@ mod tests {
             .unwrap();
         assert!(!store.references_storage_path(&old));
         assert!(store.references_storage_path(&new));
+    }
+    #[test]
+    fn background_preferences_writer_serializes_and_flushes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("generation.json");
+        let error = Arc::new(std::sync::Mutex::new(None));
+        let writer = PreferenceWriter::new(root.path().to_path_buf(), Arc::clone(&error));
+        writer
+            .enqueue(
+                path.clone(),
+                b"{\"ok\":true}".to_vec(),
+                PreferenceGroup::Generation,
+            )
+            .unwrap();
+        writer.flush();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"ok\":true}");
+        assert!(error.lock().unwrap().is_none());
     }
 }

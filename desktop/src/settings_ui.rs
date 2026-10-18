@@ -2024,70 +2024,94 @@ impl Desktop {
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = prompt.await;
+            let path = match result {
+                Ok(Ok(Some(mut paths))) => paths.drain(..).next(),
+                Ok(Ok(None)) => return,
+                Ok(Err(error)) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.workspace_error =
+                            Some(course2md::tr!("无法选择文件夹：{}", format!("{error:#}")));
+                        cx.notify();
+                    });
+                    return;
+                }
+                Err(error) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.workspace_error =
+                            Some(course2md::tr!("无法打开文件选择器：{}", error));
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let Some(path) = path else { return };
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(course2md::tr!("笔记库"))
+                .to_owned();
+            let lists = this.update(cx, |this, _| {
+                let workspace = this
+                    .workspace
+                    .as_ref()
+                    .ok_or_else(|| anyhow!(course2md::tr!("笔记库记录暂时不可用")))?;
+                Ok::<_, anyhow::Error>((
+                    workspace
+                        .state
+                        .libraries
+                        .iter()
+                        .map(|l| l.root.clone())
+                        .collect::<Vec<_>>(),
+                    workspace
+                        .state
+                        .libraries
+                        .iter()
+                        .map(|l| l.id.clone())
+                        .collect::<Vec<_>>(),
+                ))
+            });
+            let Ok(Ok((roots, ids))) = lists else { return };
+            let task = crate::spawn_blocking_io(move || {
+                crate::workspace::Workspace::prepare_library(path, name, false, &roots, &ids)
+            });
+            let prepared = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow!(crate::interrupted())));
             let _ = this.update(cx, |this, cx| {
-                match result {
-                    Ok(Ok(Some(paths))) => {
-                        if let Some(path) = paths.into_iter().next() {
-                            let name = path
-                                .file_name()
-                                .and_then(|v| v.to_str())
-                                .unwrap_or(course2md::tr!("笔记库"))
-                                .to_owned();
-                            let duplicate = this.workspace.as_ref().is_some_and(|w| {
-                                w.state
-                                    .libraries
-                                    .iter()
-                                    .any(|l| l.root.canonicalize().ok() == path.canonicalize().ok())
-                            });
-                            if !duplicate
-                                && let Ok(identity) = std::fs::read_to_string(
-                                    path.join(crate::storage::LIBRARY_ID_FILE),
-                                )
-                                && let Some(existing) = this
-                                    .workspace
-                                    .as_ref()
-                                    .and_then(|workspace| workspace.state.library(identity.trim()))
-                            {
-                                this.workspace_error = Some(course2md::tr!(
-                                    "「{}」已登记，可在该笔记库中“重新定位…”",
-                                    existing.name
-                                ));
-                                cx.notify();
-                                return;
+                match prepared {
+                    Ok(prepared) => {
+                        let duplicate = prepared.duplicate;
+                        let registered = this
+                            .workspace
+                            .as_mut()
+                            .ok_or_else(|| anyhow!(course2md::tr!("笔记库记录暂时不可用")))
+                            .and_then(|workspace| workspace.register_prepared_library(&prepared));
+                        match registered {
+                            Ok(_) => {
+                                this.message = Some(
+                                    if duplicate {
+                                        course2md::tr!("这个文件夹已是笔记库位置")
+                                    } else {
+                                        course2md::tr!("已添加笔记库位置")
+                                    }
+                                    .into(),
+                                );
+                                this.refresh_library(cx);
                             }
-                            match this
-                                .workspace
-                                .as_mut()
-                                .ok_or_else(|| anyhow!(course2md::tr!("笔记库记录暂时不可用")))
-                                .and_then(|w| w.register_library(path, name, false))
-                            {
-                                Ok(_) => {
-                                    this.message = Some(
-                                        if duplicate {
-                                            course2md::tr!("这个文件夹已是笔记库位置")
-                                        } else {
-                                            course2md::tr!("已添加笔记库位置")
-                                        }
-                                        .into(),
-                                    );
-                                    this.refresh_library(cx);
-                                }
-                                Err(error) => {
-                                    this.workspace_error = Some(course2md::tr!(
-                                        "笔记库位置尚未添加：{}",
-                                        format!("{error:#}")
-                                    ))
-                                }
+                            Err(error) => {
+                                this.workspace_error = Some(course2md::tr!(
+                                    "笔记库位置尚未添加：{}",
+                                    format!("{error:#}")
+                                ))
                             }
                         }
                     }
-                    Ok(Ok(None)) => {}
-                    Ok(Err(error)) => {
-                        this.workspace_error =
-                            Some(course2md::tr!("无法选择文件夹：{}", format!("{error:#}")))
-                    }
                     Err(error) => {
-                        this.workspace_error = Some(course2md::tr!("无法打开文件选择器：{}", error))
+                        this.workspace_error = Some(course2md::tr!(
+                            "笔记库位置尚未添加：{}",
+                            format!("{error:#}")
+                        ))
                     }
                 }
                 cx.notify();

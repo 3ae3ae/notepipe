@@ -1069,6 +1069,14 @@ impl State {
     }
 }
 
+pub struct PreparedLibrary {
+    pub root: PathBuf,
+    pub name: String,
+    pub id: String,
+    pub duplicate: bool,
+    pub make_default: bool,
+}
+
 pub struct Workspace {
     pub state: State,
     pub recovery: Option<String>,
@@ -2167,31 +2175,30 @@ impl Workspace {
     pub fn storage_path(&self) -> &Path {
         &self.path
     }
-    pub fn register_library(
-        &mut self,
+    /// File work for adding a library, safe to run on a blocking thread.
+    /// The commit half only edits in-memory state and never touches the filesystem.
+    pub fn prepare_library(
         root: PathBuf,
         name: String,
         make_default: bool,
-    ) -> Result<String> {
+        existing_roots: &[PathBuf],
+        existing_ids: &[String],
+    ) -> Result<PreparedLibrary> {
         ensure!(
             root.is_dir(),
             course2md::tr!("请选择已有文件夹；新建笔记库请使用新建操作")
         );
         let canonical = root.canonicalize()?;
-        if let Some(existing) = self
-            .state
-            .libraries
-            .iter()
-            .find(|l| l.root.canonicalize().ok().as_ref() == Some(&canonical))
-        {
-            let id = existing.id.clone();
-            if make_default {
-                self.transaction(|s| {
-                    s.default_library = id.clone();
-                    Ok(())
-                })?;
+        for existing in existing_roots {
+            if existing.canonicalize().ok().as_ref() == Some(&canonical) {
+                return Ok(PreparedLibrary {
+                    root: canonical,
+                    name,
+                    id: String::new(),
+                    duplicate: true,
+                    make_default,
+                });
             }
-            return Ok(id);
         }
         let probe = tempfile::NamedTempFile::new_in(&canonical)
             .context(course2md::tr!("所选位置不能写入"))?;
@@ -2202,7 +2209,7 @@ impl Workspace {
             if id.is_empty() {
                 bail!(course2md::tr!("笔记库身份记录为空，请检查所选位置"));
             }
-            if self.state.libraries.iter().any(|l| l.id == id) {
+            if existing_ids.iter().any(|existing| existing == &id) {
                 bail!(course2md::tr!(
                     "这个库已经登记在另一个位置，请使用移动笔记库操作"
                 ));
@@ -2213,18 +2220,67 @@ impl Workspace {
             course2md::checkpoint::atomic_write(&identity, id.as_bytes())?;
             id
         };
-        self.transaction(|s| {
-            s.libraries.push(LibraryLocation {
+        Ok(PreparedLibrary {
+            root: canonical,
+            name,
+            id,
+            duplicate: false,
+            make_default,
+        })
+    }
+
+    pub fn register_prepared_library(&mut self, prepared: &PreparedLibrary) -> Result<String> {
+        if prepared.duplicate {
+            if let Some(existing) = self
+                .state
+                .libraries
+                .iter()
+                .find(|library| library.root == prepared.root)
+            {
+                let id = existing.id.clone();
+                if prepared.make_default {
+                    self.transaction(|state| {
+                        state.default_library = id.clone();
+                        Ok(())
+                    })?;
+                }
+                return Ok(id);
+            }
+            return Ok(String::new());
+        }
+        let id = prepared.id.clone();
+        let name = prepared.name.clone();
+        let root = prepared.root.clone();
+        let make_default = prepared.make_default;
+        self.transaction(|state| {
+            state.libraries.push(LibraryLocation {
                 id: id.clone(),
                 name,
-                root: canonical,
+                root,
                 previous_roots: Vec::new(),
             });
             if make_default {
-                s.default_library = id.clone();
+                state.default_library = id.clone();
             }
             Ok(id)
         })
+    }
+
+    pub fn register_library(
+        &mut self,
+        root: PathBuf,
+        name: String,
+        make_default: bool,
+    ) -> Result<String> {
+        let roots: Vec<_> = self
+            .state
+            .libraries
+            .iter()
+            .map(|l| l.root.clone())
+            .collect();
+        let ids: Vec<_> = self.state.libraries.iter().map(|l| l.id.clone()).collect();
+        let prepared = Self::prepare_library(root, name, make_default, &roots, &ids)?;
+        self.register_prepared_library(&prepared)
     }
 }
 
