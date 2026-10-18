@@ -542,13 +542,19 @@ impl Desktop {
         let options = ConversionOptions::from_config(&config);
         let poll = cx.spawn_in(window, async |this, cx| {
             loop {
-                let wake = this.update_in(cx, |this, _, _| this.event_wake_rx.clone());
-                let Ok(wake) = wake else { break };
+                let Ok((wake, deadline)) = this.update_in(cx, |this, _, _| {
+                    (this.event_wake_rx.clone(), this.next_poll_deadline())
+                }) else {
+                    break;
+                };
                 let wait = async {
                     let _ = wake.recv().await;
                 };
+                let timeout = deadline
+                    .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+                    .unwrap_or(Duration::from_secs(3600));
                 smol::future::or(wait, async {
-                    smol::Timer::after(Duration::from_secs(2)).await;
+                    smol::Timer::after(timeout).await;
                 })
                 .await;
                 match this.update_in(cx, |this, _, cx| {
@@ -919,6 +925,21 @@ impl Desktop {
             std::thread::sleep(after);
             let _ = wake.try_send(());
         });
+    }
+    /// The next instant the UI must run `poll` even without a job event.
+    /// Returning `None` lets the loop sleep until an explicit wake.
+    fn next_poll_deadline(&self) -> Option<Instant> {
+        let mut deadline = self.draft_deadline.min(self.quit_deadline);
+        if let Some((_, shown)) = &self.transient_task_result {
+            deadline = deadline.min(Some(*shown + Duration::from_secs(8)));
+        }
+        if self.page == Page::Result {
+            deadline = deadline.min(Some(Instant::now() + Duration::from_secs(2)));
+        }
+        if self.storage_ui.has_resume_task() {
+            deadline = deadline.min(Some(Instant::now()));
+        }
+        deadline
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
         if self

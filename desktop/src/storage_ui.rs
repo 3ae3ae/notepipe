@@ -199,6 +199,10 @@ where
 }
 
 impl State {
+    pub fn has_resume_task(&self) -> bool {
+        self.resume_task.is_some()
+    }
+
     pub(super) fn begin_location_checks(
         &mut self,
         generation: u64,
