@@ -22,6 +22,8 @@ fn shell_column_width(page: Page) -> AbsoluteLength {
         Page::Settings => rems(SETTINGS_SHELL_WIDTH / 14.).into(),
         Page::Library => rems(1168. / 14.).into(),
         Page::New => rems(1200. / 14.).into(),
+        // Sections set the screenshot beside the text, as on the canvas.
+        Page::Result => rems(1180. / 14.).into(),
         _ => COLUMN.into(),
     }
 }
@@ -93,7 +95,12 @@ fn shell_column_at(width: AbsoluteLength) -> Div {
 
 impl Desktop {
     /// Keep task results reachable while the user is on another page.
-    fn shell_topbar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
+    fn shell_topbar(
+        &self,
+        reader_tools: Option<AnyElement>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> TitleBar {
         let tasks_need_attention = self.workspace.as_ref().is_some_and(|workspace| {
             workspace.state.tasks.iter().any(|task| {
                 task.handled_by.is_none()
@@ -153,6 +160,59 @@ impl Desktop {
                                 .text_size(rems(18. / 14.))
                                 .font_weight(FontWeight::MEDIUM),
                         ),
+                );
+        }
+        // A note is read where it was opened: home › origin › title, with the
+        // reading tools taking the destinations' place.
+        if let (Page::Result, Some(tools)) = (page, reader_tools) {
+            let chevron = || {
+                icons::chevron_right()
+                    .size(rems(16. / 14.))
+                    .flex_shrink_0()
+                    .text_color(color(FAINT))
+            };
+            let title = self
+                .preview
+                .as_ref()
+                .map(|preview| preview.course.title.clone())
+                .unwrap_or_default();
+            let compact = is_compact(window);
+            return apply_shell_title_bar_chrome(TitleBar::new().h(title_bar_height(window)))
+                .child(
+                    bar.child(
+                        nav_action("nav-home", false, cx)
+                            .w(CONTROL_HEIGHT)
+                            .px_0()
+                            .icon(icons::home())
+                            .accessibility_label(course2md::tr!("主页"))
+                            .tooltip(course2md::tr!("主页"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if this.prepare_workbench_input(window, cx) {
+                                    this.navigate(Page::New, cx);
+                                }
+                            })),
+                    )
+                    .child(chevron())
+                    .when(!compact && self.result_origin != Page::New, |bar| {
+                        bar.child(
+                            quiet("reader-origin")
+                                .text_color(color(GRAY))
+                                .label(self.reader_origin_label())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.navigate(this.result_origin, cx)
+                                })),
+                        )
+                        .child(chevron())
+                    })
+                    .child(
+                        accessible_text("reader-crumb-title", title)
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .px_1()
+                            .font_weight(FontWeight::MEDIUM),
+                    )
+                    .child(tools),
                 );
         }
         // Home is the workbench; its icon is the leading destination.
@@ -416,12 +476,17 @@ impl Render for Desktop {
                 .children(Root::render_dialog_layer(window, cx))
                 .into_any_element();
         }
+        let mut reader_tools = None;
         let content = match self.page {
             Page::New => self.new_page(window, cx),
             Page::Task => self.queue_page(window, cx),
             Page::Library => self.library_page(window, cx),
             Page::Settings => self.settings_page(window, cx),
-            Page::Result => self.reader_page(window, cx),
+            Page::Result => {
+                let (page, tools) = self.reader_page(window, cx);
+                reader_tools = tools;
+                page
+            }
         };
         // Task and library content virtualize their long lists: the list owns
         // scrolling for the page instead of the shared page-scroll container.
@@ -460,7 +525,7 @@ impl Render for Desktop {
         } else {
             crate::motion::page_enter(("page-content", self.page as usize), content)
         };
-        let topbar = self.shell_topbar(window, cx);
+        let topbar = self.shell_topbar(reader_tools, window, cx);
         let task_notice = self.task_result_notice(cx);
         let model_notice = self.onboarding_background_notice(cx);
         let body = v_flex()

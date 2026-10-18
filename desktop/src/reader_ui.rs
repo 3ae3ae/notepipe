@@ -14,7 +14,14 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-const READER_MEASURE: Rems = rems(48.);
+/// The article's width: two section columns, or one column of reading copy.
+const READER_MEASURE: Rems = rems(1100. / 14.);
+/// Reading copy is set in a serif, as on the canvas; the platform's CJK serif.
+const READER_SERIF: &str = if cfg!(target_os = "macos") {
+    "Songti SC"
+} else {
+    "Noto Serif CJK SC"
+};
 /// Space kept between scrolled text and an always-visible scrollbar.
 const SCROLLBAR_GUTTER: Pixels = px(14.);
 /// The icon of an empty state.
@@ -723,15 +730,39 @@ fn restored_reader_offset(
         .unwrap_or(position.offset.min(0.))
 }
 
-/// The note tab's article is one flat sequence of list items: the title
-/// (shown on short windows), the summary label and its paragraphs, then every
-/// remaining block in order. Items keep the block indexing of the full
-/// document so anchors, search targets and reading positions are unchanged.
+/// The note tab's article as list items: the title (shown on short windows),
+/// the summary as one card, then one item per section: its time, screenshot
+/// and paragraphs side by side. Blocks before the first section stay single
+/// items. Items keep the block indexing of the full document, so anchors,
+/// search targets and reading positions resolve to blocks as before.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NoteItem {
     Title,
-    SummaryLabel(Option<usize>),
+    /// The summary blocks `start..end`.
+    Summary {
+        start: usize,
+        end: usize,
+    },
+    /// A section heading and its blocks `heading..end`; `ordinal` alternates
+    /// which side the screenshot takes.
+    Section {
+        heading: usize,
+        end: usize,
+        ordinal: usize,
+    },
     Block(usize),
+}
+
+impl NoteItem {
+    /// The document blocks this item draws.
+    fn blocks(self) -> std::ops::Range<usize> {
+        match self {
+            Self::Title => 0..0,
+            Self::Summary { start, end } => start..end,
+            Self::Section { heading, end, .. } => heading..end,
+            Self::Block(block) => block..block + 1,
+        }
+    }
 }
 
 fn note_summary_block(block: &PreviewBlock) -> bool {
@@ -741,41 +772,45 @@ fn note_summary_block(block: &PreviewBlock) -> bool {
 /// The title item leads every note; it is empty unless short windows scroll
 /// the title with the article, so the item sequence never depends on layout.
 fn note_items(blocks: &[PreviewBlock]) -> Vec<NoteItem> {
-    let mut items = Vec::with_capacity(blocks.len() + 2);
+    let mut items = Vec::with_capacity(blocks.len() / 3 + 2);
     items.push(NoteItem::Title);
-    let summary = blocks
+    let summary_end = blocks
         .iter()
-        .enumerate()
-        .filter(|(_, block)| note_summary_block(block));
-    let summary_label = summary
-        .clone()
-        .find(|(_, block)| matches!(block, PreviewBlock::Heading { .. }))
-        .map(|(index, _)| index);
-    let summary_paragraphs = summary
-        .filter(|(_, block)| matches!(block, PreviewBlock::Paragraph { .. }))
-        .map(|(index, _)| NoteItem::Block(index))
-        .collect::<Vec<_>>();
-    if !summary_paragraphs.is_empty() {
-        items.push(NoteItem::SummaryLabel(summary_label));
-        items.extend(summary_paragraphs);
+        .position(|block| !note_summary_block(block))
+        .unwrap_or(blocks.len());
+    if summary_end > 0 {
+        items.push(NoteItem::Summary {
+            start: 0,
+            end: summary_end,
+        });
     }
-    items.extend(
-        blocks
-            .iter()
-            .enumerate()
-            .filter(|(_, block)| !note_summary_block(block))
-            .map(|(index, _)| NoteItem::Block(index)),
-    );
+    let mut index = summary_end;
+    let mut ordinal = 0;
+    while index < blocks.len() {
+        if blocks[index].section_index().is_some() {
+            let end = blocks[index + 1..]
+                .iter()
+                .position(|block| block.section_index().is_some())
+                .map_or(blocks.len(), |offset| index + 1 + offset);
+            items.push(NoteItem::Section {
+                heading: index,
+                end,
+                ordinal,
+            });
+            ordinal += 1;
+            index = end;
+        } else {
+            items.push(NoteItem::Block(index));
+            index += 1;
+        }
+    }
     items
 }
 
-/// The document block an item carries, when it carries one.
+/// The block an item's position resolves to, when it draws any.
 fn note_item_block(item: NoteItem) -> Option<usize> {
-    match item {
-        NoteItem::Title => None,
-        NoteItem::SummaryLabel(block) => block,
-        NoteItem::Block(block) => Some(block),
-    }
+    let blocks = item.blocks();
+    (!blocks.is_empty()).then_some(blocks.start)
 }
 
 /// The block at or after the item; decorations such as the title carry none.
@@ -795,10 +830,9 @@ fn note_top_block(items: &[NoteItem], item: usize) -> Option<usize> {
         })
 }
 
+/// The item that draws `block`.
 fn note_block_item(items: &[NoteItem], block: usize) -> Option<usize> {
-    items
-        .iter()
-        .position(|item| note_item_block(*item) == Some(block))
+    items.iter().position(|item| item.blocks().contains(&block))
 }
 
 /// The note tab's reading position from the list's logical scroll top: the top
@@ -1174,16 +1208,99 @@ fn paragraph(
     search_target: Option<ReaderSearchTarget>,
 ) -> Stateful<Div> {
     let id = id.into();
-    div()
+    let view = div()
         .id(id.clone())
         .role(Role::Paragraph)
         .aria_label(text.clone())
+        .font_family(READER_SERIF)
         .text_size(TEXT_READER)
         .font_weight(FontWeight::NORMAL)
-        .line_height(relative(1.7))
-        .child(
-            ReaderText::new(id, text, order as u64, highlights).with_search_target(search_target),
-        )
+        .line_height(relative(1.88));
+    if crate::math::has_math(&text) {
+        return view.child(math_paragraph(&text, TEXT_READER));
+    }
+    view.child(
+        ReaderText::new(id, text, order as u64, highlights).with_search_target(search_target),
+    )
+}
+
+/// Prose with formulas. GPUI text cannot hold inline elements, so the prose is
+/// laid out as wrapping tokens (one per CJK character, one per Latin word)
+/// around the typeset formulas; a display formula takes a centered row.
+fn math_paragraph(text: &str, em: Rems) -> Div {
+    let mut view = v_flex().w_full().min_w_0().gap_2();
+    let mut row = Vec::new();
+    let flush = |view: Div, row: &mut Vec<AnyElement>| {
+        if row.is_empty() {
+            view
+        } else {
+            view.child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .flex_wrap()
+                    .items_center()
+                    .children(row.drain(..)),
+            )
+        }
+    };
+    for piece in crate::math::pieces(text) {
+        match piece {
+            crate::math::Piece::Text(prose) => row.extend(prose_tokens(prose)),
+            crate::math::Piece::Math { latex, display } => {
+                let typeset = crate::math::formula(latex, display);
+                match (typeset, display) {
+                    (Some(formula), true) => {
+                        view = flush(view, &mut row).child(
+                            h_flex()
+                                .id(SharedString::from(format!("display-math-{latex}")))
+                                .w_full()
+                                .justify_center()
+                                .py_2()
+                                .overflow_x_scroll()
+                                .child(formula.element(em, true)),
+                        );
+                    }
+                    (Some(formula), false) => {
+                        row.push(
+                            div()
+                                .px(em * 0.1)
+                                .child(formula.element(em, false))
+                                .into_any_element(),
+                        );
+                    }
+                    // Unparseable LaTeX stays readable as its source.
+                    (None, _) => row.extend(prose_tokens(latex)),
+                }
+            }
+        }
+    }
+    flush(view, &mut row)
+}
+
+/// Line-break opportunities of prose: Latin words with their trailing space,
+/// and every other character on its own.
+fn prose_tokens(prose: &str) -> impl Iterator<Item = AnyElement> + '_ {
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    for (index, c) in prose.char_indices() {
+        let end = index + c.len_utf8();
+        let word = c.is_ascii_alphanumeric() || c.is_ascii_punctuation();
+        let next_word = prose[end..]
+            .chars()
+            .next()
+            .is_some_and(|next| next.is_ascii_alphanumeric() || next.is_ascii_punctuation());
+        if !(word && next_word) {
+            tokens.push(&prose[start..end]);
+            start = end;
+        }
+    }
+    tokens.into_iter().map(|token| {
+        div()
+            .whitespace_nowrap()
+            .child(SharedString::from(token.to_owned()))
+            .into_any_element()
+    })
 }
 
 /// Everything a virtualized note-flow item needs. The maps are built when the
@@ -1203,6 +1320,8 @@ struct NoteFlow {
     find_open: bool,
     data_loading: bool,
     show_title: bool,
+    /// Sections put the screenshot and text side by side; narrow, they stack.
+    wide: bool,
     layout: Rc<RefCell<nav::ReadingLayout>>,
     restore_target: Rc<Cell<Option<usize>>>,
     note_list: ListState,
@@ -1262,37 +1381,21 @@ impl NoteFlow {
 
     /// One list item: uniform spacing between items, a focus container that
     /// keeps a focused control mounted off-viewport, and the position record
-    /// that reading positions and search jumps resolve against.
+    /// that reading positions and search jumps resolve against. Every block an
+    /// item draws records the item's bounds, so a found line inside any of its
+    /// paragraphs resolves to an offset within this item.
     fn item_wrapper(&self, index: usize, content: AnyElement) -> Stateful<Div> {
         let item = self.items[index];
-        let is_summary = |item: NoteItem| match item {
-            NoteItem::SummaryLabel(_) => true,
-            NoteItem::Block(block) => note_summary_block(&self.preview.blocks[block]),
-            NoteItem::Title => false,
-        };
-        let summary = is_summary(item);
-        let summary_end = summary
-            && self
-                .items
-                .get(index + 1)
-                .is_none_or(|item| !is_summary(*item));
-        let spaced = !summary
-            && index + 1 != self.items.len()
-            && (item != NoteItem::Title || self.show_title);
         let mut wrapper = div()
             .w_full()
             .min_w_0()
             .flex_shrink_0()
             // Virtual list measurements include padding, not external margins.
-            .when(spaced, |view| view.pb_5())
-            .when(summary, |view| view.bg(color(SURFACE_HIGH)).px_5().py_2())
-            .when(matches!(item, NoteItem::SummaryLabel(_)), |view| {
-                view.rounded_t(RADIUS_CARD).pt_4()
-            })
-            .when(summary_end, |view| {
-                view.rounded_b(RADIUS_CARD).pb_4().mb_6()
+            .when(item != NoteItem::Title || self.show_title, |view| {
+                view.pb_8()
             });
-        if let Some(block) = note_item_block(item) {
+        let blocks = item.blocks();
+        if !blocks.is_empty() {
             let positions = self.layout.clone();
             let restore_target = self.restore_target.clone();
             let desktop = self.desktop.clone();
@@ -1301,12 +1404,18 @@ impl NoteFlow {
                     return;
                 };
                 // Window coordinates: see `ReadingLayout`.
-                positions.borrow_mut().record(
-                    block,
-                    f32::from(bounds.top()),
-                    f32::from(bounds.size.height),
-                );
-                if restore_target.get() == Some(block) {
+                let mut positions = positions.borrow_mut();
+                for block in blocks.clone() {
+                    positions.record(
+                        block,
+                        f32::from(bounds.top()),
+                        f32::from(bounds.size.height),
+                    );
+                }
+                if restore_target
+                    .get()
+                    .is_some_and(|target| blocks.contains(&target))
+                {
                     restore_target.set(None);
                     let desktop = desktop.clone();
                     window.defer(cx, move |window, cx| {
@@ -1327,8 +1436,8 @@ impl NoteFlow {
     }
 }
 
-/// Render one note-flow item: scrolling title, summary label and paragraphs,
-/// then the remaining blocks in document order.
+/// Render one note-flow item: the scrolling title, the summary card, a
+/// section, or a block that precedes the sections.
 fn render_note_item(flow: &NoteFlow, item_ix: usize) -> AnyElement {
     let Some(&item) = flow.items.get(item_ix) else {
         return div().into_any_element();
@@ -1341,42 +1450,232 @@ fn render_note_item(flow: &NoteFlow, item_ix: usize) -> AnyElement {
             .flex_shrink_0()
             .min_w_0()
             .whitespace_normal()
+            .font_family(READER_SERIF)
             .text_size(TEXT_DISPLAY)
             .font_weight(FontWeight::SEMIBOLD)
             .into_any_element(),
-        NoteItem::SummaryLabel(_) => {
-            theme::accessible_text("reader-summary-label", course2md::tr!("摘要"))
-                .role(Role::Heading)
-                .text_size(TEXT_AUX)
-                .text_color(color(GRAY))
-                .font_weight(FontWeight::SEMIBOLD)
-                .into_any_element()
-        }
-        NoteItem::Block(index) => match &preview.blocks[index] {
-            PreviewBlock::Heading {
-                text,
-                anchor,
-                seconds,
-            } => render_note_heading(
-                flow,
-                index,
-                text.clone(),
-                anchor,
-                *seconds,
-                preview.blocks[index].is_timestamp_heading(),
-            ),
-            PreviewBlock::Paragraph { text, anchor } => paragraph(
-                SharedString::from(anchor.clone()),
-                text.clone(),
-                index,
-                flow.highlight_runs(index),
-                flow.search_target(index),
-            )
-            .into_any_element(),
-            PreviewBlock::Image(path) => render_note_image(flow, index, path),
-        },
+        NoteItem::Summary { start, end } => render_note_summary(flow, start..end),
+        NoteItem::Section {
+            heading,
+            end,
+            ordinal,
+        } => render_note_section(flow, heading, end, ordinal),
+        NoteItem::Block(index) => render_note_block(flow, index),
     };
     flow.item_wrapper(item_ix, content).into_any_element()
+}
+
+/// One block on its own: a paragraph, heading or screenshot outside any section.
+fn render_note_block(flow: &NoteFlow, index: usize) -> AnyElement {
+    match &flow.preview.blocks[index] {
+        PreviewBlock::Heading {
+            text,
+            anchor,
+            seconds,
+        } => render_note_heading(
+            flow,
+            index,
+            text.clone(),
+            anchor,
+            *seconds,
+            flow.preview.blocks[index].is_timestamp_heading(),
+        ),
+        PreviewBlock::Paragraph { text, anchor } => note_paragraph(flow, index, text, anchor),
+        PreviewBlock::Image(path) => render_note_image(flow, index, path),
+    }
+}
+
+fn note_paragraph(flow: &NoteFlow, index: usize, text: &SharedString, anchor: &str) -> AnyElement {
+    paragraph(
+        SharedString::from(anchor.to_owned()),
+        text.clone(),
+        index,
+        flow.highlight_runs(index),
+        flow.search_target(index),
+    )
+    .into_any_element()
+}
+
+/// The summary as one card: its overview, then the key points in two columns
+/// on wide windows.
+fn render_note_summary(flow: &NoteFlow, blocks: std::ops::Range<usize>) -> AnyElement {
+    let preview = &flow.preview;
+    let mut overview = Vec::new();
+    let mut points = Vec::new();
+    for index in blocks {
+        if let PreviewBlock::Paragraph { text, anchor } = &preview.blocks[index] {
+            if anchor.starts_with("key-point-") {
+                let point = text.trim_start_matches("• ").to_owned();
+                points.push(
+                    h_flex()
+                        .min_w_0()
+                        .items_start()
+                        .gap_3()
+                        .child(
+                            div()
+                                .mt(rems(11. / 14.))
+                                .size(px(6.))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .bg(color(ACCENT)),
+                        )
+                        .child(div().flex_1().min_w_0().child(paragraph(
+                            SharedString::from(anchor.clone()),
+                            point.into(),
+                            index,
+                            flow.highlight_runs(index),
+                            flow.search_target(index),
+                        )))
+                        .into_any_element(),
+                );
+            } else {
+                overview.push(note_paragraph(flow, index, text, anchor));
+            }
+        }
+    }
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .p(rems(28. / 14.))
+        .gap(rems(18. / 14.))
+        .rounded(rems(24. / 14.))
+        .bg(color(SURFACE))
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .text_color(color(ACCENT))
+                .child(icons::sparkles().size(rems(16. / 14.)))
+                .child(
+                    theme::accessible_text("reader-summary-label", course2md::tr!("摘要"))
+                        .role(Role::Heading)
+                        .text_size(TEXT_AUX)
+                        .font_weight(FontWeight::MEDIUM),
+                ),
+        )
+        .child(
+            v_flex()
+                .gap_2()
+                .text_size(rems(18. / 14.))
+                .children(overview),
+        )
+        .when(!points.is_empty(), |card| {
+            card.child(
+                div()
+                    .grid()
+                    .grid_cols(if flow.wide { 2 } else { 1 })
+                    .gap_x(rems(40. / 14.))
+                    .gap_y(rems(10. / 14.))
+                    .children(points),
+            )
+        })
+        .into_any_element()
+}
+
+/// A section as on the canvas: the screenshot on one side with a chip that
+/// plays the source from its time, and on the other the time, the chapter
+/// title where one begins, and the paragraphs. Sides alternate; narrow
+/// windows stack them.
+fn render_note_section(flow: &NoteFlow, heading: usize, end: usize, ordinal: usize) -> AnyElement {
+    let preview = &flow.preview;
+    let (anchor, seconds) = match &preview.blocks[heading] {
+        PreviewBlock::Heading {
+            anchor, seconds, ..
+        } => (anchor.clone(), *seconds),
+        _ => (String::new(), None),
+    };
+    let image = (heading + 1..end).find_map(|index| match &preview.blocks[index] {
+        PreviewBlock::Image(path) => Some(render_note_image(flow, index, path)),
+        _ => None,
+    });
+    let paragraphs = (heading + 1..end).filter_map(|index| match &preview.blocks[index] {
+        PreviewBlock::Paragraph { text, anchor } => Some(note_paragraph(flow, index, text, anchor)),
+        _ => None,
+    });
+    let chapter = flow.chapter_starts.get(&heading);
+    let marks = flow.highlight_runs(heading);
+    let time = seconds.map(course2md::render::fmt_ts);
+    let missing = flow
+        .missing_by_block
+        .get(&heading)
+        .into_iter()
+        .flatten()
+        .map(|&frame_index| {
+            theme::accessible_text(
+                ("missing-body-image", frame_index),
+                course2md::tr!("{}无法读取", frame_label(&flow.frames[frame_index])),
+            )
+            .text_sm()
+            .text_color(color(WARNING))
+        });
+    let title_row = h_flex()
+        .id(SharedString::from(anchor))
+        .flex_wrap()
+        .items_baseline()
+        .gap_x_3()
+        .role(Role::Heading)
+        .aria_label(
+            chapter
+                .map(|chapter| format!("{} {chapter}", time.clone().unwrap_or_default()))
+                .or(time.clone())
+                .unwrap_or_default(),
+        )
+        .children(time.map(|time| {
+            div()
+                .text_size(TEXT_BODY)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(color(ACCENT))
+                .child(if marks.is_empty() {
+                    time.into_any_element()
+                } else {
+                    ReaderText::new(
+                        ("reader-heading-marks", heading),
+                        SharedString::from(time),
+                        heading as u64,
+                        marks,
+                    )
+                    .with_search_target(flow.search_target(heading))
+                    .into_any_element()
+                })
+        }))
+        .children(chapter.map(|chapter| {
+            div()
+                .font_family(READER_SERIF)
+                .text_size(rems(26. / 14.))
+                .line_height(rems(36. / 14.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(chapter.clone())
+        }));
+    let text = v_flex()
+        .flex_1()
+        .min_w_0()
+        .gap_4()
+        .child(title_row)
+        .children(missing)
+        .children(paragraphs);
+    let image_first = !flow.wide || ordinal.is_multiple_of(2);
+    let row = if flow.wide {
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .gap(rems(48. / 14.))
+    } else {
+        v_flex().w_full().min_w_0().gap_5()
+    };
+    let image = image.map(|image| div().flex_1().min_w_0().child(image));
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .pb_8()
+        .border_b_1()
+        .border_color(color(CARD_LINE))
+        .child(if image_first {
+            row.children(image).child(text)
+        } else {
+            row.child(text).children(image)
+        })
+        .into_any_element()
 }
 
 /// A section heading: its time chip, the chapter title where a new chapter of
@@ -1473,7 +1772,8 @@ fn render_note_heading(
         .into_any_element()
 }
 
-/// A screenshot inside the article, with a link to its moment in the source.
+/// A screenshot inside the article: 16:9 and rounded, opening the viewer, with
+/// a chip over its corner that plays the source from its moment.
 fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> AnyElement {
     let frame_index = flow.frame_by_path.get(path).copied();
     let frame = frame_index.map(|i| &flow.frames[i]);
@@ -1492,41 +1792,50 @@ fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> A
     let desktop = flow.desktop.clone();
     let seek = frame.and_then(|frame| {
         let url = nav::seek_url(flow.source.as_ref()?, frame.seconds)?;
+        let time = course2md::render::fmt_ts(frame.seconds);
         Some(
-            quiet(("seek-image", index))
+            control(("seek-image", index))
+                .absolute()
+                .left(rems(12. / 14.))
+                .bottom(rems(12. / 14.))
+                .h(rems(32. / 14.))
+                .min_h(rems(32. / 14.))
+                .pl(rems(8. / 14.))
+                .pr(rems(12. / 14.))
+                .rounded_full()
+                .bg(gpui::rgba(0x101416c7))
+                .text_color(gpui::white())
+                .text_size(TEXT_AUX)
                 .icon(icons::play_arrow())
-                .label(course2md::render::fmt_ts(frame.seconds))
-                .min_h(INLINE_ACTION_HEIGHT)
-                .self_start()
-                .ml(-QUIET_INSET)
-                .accessibility_label(course2md::tr!("在原视频打开这个位置"))
+                .label(time.clone())
+                .accessibility_label(course2md::tr!("从 {} 播放原视频", time))
                 .on_click(move |_, _, cx| cx.open_url(&url)),
         )
     });
-    v_flex()
-        .w_full()
-        .gap_2()
-        .child(
-            flow.reveal(
-                ("reveal-note-image", index).into(),
+    flow.reveal(
+        ("reveal-note-image", index).into(),
+        div()
+            .relative()
+            .w_full()
+            .child(
                 control(("note-image", index))
                     .ghost()
                     .p_0()
-                    // Screenshots are reading material and share the prose measure.
                     .w_full()
-                    .max_w_full()
                     .h_auto()
                     .min_h(px(0.))
                     .border_0()
-                    .rounded(RADIUS_SMALL)
-                    .aspect_ratio(frame.map_or(MISSING_FRAME_ASPECT, frame_aspect))
+                    .rounded(RADIUS_CARD)
+                    .overflow_hidden()
+                    .aspect_ratio(16. / 9.)
+                    .bg(color(SURFACE_HIGH))
                     .accessibility_label(course2md::tr!("放大{}", label))
                     .disabled(frame.is_none())
                     .child(
                         img(path.to_path_buf())
                             .size_full()
-                            .rounded(RADIUS_SMALL)
-                            .object_fit(ObjectFit::Contain)
+                            .rounded(RADIUS_CARD)
+                            .object_fit(ObjectFit::Cover)
                             .with_fallback(move || {
                                 theme::accessible_text(
                                     ("failed-reader-image", index),
@@ -1541,12 +1850,12 @@ fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> A
                                 this.open_reader_image(frame_index, window, cx);
                             });
                         }
-                    })
-                    .into_any_element(),
-            ),
-        )
-        .children(seek)
-        .into_any_element()
+                    }),
+            )
+            .children(seek)
+            .into_any_element(),
+    )
+    .into_any_element()
 }
 
 impl Desktop {
@@ -2634,9 +2943,14 @@ impl Desktop {
         self.reader_ui.view_focus[index].focus(window, cx);
         cx.notify();
     }
-    pub fn reader_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// The page and the reading tools it puts in the title bar.
+    pub fn reader_page(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, Option<AnyElement>) {
         let Some(preview) = self.preview.clone() else {
-            return self.reader_opening(cx);
+            return (self.reader_opening(cx), None);
         };
         self.schedule_reader_restore(window, cx);
         let outline = self.reader_ui.outline.clone();
@@ -2645,19 +2959,22 @@ impl Desktop {
             self.reader_ui.toc_open == Some(true),
             !outline.is_empty(),
         );
-        let (controls, scrolling_title) =
+        let (controls, scrolling_title, tools) =
             self.reader_controls(&preview, &outline, metrics, window, cx);
         let article = if self.result_tab == 0 {
-            self.reader_note_article(&preview, metrics.compact, cx)
+            self.reader_note_article(&preview, metrics, cx)
         } else {
             self.reader_gallery(&preview, metrics, scrolling_title, window, cx)
         };
         let body = self.reader_body(article, &outline, metrics, cx);
-        crate::motion::state_enter(
-            SharedString::from(format!("reader-open:{}", preview.course.dir.display())),
-            self.reader_root(metrics, cx)
-                .child(controls)
-                .child(v_flex().flex_1().min_h_0().w_full().child(body)),
+        (
+            crate::motion::state_enter(
+                SharedString::from(format!("reader-open:{}", preview.course.dir.display())),
+                self.reader_root(metrics, cx)
+                    .child(controls)
+                    .child(v_flex().flex_1().min_h_0().w_full().child(body)),
+            ),
+            Some(tools.into_any_element()),
         )
     }
 
@@ -2755,7 +3072,7 @@ impl Desktop {
         metrics: ReaderMetrics,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (AnyElement, Option<AnyElement>) {
+    ) -> (AnyElement, Option<AnyElement>, Div) {
         let ReaderMetrics {
             compact,
             short,
@@ -2772,33 +3089,28 @@ impl Desktop {
             .gap_3()
             .flex_shrink_0()
             .when(compact, |view| view.gap_1())
-            .when(!compact, |view| {
-                view.max_h(relative(0.45))
-                    .when(self.reader_ui.info_open, |view| {
-                        view.max_h(px(available_height * 0.45))
-                    })
-                    .overflow_y_scroll()
-                    .track_scroll(&controls_scroll)
-            });
-        let ReaderHeaderParts { back, title, meta } =
+            // The header is as tall as its content; only the details panel
+            // below it is bounded.
+            .when(!compact, |view| view.pt_2().pb(rems(32. / 14.)));
+        let ReaderHeaderParts { title, meta } =
             self.reader_metadata_row(preview, compact, short, &controls_scroll, cx);
         let (heading, scrolling_title) = if compact {
             (None, Some(title))
         } else {
             (Some(title), None)
         };
-        let toolbar = self.reader_toolbar(preview, outline, back, &metrics, window, cx);
-        page = page.child(
-            v_flex()
-                .w_full()
-                .min_w_0()
-                .gap_2()
-                .py_2()
-                .mb_3()
-                .child(toolbar.bar)
-                .children(toolbar.compact_search)
-                .children(toolbar.short_matches),
-        );
+        let toolbar = self.reader_toolbar(preview, outline, &metrics, window, cx);
+        if toolbar.compact_search.is_some() || toolbar.short_matches.is_some() {
+            page = page.child(
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_2()
+                    .pb_2()
+                    .children(toolbar.compact_search)
+                    .children(toolbar.short_matches),
+            );
+        }
         // The return leads the tool bar; title and facts share the article's
         // left edge below it.
         page = page.children(heading);
@@ -2848,7 +3160,7 @@ impl Desktop {
             .when(self.reader_ui.info_open, |view| {
                 view.gap_2().children(information_panel)
             });
-        (controls.into_any_element(), scrolling_title)
+        (controls.into_any_element(), scrolling_title, toolbar.bar)
     }
 
     /// The note tab's article: a variable-height list that builds only the
@@ -2857,9 +3169,13 @@ impl Desktop {
     fn reader_note_article(
         &mut self,
         preview: &Rc<notes::Preview>,
-        show_title: bool,
+        metrics: ReaderMetrics,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // Side-by-side sections need room for a legible screenshot and measure.
+        let design_px = metrics.reader_width / metrics.rem * 14.;
+        let toc_beside = self.reader_ui.toc_open == Some(true) && metrics.toc_fits_beside;
+        let wide = design_px - if toc_beside { 260. } else { 0. } >= 840.;
         let flow = NoteFlow {
             items: self.reader_ui.note_items.clone(),
             focus: self.reader_ui.note_focus.clone(),
@@ -2873,7 +3189,8 @@ impl Desktop {
             match_index: self.reader_ui.match_index,
             find_open: self.reader_ui.find_open,
             data_loading: self.reader_ui.data_loading,
-            show_title,
+            show_title: metrics.compact,
+            wide,
             layout: self.reader_ui.note_layout.clone(),
             restore_target: self.reader_ui.restore_target.clone(),
             note_list: self.reader_ui.note_list.clone(),
@@ -3011,7 +3328,6 @@ impl ReaderMetrics {
 }
 
 struct ReaderHeaderParts {
-    back: AnyElement,
     title: AnyElement,
     meta: Option<AnyElement>,
 }
@@ -3023,6 +3339,16 @@ struct ReaderToolbarParts {
 }
 
 impl Desktop {
+    /// Where the reader returns to, named for its crumb in the title bar.
+    pub(crate) fn reader_origin_label(&self) -> &'static str {
+        match self.result_origin {
+            Page::New => course2md::tr!("主页"),
+            Page::Task => course2md::tr!("任务"),
+            Page::Settings => course2md::tr!("设置"),
+            _ => course2md::tr!("笔记库"),
+        }
+    }
+
     fn relocate_source_button(&self, id: &'static str, cx: &mut Context<Self>) -> Button {
         let loading = self.reader_ui.source_loading;
         quiet(id)
@@ -3056,34 +3382,8 @@ impl Desktop {
                     .into_any_element()
             }
         };
-        let return_label = match self.result_origin {
-            Page::New => course2md::tr!("生成笔记"),
-            Page::Task => course2md::tr!("任务"),
-            Page::Settings => course2md::tr!("设置"),
-            _ => course2md::tr!("笔记库"),
-        };
-        let title = theme::accessible_text("reader-title", preview.course.title.clone())
-            .role(Role::Heading)
-            .when(!short_reader, |title| title.flex_1())
-            .when(short_reader, |title| title.flex_shrink_0())
-            .min_w_0()
-            .whitespace_normal()
-            .text_size(TEXT_DISPLAY)
-            .font_weight(FontWeight::SEMIBOLD);
-        let title = title.into_any_element();
-        let back = reveal(
-            "reveal-reader-back",
-            quiet("reader-back")
-                .icon(crate::icons::arrow_left())
-                .w(CONTROL_HEIGHT)
-                .px_0()
-                .accessibility_label(course2md::tr!("返回{}", return_label))
-                .tooltip(course2md::tr!("返回{}", return_label))
-                .on_click(cx.listener(|this, _, _, cx| this.navigate(this.result_origin, cx)))
-                .into_any_element(),
-        );
-        // Meta line 1: 作者 · 时长 · 平台 BV 号 · 打开原视频；无数据的字段省略。
-        let mut facts = preview.facts.clone();
+        // As on the canvas: the source and facts, the title in the reading
+        // serif, then the ways to watch the video.
         let meta = &preview.document.meta;
         let platform = if meta.is_local() {
             Some(course2md::tr!("本地视频"))
@@ -3094,40 +3394,97 @@ impl Desktop {
                 _ => None,
             }
         };
-        facts.extend(platform.map(str::to_owned));
+        let facts = preview.facts.join(" · ");
+        let title = v_flex()
+            .w_full()
+            .min_w_0()
+            .gap(rems(1.))
+            .when(platform.is_some() || !facts.is_empty(), |header| {
+                header.child(
+                    h_flex()
+                        .gap_2()
+                        .flex_wrap()
+                        .items_center()
+                        .children(platform.map(|platform| {
+                            div()
+                                .h(rems(24. / 14.))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .rounded(px(6.))
+                                .bg(color(SURFACE_HIGH))
+                                .text_size(TEXT_AUX)
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(platform)
+                        }))
+                        .when(!facts.is_empty(), |row| {
+                            row.child(
+                                theme::accessible_text("reader-facts", facts.clone())
+                                    .text_color(color(GRAY)),
+                            )
+                        }),
+                )
+            })
+            .child(
+                theme::accessible_text("reader-title", preview.course.title.clone())
+                    .role(Role::Heading)
+                    .min_w_0()
+                    .whitespace_normal()
+                    .font_family(READER_SERIF)
+                    .text_size(if compact {
+                        rems(30. / 14.)
+                    } else {
+                        rems(40. / 14.)
+                    })
+                    .line_height(relative(1.3))
+                    .font_weight(FontWeight::SEMIBOLD),
+            )
+            .when(short_reader, |title| title.flex_shrink_0())
+            .into_any_element();
         let mut meta_facts = h_flex().gap_2().flex_wrap().items_center();
-        if !facts.is_empty() {
-            meta_facts = meta_facts.child(
-                theme::accessible_text("reader-facts", facts.join(" · "))
-                    .text_size(TEXT_AUX)
-                    .text_color(color(GRAY)),
-            );
+        let offline = matches!(self.reader_ui.offline_video, OfflineVideo::Available(_));
+        let play = |id: &'static str| {
+            tonal_pill(id, cx)
+                .icon(icons::play_arrow())
+                .label(course2md::tr!("播放原视频"))
+        };
+        if offline {
+            meta_facts = meta_facts.child(reveal(
+                "reveal-reader-offline-video",
+                play("reader-offline-video")
+                    .loading(self.reader_ui.offline_opening)
+                    .disabled(self.reader_ui.offline_opening)
+                    .on_click(cx.listener(|this, _, _, cx| this.play_reader_offline_video(cx)))
+                    .into_any_element(),
+            ));
         }
         if let Some(source) = self.reader_source() {
             match &source {
                 nav::SourceTarget::Web(url) => {
+                    let open = if offline {
+                        quiet("reader-source")
+                            .text_color(color(ACCENT))
+                            .icon(icons::external_link())
+                            .label(course2md::tr!("在 {} 打开", platform.unwrap_or("浏览器")))
+                    } else {
+                        play("reader-source")
+                    };
                     meta_facts = meta_facts.child(reveal(
                         "reveal-reader-source",
-                        (quiet("reader-source")
-                            .icon(icons::external_link())
-                            .label(course2md::tr!("打开原视频"))
-                            .min_h(INLINE_ACTION_HEIGHT)
-                            .accessibility_label(course2md::tr!("打开原视频：{}", url))
+                        open.accessibility_label(course2md::tr!("打开原视频：{}", url))
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.open_reader_source(None, cx)),
-                            ))
-                        .into_any_element(),
+                            )
+                            .into_any_element(),
                     ));
                 }
-                nav::SourceTarget::Local(path) => {
+                nav::SourceTarget::Local(path) if !offline => {
                     let exists = self.reader_ui.source_available;
                     meta_facts = meta_facts
                         .when(exists, |row| {
                             row.child(reveal(
                                 "reveal-reader-source",
-                                quiet("reader-source")
-                                    .icon(icons::movie())
-                                    .label(course2md::tr!("打开原视频"))
+                                play("reader-source")
                                     .tooltip(path.display().to_string())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_reader_source(None, cx)
@@ -3151,45 +3508,29 @@ impl Desktop {
                             ))
                         });
                 }
+                nav::SourceTarget::Local(_) => {}
             }
         }
-        match &self.reader_ui.offline_video {
-            OfflineVideo::Available(_) => {
-                meta_facts = meta_facts.child(reveal(
-                    "reveal-reader-offline-video",
-                    quiet("reader-offline-video")
-                        .icon(icons::movie())
-                        .label(course2md::tr!("播放保留的视频"))
+        if self.reader_ui.offline_video == OfflineVideo::Missing {
+            meta_facts = meta_facts
+                .child(
+                    theme::accessible_text(
+                        "reader-offline-video-missing",
+                        course2md::tr!("保留的视频已不在"),
+                    )
+                    .text_size(TEXT_AUX)
+                    .text_color(color(GRAY)),
+                )
+                .child(reveal(
+                    "reveal-retry-reader-offline-video",
+                    quiet("retry-reader-offline-video")
+                        .icon(icons::refresh())
+                        .label(course2md::tr!("重试"))
                         .loading(self.reader_ui.offline_opening)
                         .disabled(self.reader_ui.offline_opening)
                         .on_click(cx.listener(|this, _, _, cx| this.play_reader_offline_video(cx)))
                         .into_any_element(),
                 ));
-            }
-            OfflineVideo::Missing => {
-                meta_facts = meta_facts
-                    .child(
-                        theme::accessible_text(
-                            "reader-offline-video-missing",
-                            course2md::tr!("保留的视频已不在"),
-                        )
-                        .text_size(TEXT_AUX)
-                        .text_color(color(GRAY)),
-                    )
-                    .child(reveal(
-                        "reveal-retry-reader-offline-video",
-                        quiet("retry-reader-offline-video")
-                            .icon(icons::refresh())
-                            .label(course2md::tr!("重试"))
-                            .loading(self.reader_ui.offline_opening)
-                            .disabled(self.reader_ui.offline_opening)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.play_reader_offline_video(cx)),
-                            )
-                            .into_any_element(),
-                    ));
-            }
-            OfflineVideo::NotRequested => {}
         }
         // A single version needs no selector. Keep its revision and date in
         // generation information; multiple versions retain a visible choice.
@@ -3243,7 +3584,7 @@ impl Desktop {
         } else {
             None
         };
-        ReaderHeaderParts { back, title, meta }
+        ReaderHeaderParts { title, meta }
     }
 
     /// Find field, match navigation, view switcher, contents toggle, export
@@ -3252,7 +3593,6 @@ impl Desktop {
         &mut self,
         preview: &Rc<notes::Preview>,
         headings: &[(usize, String, Option<f64>)],
-        back: AnyElement,
         metrics: &ReaderMetrics,
         window: &Window,
         cx: &mut Context<Self>,
@@ -3260,43 +3600,40 @@ impl Desktop {
         let (compact, short_reader) = (metrics.compact, metrics.short);
         let reading_note = self.result_tab == 0;
         let (search, short_matches) = self.reader_find_controls(short_reader, window, cx);
-        let mut toolbar = h_flex()
-            .w_full()
-            .min_w_0()
-            .gap_2()
-            .flex_wrap()
-            .items_center()
-            .child(back)
-            .when(!short_reader, |row| {
-                row.child(
-                    SingleChoiceGroup::new("reader-tabs", course2md::tr!("阅读视图"))
-                        .tabs()
-                        .options([
-                            ("note", course2md::tr!("笔记")),
-                            ("images", course2md::tr!("截图")),
-                        ])
-                        .icon("note", icons::article())
-                        .icon("images", icons::image())
-                        .focus_handles(self.reader_ui.view_focus.iter().cloned())
-                        .selected(if reading_note { "note" } else { "images" })
-                        .on_change(cx.listener(|this, selected: &SharedString, window, cx| {
-                            this.select_reader_view(
-                                usize::from(selected.as_ref() == "images"),
-                                window,
-                                cx,
-                            );
-                        })),
-                )
-            });
+        let mut toolbar =
+            h_flex()
+                .flex_shrink_0()
+                .gap_2()
+                .items_center()
+                .when(!short_reader, |row| {
+                    row.child(
+                        SingleChoiceGroup::new("reader-tabs", course2md::tr!("阅读视图"))
+                            .tabs()
+                            .options([
+                                ("note", course2md::tr!("笔记")),
+                                ("images", course2md::tr!("截图")),
+                            ])
+                            .icon("note", icons::article())
+                            .icon("images", icons::image())
+                            .focus_handles(self.reader_ui.view_focus.iter().cloned())
+                            .selected(if reading_note { "note" } else { "images" })
+                            .on_change(cx.listener(|this, selected: &SharedString, window, cx| {
+                                this.select_reader_view(
+                                    usize::from(selected.as_ref() == "images"),
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    )
+                });
         let search_visible = !reading_note || self.reader_ui.find_open;
         let mut search_row = h_flex()
-            .flex_1()
             .min_w_0()
             .gap_2()
             .items_center()
-            .when(search_visible, |row| row.child(search))
+            .when(search_visible, |row| row.w(rems(240. / 14.)).child(search))
             .when(!search_visible, |row| {
-                row.child(div().flex_1()).child(
+                row.child(
                     quiet("reader-open-find")
                         .icon(icons::search())
                         .w(CONTROL_HEIGHT)
@@ -3339,7 +3676,6 @@ impl Desktop {
         let (compact_search, short_search) = if short_reader {
             (None, Some(search_row))
         } else if compact {
-            toolbar = toolbar.child(div().flex_1());
             (Some(search_row.w_full()), None)
         } else {
             toolbar = toolbar.child(search_row);
@@ -3513,18 +3849,16 @@ impl Desktop {
             } else {
                 icons::ellipsis()
             })
-            .label(if short_reader {
-                if reading_note {
-                    course2md::tr!("笔记")
-                } else {
-                    course2md::tr!("截图")
-                }
-            } else {
-                course2md::tr!("更多")
-            })
             .when(short_reader, |button| {
-                button.child(crate::icons::chevron_down().size_4().flex_shrink_0())
+                button
+                    .label(if reading_note {
+                        course2md::tr!("笔记")
+                    } else {
+                        course2md::tr!("截图")
+                    })
+                    .child(crate::icons::chevron_down().size_4().flex_shrink_0())
             })
+            .when(!short_reader, |button| button.w(CONTROL_HEIGHT).px_0())
             .accessibility_label(if short_reader {
                 course2md::tr!("阅读视图与笔记操作")
             } else {
@@ -5143,6 +5477,8 @@ impl Desktop {
 }
 
 fn load_reader_data(preview: &notes::Preview) -> ReaderData {
+    // Typeset formulas here, off the UI thread, so drawing only looks them up.
+    crate::math::prepare(preview.blocks.iter().filter_map(block_text));
     let mut data = ReaderData::default();
     let dir = &preview.course.dir;
     data.export_folder = existing_export_folder(dir, &preview.outputs);
@@ -5735,7 +6071,12 @@ mod flow_tests {
     }
 
     #[test]
-    fn note_items_flatten_title_summary_and_blocks_in_order() {
+    fn note_items_group_the_summary_and_each_section() {
+        let section = |index: usize| PreviewBlock::Heading {
+            text: format!("第 {index} 节").into(),
+            anchor: format!("section-{index}"),
+            seconds: Some(index as f64 * 60.),
+        };
         let mut note = vec![
             PreviewBlock::Heading {
                 text: "摘要".into(),
@@ -5751,29 +6092,37 @@ mod flow_tests {
                 anchor: "key-point-0".into(),
             },
         ];
-        note.extend(blocks(6));
+        note.extend(blocks(2));
+        note.push(section(1));
+        note.extend(blocks(2).into_iter().skip(1));
+        note.push(section(2));
         let items = note_items(&note);
-        assert_eq!(items.len(), 1 + 3 + 6);
-        assert_eq!(items[0], NoteItem::Title);
-        assert_eq!(items[1], NoteItem::SummaryLabel(Some(0)));
-        assert_eq!(items[2], NoteItem::Block(1));
-        assert_eq!(items[3], NoteItem::Block(2));
-        assert_eq!(items[4], NoteItem::Block(3));
+        assert_eq!(
+            items,
+            [
+                NoteItem::Title,
+                NoteItem::Summary { start: 0, end: 3 },
+                NoteItem::Block(3),
+                NoteItem::Block(4),
+                NoteItem::Section {
+                    heading: 5,
+                    end: 7,
+                    ordinal: 0
+                },
+                NoteItem::Section {
+                    heading: 7,
+                    end: 8,
+                    ordinal: 1
+                },
+            ]
+        );
+        // Every block resolves to the item that draws it.
         assert_eq!(note_block_item(&items, 0), Some(1));
-        assert_eq!(note_block_item(&items, 8), Some(items.len() - 1));
+        assert_eq!(note_block_item(&items, 2), Some(1));
+        assert_eq!(note_block_item(&items, 6), Some(4));
         assert_eq!(note_top_block(&items, 0), Some(0));
-        assert_eq!(note_top_block(&items, 2), Some(1));
-
-        // A summary without its heading still leads with an unindexed label.
-        let mut unheaded = vec![PreviewBlock::Paragraph {
-            text: "总览".into(),
-            anchor: "summary-tldr".into(),
-        }];
-        unheaded.extend(blocks(3));
-        let items = note_items(&unheaded);
-        assert_eq!(items[1], NoteItem::SummaryLabel(None));
-        assert_eq!(note_top_block(&items, 0), Some(0));
-        assert_eq!(note_item_block(items[1]), None);
+        assert_eq!(note_top_block(&items, 4), Some(5));
+        assert_eq!(note_item_block(items[0]), None);
 
         assert_eq!(note_items(&[]), [NoteItem::Title]);
     }

@@ -2379,3 +2379,6 @@ ChatGPT 登录已失效，请重新登录	ChatGPT 登录已失效，请重新登
 在浏览器中登录	在浏览器中登录	Sign in with browser	在瀏覽器中登入	ブラウザでサインイン
 ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウント
 例如：我的 API	例如：我的 API	e.g. My API	例如：我的 API	例：マイ API
+播放原视频	播放原视频	Play original video	播放原影片	元の動画を再生
+从 {} 播放原视频	从 {} 播放原视频	Play original video from {}	從 {} 播放原影片	{} から元の動画を再生
+在 {} 打开	在 {} 打开	Open on {}	在 {} 開啟	{} で開く
