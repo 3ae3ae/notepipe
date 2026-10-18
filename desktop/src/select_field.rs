@@ -113,7 +113,7 @@ impl RenderOnce for SelectField {
         let rem = window.rem_size();
         let inset = |value: f32| rem * (value / 14.) - border;
         let name: SharedString = match &self.label {
-            Some(label) => format!("{label}：{}", self.value).into(),
+            Some(label) => course2md::tr!("{}：{}", label, self.value).into(),
             None => self.value.clone(),
         };
         let value_color = if self.disabled { faded(0.38) } else { ink };
@@ -196,7 +196,8 @@ impl RenderOnce for SelectField {
                     .color(faded(0.).into())
                     .foreground(ink.into())
                     .hover(faded(0.08).into())
-                    .active(faded(0.10).into())
+                    // Open is shown by the outline; a fill would hide the icon tile.
+                    .active(faded(0.).into())
                     .shadow(false),
             )
             .w_full()

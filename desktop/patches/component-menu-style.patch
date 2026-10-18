@@ -1,5 +1,5 @@
 diff --git a/crates/component/src/menu/menu_item.rs b/crates/component/src/menu/menu_item.rs
-index 29eea9d1..4d9e7eed 100644
+index 29eea9d1..641d8d3c 100644
 --- a/crates/component/src/menu/menu_item.rs
 +++ b/crates/component/src/menu/menu_item.rs
 @@ -1,6 +1,6 @@
@@ -10,25 +10,27 @@ index 29eea9d1..4d9e7eed 100644
      ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
      StyleRefinement, Styled, Window, prelude::FluentBuilder as _,
  };
-@@ -14,6 +14,9 @@ pub(crate) struct MenuItemElement {
+@@ -14,6 +14,10 @@ pub(crate) struct MenuItemElement {
      style: StyleRefinement,
      disabled: bool,
      selected: bool,
 +    /// A state-layer color for pointer and keyboard highlight that keeps the
 +    /// row's own text color; `None` uses the theme accent pair.
 +    highlight: Option<Hsla>,
++    disabled_color: Option<Hsla>,
      on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
      on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
      children: SmallVec<[AnyElement; 2]>,
-@@ -30,6 +33,7 @@ impl MenuItemElement {
+@@ -30,6 +34,8 @@ impl MenuItemElement {
              style: StyleRefinement::default(),
              disabled: false,
              selected: false,
 +            highlight: None,
++            disabled_color: None,
              on_click: None,
              on_hover: None,
              children: SmallVec::new(),
-@@ -42,6 +46,12 @@ impl MenuItemElement {
+@@ -42,6 +48,18 @@ impl MenuItemElement {
          self
      }
  
@@ -38,10 +40,16 @@ index 29eea9d1..4d9e7eed 100644
 +        self
 +    }
 +
++    /// The text color of a disabled item; `None` uses the muted foreground.
++    pub(crate) fn disabled_color(mut self, color: Hsla) -> Self {
++        self.disabled_color = Some(color);
++        self
++    }
++
      /// Set the accessible label for the menu item.
      pub(crate) fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
          self.aria_label = Some(label.into());
-@@ -111,14 +121,20 @@ impl RenderOnce for MenuItemElement {
+@@ -111,14 +129,20 @@ impl RenderOnce for MenuItemElement {
                  this.on_hover(move |hovered, window, cx| (on_hover)(hovered, window, cx))
              })
              .when(!self.disabled, |this| {
@@ -70,6 +78,18 @@ index 29eea9d1..4d9e7eed 100644
                  .when_some(self.on_click, |this, on_click| {
                      this.on_mouse_down(MouseButton::Left, move |_, _, cx| {
                          cx.stop_propagation();
+@@ -127,7 +151,10 @@ impl RenderOnce for MenuItemElement {
+                 })
+             })
+             .when(self.disabled, |this| {
+-                this.text_color(cx.theme().muted_foreground)
++                this.text_color(
++                    self.disabled_color
++                        .unwrap_or(cx.theme().muted_foreground),
++                )
+             })
+             .children(self.children)
+     }
 diff --git a/crates/component/src/menu/mod.rs b/crates/component/src/menu/mod.rs
 index 3152a15c..7ec67023 100644
 --- a/crates/component/src/menu/mod.rs
@@ -84,10 +104,10 @@ index 3152a15c..7ec67023 100644
  pub(crate) fn init(cx: &mut App) {
      app_menu_bar::init(cx);
 diff --git a/crates/component/src/menu/popup_menu.rs b/crates/component/src/menu/popup_menu.rs
-index 3b4ef1d3..6e963054 100644
+index 3b4ef1d3..67fc1531 100644
 --- a/crates/component/src/menu/popup_menu.rs
 +++ b/crates/component/src/menu/popup_menu.rs
-@@ -1,22 +1,55 @@
+@@ -1,22 +1,60 @@
  use crate::ThemeStyled as _;
  use crate::actions::{Cancel, Confirm, SelectDown, SelectUp};
 +use crate::animation::ease_out_cubic;
@@ -136,9 +156,14 @@ index 3b4ef1d3..6e963054 100644
 +    pub icon_color: Hsla,
 +    pub highlight: Hsla,
 +    pub checked: Hsla,
++    /// Pointer or keyboard highlight on a checked row, over its tonal base.
++    pub checked_highlight: Hsla,
 +    pub checked_foreground: Hsla,
 +    pub danger: Hsla,
++    pub disabled: Hsla,
 +    pub separator: Hsla,
++    /// The narrowest a menu gets; a caller's `min_w` can widen it.
++    pub min_width: Pixels,
 +    /// Entrance length; reduced motion settles the menu on its first frame.
 +    pub enter: Duration,
 +}
@@ -148,7 +173,7 @@ index 3b4ef1d3..6e963054 100644
  pub fn init(cx: &mut App) {
      cx.bind_keys([
          KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
-@@ -41,6 +74,8 @@ pub enum PopupMenuItem {
+@@ -41,6 +79,8 @@ pub enum PopupMenuItem {
          disabled: bool,
          checked: bool,
          is_link: bool,
@@ -157,7 +182,7 @@ index 3b4ef1d3..6e963054 100644
          action: Option<Box<dyn Action>>,
          // For link item
          handler: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
-@@ -77,6 +112,7 @@ impl PopupMenuItem {
+@@ -77,6 +117,7 @@ impl PopupMenuItem {
              checked: false,
              action: None,
              is_link: false,
@@ -165,7 +190,7 @@ index 3b4ef1d3..6e963054 100644
              handler: None,
          }
      }
-@@ -191,6 +227,16 @@ impl PopupMenuItem {
+@@ -191,6 +232,16 @@ impl PopupMenuItem {
          self
      }
  
@@ -182,7 +207,7 @@ index 3b4ef1d3..6e963054 100644
      /// Add a click handler for the menu item.
      ///
      /// Only works for [`PopupMenuItem::Item`] and [`PopupMenuItem::ElementItem`].
-@@ -221,6 +267,7 @@ impl PopupMenuItem {
+@@ -221,6 +272,7 @@ impl PopupMenuItem {
              checked: false,
              action: None,
              is_link: true,
@@ -190,7 +215,7 @@ index 3b4ef1d3..6e963054 100644
              handler: Some(Rc::new(move |_, _, cx| cx.open_url(&href))),
          }
      }
-@@ -323,6 +370,11 @@ pub struct PopupMenu {
+@@ -323,6 +375,11 @@ pub struct PopupMenu {
  
  impl PopupMenu {
      pub(crate) fn new(cx: &mut App) -> Self {
@@ -202,7 +227,7 @@ index 3b4ef1d3..6e963054 100644
          Self {
              focus_handle: cx.focus_handle(),
              action_context: None,
-@@ -333,7 +385,7 @@ impl PopupMenu {
+@@ -333,7 +390,7 @@ impl PopupMenu {
              min_width: None,
              max_width: None,
              max_height: None,
@@ -211,7 +236,7 @@ index 3b4ef1d3..6e963054 100644
              bounds: Bounds::default(),
              scrollable: false,
              scroll_handle: ScrollHandle::default(),
-@@ -1120,8 +1172,7 @@ impl PopupMenu {
+@@ -1120,8 +1177,7 @@ impl PopupMenu {
          has_icon: bool,
          checked: bool,
          icon: Option<Icon>,
@@ -221,7 +246,7 @@ index 3b4ef1d3..6e963054 100644
      ) -> Option<impl IntoElement> {
          if !has_icon {
              return None;
-@@ -1135,7 +1186,10 @@ impl PopupMenu {
+@@ -1135,7 +1191,10 @@ impl PopupMenu {
              Icon::empty()
          };
  
@@ -233,7 +258,7 @@ index 3b4ef1d3..6e963054 100644
      }
  
      #[inline]
-@@ -1170,9 +1224,13 @@ impl PopupMenu {
+@@ -1170,9 +1229,13 @@ impl PopupMenu {
          cx: &mut Context<Self>,
      ) -> MenuItemElement {
          let has_left_icon = options.has_left_icon;
@@ -248,7 +273,7 @@ index 3b4ef1d3..6e963054 100644
          } else {
              None
          };
-@@ -1184,16 +1242,40 @@ impl PopupMenu {
+@@ -1184,16 +1247,49 @@ impl PopupMenu {
          let is_submenu = matches!(item, PopupMenuItem::Submenu { .. });
          let group_name = format!("{}:item-{}", cx.entity().entity_id(), ix);
  
@@ -259,10 +284,18 @@ index 3b4ef1d3..6e963054 100644
 +            (Size::Small, _) => (px(20.).into(), options.radius.half()),
 +            (_, Some(style)) => (style.item_height, style.item_radius),
 +            _ => (px(26.).into(), options.radius),
-         };
++        };
 +        // The menu's own icons are secondary; danger and checked rows color
 +        // theirs with the row's text.
-+        let tinted = item.is_checked() || matches!(item, PopupMenuItem::Item { danger: true, .. });
++        let disabled = match item {
++            PopupMenuItem::Item { disabled, .. }
++            | PopupMenuItem::ElementItem { disabled, .. }
++            | PopupMenuItem::Submenu { disabled, .. } => *disabled,
++            _ => false,
+         };
++        let tinted = disabled
++            || item.is_checked()
++            || matches!(item, PopupMenuItem::Item { danger: true, .. });
 +        let icon_style = style.map(|mut style| {
 +            if tinted {
 +                style.icon_color = gpui::transparent_black();
@@ -283,10 +316,11 @@ index 3b4ef1d3..6e963054 100644
 +                            .text_color(style.checked_foreground)
 +                    })
 +                    .highlight(if item.is_checked() {
-+                        style.checked
++                        style.checked_highlight
 +                    } else {
 +                        style.highlight
-+                    }),
++                    })
++                    .disabled_color(style.disabled),
 +                None => this.text_sm().px(INNER_PADDING),
 +            })
              .py_0()
@@ -294,7 +328,7 @@ index 3b4ef1d3..6e963054 100644
              .rounded(radius)
              .items_center()
              .selected(selected)
-@@ -1210,22 +1292,48 @@ impl PopupMenu {
+@@ -1210,22 +1306,48 @@ impl PopupMenu {
              .when_some(item.a11y_label(), |this, label| this.aria_label(label));
  
          match item {
@@ -359,7 +393,7 @@ index 3b4ef1d3..6e963054 100644
              PopupMenuItem::ElementItem {
                  render,
                  icon,
-@@ -1244,13 +1352,11 @@ impl PopupMenu {
+@@ -1244,13 +1366,11 @@ impl PopupMenu {
                          .min_h(item_height)
                          .items_center()
                          .gap_x_1()
@@ -378,7 +412,7 @@ index 3b4ef1d3..6e963054 100644
                          .child((render)(window, cx))
                          .children(right_check_icon.map(|icon| icon.ml_3())),
                  ),
-@@ -1260,6 +1366,7 @@ impl PopupMenu {
+@@ -1260,6 +1380,7 @@ impl PopupMenu {
                  action,
                  disabled,
                  is_link,
@@ -386,7 +420,7 @@ index 3b4ef1d3..6e963054 100644
                  ..
              } => {
                  let show_link_icon = *is_link && self.external_link_icon;
-@@ -1272,15 +1379,16 @@ impl PopupMenu {
+@@ -1272,15 +1393,16 @@ impl PopupMenu {
                      )
                  })
                  .disabled(*disabled)
@@ -410,7 +444,7 @@ index 3b4ef1d3..6e963054 100644
                  .child(
                      h_flex()
                          .w_full()
-@@ -1321,13 +1429,11 @@ impl PopupMenu {
+@@ -1321,13 +1443,11 @@ impl PopupMenu {
                          .size_full()
                          .items_center()
                          .gap_x_1()
@@ -429,7 +463,7 @@ index 3b4ef1d3..6e963054 100644
                          .child(
                              h_flex()
                                  .flex_1()
-@@ -1335,11 +1441,14 @@ impl PopupMenu {
+@@ -1335,11 +1455,14 @@ impl PopupMenu {
                                  .items_center()
                                  .justify_between()
                                  .child(label.clone())
@@ -447,7 +481,7 @@ index 3b4ef1d3..6e963054 100644
                          ),
                  )
                  .when(selected, |this| {
-@@ -1381,6 +1490,20 @@ struct RenderOptions {
+@@ -1381,6 +1504,20 @@ struct RenderOptions {
      has_left_icon: bool,
      check_side: Side,
      radius: Pixels,
@@ -468,7 +502,7 @@ index 3b4ef1d3..6e963054 100644
  }
  
  impl Render for PopupMenu {
-@@ -1419,13 +1542,16 @@ impl Render for PopupMenu {
+@@ -1419,13 +1556,16 @@ impl Render for PopupMenu {
              .any(|item| item.has_left_icon(self.check_side));
  
          let max_width = self.max_width();
@@ -486,7 +520,7 @@ index 3b4ef1d3..6e963054 100644
              .id("popup-menu")
              .role(Role::Menu)
              .key_context(CONTEXT)
-@@ -1439,12 +1565,14 @@ impl Render for PopupMenu {
+@@ -1439,14 +1579,17 @@ impl Render for PopupMenu {
              .on_mouse_down_out(cx.listener(Self::on_mouse_down_out))
              .popover_style(cx)
              .text_color(cx.theme().popover_foreground)
@@ -500,8 +534,11 @@ index 3b4ef1d3..6e963054 100644
 +                    .when_some(style, |this, style| this.p(style.padding))
                      .gap_y_0p5()
                      .min_w(rems(8.))
++                    .when_some(style, |this, style| this.min_w(style.min_width))
                      .when_some(self.min_width, |this, min_width| this.min_w(min_width))
-@@ -1467,7 +1595,24 @@ impl Render for PopupMenu {
+                     .max_w(max_width)
+                     .when(self.scrollable, |this| {
+@@ -1467,7 +1610,24 @@ impl Render for PopupMenu {
              .when(self.scrollable, |this| {
                  // TODO: When the menu is limited by `overflow_y_scroll`, the sub-menu will cannot be displayed.
                  this.vertical_scrollbar(&self.scroll_handle)

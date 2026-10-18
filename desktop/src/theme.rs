@@ -228,9 +228,12 @@ fn menu_style(dark: bool) -> gpui_component::menu::MenuStyle {
         icon_color: color(GRAY).into(),
         highlight: layer(0.08).into(),
         checked: color(SECONDARY_CONTAINER).into(),
+        checked_highlight: blend(color(SECONDARY_CONTAINER), ink, 0.08).into(),
         checked_foreground: color(ON_SECONDARY_CONTAINER).into(),
         danger: color(DANGER).into(),
+        disabled: layer(0.38).into(),
         separator: color(HAIRLINE).into(),
+        min_width: px(220.),
         enter: std::time::Duration::from_millis(crate::motion::ENTER_MS),
     }
 }
@@ -245,6 +248,9 @@ pub const RADIUS_SMALL: Pixels = px(8.);
 /// Menus and the select fields that open them.
 pub const MENU_RADIUS: Pixels = px(16.);
 pub const FIELD_RADIUS: Pixels = px(12.);
+/// A select at the trailing end of a settings row keeps a readable width
+/// instead of spanning the row.
+pub const INLINE_SELECT_WIDTH: Rems = rems(280. / 14.);
 /// Ordinary controls share this height, including padding, at every text scale.
 pub const CONTROL_HEIGHT: Rems = rems(40. / 14.);
 /// Horizontal inset of an item inside a settings card.

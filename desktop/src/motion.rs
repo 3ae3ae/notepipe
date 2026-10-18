@@ -40,6 +40,24 @@ pub fn state_enter<E: IntoElement + Styled + 'static>(
     id: impl Into<ElementId>,
     view: E,
 ) -> AnyElement {
+    rise_in(id, view, 8.)
+}
+
+/// A destination, settings category or secondary page arrives as one unit;
+/// navigation and the app bar stay put.
+pub fn page_enter<E: IntoElement + Styled + 'static>(
+    id: impl Into<ElementId>,
+    view: E,
+) -> AnyElement {
+    rise_in(id, view, 12.)
+}
+
+/// Fades in while rising `distance` px into place.
+fn rise_in<E: IntoElement + Styled + 'static>(
+    id: impl Into<ElementId>,
+    view: E,
+    distance: f32,
+) -> AnyElement {
     let id = id.into();
     #[cfg(feature = "performance")]
     let trace_id = id.clone();
@@ -51,24 +69,8 @@ pub fn state_enter<E: IntoElement + Styled + 'static>(
         move |view, t| {
             #[cfg(feature = "performance")]
             crate::performance::record_motion(trace_id.clone(), 1., t);
-            view.relative().top(px(8. * (1. - t))).opacity(t)
+            view.relative().top(px(distance * (1. - t))).opacity(t)
         },
-    )
-    .into_any_element()
-}
-
-/// A destination, settings category or secondary page arrives as one unit:
-/// a short fade while rising into place. Navigation and the app bar stay put.
-pub fn page_enter<E: IntoElement + Styled + 'static>(
-    id: impl Into<ElementId>,
-    view: E,
-) -> AnyElement {
-    view.with_animation(
-        id,
-        Animation::new(Duration::from_millis(VALUE_MS))
-            .with_easing(ease_out)
-            .with_max_fps(60.),
-        |view, t| view.relative().top(px(12. * (1. - t))).opacity(t),
     )
     .into_any_element()
 }
