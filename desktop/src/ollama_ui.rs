@@ -1,8 +1,8 @@
-//! Ollama 本地服务发现：探测本机服务与已下载模型，一键预填 AI 服务编辑器。
+//! Ollama 本地服务发现：探测本机服务与已下载模型，作为 Ollama 服务表单的地址与模型候选。
 //! Ollama 的 OpenAI 兼容端点无需凭据，「登录」即服务发现 + 配置（见 core login/ollama）。
 use super::*;
-use crate::preferences::{Authentication, ServiceDraft, ServiceProtocol, ServicePurpose};
-use crate::theme::*;
+use crate::preferences::{ServiceProtocol, ServicePurpose};
+use crate::settings_ui::service_form::{FormField, FormOwner};
 
 #[derive(Default)]
 pub(crate) struct OllamaUi {
@@ -45,6 +45,7 @@ impl Desktop {
                 }
                 this.ollama.working = false;
                 this.ollama.status = Some(result);
+                this.ollama_apply_catalog(cx);
                 cx.notify();
             });
         })
@@ -52,150 +53,43 @@ impl Desktop {
         cx.notify();
     }
 
-    /// 检测到的服务地址是否已有对应的 Ollama AI 服务条目；返回其版本 id
-    fn ollama_added_service(&self) -> Option<String> {
-        let Some(Ok((host, _))) = &self.ollama.status else {
-            return None;
-        };
-        let detected = url::Url::parse(host).ok()?;
-        let detected = (
-            detected.host_str()?.to_owned(),
-            detected.port_or_known_default(),
-        );
-        self.preferences
-            .latest_versions()
-            .values()
-            .find(|version| {
-                version.config.protocol == ServiceProtocol::OllamaChat
-                    && !self
-                        .preferences
-                        .service_retired_in_snapshot(&version.service_id)
-                    && url::Url::parse(&version.config.endpoint)
-                        .ok()
-                        .and_then(|url| {
-                            Some((url.host_str()?.to_owned(), url.port_or_known_default()))
-                        })
-                        .as_ref()
-                        == Some(&detected)
-            })
-            .map(|version| version.id.clone())
-    }
-
-    /// 用检测结果预填 AI 服务编辑器：协议、地址与首个模型都是受支持的默认值，
-    /// 保存前仍可修改（编辑器是发布动作的唯一入口）。
-    fn ollama_add_service(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut draft = ServiceDraft::new(ServicePurpose::Ai);
-        draft.protocol = ServiceProtocol::OllamaChat;
-        draft.authentication = Authentication::None;
-        draft.name = course2md::tr!("Ollama 本地服务").into();
-        if let Some(Ok((host, models))) = &self.ollama.status {
-            draft.address = host.clone();
-            draft.model = models.first().cloned().unwrap_or_default();
+    /// The detected local address and model count, once a check found one.
+    pub(crate) fn ollama_detected(&self) -> Option<(String, usize)> {
+        match &self.ollama.status {
+            Some(Ok((host, models))) => Some((host.clone(), models.len())),
+            _ => None,
         }
-        self.open_service_draft(draft, None, None, window, cx);
     }
 
-    /// 设置「服务与账号」页的 Ollama 卡片：状态、说明与动作（与 Codex 卡片同一组合）。
-    pub(crate) fn ollama_account_section(&self, cx: &mut Context<Self>) -> Div {
-        let id = "settings-ollama-account";
-        let working = self.ollama.working;
-        let added_version = self.ollama_added_service();
-        // 状态只占标题行的一个徽章位：已检测到且已有对应服务时显示「已添加」
-        let (kind, label) = if working {
-            (BadgeKind::Progress, course2md::tr!("正在检查"))
+    /// Ollama forms read the local service: a check runs once, later forms
+    /// reuse its result.
+    pub(crate) fn ollama_prepare_form(&mut self, cx: &mut Context<Self>) {
+        if self.ollama.checked() {
+            self.ollama_apply_catalog(cx);
         } else {
-            match &self.ollama.status {
-                Some(Ok(_)) if added_version.is_some() => {
-                    (BadgeKind::Success, course2md::tr!("已添加"))
-                }
-                Some(Ok(_)) => (BadgeKind::Success, course2md::tr!("已检测到")),
-                Some(Err(_)) => (BadgeKind::Neutral, course2md::tr!("未检测到")),
-                None => (BadgeKind::Neutral, course2md::tr!("尚未检查")),
-            }
-        };
-        let detail = match &self.ollama.status {
-            Some(Ok((host, models))) => {
-                let preview: Vec<&str> =
-                    models.iter().take(3).map(|model| model.as_str()).collect();
-                Some(if models.len() > preview.len() {
-                    course2md::tr!(
-                        "{} · {} 个模型：{} 等",
-                        host,
-                        models.len(),
-                        preview.join("、")
-                    )
-                } else if preview.is_empty() {
-                    course2md::tr!("{} · 还没有已下载的模型", host)
-                } else {
-                    course2md::tr!("{} · {} 个模型：{}", host, models.len(), preview.join("、"))
-                })
-            }
-            _ => None,
-        };
-        let failure = match &self.ollama.status {
-            Some(Err(message)) => Some(message.clone()),
-            _ => None,
-        };
-        let mut actions: Vec<AnyElement> = Vec::new();
-        // 已有对应服务条目时不再邀请重复添加：给直达入口，服务列表仍是唯一管理面
-        match added_version {
-            Some(version_id) => actions.push(
-                quiet(SharedString::from(format!("{id}-open-added")))
-                    .when(self.page == Page::Settings, SettingsText::settings_text)
-                    .icon(icons::edit())
-                    .label(course2md::tr!("查看服务"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_settings_service_editor(
-                            ServicePurpose::Ai,
-                            Some(version_id.clone()),
-                            window,
-                            cx,
-                        );
-                    }))
-                    .into_any_element(),
-            ),
-            None => actions.push(
-                outline_pill(SharedString::from(format!("{id}-add")))
-                    .when(self.page == Page::Settings, SettingsText::settings_text)
-                    .icon(icons::plus())
-                    .label(course2md::tr!("添加 Ollama 服务"))
-                    .disabled(working)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.ollama_add_service(window, cx);
-                    }))
-                    .into_any_element(),
-            ),
+            self.ollama_refresh(cx);
         }
-        actions.insert(
-            0,
-            quiet(SharedString::from(format!("{id}-recheck")))
-                .when(self.page == Page::Settings, SettingsText::settings_text)
-                .w(CONTROL_HEIGHT)
-                .min_w(CONTROL_HEIGHT)
-                .px_0()
-                .flex_shrink_0()
-                .icon(icons::refresh())
-                .accessibility_label(course2md::tr!("重新检查 Ollama"))
-                .tooltip(course2md::tr!("重新检查"))
-                .disabled(working)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.ollama_refresh(cx);
-                }))
-                .into_any_element(),
-        );
-        crate::settings_ui::AccountCard {
-            id,
-            icon: icons::server(),
-            title: course2md::tr!("Ollama 本地服务"),
-            status: (kind, label),
-            detail,
-            busy: working,
-            lines: failure
-                .map(|message| ("failure", message, false))
-                .into_iter()
-                .collect(),
-            actions,
+    }
+
+    /// Detected models become candidates on every form still editing an Ollama
+    /// service; an empty address or model is filled, typed values stay.
+    pub(crate) fn ollama_apply_catalog(&mut self, cx: &mut Context<Self>) {
+        let Some(Ok((host, models))) = self.ollama.status.clone() else {
+            return;
+        };
+        let window = self.window;
+        for owner in [FormOwner::Editor, FormOwner::Setup(ServicePurpose::Ai)] {
+            let Some(form) = self
+                .service_form_mut(owner)
+                .filter(|form| form.draft.protocol == ServiceProtocol::OllamaChat)
+            else {
+                continue;
+            };
+            form.models.prime(models.clone());
+            let address = form.input(FormField::Address).clone();
+            let model = form.input(FormField::Model).clone();
+            crate::codex_ui::autofill_input(window, address, Some(host.clone()), cx);
+            crate::codex_ui::autofill_input(window, model, models.first().cloned(), cx);
         }
-        .render(cx)
     }
 }

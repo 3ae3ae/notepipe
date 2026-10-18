@@ -17,18 +17,44 @@ impl Desktop {
             (false, false) => course2md::tr!("添加 AI 服务"),
             (false, true) => course2md::tr!("编辑 AI 服务"),
         };
+        // A secondary page of 服务与账号: the way back names where it leads.
+        let header = h_flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap_2()
+            .ml(-QUIET_INSET)
+            .child(
+                quiet("service-editor-back")
+                    .w(CONTROL_HEIGHT)
+                    .px_0()
+                    .text_color(color(INK))
+                    .icon(icons::arrow_left())
+                    .accessibility_label(course2md::tr!("返回服务与账号"))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.close_service_editor(window, cx)),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .child(
+                        text("service-editor-parent", SettingsTab::Services.label())
+                            .text_size(TEXT_AUX)
+                            .text_color(color(GRAY)),
+                    )
+                    .child(
+                        text("service-editor-inline-title", title)
+                            .role(Role::Heading)
+                            .text_size(rems(24. / 14.))
+                            .line_height(rems(32. / 14.)),
+                    ),
+            );
         v_flex()
             .w_full()
             .h_full()
             .min_h_0()
-            .gap_3()
-            .child(
-                text("service-editor-inline-title", title)
-                    .flex_shrink_0()
-                    .role(Role::Heading)
-                    .text_size(TEXT_TITLE)
-                    .font_weight(FontWeight::SEMIBOLD),
-            )
+            .gap(rems(20. / 14.))
+            .child(header)
             .child(self.service_editor_content(true, window, cx))
     }
     pub fn task_service_picker(&self, purpose: ServicePurpose, cx: &mut Context<Self>) -> Div {
@@ -65,15 +91,6 @@ impl Desktop {
                 ServicePurpose::Ai => refs.llm,
             }
         };
-        let editor_version = current
-            .as_deref()
-            .and_then(|id| self.preferences.version(id))
-            .filter(|version| {
-                !self
-                    .preferences
-                    .service_retired_in_snapshot(&version.service_id)
-            })
-            .map(|version| version.id.clone());
         let latest: BTreeMap<String, ServiceVersion> = self
             .preferences
             .latest_versions()
@@ -112,15 +129,26 @@ impl Desktop {
             }
             choices.push(version);
         }
-        // With no saved service the add action alone sits at the trailing edge.
-        let mut controls = h_flex()
-            .w_full()
-            .min_w_0()
-            .items_start()
-            .gap_2()
-            .when(choices.is_empty(), |row| row.justify_end());
-        if !choices.is_empty() {
-            let index = purpose as usize * 2 + current_task as usize;
+        let index = purpose as usize * 2 + current_task as usize;
+        let controls = if choices.is_empty() {
+            // Nothing to choose yet: the one action is adding a service.
+            h_flex().w_full().justify_end().child(
+                outline_pill(("configure-service", index))
+                    .settings_text()
+                    .icon(icons::plus())
+                    .label(match purpose {
+                        ServicePurpose::Speech => course2md::tr!("添加语音服务"),
+                        ServicePurpose::Ai => course2md::tr!("添加 AI 服务"),
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if current_task {
+                            this.open_task_service_editor(purpose, window, cx)
+                        } else {
+                            this.open_settings_service_editor(purpose, None, window, cx);
+                        }
+                    })),
+            )
+        } else {
             let name = current_version
                 .as_ref()
                 .map(|version| version.config.name.clone())
@@ -131,7 +159,11 @@ impl Desktop {
                 } else {
                     ""
                 };
-                format!("{}{state}", version.config.model)
+                format!(
+                    "{} · {}{state}",
+                    version.config.protocol.choice_label(),
+                    version.config.model
+                )
             });
             let menu_choices = choices
                 .into_iter()
@@ -141,7 +173,7 @@ impl Desktop {
                         .filter(|old| old.service_id == version.service_id)
                     {
                         if old.id == version.id {
-                            course2md::tr!("当前使用修改前的配置").into()
+                            course2md::tr!("修改前的配置").into()
                         } else {
                             let changed = version.changes_since(old);
                             if changed.is_empty() {
@@ -150,8 +182,6 @@ impl Desktop {
                                 course2md::tr!("已修改：{}", changed.join(course2md::tr!("、")))
                             }
                         }
-                    } else if current.as_ref() == Some(&version.id) {
-                        course2md::tr!("当前使用").into()
                     } else {
                         String::new()
                     };
@@ -159,87 +189,38 @@ impl Desktop {
                 })
                 .collect::<Vec<_>>();
             let entity = cx.entity().downgrade();
-            let picker = control(("service-choice", index))
-                .settings_text()
-                .w_full()
-                .min_w_0()
-                .h_auto()
-                .when(current_task, |button| {
-                    button.min_h(rems(56. / 14.)).rounded(RADIUS_SMALL)
-                })
-                .py_2()
-                .accessibility_label(course2md::tr!(
-                    "{}：{}{}",
-                    if purpose == ServicePurpose::Speech {
-                        course2md::tr!("语音服务")
-                    } else {
-                        course2md::tr!("AI 服务")
-                    },
-                    name,
-                    detail
-                        .as_ref()
-                        .map(|detail| course2md::tr!("，{}", detail))
-                        .unwrap_or_default()
-                ))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .items_start()
-                        .font_weight(FontWeight::NORMAL)
-                        .child(
-                            text(("service-choice-name", index), name)
-                                .w_full()
-                                .whitespace_normal(),
-                        )
-                        .when_some(detail, |view, detail| {
-                            view.child(
-                                text(("service-choice-detail", index), detail)
-                                    .w_full()
-                                    .whitespace_normal()
-                                    .text_size(TEXT_SETTINGS_AUX)
-                                    .text_color(color(GRAY)),
-                            )
-                        }),
-                )
-                .child(crate::icons::chevron_down().size_4().flex_shrink_0())
-                .dropdown_menu(move |menu, window, _| {
-                    let width = (window.bounds().size.width - px(48.)).min(px(560.));
-                    menu_choices.iter().fold(
-                        menu.min_w(width.min(px(360.)))
-                            .max_w(width)
-                            .scrollable(true),
+            let purpose_label = match purpose {
+                ServicePurpose::Speech => course2md::tr!("语音服务"),
+                ServicePurpose::Ai => course2md::tr!("AI 服务"),
+            };
+            let field = SelectField::new(("service-choice", index), name, move |menu, _, _| {
+                let manage = entity.clone();
+                menu_choices
+                    .iter()
+                    .fold(
+                        menu.scrollable(true).label(course2md::tr!("已添加的服务")),
                         |menu, (version, state)| {
                             let id = version.id.clone();
                             let name = version.config.name.clone();
-                            let detail = format!(
-                                "{} · {} · v{}",
-                                version.config.model, version.config.endpoint, version.number
+                            let mut detail = format!(
+                                "{} · {}",
+                                version.config.protocol.choice_label(),
+                                version.config.model
                             );
-                            let state = state.clone();
+                            if !state.is_empty() {
+                                detail = format!("{detail} · {state}");
+                            }
                             let entity = entity.clone();
                             menu.item(
                                 PopupMenuItem::element(move |_, _| {
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .py_1()
-                                        .gap_1()
-                                        .whitespace_normal()
-                                        .child(div().child(name.clone()))
-                                        .child(
-                                            div()
-                                                .text_size(TEXT_SETTINGS_AUX)
-                                                .child(detail.clone()),
-                                        )
-                                        .when(!state.is_empty(), |view| {
-                                            view.child(
-                                                div()
-                                                    .text_size(TEXT_SETTINGS_AUX)
-                                                    .child(state.clone()),
-                                            )
-                                        })
+                                    crate::settings_ui::service_form::two_line_item(
+                                        name.clone(),
+                                        detail.clone(),
+                                    )
                                 })
+                                .icon(crate::settings_ui::service_form::protocol_icon(
+                                    version.config.protocol,
+                                ))
                                 .checked(current.as_ref() == Some(&id))
                                 .on_click(move |_, _, cx| {
                                     let _ = entity.update(cx, |this, cx| {
@@ -263,51 +244,32 @@ impl Desktop {
                             )
                         },
                     )
-                });
-            controls = controls.child(
+                    .separator()
+                    .item(
+                        PopupMenuItem::new(match purpose {
+                            ServicePurpose::Speech => course2md::tr!("添加或管理语音服务…"),
+                            ServicePurpose::Ai => course2md::tr!("添加或管理 AI 服务…"),
+                        })
+                        .icon(icons::plus())
+                        .on_click(move |_, window, cx| {
+                            let _ = manage.update(cx, |this, cx| this.manage_services(window, cx));
+                        }),
+                    )
+            })
+            .when_some(detail, |field, detail| field.detail(detail))
+            .when_some(current_version.as_ref(), |field, version| {
+                field.icon(crate::settings_ui::service_form::protocol_icon(
+                    version.config.protocol,
+                ))
+            })
+            .when(current_task, |field| field.label(purpose_label));
+            h_flex().w_full().min_w_0().child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(self.reveal_setting(("service-choice-reveal", index), picker)),
-            );
-        }
-        controls = controls.child(
-            control((
-                "configure-service",
-                purpose as usize * 2 + current_task as usize,
-            ))
-            .settings_text()
-            .icon(if editor_version.is_some() {
-                icons::edit()
-            } else {
-                icons::plus()
-            })
-            .ghost()
-            .when(current_task && editor_version.is_some(), |button| {
-                button
-                    .w(rems(48. / 14.))
-                    .h(rems(56. / 14.))
-                    .px_0()
-                    .accessibility_label(course2md::tr!("编辑服务"))
-                    .tooltip(course2md::tr!("编辑服务"))
-            })
-            .when(!current_task || editor_version.is_none(), |button| {
-                button.label(match (purpose, editor_version.is_some()) {
-                    (_, true) => course2md::tr!("编辑"),
-                    (ServicePurpose::Speech, false) => course2md::tr!("添加语音服务"),
-                    (ServicePurpose::Ai, false) => course2md::tr!("添加 AI 服务"),
-                })
-            })
-            .self_start()
-            .mr(-crate::theme::QUIET_INSET)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if current_task {
-                    this.open_task_service_editor(purpose, window, cx)
-                } else {
-                    this.open_settings_service_editor(purpose, editor_version.clone(), window, cx);
-                }
-            })),
-        );
+                    .child(self.reveal_setting(("service-choice-reveal", index), field)),
+            )
+        };
         view = view.child(controls);
         if current_task
             && self
@@ -409,6 +371,15 @@ impl Desktop {
                 },
                 view,
             )
+        }
+    }
+    /// The services list is where services are added, tested and removed.
+    fn manage_services(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::Settings {
+            self.select_settings_tab(SettingsTab::Services, window, cx);
+        } else {
+            self.settings_tab = SettingsTab::Services;
+            self.open_settings(window, cx);
         }
     }
     fn bind_service(
@@ -629,8 +600,12 @@ impl Desktop {
             save_failed: false,
             origin_tab,
         });
-        if draft_protocol == ServiceProtocol::CodexResponses {
-            self.codex_refresh_status(crate::codex_ui::CodexSurface::Editor, cx);
+        match draft_protocol {
+            ServiceProtocol::CodexResponses => {
+                self.codex_refresh_status(crate::codex_ui::CodexSurface::Editor, cx)
+            }
+            ServiceProtocol::OllamaChat => self.ollama_prepare_form(cx),
+            _ => {}
         }
         if inline {
             self.settings_tab = SettingsTab::Services;
@@ -746,31 +721,34 @@ impl Desktop {
             .pb_3();
         use crate::settings_ui::{SettingsGroup, setting_surface};
         // 连接字段与其他设置页同一组卡片：每个字段一项，项间内缩分隔线
+        // The type comes first: it decides which of the remaining fields exist.
         let mut connection =
-            SettingsGroup::new("service-connection-heading", course2md::tr!("连接信息"))
-                .child(setting_surface().child(self.service_field(
-                    FormField::Name,
-                    course2md::tr!("服务名称"),
-                    None,
-                )))
-                .child(
-                    setting_surface()
-                        .child(setting_label(
-                            "service-protocol-heading",
-                            course2md::tr!("服务类型"),
-                        ))
-                        .child(
-                            self.service_protocol_choices(
-                                FormOwner::Editor,
-                                self.setting_choices(
-                                    "service-protocol",
-                                    course2md::tr!("服务类型"),
-                                ),
-                                cx,
-                            )
-                            .disabled(awaiting_binding),
+            SettingsGroup::new("service-connection-heading", course2md::tr!("连接信息")).child(
+                setting_surface()
+                    .py(rems(20. / 14.))
+                    .child(self.reveal_setting(
+                        "service-protocol-reveal",
+                        self.service_type_field(
+                            FormOwner::Editor,
+                            "service-protocol",
+                            awaiting_binding,
+                            cx,
                         ),
-                );
+                    )),
+            );
+        // Codex 账号连接：登录态决定模型目录与可用性
+        if protocol == ServiceProtocol::CodexResponses {
+            connection = connection.child(setting_surface().child(self.codex_account_section(
+                crate::codex_ui::CodexSurface::Editor,
+                awaiting_binding,
+                cx,
+            )));
+        }
+        connection = connection.child(setting_surface().child(self.service_field(
+            FormField::Name,
+            course2md::tr!("服务名称"),
+            None,
+        )));
         // Codex 端点固定、凭据由登录态持有：不展示地址与认证编辑
         if protocol != ServiceProtocol::CodexResponses {
             let address = editor.form.value(FormField::Address, cx);
@@ -896,14 +874,6 @@ impl Desktop {
                     ),
                 );
             }
-        }
-        // Codex 账号连接：登录态决定模型目录与可用性
-        if protocol == ServiceProtocol::CodexResponses {
-            connection = connection.child(setting_surface().child(self.codex_account_section(
-                crate::codex_ui::CodexSurface::Editor,
-                awaiting_binding,
-                cx,
-            )));
         }
         connection = connection.child(
             setting_surface().child(
@@ -1358,7 +1328,7 @@ impl Desktop {
         cx.notify();
         valid
     }
-    fn start_service_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_service_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .settings_ui
             .editor

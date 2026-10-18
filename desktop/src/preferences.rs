@@ -231,20 +231,6 @@ pub enum InterfaceLanguage {
 impl InterfaceLanguage {
     pub const ALL: [Self; 5] = [Self::System, Self::En, Self::ZhHans, Self::ZhHant, Self::Ja];
 
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::En => "en",
-            Self::ZhHans => "zh-Hans",
-            Self::ZhHant => "zh-Hant",
-            Self::Ja => "ja",
-        }
-    }
-
-    pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|language| language.id() == id)
-    }
-
     pub fn resolve(self) -> course2md::i18n::Lang {
         match self {
             Self::System => course2md::i18n::Lang::detect(),
@@ -308,27 +294,15 @@ impl ServiceProtocol {
         }
     }
 
+    /// Choice order: account sign-in, then this computer, then API services.
     pub const ALL: [Self; 5] = [
         Self::SpeechTranscriptions,
         Self::SpeechChat,
-        Self::AiChat,
-        Self::OllamaChat,
         Self::CodexResponses,
+        Self::OllamaChat,
+        Self::AiChat,
     ];
 
-    /// Stable choice id: the saved (serde) name.
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::SpeechTranscriptions => "speech_transcriptions",
-            Self::SpeechChat => "speech_chat",
-            Self::AiChat => "ai_chat",
-            Self::OllamaChat => "ollama_chat",
-            Self::CodexResponses => "codex_responses",
-        }
-    }
-    pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|protocol| protocol.id() == id)
-    }
     /// The services of one purpose, in choice order.
     pub fn for_purpose(purpose: ServicePurpose) -> impl Iterator<Item = Self> {
         Self::ALL
@@ -357,6 +331,26 @@ impl ServiceProtocol {
             Self::AiChat => course2md::tr!("OpenAI 兼容服务"),
             Self::OllamaChat => course2md::tr!("Ollama 本地服务"),
             Self::CodexResponses => course2md::tr!("OpenAI Codex 订阅"),
+        }
+    }
+
+    /// How the service is reached, heading its group in the type menu.
+    pub fn choice_group(self) -> &'static str {
+        match self {
+            Self::CodexResponses => course2md::tr!("用账号登录"),
+            Self::OllamaChat => course2md::tr!("本机"),
+            Self::SpeechTranscriptions | Self::SpeechChat | Self::AiChat => "API",
+        }
+    }
+
+    /// What choosing this type means for the person setting it up.
+    pub fn choice_detail(self) -> &'static str {
+        match self {
+            Self::SpeechTranscriptions => course2md::tr!("上传音频，返回转写文字"),
+            Self::SpeechChat => course2md::tr!("支持音频输入的对话模型"),
+            Self::AiChat => course2md::tr!("填写接口地址和 API Key，适用于大多数云端服务"),
+            Self::OllamaChat => course2md::tr!("使用本机运行的模型，不需要 API Key"),
+            Self::CodexResponses => course2md::tr!("使用 ChatGPT 订阅，不需要 API Key"),
         }
     }
 
@@ -2635,14 +2629,6 @@ mod tests {
         assert!(!config.llm.enabled && config.llm.summarize && !config.llm.vision);
         assert_eq!(config.defaults.out, Some(PathBuf::from("/test-library")));
         assert!(config.llm.api_key.is_empty());
-    }
-
-    #[test]
-    fn protocol_choice_ids_are_the_saved_names() {
-        for protocol in ServiceProtocol::ALL {
-            assert_eq!(serde_json::to_value(protocol).unwrap(), protocol.id());
-            assert_eq!(ServiceProtocol::from_id(protocol.id()), Some(protocol));
-        }
     }
 
     #[test]

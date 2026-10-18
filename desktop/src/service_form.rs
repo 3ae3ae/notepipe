@@ -235,6 +235,31 @@ impl ServiceForm {
     }
 }
 
+/// A menu entry with a name and a quieter line saying what it means.
+pub(crate) fn two_line_item(
+    name: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+) -> impl IntoElement {
+    v_flex()
+        .flex_1()
+        .min_w_0()
+        .py(rems(8. / 14.))
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .line_height(rems(20. / 14.))
+                .child(name.into()),
+        )
+        .child(
+            div()
+                .text_size(TEXT_AUX)
+                .line_height(rems(16. / 14.))
+                .opacity(0.8)
+                .whitespace_normal()
+                .child(detail.into()),
+        )
+}
+
 pub(crate) fn protocol_icon(protocol: ServiceProtocol) -> Icon {
     match protocol {
         ServiceProtocol::SpeechTranscriptions => icons::mic(),
@@ -309,40 +334,66 @@ impl Desktop {
         };
         form.switch_protocol(protocol, window, cx);
         self.service_form_edited(owner, true);
-        if protocol == ServiceProtocol::CodexResponses {
-            self.codex_refresh_status(owner.codex_surface(), cx);
+        match protocol {
+            ServiceProtocol::CodexResponses => self.codex_refresh_status(owner.codex_surface(), cx),
+            ServiceProtocol::OllamaChat => self.ollama_prepare_form(cx),
+            _ => {}
         }
         cx.notify();
     }
 
-    /// The service type choice for this form's purpose.
-    pub(crate) fn service_protocol_choices(
+    /// The service type select for this form's purpose: one menu grouped by
+    /// how each type is reached, each entry saying what choosing it means.
+    pub(crate) fn service_type_field(
         &self,
         owner: FormOwner,
-        group: SingleChoiceGroup,
+        id: impl Into<ElementId>,
+        disabled: bool,
         cx: &mut Context<Self>,
-    ) -> SingleChoiceGroup {
-        let Some(form) = self.service_form(owner) else {
-            return group;
-        };
-        let protocols: Vec<_> =
-            ServiceProtocol::for_purpose(form.draft.protocol.purpose()).collect();
-        protocols
-            .iter()
-            .fold(
-                group.options(
-                    protocols
-                        .iter()
-                        .map(|protocol| (protocol.id(), protocol.choice_label())),
-                ),
-                |group, protocol| group.icon(protocol.id(), protocol_icon(*protocol)),
-            )
-            .selected(form.draft.protocol.id())
-            .on_change(cx.listener(move |this, id: &SharedString, window, cx| {
-                if let Some(protocol) = ServiceProtocol::from_id(id) {
-                    this.switch_service_protocol(owner, protocol, window, cx);
+    ) -> SelectField {
+        let current = self
+            .service_form(owner)
+            .map_or(ServiceProtocol::AiChat, |form| form.draft.protocol);
+        let detected = self.ollama_detected();
+        let detail = move |protocol: ServiceProtocol| -> SharedString {
+            match (&detected, protocol) {
+                (Some((host, count)), ServiceProtocol::OllamaChat) => {
+                    course2md::tr!("已在 {} 检测到 {} 个模型", host, count).into()
                 }
-            }))
+                _ => protocol.choice_detail().into(),
+            }
+        };
+        let entity = cx.weak_entity();
+        SelectField::new(id, current.choice_label(), {
+            let detail = detail.clone();
+            move |menu, _, _| {
+                let mut group = None;
+                ServiceProtocol::for_purpose(current.purpose()).fold(menu, |mut menu, protocol| {
+                    if group != Some(protocol.choice_group()) {
+                        group = Some(protocol.choice_group());
+                        menu = menu.label(protocol.choice_group());
+                    }
+                    let entity = entity.clone();
+                    let detail = detail(protocol);
+                    menu.item(
+                        PopupMenuItem::element(move |_, _| {
+                            two_line_item(protocol.choice_label(), detail.clone())
+                        })
+                        .icon(protocol_icon(protocol))
+                        .checked(protocol == current)
+                        .on_click(move |_, window, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.switch_service_protocol(owner, protocol, window, cx)
+                            });
+                        }),
+                    )
+                })
+            }
+        })
+        .label(course2md::tr!("服务类型"))
+        .icon(protocol_icon(current))
+        .detail(detail(current))
+        .disabled(disabled)
     }
 
     pub(crate) fn service_auth_choices(

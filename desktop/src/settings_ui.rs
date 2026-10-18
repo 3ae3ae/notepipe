@@ -20,10 +20,11 @@ use course2md::execution::Component;
 use gpui_component::{
     button::*,
     input::{InputContentType, Textarea, TextareaState},
-    menu::{DropdownMenu, PopupMenuItem},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
     switch::Switch,
 };
 use service_form::{FormField, FormOwner, ServiceForm};
+use std::rc::Rc;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -240,11 +241,12 @@ fn settings_form_row(
             .child(setting_label(id.clone(), label))
             .child(div().w_full().min_w_0().child(control));
     }
+    // Label and its hint read as one unit, centered against the control.
     let row = h_flex()
         .w_full()
         .min_w_0()
         .min_h(CONTROL_HEIGHT)
-        .items_start()
+        .items_center()
         .flex_wrap()
         .gap_4()
         .child(
@@ -253,28 +255,8 @@ fn settings_form_row(
                 .flex_basis(rems(120. / 14.))
                 .min_w_0()
                 .max_w_full()
-                .min_h(CONTROL_HEIGHT)
-                .justify_center()
-                .child(setting_label(id.clone(), label)),
-        )
-        .child(
-            v_flex()
-                .flex_1()
-                .flex_grow(3.)
-                .flex_basis(rems(400. / 14.))
-                .max_w_full()
-                .min_w_0()
-                .min_h(CONTROL_HEIGHT)
-                .gap_2()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .min_h(CONTROL_HEIGHT)
-                        .items_center()
-                        .justify_end()
-                        .child(control),
-                )
+                .gap(rems(2. / 14.))
+                .child(setting_label(id.clone(), label))
                 .when(!hint.is_empty(), |column| {
                     column.child(
                         text(SharedString::from(format!("{id:?}-hint")), hint)
@@ -282,6 +264,18 @@ fn settings_form_row(
                             .text_color(color(GRAY)),
                     )
                 }),
+        )
+        .child(
+            h_flex()
+                .flex_1()
+                .flex_grow(3.)
+                .flex_basis(rems(400. / 14.))
+                .max_w_full()
+                .min_w_0()
+                .min_h(CONTROL_HEIGHT)
+                .items_center()
+                .justify_end()
+                .child(control),
         );
     setting_surface().child(row)
 }
@@ -973,10 +967,6 @@ impl Desktop {
     }
 
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page != Page::Settings {
-            self.settings_origin = Some(self.page);
-            self.settings_return_focus = window.focused(cx);
-        }
         self.navigate(Page::Settings, cx);
         // Event-time preparation, not a render side effect: tab stops, first
         // hydration of inputs and the deduplicated model check.
@@ -1017,9 +1007,6 @@ impl Desktop {
         }
         if self.codex.status.is_none() && !self.codex.busy() {
             self.codex_refresh_status(crate::codex_ui::CodexSurface::Settings, cx);
-        }
-        if !self.ollama.checked() {
-            self.ollama_refresh(cx);
         }
     }
 
@@ -1108,32 +1095,6 @@ impl Desktop {
         let layout_width = content_width
             + crate::views::settings_sidebar_width(window)
             + crate::views::settings_column_gap(window);
-        let header = h_flex()
-            .w_full()
-            .min_w_0()
-            .items_center()
-            .gap_3()
-            .flex_shrink_0()
-            .child(
-                quiet("settings-return")
-                    .settings_text()
-                    .w(CONTROL_HEIGHT)
-                    .min_w(CONTROL_HEIGHT)
-                    .px_0()
-                    .flex_shrink_0()
-                    .icon(icons::arrow_left())
-                    .accessibility_label(course2md::tr!("返回"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let destination = this.settings_origin.take().unwrap_or(Page::New);
-                        let focus = this.settings_return_focus.take();
-                        this.navigate(destination, cx);
-                        if let Some(focus) = focus {
-                            window.on_next_frame(move |window, cx| focus.focus(window, cx));
-                        }
-                    })),
-            )
-            .child(text("settings-page-title", course2md::tr!("设置")).text_size(rems(22. / 14.)));
-
         let navigation = self.settings_navigation(window, cx);
         let mut panel = v_flex()
             .relative()
@@ -1236,11 +1197,44 @@ impl Desktop {
                             .min_w_0()
                             .when(editing_service, |view| view.h_full().min_h_0())
                             .when(!editing_service, |view| view.pb(px(24.)))
-                            .child(v_flex().w_full().min_w_0().gap(px(22.))
-                                .child(v_flex().gap_2()
-                                    .child(theme::page_heading("settings-category-heading", self.settings_tab.label()))
-                                    .when(self.settings_tab == SettingsTab::Generation, |view| view.child(text("generation-default-explanation", course2md::tr!("这里是长期默认值，主页的「处理选项」可以只对单次生效")).text_size(TEXT_SETTINGS_AUX).text_color(color(GRAY)))))
-                                .child(content)),
+                            // A category, or the secondary page inside it, arrives as one unit.
+                            .child(crate::motion::page_enter(
+                                (
+                                    "settings-category",
+                                    self.settings_tab.index() * 2 + editing_service as usize,
+                                ),
+                                v_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .gap(px(22.))
+                                    .when(editing_service, |view| view.h_full().min_h_0())
+                                    .when(!editing_service, |view| {
+                                        view.child(
+                                            v_flex()
+                                                .gap_2()
+                                                .child(theme::page_heading(
+                                                    "settings-category-heading",
+                                                    self.settings_tab.label(),
+                                                ))
+                                                .when(
+                                                    self.settings_tab == SettingsTab::Generation,
+                                                    |view| {
+                                                        view.child(
+                                                            text(
+                                                                "generation-default-explanation",
+                                                                course2md::tr!(
+                                                                    "这里是长期默认值，主页的「处理选项」可以只对单次生效"
+                                                                ),
+                                                            )
+                                                            .text_size(TEXT_SETTINGS_AUX)
+                                                            .text_color(color(GRAY)),
+                                                        )
+                                                    },
+                                                ),
+                                        )
+                                    })
+                                    .child(content),
+                            )),
                     ),
             )
             .when(!editing_service, |panel| {
@@ -1275,21 +1269,19 @@ impl Desktop {
             .min_w_0()
             .min_h_0()
             .pt(px(16.))
-            .gap(px(24.))
-            .child(header)
             .child(body)
             .into_any_element()
     }
 
     fn services_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let mut view = v_flex().w_full().min_w_0().flex_shrink_0().gap_6();
-        // Keep the active form near the start of the page, including in a long service list.
-        let inline_editor = self
+        // Adding or editing a service is a secondary page of this category.
+        if self
             .settings_ui
             .editor
             .as_ref()
-            .filter(|editor| editor.target.is_none() && editor.repair_task.is_none());
-        if inline_editor.is_some() {
+            .is_some_and(|editor| editor.target.is_none() && editor.repair_task.is_none())
+        {
             return view
                 .h_full()
                 .min_h_0()
@@ -1309,7 +1301,7 @@ impl Desktop {
                 ServicePurpose::Ai,
                 "ai-services-heading",
                 course2md::tr!("AI 服务"),
-                course2md::tr!("添加其他 AI 服务"),
+                course2md::tr!("添加 AI 服务"),
             ),
             (
                 ServicePurpose::Speech,
@@ -1319,104 +1311,52 @@ impl Desktop {
             ),
         ] {
             let mut section = group(heading_id, heading).resource_dividers();
-            let mut empty = true;
-            // Codex sign-in and local Ollama are AI services too; they lead the
-            // same list instead of a near-identical group of their own.
-            if purpose == ServicePurpose::Ai {
-                empty = false;
-                section =
-                    section
-                        .child(setting_surface().py(rems(16. / 14.)).child(
-                            self.codex_account_section(
-                                crate::codex_ui::CodexSurface::Settings,
-                                false,
-                                cx,
-                            ),
-                        ))
-                        .child(
-                            setting_surface()
-                                .py(rems(16. / 14.))
-                                .child(self.ollama_account_section(cx)),
-                        );
-            }
             for version in latest.values().filter(|version| {
                 version.config.protocol.purpose() == purpose
                     && !self
                         .preferences
                         .service_retired_in_snapshot(&version.service_id)
             }) {
-                empty = false;
-                section = section.child(self.service_card(version, cx));
+                section = section.child(self.service_row(version, cx));
             }
             section = section.child(
-                setting_surface()
-                    .when(purpose == ServicePurpose::Ai, |row| row.py(rems(9. / 14.)))
+                quiet(("add-service", purpose as usize))
+                    .settings_text()
+                    .w_full()
+                    .h(rems(56. / 14.))
+                    .rounded_none()
+                    .px(SETTING_ITEM_INSET)
+                    .text_color(color(ACCENT))
+                    .accessibility_label(add_label)
+                    // The plus sits in the rows' icon column, the label on their text ruler.
                     .child(
                         h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .min_h(CONTROL_HEIGHT)
-                            .gap_4()
+                            .flex_1()
                             .items_center()
-                            .flex_wrap()
-                            .when(purpose == ServicePurpose::Speech, |row| {
-                                row.child(settings_resource_icon(icons::mic())).child(
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .gap_1()
-                                        .child(text(
-                                            "speech-service-empty-title",
-                                            if empty {
-                                                course2md::tr!("尚未添加语音服务")
-                                            } else {
-                                                course2md::tr!("添加语音服务")
-                                            },
-                                        ))
-                                        .child(
-                                            text(
-                                                "speech-service-empty-detail",
-                                                if self.preferences.generation().options.provider
-                                                    == Some(course2md::config::AsrProvider::Api)
-                                                {
-                                                    course2md::tr!("当前使用在线语音服务")
-                                                } else {
-                                                    course2md::tr!("当前使用本机识别")
-                                                },
-                                            )
-                                            .text_size(TEXT_SETTINGS_AUX)
-                                            .text_color(color(GRAY)),
-                                        ),
-                                )
-                            })
+                            .gap(rems(16. / 14.))
                             .child(
-                                (if purpose == ServicePurpose::Ai {
-                                    quiet(("add-service", purpose as usize)).settings_text()
-                                } else {
-                                    outline_pill(("add-service", purpose as usize)).settings_text()
-                                })
-                                .icon(icons::plus())
-                                .label(add_label)
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        this.open_settings_service_editor(
-                                            purpose, None, window, cx,
-                                        );
-                                    },
-                                )),
-                            ),
-                    ),
+                                h_flex()
+                                    .w(px(40.))
+                                    .justify_center()
+                                    .child(icons::plus().size(rems(20. / 14.))),
+                            )
+                            .child(add_label),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_settings_service_editor(purpose, None, window, cx);
+                    })),
             );
             view = view.child(section);
         }
         view.into_any_element()
     }
 
-    /// A saved service with capability-specific test results and quiet actions.
-    fn service_card(&self, version: &ServiceVersion, cx: &mut Context<Self>) -> Div {
+    /// One saved service: what it is, whether it works, and its commands in a
+    /// menu that the row's ⋯ button and a right-click open alike.
+    fn service_row(&self, version: &ServiceVersion, cx: &mut Context<Self>) -> AnyElement {
         let id = version.id.clone();
-        let service_id = version.service_id.clone();
-        let purpose = version.config.protocol.purpose();
+        let protocol = version.config.protocol;
+        let purpose = protocol.purpose();
         let defaults = self.preferences.default_refs();
         let default_version = match purpose {
             ServicePurpose::Speech => defaults.asr.as_deref(),
@@ -1424,165 +1364,69 @@ impl Desktop {
         }
         .and_then(|id| self.preferences.version(id))
         .filter(|default| default.service_id == version.service_id);
+        let is_default = default_version.is_some_and(|default| default.id == version.id);
         let outdated_default = default_version.filter(|default| default.id != version.id);
-        let default_description = default_version
-            .map(|default| {
-                if default.id == version.id {
-                    course2md::tr!(" · 默认服务").to_owned()
-                } else {
-                    String::new()
-                }
-            })
-            .unwrap_or_default();
-        let kinds: &[TestKind] = if purpose == ServicePurpose::Speech {
-            &[TestKind::Speech]
-        } else {
-            &[TestKind::Proofread, TestKind::Summary, TestKind::Vision]
-        };
-        let tests: Vec<_> = kinds
-            .iter()
-            .filter_map(|kind| {
-                self.preferences
-                    .test_evidence(&version.config, kind.contract())
-                    .map(|evidence| (*kind, evidence))
-            })
-            .collect();
-        let latest_test = tests
-            .iter()
-            .max_by_key(|(_, evidence)| evidence.tested_at)
-            .map(|(kind, evidence)| {
-                course2md::tr!(
-                    "最近测试：{} · {}",
-                    kind.label(),
-                    crate::reader_navigation::timestamp_local(
-                        evidence.tested_at.saturating_mul(1000)
-                    )
-                )
-            });
-        let mut status_badges = Vec::new();
-        if tests.is_empty() {
-            status_badges.push(
-                badge(BadgeKind::Neutral)
-                    .text_size(TEXT_SETTINGS_AUX)
-                    .child(text(
-                        SharedString::from(format!("saved-service-badge-{id}")),
-                        course2md::tr!("尚未测试"),
-                    )),
-            );
+        let (kind, status) = self.service_status(version);
+        let mut detail = vec![protocol.choice_label().to_owned()];
+        let host = version.config.host();
+        if protocol != ServiceProtocol::CodexResponses && !host.is_empty() {
+            detail.push(host);
         }
-        for (kind, evidence) in &tests {
-            let (status_kind, outcome) = match evidence.outcome {
-                preferences::TestOutcome::Passed => (BadgeKind::Success, course2md::tr!("通过")),
-                preferences::TestOutcome::OutcomeUnknown => {
-                    (BadgeKind::Warning, course2md::tr!("结果未确认"))
-                }
-                preferences::TestOutcome::NotSent => (BadgeKind::Neutral, course2md::tr!("未完成")),
-                _ => (BadgeKind::Warning, course2md::tr!("未通过")),
-            };
-            status_badges.push(badge(status_kind).text_size(TEXT_SETTINGS_AUX).child(text(
-                SharedString::from(format!("saved-service-test-{id}-{}", kind.contract())),
-                format!("{}{outcome}", kind.label()),
-            )));
-        }
-        let failures: Vec<_> = tests
-            .iter()
+        detail.push(version.config.model.clone());
+        let failures: Vec<_> = self
+            .service_tests(version)
+            .into_iter()
             .filter(|(_, evidence)| evidence.outcome != preferences::TestOutcome::Passed)
             .map(|(kind, evidence)| course2md::tr!("{}：{}", kind.label(), evidence.message))
             .collect();
-        let host = version.config.host();
-        let description = if host.is_empty() || version.config.name.trim() == host {
-            format!("{}{}", version.config.model, default_description)
-        } else {
-            format!("{} · {}{}", version.config.model, host, default_description)
-        };
-        let edit_id = id.clone();
-        let test_id = id.clone();
-        let default_id = id.clone();
-        setting_surface()
+        let menu = self.service_menu(version, is_default, cx);
+        let row_menu = menu.clone();
+        h_flex()
+            .id(SharedString::from(format!("saved-service-{id}")))
+            .w_full()
+            .min_w_0()
+            .gap(rems(16. / 14.))
+            .items_center()
+            .py(rems(16. / 14.))
+            .pl(SETTING_ITEM_INSET)
+            .pr(rems(12. / 14.))
+            .child(settings_resource_icon(service_form::protocol_icon(
+                protocol,
+            )))
             .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .flex_wrap()
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(rems(2. / 14.))
                     .child(
-                        (if purpose == ServicePurpose::Speech {
-                            icons::mic()
-                        } else {
-                            icons::science()
-                        })
-                        .size(px(20.))
-                        .text_color(color(ACCENT))
-                        .flex_shrink_0(),
+                        h_flex()
+                            .min_w_0()
+                            .gap_2()
+                            .items_center()
+                            .flex_wrap()
+                            .child(text(
+                                SharedString::from(format!("saved-service-title-{id}")),
+                                version.config.name.clone(),
+                            ))
+                            .when(is_default, |row| {
+                                row.child(
+                                    badge(BadgeKind::Tonal)
+                                        .text_size(TEXT_AUX)
+                                        .child(course2md::tr!("默认")),
+                                )
+                            }),
                     )
                     .child(
                         text(
-                            SharedString::from(format!("saved-service-title-{id}")),
-                            version.config.name.clone(),
+                            SharedString::from(format!("saved-service-description-{id}")),
+                            detail.join(" · "),
                         )
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .flex_1()
-                        .min_w_0()
-                        .whitespace_normal(),
+                        .truncate()
+                        .text_size(TEXT_SETTINGS_AUX)
+                        .text_color(color(GRAY)),
                     )
-                    .child(
-                        quiet(SharedString::from(format!("test-saved-service-{id}")))
-                            .settings_text()
-                            .icon(icons::science())
-                            .label(course2md::tr!("测试…"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_settings_service_editor(
-                                    purpose,
-                                    Some(test_id.clone()),
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    )
-                    .child(
-                        quiet(SharedString::from(format!("edit-saved-service-{id}")))
-                            .settings_text()
-                            .icon(icons::edit())
-                            .label(course2md::tr!("编辑"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_settings_service_editor(
-                                    purpose,
-                                    Some(edit_id.clone()),
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    )
-                    .child(
-                        quiet(SharedString::from(format!(
-                            "delete-saved-service-{service_id}"
-                        )))
-                        .settings_text()
-                        .icon(icons::delete())
-                        .label(course2md::tr!("删除…"))
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.confirm_delete_service(service_id.clone(), window, cx)
-                            },
-                        )),
-                    ),
-            )
-            .child(
-                text(
-                    SharedString::from(format!("saved-service-description-{id}")),
-                    description,
-                )
-                .text_size(TEXT_SETTINGS_AUX)
-                .text_color(color(GRAY)),
-            )
-            .when_some(outdated_default, |card, default| {
-                card.child(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .gap_2()
-                        .items_center()
-                        .flex_wrap()
-                        .child(
+                    .when_some(outdated_default, |column, default| {
+                        column.child(
                             text(
                                 SharedString::from(format!("saved-service-old-default-{id}")),
                                 course2md::tr!(
@@ -1590,44 +1434,181 @@ impl Desktop {
                                     default.config.model
                                 ),
                             )
-                            .flex_1()
-                            .min_w_0()
                             .whitespace_normal()
                             .text_size(TEXT_SETTINGS_AUX)
                             .text_color(color(GRAY)),
                         )
-                        .child(
-                            quiet(SharedString::from(format!("update-default-service-{id}")))
-                                .settings_text()
-                                .icon(icons::check_circle())
-                                .label(course2md::tr!("用于以后生成…"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.confirm_default_service(default_id.clone(), window, cx);
-                                })),
-                        ),
+                    })
+                    .when(!failures.is_empty(), |column| {
+                        column.child(
+                            text(
+                                SharedString::from(format!("saved-service-test-status-{id}")),
+                                failures.join("\n"),
+                            )
+                            .whitespace_normal()
+                            .text_size(TEXT_SETTINGS_AUX)
+                            .text_color(color(GRAY)),
+                        )
+                    }),
+            )
+            .child(
+                badge(kind)
+                    .flex_shrink_0()
+                    .text_size(TEXT_AUX)
+                    .child(status),
+            )
+            .child(
+                quiet(SharedString::from(format!("service-actions-{id}")))
+                    .w(CONTROL_HEIGHT)
+                    .px_0()
+                    .icon(icons::ellipsis())
+                    .accessibility_label(course2md::tr!("{} 操作", version.config.name))
+                    .tooltip(course2md::tr!("服务操作"))
+                    .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, window, cx| {
+                        menu(popup, window, cx)
+                    }),
+            )
+            .context_menu(move |popup, window, cx| row_menu(popup, window, cx))
+            .into_any_element()
+    }
+
+    fn service_tests(
+        &self,
+        version: &ServiceVersion,
+    ) -> Vec<(TestKind, &preferences::ServiceTestEvidence)> {
+        let kinds: &[TestKind] = if version.config.protocol.purpose() == ServicePurpose::Speech {
+            &[TestKind::Speech]
+        } else {
+            &[TestKind::Proofread, TestKind::Summary, TestKind::Vision]
+        };
+        kinds
+            .iter()
+            .filter_map(|kind| {
+                self.preferences
+                    .test_evidence(&version.config, kind.contract())
+                    .map(|evidence| (*kind, evidence))
+            })
+            .collect()
+    }
+
+    /// One badge per service: an account's sign-in state, otherwise what its
+    /// tests established.
+    fn service_status(&self, version: &ServiceVersion) -> (BadgeKind, &'static str) {
+        if version.config.protocol == ServiceProtocol::CodexResponses {
+            return match &self.codex.status {
+                Some(course2md::login::codex::LoginStatus::Connected) => {
+                    (BadgeKind::Success, course2md::tr!("已连接"))
+                }
+                Some(course2md::login::codex::LoginStatus::Expired) => {
+                    (BadgeKind::Warning, course2md::tr!("登录已失效"))
+                }
+                None if self.codex.busy() => (BadgeKind::Progress, course2md::tr!("正在检查")),
+                _ => (BadgeKind::Neutral, course2md::tr!("未连接")),
+            };
+        }
+        let tests = self.service_tests(version);
+        if tests.is_empty() {
+            (BadgeKind::Neutral, course2md::tr!("尚未测试"))
+        } else if tests
+            .iter()
+            .all(|(_, evidence)| evidence.outcome == preferences::TestOutcome::Passed)
+        {
+            (BadgeKind::Success, course2md::tr!("测试通过"))
+        } else {
+            (BadgeKind::Warning, course2md::tr!("测试未通过"))
+        }
+    }
+
+    /// 打开 → 处理 → 管理 → 危险, the order every context menu follows.
+    fn service_menu(
+        &self,
+        version: &ServiceVersion,
+        is_default: bool,
+        cx: &mut Context<Self>,
+    ) -> MenuBuilder {
+        let entity = cx.weak_entity();
+        let id = version.id.clone();
+        let service_id = version.service_id.clone();
+        let purpose = version.config.protocol.purpose();
+        let codex_connected = version.config.protocol == ServiceProtocol::CodexResponses
+            && matches!(
+                self.codex.status,
+                Some(course2md::login::codex::LoginStatus::Connected)
+            );
+        let busy = self.codex.busy();
+        Rc::new(move |menu, _, _| {
+            let open = |test: bool| {
+                let entity = entity.clone();
+                let id = id.clone();
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    let _ = entity.update(cx, |this, cx| {
+                        if this.open_settings_service_editor(purpose, Some(id.clone()), window, cx)
+                            && test
+                        {
+                            this.start_service_test(window, cx);
+                        }
+                    });
+                }
+            };
+            let default = {
+                let entity = entity.clone();
+                let id = id.clone();
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.confirm_default_service(id.clone(), window, cx)
+                    });
+                }
+            };
+            let delete = {
+                let entity = entity.clone();
+                let service_id = service_id.clone();
+                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.confirm_delete_service(service_id.clone(), window, cx)
+                    });
+                }
+            };
+            let logout = entity.clone();
+            menu.item(
+                PopupMenuItem::new(course2md::tr!("测试连接"))
+                    .icon(icons::science())
+                    .on_click(open(true)),
+            )
+            .item(
+                PopupMenuItem::new(course2md::tr!("编辑…"))
+                    .icon(icons::edit())
+                    .on_click(open(false)),
+            )
+            .item(
+                PopupMenuItem::new(if is_default {
+                    course2md::tr!("已是默认服务")
+                } else {
+                    course2md::tr!("设为默认服务…")
+                })
+                .icon(icons::check_circle())
+                .disabled(is_default)
+                .on_click(default),
+            )
+            .separator()
+            .when(codex_connected, |menu| {
+                menu.item(
+                    PopupMenuItem::new(course2md::tr!("退出 ChatGPT 账号"))
+                        .icon(icons::logout())
+                        .disabled(busy)
+                        .on_click(move |_, _, cx| {
+                            let _ = logout.update(cx, |this, cx| {
+                                this.codex_logout(crate::codex_ui::CodexSurface::Settings, cx)
+                            });
+                        }),
                 )
             })
-            .child(h_flex().gap_2().flex_wrap().children(status_badges))
-            .when_some(latest_test, |card, latest_test| {
-                card.child(
-                    text(
-                        SharedString::from(format!("saved-service-last-test-{id}")),
-                        latest_test,
-                    )
-                    .text_size(TEXT_SETTINGS_AUX)
-                    .text_color(color(GRAY)),
-                )
-            })
-            .when(!failures.is_empty(), |card| {
-                card.child(
-                    text(
-                        SharedString::from(format!("saved-service-test-status-{id}")),
-                        failures.join("\n"),
-                    )
-                    .text_size(TEXT_SETTINGS_AUX)
-                    .text_color(color(GRAY)),
-                )
-            })
+            .item(
+                PopupMenuItem::new(course2md::tr!("删除服务…"))
+                    .icon(icons::delete())
+                    .danger(true)
+                    .on_click(delete),
+            )
+        })
     }
 
     fn setting_input_changed(&mut self, field: EditField, cx: &mut Context<Self>) {
@@ -2153,86 +2134,124 @@ impl Desktop {
         .detach();
     }
     pub(crate) fn appearance_controls(&self, cx: &mut Context<Self>) -> Div {
-        div().w_full().child(
-            group("appearance-motion", course2md::tr!("界面偏好"))
-                .child(settings_stacked_row(
-                    "app-language-label",
-                    course2md::tr!("界面语言"),
-                    course2md::tr!("更改后立即应用"),
-                    self.setting_choices("app-language", course2md::tr!("界面语言"))
-                        .options(crate::preferences::InterfaceLanguage::ALL.into_iter().map(
-                            |language| {
-                                let label = match language {
+        v_flex()
+            .w_full()
+            .gap_6()
+            .child(
+                group("appearance-motion", course2md::tr!("界面偏好"))
+                    .child(settings_row(
+                        "app-language-label",
+                        course2md::tr!("界面语言"),
+                        course2md::tr!("更改后立即应用"),
+                        {
+                            let current = self.application_edit_base().language;
+                            let entity = cx.weak_entity();
+                            let label =
+                                |language: crate::preferences::InterfaceLanguage| match language {
                                     crate::preferences::InterfaceLanguage::System => {
                                         course2md::tr!("跟随系统")
                                     }
                                     other => other.resolve().native_name(),
                                 };
-                                (language.id(), label)
-                            },
-                        ))
-                        .selected(self.application_edit_base().language.id())
-                        .on_change(cx.listener(|this, selected: &SharedString, _, cx| {
-                            let Some(language) =
-                                crate::preferences::InterfaceLanguage::from_id(selected)
-                            else {
-                                return;
-                            };
-                            let mut next = this.application_edit_base();
-                            next.language = language;
-                            if this.commit_application(next, cx) {
-                                crate::i18n::apply(language);
-                                cx.notify();
-                            }
-                        })),
-                ))
-                .child(settings_stacked_row(
-                    "app-font-scale-label",
-                    course2md::tr!("界面文字大小"),
-                    "",
-                    self.setting_choices("app-font-scale", course2md::tr!("应用文字大小"))
-                        .options(crate::preferences::FONT_SCALES.into_iter().map(|scale| {
-                            (
-                                (scale * 100.).round().to_string(),
-                                format!("{}%", (scale * 100.) as u32),
+                            SelectField::new("app-language", label(current), move |menu, _, _| {
+                                crate::preferences::InterfaceLanguage::ALL.into_iter().fold(
+                                    menu,
+                                    |menu, language| {
+                                        let entity = entity.clone();
+                                        let menu = menu.item(
+                                            PopupMenuItem::new(label(language))
+                                                .checked(language == current)
+                                                .on_click(move |_, _, cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        let mut next = this.application_edit_base();
+                                                        next.language = language;
+                                                        if this.commit_application(next, cx) {
+                                                            crate::i18n::apply(language);
+                                                            cx.notify();
+                                                        }
+                                                    });
+                                                }),
+                                        );
+                                        // 跟随系统 stands apart from the fixed languages.
+                                        if language == crate::preferences::InterfaceLanguage::System
+                                        {
+                                            menu.separator()
+                                        } else {
+                                            menu
+                                        }
+                                    },
+                                )
+                            })
+                            .when(
+                                current == crate::preferences::InterfaceLanguage::System,
+                                |field| field.trailing(current.resolve().native_name()),
                             )
-                        }))
-                        .full_width()
-                        .selected(
-                            (self.preferences.application().font_scale * 100.)
-                                .round()
-                                .to_string(),
-                        )
-                        .on_change(cx.listener(
-                            move |this, selected: &SharedString, window, cx| {
-                                let Ok(percent) = selected.parse::<f32>() else {
-                                    return;
-                                };
-                                let scale = percent / 100.;
-                                let mut next = this.application_edit_base();
-                                next.font_scale = scale;
-                                if this.commit_application(next, cx) {
-                                    theme::apply_scale(scale, window, cx);
-                                }
-                            },
-                        )),
-                ))
-                .child(
+                        },
+                    ))
+                    .child(settings_stacked_row(
+                        "app-font-scale-label",
+                        course2md::tr!("界面文字大小"),
+                        "",
+                        self.setting_choices("app-font-scale", course2md::tr!("应用文字大小"))
+                            .options(crate::preferences::FONT_SCALES.into_iter().map(|scale| {
+                                (
+                                    (scale * 100.).round().to_string(),
+                                    format!("{}%", (scale * 100.) as u32),
+                                )
+                            }))
+                            .full_width()
+                            .selected(
+                                (self.preferences.application().font_scale * 100.)
+                                    .round()
+                                    .to_string(),
+                            )
+                            .on_change(cx.listener(
+                                move |this, selected: &SharedString, window, cx| {
+                                    let Ok(percent) = selected.parse::<f32>() else {
+                                        return;
+                                    };
+                                    let scale = percent / 100.;
+                                    let mut next = this.application_edit_base();
+                                    next.font_scale = scale;
+                                    if this.commit_application(next, cx) {
+                                        theme::apply_scale(scale, window, cx);
+                                    }
+                                },
+                            )),
+                    ))
+                    .child(
+                        setting_surface()
+                            .py(rems(10. / 14.))
+                            .child(settings_switch_row(
+                                course2md::tr!("减少动态效果"),
+                                course2md::tr!("关闭过渡动画和进度条的流动效果"),
+                                Switch::new("app-reduce-motion")
+                                    .checked(self.preferences.application().desktop.reduce_motion)
+                                    .on_click(cx.listener(|this, enabled, _, cx| {
+                                        let mut next = this.application_edit_base();
+                                        next.desktop.reduce_motion = *enabled;
+                                        this.commit_application(next, cx);
+                                    })),
+                            )),
+                    ),
+            )
+            .child(
+                group("appearance-home", course2md::tr!("主页")).child(
                     setting_surface()
                         .py(rems(10. / 14.))
                         .child(settings_switch_row(
-                            course2md::tr!("减少动态效果"),
-                            course2md::tr!("关闭过渡动画和进度条的流动效果"),
-                            Switch::new("app-reduce-motion")
-                                .checked(self.preferences.application().desktop.reduce_motion)
+                            course2md::tr!("显示最近的笔记"),
+                            course2md::tr!("关闭后主页只保留输入区和正在处理的任务"),
+                            Switch::new("app-home-recent-notes")
+                                .checked(self.preferences.application().desktop.home_recent_notes)
                                 .on_click(cx.listener(|this, enabled, _, cx| {
                                     let mut next = this.application_edit_base();
-                                    next.desktop.reduce_motion = *enabled;
+                                    next.desktop.home_recent_notes = *enabled;
                                     this.commit_application(next, cx);
                                 })),
                         )),
                 ),
-        )
+            )
     }
     fn application_settings_page(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         v_flex()

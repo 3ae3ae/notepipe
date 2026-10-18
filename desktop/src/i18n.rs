@@ -51,11 +51,7 @@ mod tests {
     use crate::preferences::{ApplicationPreferences, InterfaceLanguage};
 
     #[test]
-    fn interface_language_ids_round_trip() {
-        for language in InterfaceLanguage::ALL {
-            assert_eq!(InterfaceLanguage::from_id(language.id()), Some(language));
-        }
-        assert_eq!(InterfaceLanguage::from_id("fr"), None);
+    fn interface_language_saved_names() {
         assert_eq!(
             serde_json::to_string(&InterfaceLanguage::ZhHant).unwrap(),
             "\"zh-Hant\""

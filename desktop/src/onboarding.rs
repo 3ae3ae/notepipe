@@ -1424,31 +1424,15 @@ impl Desktop {
         let service = self.onboarding.service(purpose);
         let draft = &service.form.draft;
         let busy = service.running.is_some() || service.pending_version.is_some();
-        let (label, choice_label) = if purpose == ServicePurpose::Speech {
-            (course2md::tr!("服务类型"), course2md::tr!("语音服务类型"))
-        } else {
-            (course2md::tr!("服务类型"), course2md::tr!("AI 服务类型"))
-        };
-        let mut body = v_flex().w_full().min_w_0().gap_4().child(
-            self.setup_reveal(
-                format!("setup-protocol-reveal-{}", purpose as usize),
-                stacked_field(
-                    format!("setup-protocol-label-{}", purpose as usize),
-                    label,
-                    icons::cloud(),
-                    self.service_protocol_choices(
-                        owner,
-                        SingleChoiceGroup::new(
-                            format!("setup-protocol-{}", purpose as usize),
-                            choice_label,
-                        )
-                        .full_width(),
-                        cx,
-                    )
-                    .disabled(busy),
-                ),
+        let mut body = v_flex().w_full().min_w_0().gap_4().child(self.setup_reveal(
+            format!("setup-protocol-reveal-{}", purpose as usize),
+            self.service_type_field(
+                owner,
+                SharedString::from(format!("setup-protocol-{}", purpose as usize)),
+                busy,
+                cx,
             ),
-        );
+        ));
         let codex = draft.protocol == preferences::ServiceProtocol::CodexResponses;
         if !codex {
             body = body.child(self.setup_input_row(
