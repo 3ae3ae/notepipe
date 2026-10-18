@@ -2371,3 +2371,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 自动（紧凑）	自动	Auto	自動	自動
 仅字幕（紧凑）	仅字幕	Subtitles	僅字幕	字幕のみ
 语音识别（紧凑）	语音识别	Speech	語音辨識	音声認識
+正在保存…	正在保存…	Saving…	正在儲存…	保存中…
+设置保存线程已停止	设置保存线程已停止	The settings save thread has stopped	設定儲存執行緒已停止	設定保存スレッドが停止しました
+没有待保存的服务设置	没有待保存的服务设置	There are no service settings waiting to be saved	沒有待儲存的服務設定	保存待ちのサービス設定はありません

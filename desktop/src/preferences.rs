@@ -940,6 +940,8 @@ pub struct Store {
     writer: Option<PreferenceWriter>,
     write_results: Option<std::sync::mpsc::Receiver<PreferenceWriteResult>>,
     pending_writes: BTreeMap<PreferenceGroup, u64>,
+    services_intent: Option<ServicesState>,
+    pending_service_recovery: BTreeSet<String>,
     wake: Arc<std::sync::Mutex<Option<smol::channel::Sender<()>>>>,
 }
 
@@ -976,6 +978,8 @@ impl Store {
             writer,
             write_results,
             pending_writes: BTreeMap::new(),
+            services_intent: None,
+            pending_service_recovery: BTreeSet::new(),
             wake,
         };
         store.generation = store.load_group(PreferenceGroup::Generation);
@@ -1001,6 +1005,16 @@ impl Store {
     }
     pub fn is_pending(&self, group: PreferenceGroup) -> bool {
         self.pending_writes.contains_key(&group)
+    }
+    pub fn has_pending_services(&self) -> bool {
+        self.services_intent.is_some()
+    }
+    pub fn retry_services(&mut self) -> Result<()> {
+        let next = self
+            .services_intent
+            .clone()
+            .ok_or_else(|| anyhow!(course2md::tr!("没有待保存的服务设置")))?;
+        self.persist(PreferenceGroup::Services, &next)
     }
     /// Drain writer completions. The UI calls this from its event poll.
     pub fn process_writes(&mut self) -> Vec<(PreferenceGroup, Result<(), String>)> {
@@ -1043,7 +1057,19 @@ impl Store {
                 self.application_intent = None;
                 ("application-intent.json", true)
             }
-            PreferenceGroup::Services => ("", false),
+            PreferenceGroup::Services => {
+                self.services_intent = None;
+                if let Some(writer) = &self.writer {
+                    for id in std::mem::take(&mut self.pending_service_recovery) {
+                        self.recovery_drafts.remove(&id);
+                        let _ =
+                            writer.enqueue_remove(self.recovery_root().join(format!("{id}.json")));
+                    }
+                } else {
+                    self.pending_service_recovery.clear();
+                }
+                ("", false)
+            }
         };
         if present && let Some(writer) = &self.writer {
             let _ = writer.enqueue_remove(self.recovery_root().join(file));
@@ -1377,6 +1403,17 @@ impl Store {
         Ok(())
     }
 
+    fn queue_service_recovery(&mut self, draft: &ServiceDraft) {
+        if let Some(writer) = &self.writer
+            && let Ok(bytes) = serde_json::to_vec_pretty(draft)
+        {
+            let path = self.recovery_root().join(format!("{}.json", draft.id));
+            let _ = writer.enqueue_recovery(path, bytes);
+            self.pending_service_recovery.insert(draft.id.clone());
+            self.recovery_drafts.insert(draft.id.clone());
+        }
+    }
+
     /// Incomplete text is a valid draft. Replacing a key allocates a new vault identity before
     /// the secret-free draft is committed. A stale editor cannot overwrite a newer revision.
     pub fn save_service_draft(
@@ -1409,6 +1446,7 @@ impl Store {
         draft.revision += 1;
         let mut next = self.services.clone();
         next.drafts.insert(draft.id.clone(), draft.clone());
+        self.queue_service_recovery(&draft);
         if let Err(error) = self.persist(PreferenceGroup::Services, &next) {
             if let Ok(bytes) = serde_json::to_vec_pretty(&draft)
                 && atomic_write_with_retry(
@@ -1427,12 +1465,10 @@ impl Store {
             return Err(error);
         }
         self.services = next;
-        self.recovery_drafts.remove(&draft.id);
-        // The recovery copy is only cleanup now that the durable write is queued.
-        let recovery = self.recovery_root().join(format!("{}.json", draft.id));
-        std::thread::spawn(move || {
-            let _ = std::fs::remove_file(recovery);
-        });
+        if self.writer.is_none() {
+            self.recovery_drafts.remove(&draft.id);
+            let _ = std::fs::remove_file(self.recovery_root().join(format!("{}.json", draft.id)));
+        }
         Ok(draft)
     }
 
@@ -1445,8 +1481,12 @@ impl Store {
         next.discarded_drafts.insert(id.to_owned());
         self.persist(PreferenceGroup::Services, &next)?;
         self.services = next;
-        self.recovery_drafts.remove(id);
-        let _ = std::fs::remove_file(self.recovery_root().join(format!("{id}.json")));
+        if self.writer.is_some() {
+            self.pending_service_recovery.insert(id.to_owned());
+        } else {
+            self.recovery_drafts.remove(id);
+            let _ = std::fs::remove_file(self.recovery_root().join(format!("{id}.json")));
+        }
         Ok(())
     }
 
@@ -1456,7 +1496,7 @@ impl Store {
         scope: BindingScope,
     ) -> Result<ServiceVersion> {
         let draft =
-            self.services.drafts.get(draft_id).ok_or_else(|| {
+            self.services.drafts.get(draft_id).cloned().ok_or_else(|| {
                 anyhow!(course2md::tr!("当前服务编辑已结束，请重新打开服务后再试"))
             })?;
         if self.is_service_retired(&draft.service_id) {
@@ -1502,10 +1542,13 @@ impl Store {
                 ServicePurpose::Ai => next.defaults.llm = Some(version.id.clone()),
             }
         }
+        self.queue_service_recovery(&draft);
         self.persist(PreferenceGroup::Services, &next)?;
         self.services = next;
-        self.recovery_drafts.remove(draft_id);
-        let _ = std::fs::remove_file(self.recovery_root().join(format!("{draft_id}.json")));
+        if self.writer.is_none() {
+            self.recovery_drafts.remove(draft_id);
+            let _ = std::fs::remove_file(self.recovery_root().join(format!("{draft_id}.json")));
+        }
         Ok(version)
     }
 
@@ -1933,6 +1976,12 @@ impl Store {
                 value,
             })?;
             if let Some(writer) = &self.writer {
+                if group == PreferenceGroup::Services {
+                    self.services_intent =
+                        serde_json::from_slice::<Envelope<ServicesState>>(&bytes)
+                            .ok()
+                            .map(|envelope| envelope.value);
+                }
                 writer.enqueue(path, bytes, group, revision)?;
                 self.revisions.insert(group, revision);
                 self.pending_writes.insert(group, revision);
@@ -2961,5 +3010,62 @@ mod tests {
         assert!(!store.is_pending(PreferenceGroup::Generation));
         assert!(store.generation_intent().is_some());
         assert!(store.unsaved_intents_are_preserved());
+    }
+    #[test]
+    fn async_service_publish_keeps_recovery_until_written() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = store_with_async_writer(root.path());
+        let draft = complete_draft(&mut store, "test-model");
+        let version = store
+            .publish_service(&draft.id, BindingScope::Defaults)
+            .unwrap();
+        assert!(store.is_pending(PreferenceGroup::Services));
+        assert!(store.has_pending_services());
+        store.flush();
+        let completed = store.process_writes();
+        assert!(completed.iter().all(|(_, result)| result.is_ok()));
+        assert!(!store.is_pending(PreferenceGroup::Services));
+        assert!(!store.has_pending_services());
+        store.flush();
+        assert!(!root.path().join(format!("{}.json", draft.id)).exists());
+        assert!(store.services.versions.contains_key(&version.id));
+    }
+    #[test]
+    fn failed_service_publish_keeps_intent_and_can_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = store_with_async_writer(root.path());
+        let draft = complete_draft(&mut store, "retry-model");
+        store.flush();
+        let _ = store.process_writes();
+        let services = root.path().join(PreferenceGroup::Services.filename());
+        std::fs::remove_file(&services).unwrap();
+        std::fs::create_dir(&services).unwrap();
+        let version = store
+            .publish_service(&draft.id, BindingScope::Defaults)
+            .unwrap();
+        store.flush();
+        let completed = store.process_writes();
+        assert!(completed.iter().any(|(_, result)| result.is_err()));
+        assert!(store.has_pending_services());
+        assert!(
+            store
+                .recovery_root()
+                .join(format!("{}.json", draft.id))
+                .exists()
+        );
+        std::fs::remove_dir(&services).unwrap();
+        store.retry_services().unwrap();
+        store.flush();
+        let completed = store.process_writes();
+        assert!(completed.iter().all(|(_, result)| result.is_ok()));
+        assert!(!store.has_pending_services());
+        store.flush();
+        assert!(store.services.versions.contains_key(&version.id));
+        assert!(
+            !store
+                .recovery_root()
+                .join(format!("{}.json", draft.id))
+                .exists()
+        );
     }
 }

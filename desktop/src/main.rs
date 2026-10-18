@@ -956,29 +956,8 @@ impl Desktop {
         deadline
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
-        for (group, result) in self.preferences.process_writes() {
-            match result {
-                Ok(()) => {
-                    self.set_settings_feedback(group, course2md::tr!("已保存").into(), false, cx)
-                }
-                Err(error) => {
-                    match group {
-                        crate::preferences::PreferenceGroup::Generation => {
-                            if let Some(intent) = self.preferences.generation_intent().cloned() {
-                                self.settings_ui.pending_generation = Some(intent);
-                            }
-                        }
-                        crate::preferences::PreferenceGroup::Application => {
-                            if let Some(intent) = self.preferences.application_intent().cloned() {
-                                self.settings_ui.pending_application = Some(intent);
-                            }
-                        }
-                        crate::preferences::PreferenceGroup::Services => {}
-                    }
-                    self.set_settings_save_failure(group, &anyhow::anyhow!(error), cx);
-                }
-            }
-        }
+        let results = self.preferences.process_writes();
+        self.apply_settings_write_results(results, cx);
         if self
             .transient_task_result
             .as_ref()

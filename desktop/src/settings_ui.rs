@@ -1844,6 +1844,39 @@ impl Desktop {
         }
         self.settings_ui.feedback.insert(group, (message, error));
     }
+    pub(crate) fn apply_settings_write_results(
+        &mut self,
+        results: Vec<(PreferenceGroup, Result<(), String>)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut all_ok = true;
+        for (group, result) in results {
+            match result {
+                Ok(()) => {
+                    self.set_settings_feedback(group, course2md::tr!("已保存").into(), false, cx)
+                }
+                Err(error) => {
+                    all_ok = false;
+                    match group {
+                        PreferenceGroup::Generation => {
+                            if let Some(intent) = self.preferences.generation_intent().cloned() {
+                                self.settings_ui.pending_generation = Some(intent);
+                            }
+                        }
+                        PreferenceGroup::Application => {
+                            if let Some(intent) = self.preferences.application_intent().cloned() {
+                                self.settings_ui.pending_application = Some(intent);
+                            }
+                        }
+                        PreferenceGroup::Services => {}
+                    }
+                    self.set_settings_save_failure(group, &anyhow::anyhow!(error), cx);
+                }
+            }
+        }
+        all_ok
+    }
+
     pub(crate) fn set_settings_save_failure(
         &mut self,
         group: PreferenceGroup,
@@ -1924,7 +1957,7 @@ impl Desktop {
             let has_pending = match group {
                 PreferenceGroup::Generation => self.settings_ui.pending_generation.is_some(),
                 PreferenceGroup::Application => self.settings_ui.pending_application.is_some(),
-                PreferenceGroup::Services => false,
+                PreferenceGroup::Services => self.preferences.has_pending_services(),
             };
             if error && has_pending {
                 let id = ("retry-settings-save", group as usize);
@@ -2633,7 +2666,19 @@ impl Desktop {
                     true
                 }
             }
-            PreferenceGroup::Services => false,
+            PreferenceGroup::Services => {
+                if self.preferences.retry_services().is_ok() {
+                    self.set_settings_feedback(
+                        PreferenceGroup::Services,
+                        course2md::tr!("正在保存…").into(),
+                        false,
+                        cx,
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
     /// Only the explicitly named group is reset; the form and its source stay in place.
@@ -2760,11 +2805,8 @@ impl Desktop {
             self.commit_application(next, cx);
         }
         self.preferences.flush();
-        let failed = self
-            .preferences
-            .process_writes()
-            .into_iter()
-            .any(|(_, result)| result.is_err());
+        let results = self.preferences.process_writes();
+        let failed = !self.apply_settings_write_results(results, cx);
         self.preferences.flush();
         if failed || !self.preferences.unsaved_intents_are_preserved() {
             self.message = Some(course2md::tr!("修改暂时无法保存，请重试").into());
