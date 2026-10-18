@@ -1025,6 +1025,10 @@ impl Desktop {
 
     fn settings_navigation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let rail = is_compact(window);
+        // The rail is two characters wide by design. At enlarged text even the
+        // English short labels no longer fit there; keep the icon and its
+        // accessibility label instead of breaking a word across lines.
+        let rail_label = !rail || f32::from(window.rem_size()) <= 14.5;
         let mut navigation = v_flex()
             .id("settings-navigation")
             .key_context("SettingsTabs")
@@ -1081,15 +1085,17 @@ impl Desktop {
                             .gap(px(if rail { 4. } else { 12. }))
                             .when(rail, |view| view.flex_col())
                             .child(icon)
-                            .child(
-                                div()
-                                    .text_size(if rail {
-                                        theme::TEXT_AUX
-                                    } else {
-                                        theme::TEXT_BODY
-                                    })
-                                    .child(label),
-                            ),
+                            .when(rail_label, |view| {
+                                view.child(
+                                    div()
+                                        .text_size(if rail {
+                                            theme::TEXT_AUX
+                                        } else {
+                                            theme::TEXT_BODY
+                                        })
+                                        .child(label),
+                                )
+                            }),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.select_settings_tab(tab, window, cx)
