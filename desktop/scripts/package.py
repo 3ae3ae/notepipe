@@ -211,9 +211,17 @@ def main():
         run("codesign", *signing, str(binaries / "course2md"))
         run("codesign", *signing, str(binaries / "course2md-desktop"))
         # Sign the bundled yt-dlp as nested code; --deep verification and notarization require it.
+        # Its PyInstaller payload loads a Python framework with a different Team ID, so
+        # library validation must be disabled for this nested executable.
         ytdlp = binaries / "yt-dlp"
         if ytdlp.is_file():
-            run("codesign", *signing, str(ytdlp))
+            run(
+                "codesign",
+                *signing,
+                "--entitlements",
+                str(ROOT / "assets/yt-dlp.entitlements"),
+                str(ytdlp),
+            )
         run("codesign", *signing, str(bundle))
         run("codesign", "--verify", "--deep", "--strict", str(bundle))
         if args.app_only:
