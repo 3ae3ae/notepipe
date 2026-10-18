@@ -672,7 +672,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 复制整份笔记 · Markdown 文本	复制整份笔记 · Markdown 文本	Copy entire note · Markdown text	複製整份筆記 · Markdown 文字	ノート全体をコピー・マークダウンテキスト
 复制整份笔记 · 纯文本	复制整份笔记 · 纯文本	Copy entire note · Plain text	複製整份筆記 · 純文字	ノート全体をコピー・プレーンテキスト
 外观	外观	Appearance	外觀	外観
-外观模式	外观模式	appearance mode	外觀模式	外観モード
+外观模式	外观模式	Appearance mode	外觀模式	外観モード
 外部处理	外部处理	external processing	外部處理	外部処理
 多模态对话（如 GPT-4o 音频）	多模态对话（如 GPT-4o 音频）	Multimodal conversations (e.g. GPT-4o audio)	多模態對話（如 GPT-4o 音訊）	マルチモーダルな会話 (例: GPT-4o オーディオ)
 字幕	字幕	Subtitles	字幕	字幕
@@ -683,7 +683,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 字幕时间无效 / Invalid subtitle timestamps	字幕时间无效	Invalid subtitle timestamps	字幕時間無效	字幕時間が無効です
 字幕未读取成功	字幕未读取成功	Subtitles not read successfully	字幕未讀取成功	字幕がうまく読み取れない
 字幕缓存路径无法编码	字幕缓存路径无法编码	Subtitle cache path cannot be encoded	字幕快取路徑無法編碼	字幕キャッシュパスをエンコードできません
-字幕语言	字幕语言	subtitle language	字幕語言	字幕言語
+字幕语言	字幕语言	Subtitle language	字幕語言	字幕言語
 字幕读取意外中断	字幕读取意外中断	Subtitle reading unexpectedly interrupted	字幕讀取意外中斷	字幕の読み取りが予期せず中断されました
 字幕还未确认。请读取字幕，或明确选择识别视频声音。	字幕还未确认。请读取字幕，或明确选择识别视频声音。	Subtitles have not yet been confirmed. Please read subtitles, or explicitly choose to recognize video sounds.	字幕還未確認。請讀取字幕，或明確選擇識別影片聲音。	字幕はまだ確認されていません。 Please read subtitles, or explicitly choose to recognize video sounds.
 字幕还未确认。请读取字幕，或明确选择语音识别。	字幕还未确认。请读取字幕，或明确选择语音识别。	Subtitles are not confirmed. Read them, or explicitly choose speech recognition.	字幕尚未確認。請讀取字幕，或明確選擇語音辨識。	字幕が未確認です。字幕を読み取るか、音声認識を明示的に選択してください。
@@ -1317,7 +1317,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 有一个旧版本无法读取	有一个旧版本无法读取	There is an older version that cannot be read	有一箇舊版本無法讀取	読み込めない古いバージョンがあります
 有字幕时直接用字幕，没有字幕时使用语音识别	有字幕时直接用字幕，没有字幕时使用语音识别	Use subtitles when available; otherwise use speech recognition	有字幕時直接使用字幕，沒有字幕時使用語音辨識	字幕があれば字幕を使用し、なければ音声認識を使用します
 有字幕时直接用字幕，没有字幕时识别视频声音	有字幕时直接用字幕，没有字幕时识别视频声音	Use subtitles directly when there are subtitles, and identify the video sound when there are no subtitles.	有字幕時直接用字幕，沒有字幕時識別影片聲音	字幕がある場合は字幕を直接使用し、字幕がない場合は動画音声を識別します。
-有字幕，将直接使用	有字幕，将直接使用	There are subtitles and will be used directly	有字幕，將直接使用	字幕があり、そのまま使用されます
+有字幕，将直接使用	有字幕，将直接使用	Subtitles will be used directly	有字幕，將直接使用	字幕があり、そのまま使用されます
 有效服务版本记录不完整	有效服务版本记录不完整	The effective service version record is incomplete	有效服務版本記錄不完整	有効なサービス バージョン レコードが不完全です
 有效的模型分片索引 / a valid model shard index	有效的模型分片索引	a valid model shard index	有效的模型分片索引	有効なモデルシャードインデックス
 服务	服务	Services	服務	サービス
@@ -1427,7 +1427,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 未连接	未连接	Not connected	未連線	接続されていません
 未通过	未通过	failed	未透過	失敗しました
 未采样到任何帧 / No frames sampled	未采样到任何帧	No frames sampled	未取樣到任何幀	フレームがサンプリングされていません
-本地文件	本地文件	local file	本地檔案	ローカルファイル
+本地文件	本地文件	Local file	本地檔案	ローカルファイル
 本地模型目录 / Local model directory (default: platform cache)	本地模型目录	Local model directory (default: platform cache)	本地模型目錄	ローカルモデルディレクトリ
 本地视频	本地视频	local video	本地影片	ローカル動画
 本地识别方式 / Local transcription engine	本地识别方式	Local transcription engine	本地識別方式	ローカル識別方法
@@ -1674,7 +1674,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 没有获得可读文字 / No readable transcript	没有获得可读文字	No readable transcript	沒有獲得可讀文字	判読可能なテキストが得られませんでした
 没有获得可读文字；已保留可用截图 / No readable transcript; available screenshots were retained	没有获得可读文字；已保留可用截图	No readable transcript; available screenshots were retained	沒有獲得可讀文字；已保留可用截圖	判読可能なテキストは得られませんでした。使用可能なスクリーンショットが保持される
 法语	法语	French	法語	フランス語
-浅色	浅色	light color	淺色	明るい色
+浅色	浅色	Light	淺色	明るい色
 浅色主题	浅色主题	Light theme	淺色主題	ライトテーマ
 测试{test_label}	测试{test_label}	Test{test_label}	測試{test_label}	テスト{test_label}
 测试{}	测试{}	Test{}	測試{}	テスト{}

@@ -1,23 +1,25 @@
-# 代码审查剩余事项
+# 代码审查记录
 
-本文件只保留**仍未完成**的审查项；已完成项已从清单删除，历史记录见 Git 提交。
+本文件只保留仍需处理的审查项；已完成项已从清单删除，历史见 Git 提交。
 
-## 每帧重算与轮询
+## 未完成项
 
-1. `desktop/src/task_ui.rs` 的 `queue_page` 已缓存排序后的任务快照，但 `recent_notes_section`、`conversion_recovery` 的 `preview_plan`、笔记库筛选/封面、阅读页查找与画廊仍需逐帧缓存或索引。
-2. `desktop/src/main.rs` 的任务事件、草稿 debounce、提示过期和退出超时仍由 100/500ms 轮询驱动；应改为 Job 事件、专用定时器和一次性 wake，不再固定轮询。
-3. `workspace::transaction` 仍会为每次编辑克隆整个 `State`；后台写入已合并，但内存快照仍可改为增量或写时复制。
+无。
 
-## 设置、首次设置与账号
+## 已评估并保留的实现
 
-1. `onboarding.rs`、`import_ui.rs` 仍在渲染路径调用 `ensure_model_diagnostic` 并通过 `pending_checks` defer；应在进入步骤、选择模型/服务、刷新环境等事件中触发。
-2. `preferences.rs` 的 `#[cfg(test)] resolve_for_execution` / `record_draft_test` 和 `credentials.rs` 的 MemoryVault 轮换测试仍与生产路径并行；测试应走生产函数。
-3. `account_ui.rs` 的 `account_summary` 仍重复推导 badge/detail，未统一由 `account_status_text` 渲染；`account_ui.rs`、`service_editor.rs`、`onboarding.rs`、`settings_ui.rs` 的小型文件读写仍在 UI 线程。
-4. `generation_settings.rs` 的字幕语言表、“custom” 哨兵、`settings_ui.rs` 的 `llama-server` 名称判断、`onboarding.rs` 的 `"proofread"` id 判断仍按显示/id 字符串分支；应改为类型或共享表。
-5. `settings_ui.rs` 的字号选项仍手写 100/125/150/200 与 `FONT_SCALES` 并行；模型选项仍给每个值重复麦克风图标。
-6. `service_editor.rs` 的 `close_service_editor` 恒返回 true、`&& has_services` 死分支和若干薄包装仍在。
-7. `preferences.rs` 的 `atomic_write_with_retry` 无延迟重试、`StoredTestEvidence` 从详情文本解析 `HTTP n` 的兼容层仍在。
+1. `desktop/src/workspace.rs` 的 `transaction` 在编辑前克隆 `State`。这仍是原子回滚和后台写入合并的边界：编辑失败时旧状态不被污染，写入线程拿到独立快照。状态规模有界，路径不在渲染循环内；改为增量日志需要同时重做恢复、镜像写入和草稿字幕依赖，收益不足以抵消风险，本轮保留。
+2. 设置、引导与账号中显式保存动作（测试证据、笔记库身份文件）仍同步执行小型原子写。它们不在渲染路径，文件很小，并且同步结果需要在界面声明“已保存”前获得；二维码登录、退出登录和密钥链操作已移出 UI 线程。保留同步写以避免引入跨线程设置覆盖与错误延迟。
 
 ## 原生验证
 
-原生应用尚未逐页覆盖正常/窄/宽窗口、浅色/深色、全部配色、100/125/150/200% 字号，以及加载、空、失败、完成状态；需要在运行中的应用里重新检查设置、服务与账号、首次设置、任务、笔记库和阅读页。
+已在隔离的 `ux_fixture` 应用中检查：
+
+- 首次设置：100% 字号、英文、深色；识别方式、引擎与模型步骤正常。
+- 主页：100% 深色、150% 深色/浅色、200% 窄窗；空笔记库、最近笔记、链接预览、加载与完成后的阅读页。
+- 设置：100% 与 150% 的 Appearance、Create note、Services & accounts；200% 窄窗；浅色 Tokyo Day 与深色 Ink/Nord。
+- 笔记库与阅读页：100%/150% 的笔记、截图与画廊；图片、时间标题、正文和搜索入口正常。
+- 发现并修复：150%/200% 字号下设置侧栏英文标签在 96/128px 轨道内断词；放大字号时侧栏改为仅图标，保留完整无障碍标签。设置侧栏在 150% 下不再出现“Appearanc e”。
+- 英文标签大小写与语法统一：Appearance mode、Subtitle language、Local file、Light、Subtitles will be used directly。
+
+未把截图或编译通过本身当作设计验收；交互、焦点与状态转换仍需在后续改动中继续按设计规范复查。
