@@ -174,6 +174,51 @@ pub fn rename_course(root: &Path, course: &Path, name: &str) -> Result<()> {
     )
 }
 
+/// The platform's name for the system trash.
+pub fn trash_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        course2md::tr!("废纸篓")
+    } else {
+        course2md::tr!("回收站")
+    }
+}
+
+/// Moves a note to the system trash, where it can be restored, and forgets
+/// its folder and name records. Records left by a failure name a missing
+/// note and are ignored.
+pub fn delete_course(root: &Path, course: &Path) -> Result<()> {
+    delete_course_with(root, course, |course| {
+        trash::delete(course)
+            .with_context(|| course2md::tr!("笔记未能移到{}", trash_name()).to_string())
+    })
+}
+
+fn delete_course_with(
+    root: &Path,
+    course: &Path,
+    remove: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    ensure!(
+        root.is_dir() && course.is_dir(),
+        course2md::tr!("这份笔记的位置暂时无法访问")
+    );
+    let key = relative_key(root, course)?;
+    remove(course)?;
+    Library::edit(root, |library| {
+        library.courses.remove(&key);
+        Ok(())
+    })?;
+    let _lock = course2md::runtime::lock_file(&root.join(".course2md-titles.lock"))?;
+    let mut names = title_aliases(root)?;
+    if names.remove(&key).is_some() {
+        save_with_backup(
+            &root.join(TITLES),
+            &serde_json::to_vec_pretty(&Titles { names })?,
+        )?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct Library {
     pub folders: BTreeMap<u64, String>,
@@ -270,6 +315,31 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_a_note_forgets_its_folder_and_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let course = root.join("lecture");
+        let other = root.join("other");
+        std::fs::create_dir_all(&course).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        Library::edit(root, |library| {
+            let folder = library.rename(None, "课程")?;
+            library.assign(root, &course, Some(folder))?;
+            library.assign(root, &other, Some(folder))
+        })
+        .unwrap();
+        rename_course(root, &course, "新名称").unwrap();
+        delete_course_with(root, &course, |path| Ok(std::fs::remove_dir_all(path)?)).unwrap();
+        assert!(!course.exists());
+        let library = Library::load(root).unwrap();
+        assert_eq!(library.folder(root, &other), Some(1));
+        assert!(!library.courses.contains_key(Path::new("lecture")));
+        assert!(title_aliases(root).unwrap().is_empty());
+        // A note that is already gone is reported, not silently accepted.
+        assert!(delete_course_with(root, &course, |_| Ok(())).is_err());
+    }
 
     #[test]
     #[cfg(unix)]

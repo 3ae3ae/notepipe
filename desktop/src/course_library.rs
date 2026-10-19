@@ -693,6 +693,114 @@ impl Desktop {
         });
     }
 
+    /// Asks before moving a note to the system trash. A note that a running
+    /// task is still writing a version into cannot be deleted yet.
+    pub fn confirm_course_delete(
+        &mut self,
+        course: Course,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(root) = self
+            .course_location(&course)
+            .map(|library| library.root.clone())
+        else {
+            self.message = Some(
+                course2md::tr!("这份笔记的保存位置暂时无法确认，请在笔记库菜单中重新扫描。").into(),
+            );
+            cx.notify();
+            return;
+        };
+        let source = course
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.source_id.as_str());
+        let busy = source.is_some_and(|source| {
+            self.workspace.as_ref().is_some_and(|workspace| {
+                workspace.state.tasks.iter().any(|task| {
+                    !task.state.finished()
+                        && task.plan.source_id == source
+                        && task.plan.library_id == root.to_string_lossy()
+                })
+            })
+        });
+        if busy {
+            self.message =
+                Some(course2md::tr!("这份笔记还有未完成的任务，请在任务结束或取消后再删除").into());
+            cx.notify();
+            return;
+        }
+        let title = self.course_display_title(&course);
+        let trash = organize::trash_name();
+        let weak = cx.weak_entity();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let weak = weak.clone();
+            let course = course.clone();
+            let root = root.clone();
+            dialog
+                .title(course2md::tr!("删除笔记"))
+                .child(accessible_text(
+                    "delete-note-consequence",
+                    course2md::tr!("《{}》将移到{}，可以从那里恢复。", title, trash),
+                ))
+                .button_props(
+                    gpui_component::dialog::DialogButtonProps::default()
+                        .ok_text(course2md::tr!("移到{}", trash))
+                        .ok_variant(ButtonVariant::Danger)
+                        .cancel_text(course2md::tr!("保留笔记"))
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.delete_course(root.clone(), course.clone(), cx)
+                    });
+                    true
+                })
+        });
+    }
+
+    fn delete_course(&mut self, root: PathBuf, course: Course, cx: &mut Context<Self>) {
+        let title = self.course_display_title(&course);
+        let dir = course.storage_dir();
+        let worker_dir = dir.clone();
+        let task = crate::spawn_blocking_io(move || organize::delete_course(&root, &worker_dir));
+        cx.spawn(async move |this, cx| {
+            let result = task
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!(crate::interrupted())));
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => {
+                        let reading = this
+                            .preview
+                            .as_ref()
+                            .is_some_and(|preview| preview.course.storage_dir() == dir);
+                        if reading && this.page == Page::Result {
+                            this.navigate(Page::Library, cx);
+                        } else {
+                            this.refresh_library(cx);
+                        }
+                        if reading {
+                            this.preview = None;
+                        }
+                        this.message = Some(course2md::tr!(
+                            "已将《{}》移到{}",
+                            title,
+                            organize::trash_name()
+                        ));
+                    }
+                    Err(error) => {
+                        this.message =
+                            Some(course2md::tr!("笔记尚未删除：{}", format!("{error:#}")))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn course_actions(&self, course: Course, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let menu = self.course_menu(&course, false, cx);
         control(("course-actions", index))
@@ -814,15 +922,27 @@ impl Desktop {
             );
             let rename = entity.clone();
             let selected = course.clone();
-            menu.separator().item(
-                PopupMenuItem::new(course2md::tr!("重命名笔记…"))
-                    .icon(icons::edit())
-                    .on_click(move |_, window, cx| {
-                        let _ = rename.update(cx, |this, cx| {
-                            this.begin_course_rename(selected.clone(), window, cx)
-                        });
-                    }),
-            )
+            let delete = entity.clone();
+            let doomed = course.clone();
+            menu.separator()
+                .item(
+                    PopupMenuItem::new(course2md::tr!("重命名笔记…"))
+                        .icon(icons::edit())
+                        .on_click(move |_, window, cx| {
+                            let _ = rename.update(cx, |this, cx| {
+                                this.begin_course_rename(selected.clone(), window, cx)
+                            });
+                        }),
+                )
+                .item(
+                    PopupMenuItem::new(course2md::tr!("删除笔记…"))
+                        .icon(icons::delete())
+                        .on_click(move |_, window, cx| {
+                            let _ = delete.update(cx, |this, cx| {
+                                this.confirm_course_delete(doomed.clone(), window, cx)
+                            });
+                        }),
+                )
         })
     }
 

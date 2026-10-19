@@ -2393,3 +2393,14 @@ ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウ�
 正在连接 {}	正在连接 {}	Connecting to {}	正在連線 {}	{} に接続しています
 连接中断，正在重新连接 {}	连接中断，正在重新连接 {}	Connection dropped; reconnecting to {}	連線中斷，正在重新連線 {}	接続が切れました。{} に再接続しています
 正在校验文件完整性	正在校验文件完整性	Verifying the file	正在校驗檔案完整性	ファイルを検証しています
+废纸篓	废纸篓	Trash	垃圾桶	ゴミ箱
+回收站	回收站	Recycle Bin	資源回收筒	ごみ箱
+笔记未能移到{}	笔记未能移到{}	Could not move the note to the {}	筆記未能移到{}	ノートを{}に移動できませんでした
+删除笔记…	删除笔记…	Delete Note…	刪除筆記…	ノートを削除…
+删除笔记	删除笔记	Delete Note	刪除筆記	ノートを削除
+《{}》将移到{}，可以从那里恢复。	《{}》将移到{}，可以从那里恢复。	“{}” will move to the {}, where you can restore it.	《{}》將移到{}，可以從那裡復原。	「{}」は{}に移動され、そこから復元できます。
+移到{}	移到{}	Move to {}	移到{}	{}に移動
+保留笔记	保留笔记	Keep Note	保留筆記	ノートを残す
+已将《{}》移到{}	已将《{}》移到{}	Moved “{}” to the {}	已將《{}》移到{}	「{}」を{}に移動しました
+笔记尚未删除：{}	笔记尚未删除：{}	The note was not deleted: {}	筆記尚未刪除：{}	ノートは削除されていません: {}
+这份笔记还有未完成的任务，请在任务结束或取消后再删除	这份笔记还有未完成的任务，请在任务结束或取消后再删除	This note has an unfinished task; delete it after the task finishes or is cancelled	這份筆記還有未完成的任務，請在任務結束或取消後再刪除	このノートには未完了のタスクがあります。タスクが終了するかキャンセルしてから削除してください
