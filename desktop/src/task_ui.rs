@@ -3078,10 +3078,9 @@ impl Desktop {
                         .text_sm(),
                     );
                 }
-                let repairable = failures
-                    .iter()
-                    .any(|(component, _, _)| ai_component(component).is_some());
-                if repairable && uncertain.is_empty() && task.handled_by.is_none() {
+                // Repair is offered only when the service rejected its
+                // configuration; any other failure is retried as it is.
+                if requires_repair && uncertain.is_empty() && task.handled_by.is_none() {
                     actions = actions.child(self.repair_ai_action(task, style, cx));
                 }
                 for (component, label, outcome) in &failures {
@@ -3768,10 +3767,7 @@ impl Desktop {
                         })),
                 );
             }
-            if partial_failures
-                .iter()
-                .any(|(component, _, _)| ai_component(component).is_some())
-            {
+            if requires_repair {
                 actions = actions.child(self.repair_ai_action(task, style, cx));
             }
             for (component, _, _) in &partial_failures {
