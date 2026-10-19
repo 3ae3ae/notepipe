@@ -119,11 +119,40 @@ impl Activity {
                 ..TransferMetrics::default()
             };
         }
+        // Model files name their host, and whether the engine is connecting,
+        // resuming after a dropped connection or checking the finished file.
+        let host = (stage.starts_with("model/") && !self.message.is_empty())
+            .then_some(self.message.as_str());
+        let source = host.map(|host| course2md::tr!("来源 {}", host));
+        match (self.phase.as_deref(), host) {
+            (Some("connect"), Some(host)) => {
+                return TransferMetrics {
+                    quantity,
+                    note: Some(course2md::tr!("正在连接 {}", host)),
+                    ..TransferMetrics::default()
+                };
+            }
+            (Some("retry"), Some(host)) => {
+                return TransferMetrics {
+                    quantity,
+                    note: Some(course2md::tr!("连接中断，正在重新连接 {}", host)),
+                    ..TransferMetrics::default()
+                };
+            }
+            (Some("verify"), _) => {
+                return TransferMetrics {
+                    note: Some(course2md::tr!("正在校验文件完整性").into()),
+                    ..TransferMetrics::default()
+                };
+            }
+            _ => {}
+        }
         let byte_download = is_byte_download(stage);
         let stalled = self.updated.elapsed() >= Duration::from_secs(30) && self.current > 0;
         if stalled {
             return TransferMetrics {
                 quantity,
+                source,
                 speed: byte_download.then(|| "—".into()),
                 note: Some(
                     if stage.starts_with("scenes/") {
@@ -165,6 +194,7 @@ impl Activity {
             note: (byte_download && speed.is_none()).then(|| course2md::tr!("正在测量速度").into()),
             speed,
             eta,
+            source,
         }
     }
     pub fn detail(&self, stage: &str, running: bool) -> String {
@@ -187,6 +217,8 @@ pub struct TransferMetrics {
     pub speed: Option<String>,
     pub eta: Option<TransferEta>,
     pub note: Option<String>,
+    /// Where the bytes come from, for model files.
+    pub source: Option<String>,
 }
 
 impl TransferMetrics {
@@ -206,6 +238,9 @@ impl TransferMetrics {
         }
         if let Some(note) = &self.note {
             parts.push(note.clone());
+        }
+        if let Some(source) = &self.source {
+            parts.push(source.clone());
         }
         parts.join(" · ")
     }
@@ -364,9 +399,11 @@ pub(crate) fn is_model_transfer_stage(stage: &str) -> bool {
 
 /// 准备阶段文案：结构化 phase 来自引擎，缺失时退化为阶段标题。
 pub(crate) fn model_transfer_phase(stage: &str, phase: Option<&str>) -> String {
+    // Only Apple preparation names its phase in the title; model files keep
+    // their own title and word their phase in the detail.
     match phase {
-        Some("load") => course2md::tr!("加载识别模型").into(),
-        Some("download") => course2md::tr!("下载识别模型").into(),
+        Some("load") if stage == "model/apple" => course2md::tr!("加载识别模型").into(),
+        Some("download") if stage == "model/apple" => course2md::tr!("下载识别模型").into(),
         _ => title(stage),
     }
 }
@@ -488,6 +525,40 @@ mod tests {
         assert!(metrics.speed.is_none() && metrics.note.is_some());
         assert_eq!(metrics.eta, Some(TransferEta::Remaining("计算中".into())));
     }
+    #[test]
+    fn model_files_show_their_host_and_phase() {
+        let mut activity = Activity::new();
+        activity.update(0, 8 * 1024 * 1024, Some("modelscope.cn".into()));
+        activity.phase = Some("connect".into());
+        let metrics = activity.transfer_metrics("model/model.gguf", true);
+        assert_eq!(metrics.note.as_deref(), Some("正在连接 modelscope.cn"));
+        assert!(metrics.speed.is_none() && metrics.eta.is_none());
+
+        activity.phase = Some("download".into());
+        activity.started = Instant::now() - Duration::from_secs(10);
+        activity.update(4 * 1024 * 1024, 8 * 1024 * 1024, None);
+        let metrics = activity.transfer_metrics("model/model.gguf", true);
+        assert_eq!(metrics.source.as_deref(), Some("来源 modelscope.cn"));
+        assert!(metrics.speed.is_some(), "{metrics:?}");
+
+        activity.phase = Some("retry".into());
+        let detail = activity.detail("model/model.gguf", true);
+        assert!(detail.contains("正在重新连接 modelscope.cn"), "{detail}");
+
+        activity.phase = Some("verify".into());
+        let metrics = activity.transfer_metrics("model/model.gguf", true);
+        assert_eq!(metrics.note.as_deref(), Some("正在校验文件完整性"));
+        assert!(metrics.quantity.is_empty());
+        assert_eq!(
+            model_transfer_phase("model/model.gguf", Some("download")),
+            "下载语音模型"
+        );
+        assert_eq!(
+            model_transfer_phase("model/apple", Some("download")),
+            "下载识别模型"
+        );
+    }
+
     #[test]
     fn completed_scan_cannot_supply_the_new_extraction_counter_or_eta() {
         let mut scan = Activity::new();

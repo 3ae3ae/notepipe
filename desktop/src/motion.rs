@@ -254,12 +254,14 @@ pub fn transfer_status(
             .text_color(color(GRAY)),
         );
     }
-    if let Some(note) = &metrics.note {
-        view = view.child(
-            accessible_text(SharedString::from(format!("{id:?}-note")), note.clone())
-                .text_size(TEXT_AUX)
-                .text_color(color(GRAY)),
-        );
+    for (key, text) in [("note", &metrics.note), ("source", &metrics.source)] {
+        if let Some(text) = text {
+            view = view.child(
+                accessible_text(SharedString::from(format!("{id:?}-{key}")), text.clone())
+                    .text_size(TEXT_AUX)
+                    .text_color(color(GRAY)),
+            );
+        }
     }
     view.when_some(fraction, |view, fraction| {
         view.child(progress(
