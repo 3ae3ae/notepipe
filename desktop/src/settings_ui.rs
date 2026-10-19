@@ -595,6 +595,20 @@ impl AccountCard {
     }
 }
 
+/// One row of a resource list (an account or a saved service): icon, text,
+/// status and a ⋯ menu, on the shared insets that line the menus up.
+fn resource_row(id: impl Into<ElementId>) -> Stateful<Div> {
+    h_flex()
+        .id(id)
+        .w_full()
+        .min_w_0()
+        .gap(rems(16. / 14.))
+        .items_center()
+        .py(rems(16. / 14.))
+        .pl(SETTING_ITEM_INSET)
+        .pr(rems(12. / 14.))
+}
+
 pub(crate) fn settings_resource_icon(icon: Icon) -> Div {
     div()
         .flex()
@@ -1400,12 +1414,12 @@ impl Desktop {
                 .child(self.service_editor_card(window, cx))
                 .into_any_element();
         }
+        // The account is a resource row like the services below, on the same
+        // insets, so every row's ⋯ sits on one vertical line.
         view = view.child(
-            group("account-settings-heading", course2md::tr!("来源账号")).child(
-                setting_surface()
-                    .gap_3()
-                    .child(self.account_settings_page(cx)),
-            ),
+            group("account-settings-heading", course2md::tr!("来源账号"))
+                .resource_dividers()
+                .child(resource_row("bilibili-account-row").child(self.account_settings_page(cx))),
         );
         let latest = self.preferences.latest_versions();
         for (purpose, heading_id, heading, add_label) in [
@@ -1500,15 +1514,14 @@ impl Desktop {
             .collect();
         let menu = self.service_menu(version, is_default, cx);
         let row_menu = menu.clone();
-        h_flex()
-            .id(SharedString::from(format!("saved-service-{id}")))
-            .w_full()
-            .min_w_0()
-            .gap(rems(16. / 14.))
-            .items_center()
-            .py(rems(16. / 14.))
-            .pl(SETTING_ITEM_INSET)
-            .pr(rems(12. / 14.))
+        let edit_id = id.clone();
+        resource_row(SharedString::from(format!("saved-service-{id}")))
+            // The whole row opens the editor, as「编辑…」in its menu does.
+            .cursor_pointer()
+            .hover(|style| style.bg(color(INK).opacity(0.035)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_settings_service_editor(purpose, Some(edit_id.clone()), window, cx);
+            }))
             .child(settings_resource_icon(service_form::protocol_icon(
                 protocol,
             )))
@@ -1592,15 +1605,23 @@ impl Desktop {
                     .child(status),
             )
             .child(
-                quiet(SharedString::from(format!("service-actions-{id}")))
-                    .w(CONTROL_HEIGHT)
-                    .px_0()
-                    .icon(icons::ellipsis())
-                    .accessibility_label(course2md::tr!("{} 操作", version.config.name))
-                    .tooltip(course2md::tr!("服务操作"))
-                    .dropdown_menu_with_anchor(Anchor::TopRight, move |popup, window, cx| {
-                        menu(popup, window, cx)
-                    }),
+                // The menu button keeps its click from also opening the row.
+                div()
+                    .id(SharedString::from(format!("service-actions-slot-{id}")))
+                    .flex_shrink_0()
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(
+                        quiet(SharedString::from(format!("service-actions-{id}")))
+                            .w(CONTROL_HEIGHT)
+                            .px_0()
+                            .icon(icons::ellipsis())
+                            .accessibility_label(course2md::tr!("{} 操作", version.config.name))
+                            .tooltip(course2md::tr!("服务操作"))
+                            .dropdown_menu_with_anchor(
+                                Anchor::TopRight,
+                                move |popup, window, cx| menu(popup, window, cx),
+                            ),
+                    ),
             )
             .context_menu(move |popup, window, cx| row_menu(popup, window, cx))
             .into_any_element()
