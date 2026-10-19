@@ -216,6 +216,14 @@ struct Ledger {
 }
 static ACTIVE: OnceLock<Mutex<Option<Arc<Ledger>>>> = OnceLock::new();
 
+/// Whether an unconfirmed request may be sent again without asking: only when
+/// the service has no per-request billing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resend {
+    AskUser,
+    Free,
+}
+
 /// Marks a response replayed from a completed receipt rather than received now.
 pub const REPLAYED: &str = "course2md_replayed";
 
@@ -453,7 +461,14 @@ impl Ledger {
         validate: impl FnOnce(&Value) -> Result<()>,
     ) -> std::result::Result<Value, Failure> {
         self.send_described(
-            service, purpose, purpose, endpoint, identity, send, validate,
+            service,
+            purpose,
+            purpose,
+            endpoint,
+            identity,
+            Resend::AskUser,
+            send,
+            validate,
         )
     }
     // Keep the transport, validation and persisted request identity explicit at the call site.
@@ -465,6 +480,7 @@ impl Ledger {
         description: &str,
         endpoint: &str,
         identity: &Value,
+        resend: Resend,
         send: impl FnOnce() -> std::result::Result<HttpResponse, NetworkFailure>,
         validate: impl FnOnce(&Value) -> Result<()>,
     ) -> std::result::Result<Value, Failure> {
@@ -510,7 +526,8 @@ impl Ledger {
         }
         let control = self.check_intent(Some(&service_version))?;
         let authorized = old.as_ref().is_some_and(|receipt| {
-            control.resend.contains(&receipt.request_id)
+            (resend == Resend::Free && matches!(receipt.state, State::Sending | State::Uncertain))
+                || control.resend.contains(&receipt.request_id)
                 || (matches!(receipt.state, State::Failed | State::Rejected)
                     && receipt.retry_authorized.as_ref() == Some(&receipt.request_id))
         });
@@ -543,7 +560,13 @@ impl Ledger {
         }
         // An unknown prerequisite cannot be bypassed by splitting/relaxing the payload
         // or by beginning downstream summary requests. Unrelated local work remains possible.
-        for unresolved in self.unresolved_receipts()? {
+        // A free service resends unresolved requests when it reaches them, so
+        // overlapping or downstream requests cost nothing extra either.
+        for unresolved in self
+            .unresolved_receipts()?
+            .into_iter()
+            .filter(|_| resend == Resend::AskUser)
+        {
             if unresolved.stable_id != stable_id {
                 // Live in-flight requests may run concurrently; only stale Sending from another
                 // process is unknown. A lock currently held in this context proves it is live.
@@ -643,12 +666,14 @@ impl Ledger {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn json_request_described(
     service: &str,
     purpose: &str,
     description: &str,
     endpoint: &str,
     identity: &Value,
+    resend: Resend,
     send: impl FnOnce() -> std::result::Result<HttpResponse, NetworkFailure>,
     validate: impl FnOnce(&Value) -> Result<()>,
 ) -> std::result::Result<Value, Failure> {
@@ -659,6 +684,7 @@ pub fn json_request_described(
             description,
             endpoint,
             identity,
+            resend,
             send,
             validate,
         );
@@ -881,6 +907,51 @@ mod tests {
         assert_eq!(receipt.state, State::Completed);
         assert_eq!(receipt.attempt, 2);
     }
+    #[test]
+    fn free_services_resend_unconfirmed_requests_without_asking() {
+        let dir = tempfile::tempdir().unwrap();
+        let control = dir.path().join("control.json");
+        let ledger = Ledger::new(dir.path(), Some(&control), &Default::default()).unwrap();
+        let send = |payload: &Value, resend, ok: bool| {
+            ledger.send_described(
+                "llm",
+                "proofreading",
+                "segment",
+                "https://example.test",
+                payload,
+                resend,
+                || {
+                    if ok {
+                        Ok(HttpResponse {
+                            status: 200,
+                            body: br#"{"ok":true}"#.to_vec(),
+                        })
+                    } else {
+                        Err(NetworkFailure {
+                            message: "stalled".into(),
+                            definitely_unsent: false,
+                        })
+                    }
+                },
+                |_| Ok(()),
+            )
+        };
+        let first = serde_json::json!({"text":"one"});
+        let second = serde_json::json!({"text":"two"});
+        assert!(send(&first, Resend::Free, false).unwrap_err().uncertain);
+        // A billed service still stops at the unresolved request.
+        assert!(send(&second, Resend::AskUser, true).is_err());
+        // A free one carries on, and resends the unconfirmed request itself.
+        assert!(send(&second, Resend::Free, true).is_ok());
+        assert!(send(&first, Resend::Free, true).is_ok());
+        assert!(
+            receipts(dir.path())
+                .unwrap()
+                .iter()
+                .all(|r| !is_unresolved(r))
+        );
+    }
+
     #[test]
     fn uncertain_attempt_requires_exact_single_use_authorization() {
         let dir = tempfile::tempdir().unwrap();

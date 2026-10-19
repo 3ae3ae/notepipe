@@ -655,6 +655,7 @@ fn post_cloud(
             &description,
             t.url,
             identity,
+            crate::dispatch::Resend::AskUser,
             send,
             |value| {
                 anyhow::ensure!(

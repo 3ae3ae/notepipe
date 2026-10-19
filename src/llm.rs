@@ -164,8 +164,9 @@ pub(crate) fn chat_agent() -> ureq::Agent {
 
 const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// Times a Codex request is sent when its stream stalls or ends unfinished.
-const CODEX_STREAM_ATTEMPTS: u32 = 3;
+/// Times a request to a service without per-request billing is sent when its
+/// result stays unconfirmed (a stalled or unfinished response).
+const FREE_RESEND_ATTEMPTS: u32 = 3;
 
 const ERROR_BODY_LIMIT: u64 = 4 * 1024 * 1024;
 /// 单次请求输出 token 上限（校对与摘要共用）。
@@ -712,9 +713,9 @@ pub(crate) fn send_chat_described(
     let usage = &resp["usage"];
     if resp[crate::dispatch::REPLAYED] != true {
         crate::progress::note_tokens(
-        purpose.usage_stage(),
-        usage["prompt_tokens"].as_u64().unwrap_or(0),
-        usage["completion_tokens"].as_u64().unwrap_or(0),
+            purpose.usage_stage(),
+            usage["prompt_tokens"].as_u64().unwrap_or(0),
+            usage["completion_tokens"].as_u64().unwrap_or(0),
         );
     }
     // 账本已校验正文存在且结构有效
@@ -742,6 +743,11 @@ fn request_chat_once(
         description,
         &url,
         body,
+        if crate::provider::free_to_resend(s) {
+            crate::dispatch::Resend::Free
+        } else {
+            crate::dispatch::Resend::AskUser
+        },
         || {
             let send = || -> std::result::Result<
                 crate::dispatch::HttpResponse,
@@ -769,23 +775,30 @@ fn request_chat_once(
                 }
                 Ok(response)
             };
-            // A Codex stream that stalls or ends unfinished returns nothing
-            // usable. Codex runs on the ChatGPT plan rather than per-request
-            // billing, so it is sent again here instead of becoming an
-            // uncertain result that stops every later request of the task.
+            // A response that stalls or ends unfinished returns nothing usable.
+            // Without per-request billing (a ChatGPT plan, a local server)
+            // sending it again costs nothing, so it is resent here instead of
+            // becoming an uncertain result that stops every later request.
+            // Billed APIs keep asking the user before a resend.
+            let free = crate::provider::free_to_resend(s);
             let mut attempt = 1;
             loop {
                 match send() {
                     Err(failure)
-                        if sse
+                        if free
                             && !failure.definitely_unsent
-                            && attempt < CODEX_STREAM_ATTEMPTS
+                            && attempt < FREE_RESEND_ATTEMPTS
                             && crate::dispatch::check_control().is_ok() =>
                     {
                         tracing::warn!(
                             attempt,
-                            "Codex 响应中断，重新发送 / Codex response stalled; sending again"
+                            "AI 响应中断，重新发送 / AI response was interrupted; sending again"
                         );
+                        crate::runtime::interruptible_sleep(crate::runtime::retry_backoff(attempt))
+                            .map_err(|e| crate::dispatch::NetworkFailure {
+                                message: format!("{e:#}"),
+                                definitely_unsent: false,
+                            })?;
                         attempt += 1;
                     }
                     result => return result,

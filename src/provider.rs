@@ -49,6 +49,13 @@ pub(crate) fn auth_headers(s: &LlmSettings) -> Result<Vec<(String, String)>> {
     }
 }
 
+/// Whether sending a request again costs no per-request money: a ChatGPT
+/// plan (Codex) or a local Ollama server. An unconfirmed result from such a
+/// service is resent automatically instead of waiting for the user's consent.
+pub(crate) fn free_to_resend(s: &LlmSettings) -> bool {
+    matches!(s.provider, LlmProvider::Codex | LlmProvider::Ollama)
+}
+
 /// 响应是否为 SSE 流（Codex Responses API 只提供流式）。
 pub(crate) fn is_sse(s: &LlmSettings) -> bool {
     s.provider == LlmProvider::Codex
