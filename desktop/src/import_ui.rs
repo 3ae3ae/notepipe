@@ -1016,7 +1016,7 @@ impl Desktop {
         cx.notify();
     }
 
-    fn drop_source_files(
+    pub(crate) fn drop_source_files(
         &mut self,
         files: &[PathBuf],
         window: &mut Window,
@@ -1753,9 +1753,12 @@ impl Desktop {
                                         this.pick_video(window, cx)
                                     })),
                             )
-                            .when(self.can_start_input(cx), |row| {
-                                row.child(self.preview_source_button(false, cx))
-                            }),
+                            // Once the preview is on screen its own 「开始转换」
+                            // is the one primary action.
+                            .when(
+                                self.can_start_input(cx) && self.source_preview.is_none(),
+                                |row| row.child(self.preview_source_button(false, cx)),
+                            ),
                     )
                     .on_drop(
                         cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {

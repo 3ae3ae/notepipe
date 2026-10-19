@@ -112,6 +112,12 @@ impl Desktop {
             cx.notify();
             return;
         }
+        if self.online
+            && let Some(path) = source::pasted_local_path(&input)
+        {
+            self.drop_source_files(&[path], window, cx);
+            return;
+        }
         if self.online {
             let links = source::video_links(&input);
             if links.len() > 1 {

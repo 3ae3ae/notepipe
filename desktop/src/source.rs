@@ -377,6 +377,22 @@ fn command_once(
     })
 }
 
+/// A file path typed or pasted where a link was expected: absolute, `~/`, or a
+/// `file://` URL, optionally quoted as Finder's "Copy as Pathname" leaves it.
+/// Only paths that name an existing file count, so a mistyped link still gets
+/// the link message.
+pub fn pasted_local_path(input: &str) -> Option<PathBuf> {
+    let text = input.trim().trim_matches(|c| c == '"' || c == '\'');
+    let path = if text.starts_with("file://") {
+        url::Url::parse(text).ok()?.to_file_path().ok()?
+    } else if text.starts_with("~/") || Path::new(text).is_absolute() {
+        course2md::config::expand_tilde(text.into())
+    } else {
+        return None;
+    };
+    path.is_file().then_some(path)
+}
+
 pub fn validate_url(input: &str) -> Result<url::Url> {
     let url = url::Url::parse(input).context(course2md::tr!(
         "请输入完整的视频链接，以 https:// 或 http:// 开头"
@@ -598,6 +614,11 @@ pub(crate) fn cache_remote_cover(url: &str, cancel: &AtomicBool) -> Result<PathB
 
 fn inspect_local(input: String, cancel: &AtomicBool) -> Result<Source> {
     let path = course2md::config::expand_tilde(input.into());
+    // An app bundle or folder exists but is not a video; say so instead of "missing".
+    ensure!(
+        !path.exists() || path.is_file(),
+        course2md::tr!("所选项目不是视频文件，请选择一个视频文件")
+    );
     ensure!(path.is_file(), course2md::tr!("视频文件不存在，请重新选择"));
     let path = std::fs::canonicalize(path)
         .context(course2md::tr!("无法读取所选视频的位置，请重新选择"))?;
@@ -1013,6 +1034,24 @@ mod tests {
             SourceProbe::Single(source) => Ok(*source),
             _ => anyhow::bail!("not a single video"),
         }
+    }
+
+    #[test]
+    fn pasted_paths_to_existing_files_are_local_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("lecture one.mp4");
+        std::fs::write(&video, b"x").unwrap();
+        let shown = video.display().to_string();
+        assert_eq!(pasted_local_path(&shown), Some(video.clone()));
+        assert_eq!(
+            pasted_local_path(&format!("'{shown}'")),
+            Some(video.clone())
+        );
+        let url = url::Url::from_file_path(&video).unwrap().to_string();
+        assert_eq!(pasted_local_path(&url), Some(video));
+        assert_eq!(pasted_local_path(dir.path().to_str().unwrap()), None);
+        assert_eq!(pasted_local_path("/no/such/video.mp4"), None);
+        assert_eq!(pasted_local_path("bilibili.com/video/BV1"), None);
     }
 
     #[test]

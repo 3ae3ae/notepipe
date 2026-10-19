@@ -2300,62 +2300,65 @@ impl Desktop {
             if index > 0 {
                 list = list.child(inset_divider());
             }
-            let mut detail = v_flex()
-                .flex_1()
-                .min_w_0()
-                .gap_2()
-                .child(
-                    quiet(SharedString::from(format!("workbench-task-open-{id}")))
-                        .w_full()
-                        .h_auto()
-                        .p_0()
-                        .justify_start()
-                        // The component centers its internal content wrapper; a full-width
-                        // text child owns the shared title/status leading edge.
-                        .child(
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .text_left()
-                                .text_color(color(INK))
-                                .text_size(ROW_TITLE)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(task.plan.title.clone()),
-                        )
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |this, _, _, cx| {
-                                this.select_task(&id, cx);
-                                this.navigate(Page::Task, cx);
-                            }
-                        })),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .whitespace_normal()
-                        .text_size(TEXT_BODY)
-                        .text_color(color(GRAY))
-                        .child(status),
-                );
-            if !queued && !cancelling {
-                detail = detail.child(
-                    if let Some(fraction) = progress.and_then(|(_, fraction)| fraction) {
-                        crate::motion::progress(
-                            SharedString::from(format!("workbench-task-progress-{id}")),
-                            fraction,
-                            window,
-                            cx,
-                        )
-                    } else {
-                        crate::motion::spinner(
+            let mut detail = v_flex().flex_1().min_w_0().gap_2().child(
+                quiet(SharedString::from(format!("workbench-task-open-{id}")))
+                    .w_full()
+                    .h_auto()
+                    .p_0()
+                    .justify_start()
+                    // The component centers its internal content wrapper; a full-width
+                    // text child owns the shared title/status leading edge.
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .text_left()
+                            .text_color(color(INK))
+                            .text_size(ROW_TITLE)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(task.plan.title.clone()),
+                    )
+                    .on_click(cx.listener({
+                        let id = id.clone();
+                        move |this, _, _, cx| {
+                            this.select_task(&id, cx);
+                            this.navigate(Page::Task, cx);
+                        }
+                    })),
+            );
+            // Measured work gets a bar under the status; unmeasured work a
+            // spinner leading the status line, never one on a line of its own.
+            let active = !queued && !cancelling;
+            let fraction = progress.and_then(|(_, fraction)| fraction);
+            detail = detail.child(
+                h_flex()
+                    .min_w_0()
+                    .gap_2()
+                    .items_center()
+                    .when(active && fraction.is_none(), |row| {
+                        row.child(crate::motion::spinner(
                             SharedString::from(format!("workbench-task-spinner-{id}")),
                             cx,
-                        )
-                    },
-                );
+                        ))
+                    })
+                    .child(
+                        div()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .text_size(TEXT_BODY)
+                            .text_color(color(GRAY))
+                            .child(status),
+                    ),
+            );
+            if let Some(fraction) = fraction.filter(|_| active) {
+                detail = detail.child(crate::motion::progress(
+                    SharedString::from(format!("workbench-task-progress-{id}")),
+                    fraction,
+                    window,
+                    cx,
+                ));
             }
             let mut cover = row_cover()
                 .flex()

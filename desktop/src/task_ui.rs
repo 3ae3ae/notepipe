@@ -463,7 +463,8 @@ impl RenderOnce for TaskStages {
                     .w_full()
                     .min_w_0()
                     .items_start()
-                    .gap_2()
+                    // detail_row's gap, so stage details start on the facts' value column.
+                    .gap(rems(12. / 14.))
                     .flex_wrap()
                     .child(
                         semantic_label(

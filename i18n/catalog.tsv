@@ -1249,8 +1249,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 暂时无法检查登录状态	暂时无法检查登录状态	Unable to check login status at the moment	暫時無法檢查登入狀態	現在ログイン状況を確認できません
 暂时无法确认此服务是否已删除，尚未发送新的请求	暂时无法确认此服务是否已删除，尚未发送新的请求	It is temporarily impossible to confirm whether this service has been deleted, and a new request has not been sent yet.	暫時無法確認此服務是否已刪除，尚未傳送新的請求	このサービスが削除されたかどうかは一時的に確認できず、新しいリクエストはまだ送信されていません。
 暂时无法移除凭据	暂时无法移除凭据	Credentials cannot be removed at this time	暫時無法移除憑據	現時点では資格情報を削除できません
-暂时无法获取 Codex 模型目录：{error:#}	暂时无法获取 Codex 模型目录：{error:#}	The Codex model directory cannot be obtained at the moment: {error:#}	暫時無法獲取 Codex 模型目錄：{error:#}	現在、Codex モデル ディレクトリを取得できません: {error:#}
-暂时无法获取 Codex 模型目录：{}	暂时无法获取 Codex 模型目录：{}	The Codex model directory cannot be obtained at the moment: {}	暫時無法獲取 Codex 模型目錄：{}	現在、Codex モデル ディレクトリを取得できません: {}
 暂时无法获取模型（HTTP {status}），可重试	暂时无法获取模型（HTTP {status}），可重试	Temporarily unable to obtain the model (HTTP {status}), please try again	暫時無法獲取模型（HTTP {status}），可重試	一時的にモデルを取得できません (HTTP {status})。もう一度お試しください。
 暂时无法获取模型（HTTP {}），可重试	暂时无法获取模型（HTTP {}），可重试	Temporarily unable to obtain the model (HTTP {}), please try again	暫時無法獲取模型（HTTP {}），可重試	一時的にモデルを取得できません (HTTP {})。もう一度お試しください。
 暂时无法获取模型，请检查地址或网络	暂时无法获取模型，请检查地址或网络	The model cannot be obtained at the moment, please check the address or network	暫時無法獲取模型，請檢查地址或網路	現在このモデルを取得できません。アドレスまたはネットワークを確認してください。
@@ -2382,3 +2380,5 @@ ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウ�
 播放原视频	播放原视频	Play original video	播放原影片	元の動画を再生
 从 {} 播放原视频	从 {} 播放原视频	Play original video from {}	從 {} 播放原影片	{} から元の動画を再生
 在 {} 打开	在 {} 打开	Open on {}	在 {} 開啟	{} で開く
+所选项目不是视频文件，请选择一个视频文件	所选项目不是视频文件，请选择一个视频文件	The selected item is not a video file. Choose a video file.	所選項目不是影片檔案，請選擇一個影片檔案	選択した項目は動画ファイルではありません。動画ファイルを選んでください
+暂时无法获取模型列表，可以直接填写模型名称（{}）	暂时无法获取模型列表，可以直接填写模型名称（{}）	Could not load the model list; you can type a model name ({})	暫時無法取得模型列表，可以直接填寫模型名稱（{}）	モデル一覧を取得できません。モデル名を直接入力できます（{}）
