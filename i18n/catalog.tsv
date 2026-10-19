@@ -286,8 +286,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 下载 Whisper 模型文件	下载 Whisper 模型文件	Download Whisper model files	下載 Whisper 模型檔案	ウィスパーモデルファイルをダウンロードする
 下载 gpu/cpu 模型（约 2.4GB）/ Download gpu/cpu models (~2.4GB)	下载 gpu/cpu 模型（约 2.4GB）/ Download gpu/cpu models (~2.4GB)	Download gpu/cpu models (~2.4GB)/ Download gpu/cpu models (~2.4GB)	下載 gpu/cpu 模型（約 2.4GB）/ Download gpu/cpu models (~2.4GB)	GPU/CPU モデルをダウンロード (~2.4GB)/ GPU/CPU モデルをダウンロード (~2.4GB)
 下载失败，稍后重试 / Download failed; retrying shortly	下载失败，稍后重试	Download failed; retrying shortly	下載失敗，稍後重試	ダウンロードに失敗しました。後でもう一度お試しください
-下载失败，请检查网络或配置镜像 / Download failed; check your connection or configure a mirror: \n                 HF_ENDPOINT=https://hf-mirror.com	下载失败，请检查网络或配置镜像	Download failed; check your connection or configure a mirror: \n                 HF_ENDPOINT=https://hf-mirror.com	下載失敗，請檢查網路或配置映象	ダウンロードに失敗しました。ネットワークを確認するか、イメージを構成してください
-下载失败：{}	下载失败：{}	Download failed: {}	下載失敗：{}	ダウンロードに失敗しました: {}
 下载安装包	下载安装包	Download the installation package	下載安裝包	インストールパッケージをダウンロードする
 下载完整应用	下载完整应用	Download the full app	下載完整應用	アプリ全体をダウンロードする
 下载并准备模型	下载并准备模型	Download and prepare the model	下載並準備模型	モデルをダウンロードして準備する
@@ -1493,7 +1491,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 模型 ID，{}	模型 ID，{}	Model ID, {}	模型 ID，{}	モデルID、{}
 模型 {}% · {}	模型 {}% · {}	Model {}% · {}	模型 {}% · {}	モデル {}% · {}
 模型下载任务失败 / Model download task failed	模型下载任务失败	Model download task failed	模型下載任務失敗	モデルのダウンロード タスクが失敗しました
-模型下载失败 / Model download failed	模型下载失败	Model download failed	模型下載失敗	モデルのダウンロードに失敗しました
 模型下载完成或停止后再移动笔记库	模型下载完成或停止后再移动笔记库	Move the note library after the model download is completed or stopped.	模型下載完成或停止後再移動筆記庫	モデルのダウンロードが完了または停止した後で、ノート ライブラリを移動します。
 模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份	模型仍在使用旧位置，请先在“生成笔记”中保存模型位置，再清理备份	The model is still using the old location. Please save the model location in "Generate Notes" before cleaning the backup.	模型仍在使用舊位置，請先在“生成筆記”中儲存模型位置，再清理備份	モデルはまだ古い場所を使用しています。バックアップを消去する前に、「ノートの生成」でモデルの場所を保存してください。
 模型仍在使用旧位置，请先在「生成笔记」中保存模型位置，再清理备份	模型仍在使用旧位置，请先在「生成笔记」中保存模型位置，再清理备份	The model still uses the old location. Save the model location in “Create note” before cleaning backups.	模型仍在使用舊位置，請先在「產生筆記」中儲存模型位置，再清理備份	モデルはまだ古い場所を使用しています。「ノートを作成」でモデルの場所を保存してからバックアップを整理してください
@@ -2384,3 +2381,15 @@ ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウ�
 暂时无法获取模型列表，可以直接填写模型名称（{}）	暂时无法获取模型列表，可以直接填写模型名称（{}）	Could not load the model list; you can type a model name ({})	暫時無法取得模型列表，可以直接填寫模型名稱（{}）	モデル一覧を取得できません。モデル名を直接入力できます（{}）
 ↓ {} tokens	↓ {} tokens	↓ {} tokens	↓ {} tokens	↓ {} トークン
 用时 {}	用时 {}	{} elapsed	用時 {}	経過 {}
+检测到中国大陆网络，从国内镜像下载模型 / Mainland China network detected; downloading models from a domestic mirror	检测到中国大陆网络，从国内镜像下载模型	Mainland China network detected; downloading models from a domestic mirror	偵測到中國大陸網路，從國內鏡像下載模型	中国本土のネットワークを検出しました。国内ミラーからモデルをダウンロードします
+所有下载地址均失败 / Every download host failed	所有下载地址均失败	Every download host failed	所有下載位址均失敗	すべてのダウンロード元で失敗しました
+文件校验不符 / Checksum mismatch	文件校验不符	Checksum mismatch	檔案校驗不符	チェックサムが一致しません
+一分钟没有收到数据 / No data for a minute	一分钟没有收到数据	No data for a minute	一分鐘沒有收到資料	1 分間データを受信していません
+模型下载失败；可设置 HF_ENDPOINT 指定下载地址 / Model download failed; set HF_ENDPOINT to choose a download host	模型下载失败；可设置 HF_ENDPOINT 指定下载地址	Model download failed; set HF_ENDPOINT to choose a download host	模型下載失敗；可設定 HF_ENDPOINT 指定下載位址	モデルのダウンロードに失敗しました。HF_ENDPOINT でダウンロード元を指定できます
+连接 {} · {}	连接 {} · {}	Connecting to {} · {}	連線 {} · {}	{} に接続中 · {}
+重新连接 {} · {}	重新连接 {} · {}	Reconnecting to {} · {}	重新連線 {} · {}	{} に再接続中 · {}
+校验 {}	校验 {}	Verifying {}	校驗 {}	{} を検証中
+来源 {}	来源 {}	From {}	來源 {}	取得元 {}
+正在连接 {}	正在连接 {}	Connecting to {}	正在連線 {}	{} に接続しています
+连接中断，正在重新连接 {}	连接中断，正在重新连接 {}	Connection dropped; reconnecting to {}	連線中斷，正在重新連線 {}	接続が切れました。{} に再接続しています
+正在校验文件完整性	正在校验文件完整性	Verifying the file	正在校驗檔案完整性	ファイルを検証しています

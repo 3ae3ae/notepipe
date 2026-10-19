@@ -350,6 +350,13 @@ fn spawn_npu_worker(
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    // huggingface_hub downloads repository ids; a local directory needs no host.
+    if !Path::new(model).is_dir()
+        && std::env::var_os("HF_ENDPOINT").is_none()
+        && let Some(mirror) = crate::hub::endpoints().hub_override()
+    {
+        cmd.env("HF_ENDPOINT", mirror);
+    }
     cmd.arg(script)
         .arg(model)
         .arg(port.to_string())

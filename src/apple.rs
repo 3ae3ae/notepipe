@@ -281,11 +281,39 @@ pub fn prepare_cache(model: &str) -> Result<()> {
     ensure_metallib()?;
     let name = CString::new(model)?;
     let manifest = CString::new(cache_manifest(model)?)?;
-    let status = unsafe { ffi::c2m_asr_prepare_cache(name.as_ptr(), manifest.as_ptr()) };
-    if status != 0 {
-        anyhow::bail!("{}", last_error());
+    let attempt = || {
+        let status = unsafe { ffi::c2m_asr_prepare_cache(name.as_ptr(), manifest.as_ptr()) };
+        if status != 0 {
+            anyhow::bail!("{}", last_error());
+        }
+        Ok(())
+    };
+    // The Swift downloader reads HF_ENDPOINT; an explicit setting is left alone.
+    let mirror = if std::env::var_os("HF_ENDPOINT").is_none() {
+        crate::hub::endpoints().hub_override()
+    } else {
+        None
+    };
+    let Some(mirror) = mirror else {
+        return attempt();
+    };
+    // SAFETY: Darwin's libc serializes environment access, Rust's std takes
+    // its own environment lock, and no download is running while it changes.
+    unsafe { std::env::set_var("HF_ENDPOINT", mirror) };
+    let mut result = attempt();
+    if let Err(error) = &result
+        && crate::dispatch::check_control().is_ok()
+    {
+        tracing::warn!(
+            "Apple 模型从镜像下载失败，改用 Hugging Face / Apple model download from the mirror failed; trying Hugging Face: {error:#}"
+        );
+        // SAFETY: as above.
+        unsafe { std::env::set_var("HF_ENDPOINT", crate::hub::ORIGIN) };
+        result = attempt();
     }
-    Ok(())
+    // SAFETY: as above.
+    unsafe { std::env::remove_var("HF_ENDPOINT") };
+    result
 }
 
 impl Drop for CoremlAsr {
