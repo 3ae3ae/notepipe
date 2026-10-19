@@ -230,6 +230,7 @@ pub const REPLAYED: &str = "course2md_replayed";
 /// The process that started this task. If it goes away (the app was killed
 /// rather than quit), the task stops at its next safe boundary as on quit, so
 /// no orphaned worker keeps changing a task the next app instance shows.
+#[cfg(unix)]
 static PARENT: OnceLock<u32> = OnceLock::new();
 
 pub fn watch_parent() {
