@@ -215,6 +215,29 @@ struct Ledger {
     unresolved: Mutex<Option<HashMap<String, Receipt>>>,
 }
 static ACTIVE: OnceLock<Mutex<Option<Arc<Ledger>>>> = OnceLock::new();
+
+/// The process that started this task. If it goes away (the app was killed
+/// rather than quit), the task stops at its next safe boundary as on quit, so
+/// no orphaned worker keeps changing a task the next app instance shows.
+static PARENT: OnceLock<u32> = OnceLock::new();
+
+pub fn watch_parent() {
+    #[cfg(unix)]
+    let _ = PARENT.set(std::os::unix::process::parent_id());
+}
+
+fn parent_gone() -> bool {
+    #[cfg(unix)]
+    {
+        PARENT
+            .get()
+            .is_some_and(|parent| std::os::unix::process::parent_id() != *parent)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
 fn active() -> Option<Arc<Ledger>> {
     ACTIVE.get_or_init(|| Mutex::new(None)).lock().ok()?.clone()
 }
@@ -352,7 +375,12 @@ impl Ledger {
     }
     fn check_intent(&self, service_version: Option<&str>) -> std::result::Result<Control, Failure> {
         let control = self.control().map_err(Failure::local)?;
-        let reason = match control.intent {
+        let intent = if parent_gone() {
+            &Intent::Quit
+        } else {
+            &control.intent
+        };
+        let reason = match intent {
             Intent::Run => None,
             Intent::Pause => Some((
                 "paused",

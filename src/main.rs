@@ -171,6 +171,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
     }
     match cli.command {
         Some(Command::RunTask) => {
+            course2md::dispatch::watch_parent();
             let request = course2md::execution::Request::read(std::io::stdin().lock())?;
             Ok(course2md::runtime::block_on(course2md::execution::run(
                 request,
