@@ -2382,3 +2382,5 @@ ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウ�
 在 {} 打开	在 {} 打开	Open on {}	在 {} 開啟	{} で開く
 所选项目不是视频文件，请选择一个视频文件	所选项目不是视频文件，请选择一个视频文件	The selected item is not a video file. Choose a video file.	所選項目不是影片檔案，請選擇一個影片檔案	選択した項目は動画ファイルではありません。動画ファイルを選んでください
 暂时无法获取模型列表，可以直接填写模型名称（{}）	暂时无法获取模型列表，可以直接填写模型名称（{}）	Could not load the model list; you can type a model name ({})	暫時無法取得模型列表，可以直接填寫模型名稱（{}）	モデル一覧を取得できません。モデル名を直接入力できます（{}）
+↓ {} tokens	↓ {} tokens	↓ {} tokens	↓ {} tokens	↓ {} トークン
+用时 {}	用时 {}	{} elapsed	用時 {}	経過 {}

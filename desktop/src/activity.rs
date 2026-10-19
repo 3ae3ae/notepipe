@@ -9,9 +9,14 @@ pub struct Activity {
     pub phase: Option<String>,
     pub done: bool,
     pub workers: usize,
-    /// The AI service has returned usage for at least one response.
-    responded: bool,
+    /// Tokens the AI service reported for this stage, sent and received.
+    prompt_tokens: u64,
+    completion_tokens: u64,
     sampled: bool,
+    /// When the stage began and ended, for its elapsed time; `started`
+    /// restarts with each retry for the rate.
+    created: Instant,
+    finished: Option<Instant>,
     started: Instant,
     baseline: u64,
     updated: Instant,
@@ -26,8 +31,11 @@ impl Activity {
             phase: None,
             done: false,
             workers: 1,
-            responded: false,
+            prompt_tokens: 0,
+            completion_tokens: 0,
             sampled: false,
+            created: now,
+            finished: None,
             started: now,
             baseline: 0,
             updated: now,
@@ -49,16 +57,26 @@ impl Activity {
             self.message = message;
         }
     }
-    pub fn note_tokens(&mut self, prompt: u64, completion: u64) {
-        self.responded |= prompt > 0 || completion > 0;
+    pub fn finish(&mut self) {
+        self.done = true;
+        self.finished.get_or_insert_with(Instant::now);
     }
-    /// Live AI stage status: the first returned response replaces the waiting text.
-    pub fn ai_detail(&self) -> &'static str {
-        if self.responded {
-            course2md::tr!("AI 正在返回结果")
-        } else {
-            course2md::tr!("等待 AI 服务返回结果")
+    /// Adds the tokens of responses that arrived since the last report.
+    pub fn note_tokens(&mut self, prompt: u64, completion: u64) {
+        self.prompt_tokens += prompt;
+        self.completion_tokens += completion;
+    }
+    pub fn elapsed(&self) -> Duration {
+        self.finished.unwrap_or_else(Instant::now) - self.created
+    }
+    /// Unmeasured work shows that it is moving: how long it has run and, for
+    /// AI requests, how much the service has sent back.
+    pub fn live_counter(&self) -> String {
+        let mut parts = vec![elapsed_label(self.elapsed())];
+        if self.completion_tokens > 0 {
+            parts.push(course2md::tr!("↓ {} tokens", compact_count(self.completion_tokens)));
         }
+        parts.join(" · ")
     }
     pub fn fraction(&self) -> Option<f32> {
         (self.total > 0).then(|| (self.current as f32 / self.total as f32).clamp(0., 1.))
@@ -187,6 +205,28 @@ impl TransferMetrics {
             parts.push(note.clone());
         }
         parts.join(" · ")
+    }
+}
+
+/// "45s", "1m23s", "1h02m" elapsed.
+pub fn elapsed_label(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    let compact = if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h{:02}m", secs / 3600, secs % 3600 / 60)
+    };
+    course2md::tr!("用时 {}", compact)
+}
+
+/// "950", "12.3k", "1.2M".
+fn compact_count(count: u64) -> String {
+    match count {
+        0..1_000 => count.to_string(),
+        1_000..1_000_000 => format!("{:.1}k", count as f64 / 1e3),
+        _ => format!("{:.1}M", count as f64 / 1e6),
     }
 }
 
@@ -362,6 +402,17 @@ fn duration(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn counters_are_compact() {
+        use super::{Duration, compact_count, elapsed_label};
+        assert_eq!(compact_count(950), "950");
+        assert_eq!(compact_count(12_345), "12.3k");
+        assert_eq!(compact_count(1_250_000), "1.2M");
+        assert!(elapsed_label(Duration::from_secs(45)).contains("45s"));
+        assert!(elapsed_label(Duration::from_secs(83)).contains("1m23s"));
+        assert!(elapsed_label(Duration::from_secs(3720)).contains("1h02m"));
+    }
+
     use super::*;
     #[test]
     fn stage_boundaries_do_not_invent_download_samples() {

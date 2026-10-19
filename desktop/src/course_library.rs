@@ -2295,7 +2295,13 @@ impl Desktop {
                 progress
                     .as_ref()
                     .map(|(label, _)| label.clone())
-                    .unwrap_or_else(|| course2md::tr!("正在准备…").into())
+                    .unwrap_or_else(|| {
+                        if self.is_running_task(&id) {
+                            self.with_job_clock(course2md::tr!("正在准备…"))
+                        } else {
+                            course2md::tr!("正在准备…").into()
+                        }
+                    })
             };
             if index > 0 {
                 list = list.child(inset_divider());

@@ -246,7 +246,7 @@ impl StageStatus {
 
     fn icon(self, id: SharedString, indeterminate: bool, cx: &App) -> AnyElement {
         if matches!(self, Self::Running | Self::Pausing | Self::Stopping) && indeterminate {
-            return crate::motion::spinner(id, cx);
+            return crate::motion::icon_spinner(id, rems(20. / 14.), cx);
         }
         (match self {
             Self::Running => icons::refresh(),
@@ -281,13 +281,11 @@ fn task_stage_progress(
     current: u64,
     total: u64,
 ) -> (String, Option<f32>) {
+    // AI requests have no measurable fraction; their clock and returned
+    // tokens show them moving, and stay as the record once they finish.
     if matches!(name, "llm" | "summary") {
         return (
-            if !done && let Some(live) = live {
-                live.ai_detail().into()
-            } else {
-                String::new()
-            },
+            live.map(|live| live.live_counter()).unwrap_or_default(),
             None,
         );
     }
@@ -302,9 +300,19 @@ fn task_stage_progress(
     } else {
         String::new()
     };
-    let fraction = (!done)
-        .then(|| live.and_then(|stage| stage.fraction()))
-        .flatten();
+    // A finished measured stage keeps a full bar, so the stages read as a
+    // growing stack rather than one bar replacing another.
+    let fraction = if done {
+        (total > 0).then_some(1.)
+    } else {
+        live.and_then(|stage| stage.fraction())
+    };
+    // Unmeasured running work shows its clock instead of a bar.
+    let detail = match live.filter(|_| !done && fraction.is_none()) {
+        Some(live) if detail.is_empty() => live.live_counter(),
+        Some(live) => format!("{detail} · {}", live.live_counter()),
+        None => detail,
+    };
     (detail, fraction)
 }
 
@@ -1800,6 +1808,8 @@ impl Desktop {
                     this.kind = Kind::Convert;
                     this.cancelling = false;
                     this.progress.clear();
+                    this.token_totals = (0, 0);
+                    this.job_started = Some(std::time::Instant::now());
                     this.logs.clear();
                     this.pending_done = None;
                     this.task_error = None;
@@ -3369,6 +3379,15 @@ impl Desktop {
     }
 
     /// Compact workbench status uses the same measured progress as task details.
+    /// A waiting line with the running job's clock, so a pause between
+    /// stages never looks stalled.
+    pub(crate) fn with_job_clock(&self, label: &str) -> String {
+        match self.job_started.filter(|_| self.job.is_some()) {
+            Some(started) => format!("{label} · {}", activity::elapsed_label(started.elapsed())),
+            None => label.to_owned(),
+        }
+    }
+
     pub(crate) fn compact_task_progress(&self, task: &TaskRecord) -> Option<(String, Option<f32>)> {
         self.task_stage_rows(task)
             .into_iter()
@@ -3393,11 +3412,13 @@ impl Desktop {
         task: &TaskRecord,
         cx: &mut Context<Self>,
     ) -> (Option<Div>, Option<TaskDisclosure>) {
+        let active = self.is_running_task(&task.id);
+        // While the task runs every stage stays in order, finished ones above
+        // the current one; afterwards the finished ones fold into history.
         let (completed, current): (Vec<_>, Vec<_>) = self
             .task_stage_rows(task)
             .into_iter()
-            .partition(|stage| stage.status == StageStatus::Complete);
-        let active = self.is_running_task(&task.id);
+            .partition(|stage| !active && stage.status == StageStatus::Complete);
         let waiting = worker_wait_state(
             active,
             self.pending_done.is_some(),
@@ -3417,7 +3438,7 @@ impl Desktop {
                 view = view.child(
                     semantic_label(
                         SharedString::from(format!("task-waiting-{}", task.id)),
-                        waiting.label(),
+                        self.with_job_clock(waiting.label()),
                         crate::motion::spinner(
                             SharedString::from(format!("task-waiting-spinner-{}", task.id)),
                             cx,
@@ -4276,9 +4297,10 @@ mod tests {
                 assert!(!detail.contains("收尾"));
                 assert!(!activity.done);
             }
-            activity.done = true;
+            activity.finish();
+            // The finished stage keeps its clock as the record, still without a fraction.
             let (detail, fraction) = task_stage_progress(name, true, Some(&activity), 1, 1);
-            assert!(detail.is_empty());
+            assert!(detail.contains("0s"));
             assert!(fraction.is_none());
         }
         // Quantities that measure completed work keep their determinate progress.

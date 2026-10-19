@@ -284,6 +284,10 @@ struct Desktop {
     task_status: String,
     task_error: Option<String>,
     progress: BTreeMap<String, activity::Activity>,
+    /// The engine's running token totals for the current job.
+    token_totals: (u64, u64),
+    /// When the current job started, for its elapsed time before any stage.
+    job_started: Option<Instant>,
     desktop_settings: course2md::settings::DesktopSettings,
     last_tick: Instant,
     logs: VecDeque<String>,
@@ -670,6 +674,8 @@ impl Desktop {
             task_error: None,
             task_status: String::new(),
             progress: BTreeMap::new(),
+            token_totals: (0, 0),
+            job_started: None,
             logs: VecDeque::new(),
             pending_done: None,
             completed: None,
@@ -950,6 +956,10 @@ impl Desktop {
         if self.page == Page::Result {
             deadline = earliest_deadline(deadline, Some(Instant::now() + Duration::from_secs(2)));
         }
+        // Running work shows a live clock.
+        if self.job.is_some() {
+            deadline = earliest_deadline(deadline, Some(Instant::now() + Duration::from_secs(1)));
+        }
         if self.storage_ui.resume_ready() {
             deadline = earliest_deadline(deadline, Some(Instant::now()));
         }
@@ -999,7 +1009,7 @@ impl Desktop {
                         self.progress
                             .entry(stage)
                             .or_insert_with(activity::Activity::new)
-                            .done = true;
+                            .finish();
                     }
                     flush = recording;
                     immediate = true;
@@ -1022,11 +1032,19 @@ impl Desktop {
                     stage,
                     prompt,
                     completion,
-                } => self
-                    .progress
-                    .entry(stage)
-                    .or_insert_with(activity::Activity::new)
-                    .note_tokens(prompt, completion),
+                } => {
+                    // The engine reports running totals for the whole task;
+                    // each stage keeps the part that arrived while it ran.
+                    let (sent, received) = self.token_totals;
+                    self.token_totals = (prompt, completion);
+                    self.progress
+                        .entry(stage)
+                        .or_insert_with(activity::Activity::new)
+                        .note_tokens(
+                            prompt.saturating_sub(sent),
+                            completion.saturating_sub(received),
+                        )
+                }
                 Event::Workers { stage, workers } => {
                     self.progress
                         .entry(stage)

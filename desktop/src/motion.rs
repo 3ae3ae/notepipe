@@ -76,9 +76,16 @@ fn rise_in<E: IntoElement + Styled + 'static>(
 }
 
 pub fn spinner(id: impl Into<ElementId>, cx: &App) -> AnyElement {
-    let icon = crate::icons::loader_circle()
-        .small()
-        .text_color(color(ACCENT));
+    spin(crate::icons::loader_circle().small(), id, cx)
+}
+
+/// A spinner standing in an icon column, at that column's icon size.
+pub fn icon_spinner(id: impl Into<ElementId>, size: Rems, cx: &App) -> AnyElement {
+    spin(crate::icons::loader_circle().size(size), id, cx)
+}
+
+fn spin(icon: gpui_component::Icon, id: impl Into<ElementId>, cx: &App) -> AnyElement {
+    let icon = icon.text_color(color(ACCENT));
     if cx.reduce_motion() {
         return icon.into_any_element();
     }
