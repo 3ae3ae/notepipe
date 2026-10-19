@@ -43,11 +43,17 @@ fn fetch_models(tokens: &CodexTokens) -> Result<Vec<(String, String)>> {
     if let Some(account_id) = &tokens.account_id {
         request = request.set("ChatGPT-Account-ID", account_id);
     }
-    let response = request.call().map_err(|e| match e {
-        ureq::Error::Status(401 | 403, _) => anyhow::Error::new(CodexLoginRequired),
-        _ => anyhow::anyhow!(crate::tr!(
+    // The root cause stays specific (status or transport failure); the
+    // context names what failed.
+    let response = request.call().map_err(|e| {
+        let cause = match e {
+            ureq::Error::Status(401 | 403, _) => return anyhow::Error::new(CodexLoginRequired),
+            ureq::Error::Status(status, _) => anyhow::anyhow!("HTTP {status}"),
+            ureq::Error::Transport(transport) => anyhow::anyhow!("{transport}"),
+        };
+        cause.context(crate::tr!(
             "无法获取 Codex 模型目录 / Cannot fetch the Codex model catalog"
-        )),
+        ))
     })?;
     let value: Value = response.into_json().context(crate::tr!(
         "Codex 模型目录无法解析 / Cannot parse the Codex model catalog"

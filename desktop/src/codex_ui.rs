@@ -280,7 +280,10 @@ impl Desktop {
                             this.codex.status = Some(LoginStatus::Expired);
                             course2md::tr!("ChatGPT 登录已失效，请重新登录").to_string()
                         } else {
-                            course2md::tr!("暂时无法获取 Codex 模型目录：{}", format!("{error:#}"))
+                            course2md::tr!(
+                                "暂时无法获取模型列表，可以直接填写模型名称（{}）",
+                                error.root_cause().to_string()
+                            )
                         };
                         this.codex_form_models_failed(surface, message);
                     }
