@@ -6,6 +6,10 @@ description = "Turn online course videos (YouTube/Bilibili) into image+transcrip
 license = "MIT"
 
 [dependencies]
+ratex-layout = "0.1.15"
+ratex-parser = "0.1.15"
+ratex-svg = { version = "0.1.15", features = ["embed-fonts"] }
+ratex-types = "0.1.15"
 qrcode = { version = "0.14.1", default-features = false }
 anyhow = "1"
 tempfile = "3"

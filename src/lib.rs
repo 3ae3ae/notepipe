@@ -13,6 +13,7 @@ pub mod fetch;
 pub mod i18n;
 pub mod llm;
 pub mod login;
+pub mod math;
 pub mod media;
 pub mod models;
 pub mod npu;

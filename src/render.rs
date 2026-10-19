@@ -162,14 +162,19 @@ pub fn render_html(meta: &VideoMeta, sections: &[Section]) -> String {
             .unwrap();
         }
         for ev in &s.speech {
-            writeln!(body, "<p>{}</p>", esc(&ev.text)).unwrap();
+            writeln!(body, "<p>{}</p>", rich(&ev.text)).unwrap();
         }
         body.push_str("</section>\n");
     }
     format!(
-        "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{title}</title>\n<style>\n:root {{ color-scheme: light dark; }}\nbody {{ max-width: 920px; margin: 0 auto; padding: 1rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; }}\nheader h1 {{ font-size: 1.5rem; }}\nheader p {{ color: #888; }}\nsection {{ margin: 2rem 0; }}\nsection h2 {{ font-size: 1rem; font-weight: 600; }}\nsection h2 a {{ color: #0969da; text-decoration: none; }}\nimg {{ max-width: 100%; border: 1px solid #8884; border-radius: 6px; }}\np {{ margin: .4rem 0; }}\n</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
+        "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{title}</title>\n<style>\n:root {{ color-scheme: light dark; }}\nbody {{ max-width: 920px; margin: 0 auto; padding: 1rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; }}\nheader h1 {{ font-size: 1.5rem; }}\nheader p {{ color: #888; }}\nsection {{ margin: 2rem 0; }}\nsection h2 {{ font-size: 1rem; font-weight: 600; }}\nsection h2 a {{ color: #0969da; text-decoration: none; }}\nimg {{ max-width: 100%; border: 1px solid #8884; border-radius: 6px; }}\np {{ margin: .4rem 0; }}\n.math {{ display: inline-block; }}\n.math svg {{ display: block; }}\n.math.display {{ display: block; margin: .6rem auto; max-width: 100%; }}\n</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
         title = esc(&meta.title),
     )
+}
+
+/// Note text with its formulas typeset; everything else escaped.
+pub(crate) fn rich(s: &str) -> String {
+    crate::math::html(s, esc)
 }
 
 pub(crate) fn esc(s: &str) -> String {

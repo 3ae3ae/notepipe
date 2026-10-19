@@ -387,12 +387,12 @@ pub fn render_html_block(sm: &Summary) -> String {
     );
     out.push_str(&format!(
         "<p class=\"mute\">{}</p>",
-        crate::render::esc(&sm.tldr)
+        crate::render::rich(&sm.tldr)
     ));
     if !sm.key_points.is_empty() {
         out.push_str(crate::tr!("<h3>核心要点</h3><ul>"));
         for p in &sm.key_points {
-            out.push_str(&format!("<li>{}</li>", crate::render::esc(p)));
+            out.push_str(&format!("<li>{}</li>", crate::render::rich(p)));
         }
         out.push_str("</ul>");
     }
@@ -402,8 +402,8 @@ pub fn render_html_block(sm: &Summary) -> String {
             out.push_str(&crate::tr!(
                 "<li><b>{}</b> {}：{}</li>",
                 crate::render::esc(&crate::render::fmt_ts(o.t)),
-                crate::render::esc(&o.title),
-                crate::render::esc(&o.detail)
+                crate::render::rich(&o.title),
+                crate::render::rich(&o.detail)
             ));
         }
         out.push_str("</ul>");
