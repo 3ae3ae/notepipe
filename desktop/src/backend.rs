@@ -417,6 +417,12 @@ pub fn resolve_cli() -> Result<PathBuf> {
     if let Some(dir) = std::env::current_exe()?.parent() {
         candidates.push(dir.join(&name));
     }
+    // A development build runs beside the workspace's own engine build; an
+    // older engine on PATH cannot read today's task format.
+    if cfg!(debug_assertions) {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target");
+        candidates.extend(["debug", "release"].map(|profile| workspace.join(profile).join(&name)));
+    }
     candidates.extend(std::env::split_paths(&tool_path()).map(|dir| dir.join(&name)));
     candidates
         .into_iter()
