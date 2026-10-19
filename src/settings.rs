@@ -199,7 +199,11 @@ pub fn template() -> String {
             "{TRANSCRIPT_SOURCE}",
             c::TranscriptSource::default().to_string(),
         ),
-        ("{MODEL_DIR}", c::model_dir_from(None).display().to_string()),
+        // A TOML string, escaped: Windows paths contain backslashes.
+        (
+            "{MODEL_DIR}",
+            toml::Value::String(c::model_dir_from(None).display().to_string()).to_string(),
+        ),
         ("{LLM_ENABLED}", llm.enabled.to_string()),
         ("{LLM_BASE_URL}", llm.base_url),
         ("{LLM_MODEL}", llm.model),
@@ -258,7 +262,7 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 # 输出格式 / Output formats: md, html, json
 #formats = [{FORMATS}]
 # gpu/cpu 模型目录；默认使用系统缓存 / gpu/cpu model directory; platform cache by default
-#model_dir = "{MODEL_DIR}"
+#model_dir = {MODEL_DIR}
 # 成功后保留下载的视频 / Keep downloaded video after success
 #keep_video = {KEEP_VIDEO}
 # 继续上次中断的识别 / Continue interrupted transcription
@@ -371,6 +375,13 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn template_paths_are_escaped_toml_strings() {
+        let quoted = toml::Value::String(r"C:\Users\me\models".into()).to_string();
+        let parsed: toml::Table = toml::from_str(&format!("model_dir = {quoted}")).unwrap();
+        assert_eq!(parsed["model_dir"].as_str(), Some(r"C:\Users\me\models"));
+    }
+
     #[test]
     fn template_parses_to_built_in_defaults_when_uncommented() {
         let text: String = super::template()
