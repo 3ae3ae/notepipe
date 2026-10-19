@@ -295,6 +295,10 @@ pub fn polish_sections_report(
         },
     )?;
     pb.finish();
+    // A formula spoken across a subtitle boundary comes back in two pieces.
+    for sec in sections.iter_mut() {
+        join_split_formulas(&mut sec.speech);
+    }
     // 删除「成功校对为空串」的纯语气词条目（全部 chunk 完成后统一过滤）
     for sec in sections.iter_mut() {
         sec.speech.retain(|e| !e.text.trim().is_empty());
@@ -306,6 +310,47 @@ pub fn polish_sections_report(
         failed: attempted.saturating_sub(succeeded),
         note: crate::runtime::lock_recover(&first_error).take(),
     })
+}
+
+/// Joins an inline formula that a segment ends unfinished (`$0.$`, `$a+$`)
+/// with the formula the next segment opens with, so `加上 $0.$` + `$2\cos 2x$`
+/// reads `加上 $0.2\cos 2x$`. The next segment keeps the rest of its text.
+fn join_split_formulas(events: &mut [TranscriptEvent]) {
+    for index in 1..events.len() {
+        let (before, after) = events.split_at_mut(index);
+        let (previous, next) = (&mut before[index - 1].text, &mut after[0].text);
+        let Some(head) = unfinished_tail_formula(previous) else {
+            continue;
+        };
+        let rest = next.trim_start();
+        let Some(body) = rest.strip_prefix('$').filter(|body| !body.starts_with('$')) else {
+            continue;
+        };
+        let Some(close) = body.find('$') else {
+            continue;
+        };
+        let joined = format!("{head}{}$", &body[..close]);
+        let remainder = body[close + 1..].to_owned();
+        let keep = previous.trim_end().len() - 1;
+        previous.truncate(keep - (head.len() + 1));
+        previous.push('$');
+        previous.push_str(&joined);
+        *next = remainder;
+    }
+}
+
+/// The content of a closing inline formula that cannot end where it does.
+fn unfinished_tail_formula(text: &str) -> Option<String> {
+    let trimmed = text.trim_end().strip_suffix('$')?;
+    let open = trimmed.rfind('$')?;
+    let content = &trimmed[open + 1..];
+    if content.is_empty() || trimmed[..open].ends_with('$') {
+        return None;
+    }
+    let tail = content.trim_end();
+    let unfinished = tail.ends_with(['+', '-', '=', '(', '[', '{', '^', '_', ',', '\\'])
+        || (tail.ends_with('.') && tail[..tail.len() - 1].ends_with(|c: char| c.is_ascii_digit()));
+    unfinished.then(|| content.to_owned())
 }
 
 /// 读取本节校对截图的 base64；None = 截图不可用（已告警）。
@@ -1060,6 +1105,28 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formulas_split_across_segments_are_joined() {
+        let event = |text: &str| TranscriptEvent {
+            start: 0.,
+            end: 1.,
+            text: text.into(),
+            raw: None,
+        };
+        let mut events = vec![
+            event("加上 $0.$"),
+            event("$2\\cos 2x$，等等。"),
+            event("这是 $x$"),
+            event("$y$ 不变"),
+        ];
+        join_split_formulas(&mut events);
+        assert_eq!(events[0].text, "加上 $0.2\\cos 2x$");
+        assert_eq!(events[1].text, "，等等。");
+        // A complete formula followed by another stays two formulas.
+        assert_eq!(events[2].text, "这是 $x$");
+        assert_eq!(events[3].text, "$y$ 不变");
+    }
 
     #[test]
     fn validate_rejects_unusable_service_urls() {
