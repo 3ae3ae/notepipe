@@ -159,6 +159,8 @@ const WHISPER: &[ApplePart] = &[ApplePart {
     ],
     weights: false,
 }];
+// Read by the Apple native backend only.
+#[cfg_attr(not(apple_native), allow(dead_code))]
 pub(crate) const APPLE_VAD: ApplePart = ApplePart {
     repo: "aufklarer/Silero-VAD-v6.2.1-CoreML",
     files: &["config.json"],

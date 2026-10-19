@@ -36,6 +36,8 @@ enum CoremlMode {
     /// Download/repair files only; the later transcription loads the model.
     Cache,
     /// Load the model as the requested preparation step.
+    // Only the Apple native backend reads whether files were already cached.
+    #[cfg_attr(not(apple_native), allow(dead_code))]
     Prepare { cached: bool },
 }
 
