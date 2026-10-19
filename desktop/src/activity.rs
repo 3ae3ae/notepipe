@@ -74,7 +74,10 @@ impl Activity {
     pub fn live_counter(&self) -> String {
         let mut parts = vec![elapsed_label(self.elapsed())];
         if self.completion_tokens > 0 {
-            parts.push(course2md::tr!("↓ {} tokens", compact_count(self.completion_tokens)));
+            parts.push(course2md::tr!(
+                "↓ {} tokens",
+                compact_count(self.completion_tokens)
+            ));
         }
         parts.join(" · ")
     }
