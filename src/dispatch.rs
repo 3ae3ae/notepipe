@@ -216,6 +216,9 @@ struct Ledger {
 }
 static ACTIVE: OnceLock<Mutex<Option<Arc<Ledger>>>> = OnceLock::new();
 
+/// Marks a response replayed from a completed receipt rather than received now.
+pub const REPLAYED: &str = "course2md_replayed";
+
 /// The process that started this task. If it goes away (the app was killed
 /// rather than quit), the task stops at its next safe boundary as on quit, so
 /// no orphaned worker keeps changing a task the next app instance shows.
@@ -497,6 +500,12 @@ impl Ledger {
                 ))
             })?;
             validate(&response).map_err(Failure::local)?;
+            // A replayed result was received in an earlier run; callers that
+            // report live usage skip it.
+            let mut response = response;
+            if let Some(object) = response.as_object_mut() {
+                object.insert(REPLAYED.into(), Value::Bool(true));
+            }
             return Ok(response);
         }
         let control = self.check_intent(Some(&service_version))?;
@@ -977,6 +986,10 @@ mod tests {
                 |_| Ok(()),
             )
             .unwrap();
+        // The replay is the saved result, marked as not received now.
+        let mut cached = cached;
+        assert_eq!(cached[REPLAYED], true);
+        cached.as_object_mut().unwrap().remove(REPLAYED);
         assert_eq!(cached, result);
     }
     #[test]

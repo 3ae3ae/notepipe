@@ -710,11 +710,13 @@ pub(crate) fn send_chat_described(
     // token 用量实时反馈：GUI 阶段行据此跳动（上传=prompt，下载=completion）。
     // Codex SSE 已在 provider::sse_to_chat_json 归一成 chat/completions 同一形状。
     let usage = &resp["usage"];
-    crate::progress::note_tokens(
+    if resp[crate::dispatch::REPLAYED] != true {
+        crate::progress::note_tokens(
         purpose.usage_stage(),
         usage["prompt_tokens"].as_u64().unwrap_or(0),
         usage["completion_tokens"].as_u64().unwrap_or(0),
-    );
+        );
+    }
     // 账本已校验正文存在且结构有效
     Ok(resp["choices"][0]["message"]["content"]
         .as_str()
