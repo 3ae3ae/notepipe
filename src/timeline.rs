@@ -21,6 +21,9 @@ pub struct TranscriptEvent {
     /// ASR 原始文本（provenance；校对后保留）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
+    /// AI translation into the note's target language (bilingual notes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation: Option<String>,
 }
 
 /// 一张截图 + 展示期间的语音。
@@ -162,6 +165,7 @@ fn split_at_natural_boundaries(event: TranscriptEvent, boundaries: &[f64]) -> Ve
                 end: window[1],
                 text,
                 raw: event.raw.clone(),
+                translation: None,
             }
         })
         .collect()
@@ -220,6 +224,7 @@ pub fn coalesce_sections(sections: &mut [Section]) {
                         end: event.end,
                         text: text.to_string(),
                         raw: None,
+                        translation: None,
                     });
                 }
             }
@@ -315,6 +320,7 @@ mod tests {
             end,
             text: format!("{start}-{end}"),
             raw: None,
+            translation: None,
         }
     }
 
@@ -340,6 +346,7 @@ mod tests {
             end: 10.0,
             text: "前半句，后半句。".into(),
             raw: None,
+            translation: None,
         }];
         let s = merge(frames, speech, 10.0);
         // 边界 5s 附近有句读「，」：安全拆分，图文对应
@@ -357,6 +364,7 @@ mod tests {
             end: 10.0,
             text: "一二三四五六七八九十".into(),
             raw: None,
+            translation: None,
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[5.0]);
         assert_eq!(parts.len(), 1, "无句读不切分");
@@ -368,6 +376,7 @@ mod tests {
             end: 1.0,
             text: "abc".into(),
             raw: None,
+            translation: None,
         };
         assert_eq!(split_at_natural_boundaries(ev2, &[0.1]).len(), 1);
     }
@@ -380,6 +389,7 @@ mod tests {
             end: 10.0,
             text: "你好，世界很好。再见".into(),
             raw: None,
+            translation: None,
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[5.0]);
         assert_eq!(parts.len(), 2);
@@ -392,6 +402,7 @@ mod tests {
             end: 10.0,
             text: "compiler optimization lecture".into(),
             raw: None,
+            translation: None,
         };
         let parts2 = split_at_natural_boundaries(ev2, &[5.0]);
         assert_eq!(parts2[0].text, "compiler ");
@@ -406,6 +417,7 @@ mod tests {
             end: 30.0,
             text: "零一，二三四五六七八九十".into(),
             raw: None,
+            translation: None,
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[10.0, 20.0]);
         assert_eq!(parts.len(), 1, "任一边界无自然断点则整段保留：{parts:?}");
@@ -446,12 +458,14 @@ mod tests {
                 end: 2.0,
                 text: long_text.clone(),
                 raw: None,
+                translation: None,
             },
             TranscriptEvent {
                 start: 2.1,
                 end: 4.0,
                 text: long_text.clone(),
                 raw: None,
+                translation: None,
             },
         ];
         let mut sections = vec![Section {
@@ -472,18 +486,21 @@ mod tests {
                 end: 1.0,
                 text: "嗯，".into(),
                 raw: None,
+                translation: None,
             },
             TranscriptEvent {
                 start: 1.1,
                 end: 2.0,
                 text: "啊".into(),
                 raw: None,
+                translation: None,
             },
             TranscriptEvent {
                 start: 2.1,
                 end: 4.0,
                 text: "我们今天讲啊这个问题".into(),
                 raw: None,
+                translation: None,
             },
         ];
         let mut sections = vec![Section {
@@ -508,12 +525,14 @@ mod tests {
                 end: 2.0,
                 text: "hello world".into(),
                 raw: None,
+                translation: None,
             },
             TranscriptEvent {
                 start: 2.2,
                 end: 4.0,
                 text: "next sentence".into(),
                 raw: None,
+                translation: None,
             },
         ];
         let mut sections = vec![Section {

@@ -294,6 +294,9 @@ enabled = {LLM_ENABLED}
 #concurrency = {LLM_CONCURRENCY}
 # 在笔记中加入 AI 摘要，需要 enabled = true / Add AI summaries; requires enabled = true
 #summarize = {LLM_SUMMARIZE}
+# 双语笔记的目标语言（zh-Hans、zh-Hant、en、ja、ko、fr、de、es）；已是该语言时不翻译
+# Bilingual notes: target language; skipped when the text is already in it
+#translate = "en"
 "#;
 
 /// 打印配置文件与内置默认合并后的设置（不含本次命令行与环境变量覆盖）。
@@ -370,6 +373,11 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     println!("  {:<17}: {}", "vision", cfg.llm.vision);
     println!("  {:<17}: {}", "concurrency", cfg.llm.concurrency);
     println!("  {:<17}: {}", "summarize", cfg.llm.summarize);
+    println!(
+        "  {:<17}: {}",
+        "translate",
+        cfg.llm.translate.as_deref().unwrap_or("-")
+    );
     Ok(())
 }
 

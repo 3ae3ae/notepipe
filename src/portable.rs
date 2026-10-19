@@ -270,6 +270,7 @@ mod tests {
                     end: 1.,
                     text: "Actual note".into(),
                     raw: None,
+                    translation: None,
                 }],
             }],
             summary: None,

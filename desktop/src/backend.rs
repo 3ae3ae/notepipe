@@ -702,6 +702,7 @@ mod tests {
                 end: 1.,
                 text: "Manually added explanation.".into(),
                 raw: None,
+                translation: None,
             }],
         }];
         let target = course2md::artifact::Target {
@@ -761,6 +762,7 @@ mod tests {
                 end: 1.,
                 text: "Readable explanation.".into(),
                 raw: None,
+                translation: None,
             }],
         }];
         let target = course2md::artifact::Target {

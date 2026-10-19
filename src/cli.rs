@@ -247,6 +247,16 @@ pub struct RunOpts {
     #[arg(help_heading = "AI 校对 / AI proofreading")]
     pub no_summarize: bool,
 
+    /// 双语笔记：把文字翻译为该语言（zh-Hans、zh-Hant、en、ja、ko、fr、de、es） / Bilingual notes: translate the text into this language (zh-Hans, zh-Hant, en, ja, ko, fr, de, es)
+    #[arg(long, value_name = "LANG", conflicts_with = "no_translate", value_parser = parse_translation_target)]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    pub translate: Option<String>,
+
+    /// 本次不翻译 / Do not translate this run
+    #[arg(long)]
+    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    pub no_translate: bool,
+
     /// 显示诊断日志；-vv 显示调试细节 / Diagnostic logs; -vv for debug details
     #[arg(short, long, action = clap::ArgAction::Count)]
     #[arg(help_heading = "终端输出 / Terminal output")]
@@ -596,6 +606,18 @@ fn more_version(lang: Lang) -> &'static str {
         Lang::Ja => crate::tr!("バージョンを表示"),
         Lang::En => "Print version",
     }
+}
+
+fn parse_translation_target(value: &str) -> Result<String, String> {
+    crate::language::target(value)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            let codes: Vec<_> = crate::language::TARGETS
+                .iter()
+                .map(|(code, _)| *code)
+                .collect();
+            crate::tr!("支持的语言：{}", codes.join(", "))
+        })
 }
 
 #[cfg(test)]

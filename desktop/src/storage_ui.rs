@@ -2039,6 +2039,7 @@ mod tests {
                 end: 1.,
                 text: "Relocation must preserve this body.".into(),
                 raw: None,
+                translation: None,
             }],
         }];
         let meta = course2md::fetch::VideoMeta {

@@ -2404,3 +2404,12 @@ ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウ�
 已将《{}》移到{}	已将《{}》移到{}	Moved “{}” to the {}	已將《{}》移到{}	「{}」を{}に移動しました
 笔记尚未删除：{}	笔记尚未删除：{}	The note was not deleted: {}	筆記尚未刪除：{}	ノートは削除されていません: {}
 这份笔记还有未完成的任务，请在任务结束或取消后再删除	这份笔记还有未完成的任务，请在任务结束或取消后再删除	This note has an unfinished task; delete it after the task finishes or is cancelled	這份筆記還有未完成的任務，請在任務結束或取消後再刪除	このノートには未完了のタスクがあります。タスクが終了するかキャンセルしてから削除してください
+双语笔记：把文字翻译为该语言（zh-Hans、zh-Hant、en、ja、ko、fr、de、es） / Bilingual notes: translate the text into this language (zh-Hans, zh-Hant, en, ja, ko, fr, de, es)	双语笔记：把文字翻译为该语言（zh-Hans、zh-Hant、en、ja、ko、fr、de、es）	Bilingual notes: translate the text into this language (zh-Hans, zh-Hant, en, ja, ko, fr, de, es)	雙語筆記：把文字翻譯為該語言（zh-Hans、zh-Hant、en、ja、ko、fr、de、es）	バイリンガルノート：テキストをこの言語に翻訳します（zh-Hans、zh-Hant、en、ja、ko、fr、de、es）
+本次不翻译 / Do not translate this run	本次不翻译	Do not translate this run	本次不翻譯	今回は翻訳しない
+支持的语言：{}	支持的语言：{}	Supported languages: {}	支援的語言：{}	対応言語: {}
+翻译 {}–{} 的文字 / Translate transcript {}–{}	翻译 {}–{} 的文字	Translate transcript {}–{}	翻譯 {}–{} 的文字	{}–{} のテキストを翻訳
+服务返回的翻译结构无效 / Invalid translation structure	服务返回的翻译结构无效	Invalid translation structure	服務返回的翻譯結構無效	サービスから返された翻訳の構造が無効です
+翻译结果与原文段落不对应 / Translated segments do not match the input	翻译结果与原文段落不对应	Translated segments do not match the input	翻譯結果與原文段落不對應	翻訳結果が元の段落と一致しません
+翻译未完成：{}	翻译未完成：{}	Translation incomplete: {}	翻譯未完成：{}	翻訳が完了していません: {}
+AI 翻译工作进程中断 / Translation worker interrupted	AI 翻译工作进程中断	Translation worker interrupted	AI 翻譯工作程序中斷	AI 翻訳プロセスが中断されました
+翻译未全部完成（{}/{} 失败）	翻译未全部完成（{}/{} 失败）	Translation incomplete ({}/{} failed)	翻譯未全部完成（{}/{} 失敗）	翻訳が完了していません（{}/{} 件失敗）

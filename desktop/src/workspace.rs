@@ -2436,6 +2436,7 @@ mod tests {
             end: 1.,
             text: "字幕正文".into(),
             raw: None,
+            translation: None,
         }];
         let mut task = plan(&ws.state.default_library);
         task.source.identity = "video-a".into();
@@ -3042,6 +3043,7 @@ mod tests {
                 end: 20.,
                 text: "Preserved readable notes.".into(),
                 raw: None,
+                translation: None,
             }],
         }];
         artifact::publish_blocking(

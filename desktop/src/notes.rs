@@ -493,6 +493,7 @@ pub(crate) mod fixtures {
                         end: *time + 10.,
                         text: format!("第 {revision} 版，{time} 秒的正文"),
                         raw: None,
+                        translation: None,
                     }],
                 }
             })

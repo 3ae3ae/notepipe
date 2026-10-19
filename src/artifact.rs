@@ -112,6 +112,8 @@ pub struct Outcomes {
     pub screenshots: Outcome,
     pub proofreading: Outcome,
     pub summary: Outcome,
+    /// Bilingual translation; not requested when the note is already in the target.
+    pub translation: Outcome,
     pub exports: BTreeMap<String, Outcome>,
 }
 impl Outcomes {
@@ -121,6 +123,7 @@ impl Outcomes {
             &self.screenshots,
             &self.proofreading,
             &self.summary,
+            &self.translation,
         ]
         .into_iter()
         .chain(self.exports.values())
@@ -625,6 +628,7 @@ mod tests {
                 end: 1.,
                 text: "Preserved body".into(),
                 raw: None,
+                translation: None,
             }],
         }];
         publish(
@@ -734,6 +738,7 @@ mod tests {
                 end: 1.,
                 text: "Readable text".into(),
                 raw: None,
+                translation: None,
             }],
         }];
         let first = publish(

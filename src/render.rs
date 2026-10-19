@@ -107,6 +107,10 @@ pub fn render_markdown(meta: &VideoMeta, sections: &[Section]) -> String {
         }
         for ev in &s.speech {
             write!(md, "{}\n\n", ev.text).unwrap();
+            // Bilingual notes quote the translation under its original.
+            if let Some(translation) = &ev.translation {
+                write!(md, "> {}\n\n", md_inline(translation)).unwrap();
+            }
         }
     }
     md
@@ -163,11 +167,14 @@ pub fn render_html(meta: &VideoMeta, sections: &[Section]) -> String {
         }
         for ev in &s.speech {
             writeln!(body, "<p>{}</p>", rich(&ev.text)).unwrap();
+            if let Some(translation) = &ev.translation {
+                writeln!(body, "<p class=\"translation\">{}</p>", rich(translation)).unwrap();
+            }
         }
         body.push_str("</section>\n");
     }
     format!(
-        "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{title}</title>\n<style>\n:root {{ color-scheme: light dark; }}\nbody {{ max-width: 920px; margin: 0 auto; padding: 1rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; }}\nheader h1 {{ font-size: 1.5rem; }}\nheader p {{ color: #888; }}\nsection {{ margin: 2rem 0; }}\nsection h2 {{ font-size: 1rem; font-weight: 600; }}\nsection h2 a {{ color: #0969da; text-decoration: none; }}\nimg {{ max-width: 100%; border: 1px solid #8884; border-radius: 6px; }}\np {{ margin: .4rem 0; }}\n.math {{ display: inline-block; }}\n.math svg {{ display: block; }}\n.math.display {{ display: block; margin: .6rem auto; max-width: 100%; }}\n</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
+        "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{title}</title>\n<style>\n:root {{ color-scheme: light dark; }}\nbody {{ max-width: 920px; margin: 0 auto; padding: 1rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.7; }}\nheader h1 {{ font-size: 1.5rem; }}\nheader p {{ color: #888; }}\nsection {{ margin: 2rem 0; }}\nsection h2 {{ font-size: 1rem; font-weight: 600; }}\nsection h2 a {{ color: #0969da; text-decoration: none; }}\nimg {{ max-width: 100%; border: 1px solid #8884; border-radius: 6px; }}\np {{ margin: .4rem 0; }}\np.translation {{ color: #777; margin-top: 0; }}\n.math {{ display: inline-block; }}\n.math svg {{ display: block; }}\n.math.display {{ display: block; margin: .6rem auto; max-width: 100%; }}\n</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
         title = esc(&meta.title),
     )
 }
@@ -246,6 +253,7 @@ mod tests {
                 end: 12.5,
                 text: "你好".into(),
                 raw: None,
+                translation: None,
             }],
         }];
         let md = render_markdown(&m, &s);

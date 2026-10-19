@@ -13,6 +13,7 @@ pub mod execution;
 pub mod fetch;
 pub mod hub;
 pub mod i18n;
+pub mod language;
 pub mod llm;
 pub mod login;
 pub mod math;

@@ -479,6 +479,16 @@ async fn reprocess(
         document.sections = sections;
         outcomes.proofreading = Outcome::from_report(&report);
         progress::stage("llm", "done");
+        // Proofreading rebuilt the paragraphs from the original transcript.
+        if let Some(target) = cfg.llm.translation_target() {
+            document.sections = translate_step(
+                std::mem::take(&mut document.sections),
+                cfg,
+                target,
+                &mut outcomes,
+            )
+            .await?;
+        }
     }
     if has(Component::Summary) {
         document.summary =
@@ -709,7 +719,7 @@ async fn run_prepared(
         emit_done(target, &manifest, &document.sections, started);
         return Ok(());
     }
-    if cfg.llm.enabled || cfg.llm.summarize {
+    if cfg.llm.uses_service() {
         crate::llm::validate(&cfg.llm)?;
     }
     // Subtitle evidence and cloud static validation precede any full media download.
@@ -908,6 +918,10 @@ async fn run_prepared(
         sections = polished;
         outcomes.proofreading = Outcome::from_report(&report);
         progress::stage("llm", "done");
+    }
+    crate::dispatch::check_control()?;
+    if let Some(target) = cfg.llm.translation_target() {
+        sections = translate_step(sections, cfg, target, &mut outcomes).await?;
     }
     crate::dispatch::check_control()?;
     let summary = if cfg.llm.summarize {
@@ -1196,6 +1210,62 @@ impl Outcome {
             total: Some(report.attempted),
         }
     }
+}
+
+/// How much transcript the language guess reads.
+const LANGUAGE_SAMPLE_CHARS: usize = 4000;
+
+/// Adds translations for a bilingual note, unless the transcript is already
+/// in the target language. Failed batches stay untranslated.
+async fn translate_step(
+    mut sections: Vec<timeline::Section>,
+    cfg: &PipelineConfig,
+    target: &'static str,
+    outcomes: &mut Outcomes,
+) -> Result<Vec<timeline::Section>> {
+    let mut sample = String::new();
+    for event in sections.iter().flat_map(|section| &section.speech) {
+        if sample.len() >= LANGUAGE_SAMPLE_CHARS {
+            break;
+        }
+        sample.push_str(&event.text);
+        sample.push(' ');
+    }
+    let detected = crate::language::detect(&sample);
+    if crate::language::already_in(detected, target) {
+        tracing::info!(
+            target,
+            "文字已是目标语言，无需翻译 / The transcript is already in the target language; not translating"
+        );
+        outcomes.translation = Outcome::not_requested();
+        return Ok(sections);
+    }
+    progress::stage("translate", "start");
+    let llm = cfg.llm.clone();
+    let (sections, report) = tokio::task::spawn_blocking(move || {
+        crate::llm::translate_sections_report(&mut sections, &llm, target)
+            .map(|report| (sections, report))
+    })
+    .await
+    .context(crate::tr!(
+        "AI 翻译工作进程中断 / Translation worker interrupted"
+    ))??;
+    outcomes.translation = Outcome {
+        message: (report.failed > 0).then(|| {
+            let base = crate::tr!(
+                "翻译未全部完成（{}/{} 失败）",
+                report.failed,
+                report.attempted
+            );
+            match &report.note {
+                Some(note) => crate::tr!("{}；首个错误：{}", base, note),
+                None => base,
+            }
+        }),
+        ..Outcome::from_report(&report)
+    };
+    progress::stage("translate", "done");
+    Ok(sections)
 }
 
 async fn summarize_step(
@@ -1492,6 +1562,7 @@ mod tests {
             end: 1.0,
             text: text.into(),
             raw: None,
+            translation: None,
         };
 
         // 全空缓存（上次端点故障的残留）→ 丢弃并删除文件，ASR 得以重跑

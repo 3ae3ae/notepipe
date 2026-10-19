@@ -39,6 +39,7 @@ fn request(root: &Path, source: &Path) -> Request {
             end: 1.,
             text: "这里是已选字幕中的实际正文。".into(),
             raw: None,
+            translation: None,
         }]),
         config,
         allow_unauthenticated_asr: false,
@@ -767,12 +768,14 @@ fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() 
             end: 1.,
             text: "第一段原文。".into(),
             raw: None,
+            translation: None,
         },
         TranscriptEvent {
             start: 6.,
             end: 7.,
             text: "第二段原文。".into(),
             raw: None,
+            translation: None,
         },
     ]);
     original.config.llm.enabled = true;

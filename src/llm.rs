@@ -78,6 +78,9 @@ pub struct LlmSettings {
     pub vision: bool,
     /// 独立生成视频摘要并写入笔记（不依赖校对 enabled）
     pub summarize: bool,
+    /// Bilingual notes: the target language code (see [`crate::language::TARGETS`]).
+    /// Skipped when the transcript is already in that language.
+    pub translate: Option<String>,
     /// 校对并发数（chunk 间相互独立；自建网关/代理可调高）
     pub concurrency: usize,
 }
@@ -94,6 +97,7 @@ impl Default for LlmSettings {
             disable_hint: false,
             vision: false,
             summarize: false,
+            translate: None,
             concurrency: DEFAULT_CONCURRENCY,
         }
     }
@@ -104,6 +108,7 @@ impl Default for LlmSettings {
 pub(crate) enum Purpose {
     Proofreading,
     Summary,
+    Translation,
 }
 
 impl Purpose {
@@ -111,12 +116,14 @@ impl Purpose {
         match self {
             Self::Proofreading => "proofreading",
             Self::Summary => "summary",
+            Self::Translation => "translation",
         }
     }
     fn usage_stage(self) -> &'static str {
         match self {
             Self::Proofreading => "llm",
             Self::Summary => "summary",
+            Self::Translation => "translate",
         }
     }
 }
@@ -310,6 +317,147 @@ pub fn polish_sections_report(
         failed: attempted.saturating_sub(succeeded),
         note: crate::runtime::lock_recover(&first_error).take(),
     })
+}
+
+impl LlmSettings {
+    /// Whether any requested step sends text to the AI service.
+    pub fn uses_service(&self) -> bool {
+        self.enabled || self.summarize || self.translation_target().is_some()
+    }
+
+    /// The supported bilingual target, if one is set.
+    pub fn translation_target(&self) -> Option<&'static str> {
+        self.translate.as_deref().and_then(crate::language::target)
+    }
+}
+
+/// Translates every paragraph into `target`, kept beside the original.
+/// Failed batches stay untranslated; the note is published either way.
+pub fn translate_sections_report(
+    sections: &mut [Section],
+    s: &LlmSettings,
+    target: &str,
+) -> Result<PolishReport> {
+    let mut chunks: Vec<Vec<&mut TranscriptEvent>> = Vec::new();
+    let mut refs: Vec<_> = sections
+        .iter_mut()
+        .flat_map(|section| section.speech.iter_mut())
+        .filter(|event| !event.text.trim().is_empty())
+        .collect();
+    let attempted = refs.len();
+    if attempted == 0 {
+        return Ok(PolishReport::default());
+    }
+    while !refs.is_empty() {
+        let rest = refs.split_off(refs.len().min(BATCH));
+        chunks.push(std::mem::replace(&mut refs, rest));
+    }
+    let pb = crate::progress::Bar::new("translate", chunks.len() as u64)
+        .with_template("{spinner:.green} translate {pos}/{len} [{bar:32.cyan/blue}] {msg}");
+    let agent = chat_agent();
+    let warned = std::sync::atomic::AtomicBool::new(false);
+    let succeeded = std::sync::atomic::AtomicUsize::new(0);
+    let first_error = std::sync::Mutex::new(None::<String>);
+    let queue = std::sync::Mutex::new(chunks.into_iter());
+    run_pool(
+        &queue,
+        s.concurrency.clamp(1, MAX_CONCURRENCY),
+        &succeeded,
+        &pb,
+        &|mut chunk| translate_chunk(&agent, s, target, &mut chunk, &warned, &first_error),
+    )?;
+    pb.finish();
+    let succeeded = succeeded.load(std::sync::atomic::Ordering::Relaxed);
+    Ok(PolishReport {
+        attempted,
+        succeeded,
+        failed: attempted.saturating_sub(succeeded),
+        note: crate::runtime::lock_recover(&first_error).take(),
+    })
+}
+
+fn translate_chunk(
+    agent: &ureq::Agent,
+    s: &LlmSettings,
+    target: &str,
+    chunk: &mut [&mut TranscriptEvent],
+    warned: &std::sync::atomic::AtomicBool,
+    first_error: &std::sync::Mutex<Option<String>>,
+) -> usize {
+    let (Some(first), Some(last)) = (chunk.first(), chunk.last()) else {
+        return 0;
+    };
+    let description = crate::tr!(
+        "翻译 {}–{} 的文字 / Translate transcript {}–{}",
+        crate::render::fmt_ts(first.start),
+        crate::render::fmt_ts(last.end),
+        crate::render::fmt_ts(first.start),
+        crate::render::fmt_ts(last.end)
+    );
+    let items: Vec<&str> = chunk.iter().map(|e| e.text.as_str()).collect();
+    let result = translation_body(s, target, &items).and_then(|body| {
+        let expected = items.len();
+        let content = send_chat_described(
+            agent,
+            s,
+            &body,
+            Purpose::Translation,
+            &description,
+            &|content| {
+                let parsed = parse_segments(content).context(crate::tr!(
+                    "服务返回的翻译结构无效 / Invalid translation structure"
+                ))?;
+                anyhow::ensure!(
+                    segment_ids_match(&parsed, expected),
+                    crate::tr!(
+                        "翻译结果与原文段落不对应 / Translated segments do not match the input"
+                    )
+                );
+                Ok(())
+            },
+        )?;
+        parse_segments(&content).context(crate::tr!(
+            "服务返回的翻译结构无效 / Invalid translation structure"
+        ))
+    });
+    match result {
+        Ok(translated) => {
+            for (id, text) in translated {
+                if let Some(event) = chunk.get_mut(id) {
+                    let text = text.trim();
+                    event.translation = (!text.is_empty()).then(|| text.to_owned());
+                }
+            }
+            chunk.len()
+        }
+        Err(error) => {
+            warn_once(warned, &crate::tr!("翻译未完成：{}", format!("{error:#}")));
+            record_first_error(first_error, format!("{error:#}"));
+            0
+        }
+    }
+}
+
+fn translation_body(s: &LlmSettings, target: &str, items: &[&str]) -> Result<serde_json::Value> {
+    let payload: Vec<serde_json::Value> = items
+        .iter()
+        .enumerate()
+        .map(|(i, t)| serde_json::json!({"id": i, "text": t}))
+        .collect();
+    // The instruction stays in English: it names the target for any service.
+    let system = format!(
+        "You translate lecture transcripts. Translate each item into {}. Keep the meaning, \
+         terminology and tone; do not summarize, add or omit content. Keep names, code and \
+         formulas as they are. Output a JSON object {{\"segments\":[{{\"id\":number,\"text\":translation}}]}} \
+         with exactly one entry per input id. {MATH_RULE}",
+        crate::language::english_name(target)
+    );
+    Ok(crate::provider::chat_body(
+        s,
+        &system,
+        serde_json::Value::String(serde_json::to_string(&payload)?),
+        CHAT_MAX_TOKENS,
+    ))
 }
 
 /// Joins an inline formula that a segment ends unfinished (`$0.$`, `$a+$`)
@@ -1113,6 +1261,7 @@ mod tests {
             end: 1.,
             text: text.into(),
             raw: None,
+            translation: None,
         };
         let mut events = vec![
             event("加上 $0.$"),
@@ -1193,8 +1342,76 @@ mod tests {
             disable_hint: false,
             vision: false,
             summarize: false,
+            translate: None,
             concurrency: 8,
         }
+    }
+
+    #[test]
+    fn translation_keeps_originals_and_adds_each_translation() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            // Read the head, then the body announced by Content-Length.
+            let body_start = loop {
+                let n = stream.read(&mut buffer).unwrap();
+                request.extend_from_slice(&buffer[..n]);
+                if let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break at + 4;
+                }
+            };
+            let head = String::from_utf8_lossy(&request[..body_start]).to_ascii_lowercase();
+            let length: usize = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap();
+            while request.len() < body_start + length {
+                let n = stream.read(&mut buffer).unwrap();
+                request.extend_from_slice(&buffer[..n]);
+            }
+            let content = serde_json::json!({"segments":[{"id":0,"text":"Today: compilers."},{"id":1,"text":"Next, parsing."}]});
+            let body = serde_json::json!({"choices":[{"message":{"content":content.to_string()}}]})
+                .to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            String::from_utf8_lossy(&request[body_start..]).into_owned()
+        });
+        let event = |text: &str| TranscriptEvent {
+            start: 0.0,
+            end: 1.0,
+            text: text.into(),
+            raw: None,
+            translation: None,
+        };
+        let mut sections = vec![Section {
+            t: 0.0,
+            end: 1.0,
+            image: String::new(),
+            speech: vec![event("今天讲编译原理。"), event("接下来是语法分析。")],
+        }];
+        let mut settings = test_settings();
+        settings.base_url = format!("http://{address}/v1");
+        settings.concurrency = 1;
+        let report = translate_sections_report(&mut sections, &settings, "en").unwrap();
+        let request = server.join().unwrap();
+        assert!(request.contains("English"), "{request}");
+        assert_eq!((report.attempted, report.succeeded), (2, 2));
+        let speech = &sections[0].speech;
+        assert_eq!(speech[0].text, "今天讲编译原理。");
+        assert_eq!(speech[0].translation.as_deref(), Some("Today: compilers."));
+        assert_eq!(speech[1].translation.as_deref(), Some("Next, parsing."));
     }
 
     #[test]
@@ -1204,6 +1421,7 @@ mod tests {
             end: 1.0,
             text: text.into(),
             raw: None,
+            translation: None,
         };
         let (mut a, mut b) = (event(crate::tr!("今天讲编译原理")), event(crate::tr!("啊")));
         let mut refs = vec![&mut a, &mut b];

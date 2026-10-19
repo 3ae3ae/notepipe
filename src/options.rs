@@ -28,6 +28,11 @@ fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> llm::LlmSettings 
         s.disable_hint = true;
     }
     s.summarize = config::resolve_flag(opts.summarize, opts.no_summarize, None, s.summarize);
+    if opts.no_translate {
+        s.translate = None;
+    } else if let Some(target) = &opts.translate {
+        s.translate = Some(target.clone());
+    }
     s
 }
 
