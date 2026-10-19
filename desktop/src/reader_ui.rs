@@ -807,6 +807,19 @@ fn note_items(blocks: &[PreviewBlock]) -> Vec<NoteItem> {
     items
 }
 
+/// `None` at the top of the note, otherwise the top item: the page re-renders
+/// when this changes. Items before the first that draws a block (the title,
+/// which is empty when the header is outside the list) count as the top.
+fn note_scroll_key(items: &[NoteItem], list: &ListState) -> Option<usize> {
+    let top = list.logical_scroll_top();
+    let first = items
+        .iter()
+        .position(|item| note_item_block(*item).is_some())
+        .unwrap_or(0);
+    (top.item_ix > first || (top.item_ix == first && top.offset_in_item > px(0.)))
+        .then_some(top.item_ix)
+}
+
 /// The block an item's position resolves to, when it draws any.
 fn note_item_block(item: NoteItem) -> Option<usize> {
     let blocks = item.blocks();
@@ -3153,8 +3166,8 @@ impl Desktop {
         // left edge below it.
         // Once the note scrolls, the title bar carries the title and tools;
         // the page header gives its height back to the text.
-        let top = self.reader_ui.note_list.logical_scroll_top();
-        let scrolled = self.result_tab == 0 && (top.item_ix > 0 || top.offset_in_item > px(0.));
+        let scrolled = self.result_tab == 0
+            && note_scroll_key(&self.reader_ui.note_items, &self.reader_ui.note_list).is_some();
         let (inline_meta, panel_meta) = if short { (None, meta) } else { (meta, None) };
         if !scrolled {
             page = page.children(heading).children(inline_meta);
@@ -3243,18 +3256,27 @@ impl Desktop {
         };
         // The page re-renders when the top item changes: the header collapses
         // once the article leaves its top, and the outline follows the text.
+        // GPUI calls this while it still borrows the list state, so the
+        // position is read once the scroll has been applied.
         let entity = cx.weak_entity();
-        let last_top = std::cell::Cell::new(self.reader_ui.note_list.logical_scroll_top().item_ix);
         let list_state = self.reader_ui.note_list.clone();
+        let items = self.reader_ui.note_items.clone();
+        let last = Rc::new(std::cell::Cell::new(note_scroll_key(&items, &list_state)));
         self.reader_ui
             .note_list
             .set_scroll_handler(move |_, _, cx| {
-                let top = list_state.logical_scroll_top();
-                let at_top = top.item_ix == 0 && top.offset_in_item <= px(0.);
-                let key = if at_top { usize::MAX } else { top.item_ix };
-                if last_top.replace(key) != key {
-                    let _ = entity.update(cx, |_, cx| cx.notify());
-                }
+                let (entity, list_state, items, last) = (
+                    entity.clone(),
+                    list_state.clone(),
+                    items.clone(),
+                    last.clone(),
+                );
+                cx.defer(move |cx| {
+                    let key = note_scroll_key(&items, &list_state);
+                    if last.replace(key) != key {
+                        let _ = entity.update(cx, |_, cx| cx.notify());
+                    }
+                });
             });
         div()
             .id("note-reader")
@@ -6101,7 +6123,7 @@ mod tests {
 mod flow_tests {
     use super::{
         NoteItem, nav, note_block_item, note_capture_position, note_item_block, note_items,
-        note_restore_target, note_top_block,
+        note_restore_target, note_scroll_key, note_top_block,
     };
     use crate::notes::PreviewBlock;
     use gpui::{
@@ -6185,6 +6207,31 @@ mod flow_tests {
         assert_eq!(note_item_block(items[0]), None);
 
         assert_eq!(note_items(&[]), [NoteItem::Title]);
+    }
+
+    #[test]
+    fn the_note_top_ignores_the_empty_title_item() {
+        let note = blocks(30);
+        let items = note_items(&note);
+        let list = ListState::new(items.len(), ListAlignment::Top, px(1000.));
+        assert_eq!(note_scroll_key(&items, &list), None);
+        // The title draws nothing beside the header, so the first block's top
+        // is still the top of the note.
+        list.scroll_to(ListOffset {
+            item_ix: 1,
+            offset_in_item: px(0.),
+        });
+        assert_eq!(note_scroll_key(&items, &list), None);
+        list.scroll_to(ListOffset {
+            item_ix: 1,
+            offset_in_item: px(5.),
+        });
+        assert_eq!(note_scroll_key(&items, &list), Some(1));
+        list.scroll_to(ListOffset {
+            item_ix: 3,
+            offset_in_item: px(0.),
+        });
+        assert_eq!(note_scroll_key(&items, &list), Some(3));
     }
 
     #[test]
