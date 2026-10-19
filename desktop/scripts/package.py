@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
+import zipfile
 
 from dmg import build_install_dmg
 
@@ -109,6 +110,38 @@ def bundle_ytdlp(dest, required):
         return None
 
 
+# aria2 downloads speech models over several connections. Package managers
+# supply it on macOS and Linux; Windows archives bundle the official static
+# build. It is GPL-2.0 and ships beside the app with its license.
+ARIA2_VERSION = "1.37.0"
+ARIA2_WINDOWS = "aria2-1.37.0-win-64bit-build1"
+ARIA2_WINDOWS_SHA256 = "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288"
+
+
+def bundle_aria2(binaries, licenses, required):
+    """Place aria2c.exe beside the Windows binaries; the engine finds it there."""
+    url = (f"https://github.com/aria2/aria2/releases/download/release-{ARIA2_VERSION}/"
+           f"{ARIA2_WINDOWS}.zip")
+    tmp = binaries / "aria2.zip.download"
+    try:
+        with urllib.request.urlopen(url, timeout=300) as response, tmp.open("wb") as out:
+            shutil.copyfileobj(response, out)
+        digest = hashlib.sha256(tmp.read_bytes()).hexdigest()
+        if digest != ARIA2_WINDOWS_SHA256:
+            raise OSError(f"{ARIA2_WINDOWS} checksum mismatch: {digest}")
+        with zipfile.ZipFile(tmp) as archive:
+            (binaries / "aria2c.exe").write_bytes(archive.read(f"{ARIA2_WINDOWS}/aria2c.exe"))
+            (licenses / "LICENSE-aria2").write_bytes(archive.read(f"{ARIA2_WINDOWS}/COPYING"))
+        return binaries / "aria2c.exe"
+    except (OSError, KeyError, zipfile.BadZipFile) as error:
+        if required:
+            raise SystemExit(f"Release builds must bundle aria2: {error}") from error
+        print(f"warning: aria2 not bundled ({error}); models download without it")
+        return None
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--debug", action="store_true")
@@ -193,6 +226,9 @@ def main():
         bundled = bundle_ytdlp(binaries / f"yt-dlp{suffix}", required=distribution)
         if bundled:
             print(f"bundled {bundled.name}")
+    if system == "Windows" and not os.environ.get("COURSE2MD_NO_ARIA2"):
+        if bundle_aria2(binaries, base, required=distribution):
+            print("bundled aria2c.exe")
     if system == "Windows":
         verify_windows_icon(binaries / "course2md-desktop.exe")
     copy_licenses(base)

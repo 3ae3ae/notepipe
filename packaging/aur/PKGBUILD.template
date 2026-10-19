@@ -9,7 +9,7 @@ pkgdesc='Turn online course videos (YouTube/Bilibili/local) into image+transcrip
 arch=(x86_64 aarch64)
 url='https://github.com/mizorewww/course2md'
 license=('MIT')
-depends=(ffmpeg yt-dlp)
+depends=(ffmpeg yt-dlp aria2)
 optdepends=(
     'llama-cpp: local GPU/CPU ASR via llama-server'
     'ggml-vulkan: GPU ASR via Vulkan (also install the Vulkan driver for your GPU)'

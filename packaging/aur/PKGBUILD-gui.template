@@ -8,7 +8,7 @@ arch=(x86_64)
 url='https://github.com/mizorewww/course2md'
 license=('MIT' 'Apache-2.0')
 depends=(glibc gcc-libs libxcb libxkbcommon libxkbcommon-x11
-         fontconfig libx11 wayland vulkan-icd-loader ffmpeg yt-dlp)
+         fontconfig libx11 wayland vulkan-icd-loader ffmpeg yt-dlp aria2)
 optdepends=(
     'llama-cpp: local GPU/CPU speech recognition via llama-server'
     'ggml-vulkan: Vulkan GPU speech recognition backend'

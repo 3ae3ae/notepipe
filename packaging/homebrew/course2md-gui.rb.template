@@ -12,6 +12,7 @@ cask "@CASK_TOKEN@" do
   depends_on macos: :sequoia
   depends_on formula: "ffmpeg"
   depends_on formula: "yt-dlp"
+  depends_on formula: "aria2"
 
   app "course2md.app"
 

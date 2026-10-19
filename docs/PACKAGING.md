@@ -6,7 +6,7 @@
 | Homebrew prerelease channels | Cask `course2md-gui@{alpha,beta,rc}` | Formula `course2md-{alpha,beta,rc}` (keg-only) |
 | AUR (stable only) | `course2md-gui-bin` (x86_64) | `course2md-bin` (x86_64, aarch64) |
 
-GUI packages contain a matching private CLI engine and do not install a terminal `course2md` command, so they coexist with the CLI package. Both channels depend on ffmpeg and yt-dlp; desktop archives also bundle the yt-dlp version pinned in `desktop/scripts/package.py`.
+GUI packages contain a matching private CLI engine and do not install a terminal `course2md` command, so they coexist with the CLI package. Both channels depend on ffmpeg, yt-dlp and aria2 (multi-connection model downloads); desktop archives also bundle the yt-dlp version pinned in `desktop/scripts/package.py`, and Windows archives bundle the official aria2 build pinned there.
 
 ## Publishing a version
 

@@ -6,6 +6,7 @@ class @FORMULA_CLASS@ < Formula
 @KEG_ONLY@
   depends_on "ffmpeg"
   depends_on "yt-dlp"
+  depends_on "aria2"
 
   on_macos do
     on_arm do
