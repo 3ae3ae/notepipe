@@ -633,17 +633,17 @@ impl Render for ImageDialog {
 }
 fn block_text(block: &PreviewBlock) -> Option<&str> {
     match block {
-        PreviewBlock::Heading { text, .. } | PreviewBlock::Paragraph { text, .. } => {
-            Some(text.as_ref())
-        }
+        PreviewBlock::Heading { text, .. }
+        | PreviewBlock::Paragraph { text, .. }
+        | PreviewBlock::Translation { text, .. } => Some(text.as_ref()),
         _ => None,
     }
 }
 fn block_anchor(block: &PreviewBlock, index: usize) -> String {
     match block {
-        PreviewBlock::Heading { anchor, .. } | PreviewBlock::Paragraph { anchor, .. } => {
-            anchor.clone()
-        }
+        PreviewBlock::Heading { anchor, .. }
+        | PreviewBlock::Paragraph { anchor, .. }
+        | PreviewBlock::Translation { anchor, .. } => anchor.clone(),
         PreviewBlock::Image(path) => format!(
             "image:{index}:{}",
             path.file_name().unwrap_or_default().to_string_lossy()
@@ -1527,6 +1527,7 @@ fn render_note_block(flow: &NoteFlow, index: usize) -> AnyElement {
             flow.preview.blocks[index].is_timestamp_heading(),
         ),
         PreviewBlock::Paragraph { text, anchor } => note_paragraph(flow, index, text, anchor),
+        PreviewBlock::Translation { text, anchor } => note_translation(flow, index, text, anchor),
         PreviewBlock::Image(path) => render_note_image(flow, index, path),
     }
 }
@@ -1539,6 +1540,24 @@ fn note_paragraph(flow: &NoteFlow, index: usize, text: &SharedString, anchor: &s
         flow.highlight_runs(index),
         flow.search_target(index),
     )
+    .into_any_element()
+}
+
+/// A translation reads as a quieter companion to the paragraph above it.
+fn note_translation(
+    flow: &NoteFlow,
+    index: usize,
+    text: &SharedString,
+    anchor: &str,
+) -> AnyElement {
+    paragraph(
+        SharedString::from(anchor.to_owned()),
+        text.clone(),
+        index,
+        flow.highlight_runs(index),
+        flow.search_target(index),
+    )
+    .text_color(color(GRAY))
     .into_any_element()
 }
 
@@ -1636,6 +1655,9 @@ fn render_note_section(flow: &NoteFlow, heading: usize, end: usize, ordinal: usi
     });
     let paragraphs = (heading + 1..end).filter_map(|index| match &preview.blocks[index] {
         PreviewBlock::Paragraph { text, anchor } => Some(note_paragraph(flow, index, text, anchor)),
+        PreviewBlock::Translation { text, anchor } => {
+            Some(note_translation(flow, index, text, anchor))
+        }
         _ => None,
     });
     let chapter = flow.chapter_starts.get(&heading);
@@ -4107,7 +4129,7 @@ impl Desktop {
                     ));
                 }
             }
-            if task.plan.options.llm || task.plan.options.summarize {
+            if task.plan.config.llm.uses_service() {
                 details.push((
                     course2md::tr!("AI 模型"),
                     icons::auto_fix(),
@@ -4363,7 +4385,9 @@ impl Desktop {
                     && preview.processing_issues.iter().any(|issue| {
                         matches!(
                             issue.stage,
-                            notes::ProcessingStage::Proofreading | notes::ProcessingStage::Summary
+                            notes::ProcessingStage::Proofreading
+                                | notes::ProcessingStage::Translation
+                                | notes::ProcessingStage::Summary
                         )
                     })
                 {

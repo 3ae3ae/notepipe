@@ -283,7 +283,7 @@ fn task_stage_progress(
 ) -> (String, Option<f32>) {
     // AI requests have no measurable fraction; their clock and returned
     // tokens show them moving, and stay as the record once they finish.
-    if matches!(name, "llm" | "summary") {
+    if matches!(name, "llm" | "translate" | "summary") {
         return (
             live.map(|live| live.live_counter()).unwrap_or_default(),
             None,
@@ -331,6 +331,7 @@ fn ai_stage_outcome(
 ) -> Option<StageStatus> {
     let outcome = match name {
         "llm" => &outcomes?.proofreading,
+        "translate" => &outcomes?.translation,
         "summary" => &outcomes?.summary,
         _ => return None,
     };
@@ -407,14 +408,18 @@ fn task_service_repair_reason(task: &TaskRecord) -> Option<&'static str> {
         return None;
     }
     let outcomes = task.outcomes.as_ref()?;
-    let components = [&outcomes.proofreading, &outcomes.summary]
-        .into_iter()
-        .filter(|outcome| {
-            matches!(
-                outcome.status,
-                course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
-            )
-        });
+    let components = [
+        &outcomes.proofreading,
+        &outcomes.translation,
+        &outcomes.summary,
+    ]
+    .into_iter()
+    .filter(|outcome| {
+        matches!(
+            outcome.status,
+            course2md::artifact::Status::Failed | course2md::artifact::Status::Partial
+        )
+    });
     let blocked = task
         .blocked
         .iter()
@@ -2108,6 +2113,10 @@ impl Desktop {
             base.defaults.transcript_source = Some(course2md::config::TranscriptSource::Subtitle);
             base.llm.enabled = components.contains(&Component::Proofreading);
             base.llm.summarize = components.contains(&Component::Summary);
+            // Translation follows the proofread paragraphs it is redone with.
+            if !base.llm.enabled {
+                base.llm.translate = None;
+            }
             let config = self.preferences.config_for_refs(
                 &base,
                 &ServiceRefs {
@@ -3622,7 +3631,7 @@ impl Desktop {
                 .text_color(color(GRAY)),
             div().text_size(TEXT_BODY).whitespace_normal().child(source),
         ));
-        if (task.plan.options.llm || task.plan.options.summarize)
+        if task.plan.config.llm.uses_service()
             && let Some(version) = task
                 .plan
                 .ai_service

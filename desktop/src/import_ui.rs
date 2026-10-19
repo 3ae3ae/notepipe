@@ -2345,7 +2345,7 @@ impl Desktop {
                 course2md::tr!("AI 处理"),
                 choices,
             ));
-        if self.task_options.llm || self.task_options.summarize {
+        if self.task_uses_ai() {
             let mut service = v_flex()
                 .w_full()
                 .min_w_0()
@@ -2582,6 +2582,13 @@ impl Desktop {
             .is_some_and(|source| uses_speech(source, self.task_options.source_mode))
     }
 
+    /// Proofreading, a summary or a bilingual translation sends text to the AI service.
+    fn task_uses_ai(&self) -> bool {
+        self.task_options.llm
+            || self.task_options.summarize
+            || self.import_base_config().llm.translation_target().is_some()
+    }
+
     fn missing_import_service(&self) -> Option<ServicePurpose> {
         let separate_subtitle = self.task_options.source_mode != TranscriptSource::Asr
             && self
@@ -2596,10 +2603,7 @@ impl Desktop {
                     && self.import_uses_speech()
                     && !separate_subtitle,
             ),
-            (
-                ServicePurpose::Ai,
-                self.task_options.llm || self.task_options.summarize,
-            ),
+            (ServicePurpose::Ai, self.task_uses_ai()),
         ]
         .into_iter()
         .find_map(|(purpose, required)| {

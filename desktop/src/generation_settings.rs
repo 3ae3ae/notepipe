@@ -23,6 +23,54 @@ fn subtitle_language_label(id: &str) -> &'static str {
 use course2md::config::{AsrProvider, local_models, model_label};
 
 impl Desktop {
+    /// Bilingual notes: the language each paragraph is also translated into.
+    fn translation_setting(
+        &self,
+        value: &crate::preferences::GenerationPreferences,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let current = value
+            .translate
+            .as_deref()
+            .and_then(course2md::language::target);
+        let entity = cx.weak_entity();
+        settings_outlined_row(
+            "default-ai-translate-row",
+            if current.is_some() {
+                course2md::tr!("每段文字下方附上译文；已是该语言的视频不翻译")
+            } else {
+                ""
+            },
+            SelectField::new(
+                "default-ai-translate",
+                current
+                    .map(course2md::language::native_name)
+                    .unwrap_or(course2md::tr!("不翻译")),
+                move |menu, _, _| {
+                    std::iter::once((None, course2md::tr!("不翻译")))
+                        .chain(
+                            course2md::language::TARGETS.iter().map(|(code, _)| {
+                                (Some(*code), course2md::language::native_name(code))
+                            }),
+                        )
+                        .fold(menu, |menu, (code, label)| {
+                            let entity = entity.clone();
+                            menu.item(PopupMenuItem::new(label).checked(code == current).on_click(
+                                move |_, _, cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        let mut next = this.generation_edit_base();
+                                        next.translate = code.map(str::to_owned);
+                                        this.commit_generation(next, cx);
+                                    });
+                                },
+                            ))
+                        })
+                },
+            )
+            .label(course2md::tr!("双语翻译")),
+        )
+    }
+
     pub(super) fn generation_settings_page(
         &self,
         window: &mut Window,
@@ -348,6 +396,7 @@ impl Desktop {
                             })),
                     )),
             )
+            .child(self.translation_setting(&value, cx))
             .child(self.service_picker(ServicePurpose::Ai, false, cx));
         // The rule only applies to proofreading, so it appears with it.
         if value.ai_proofread {

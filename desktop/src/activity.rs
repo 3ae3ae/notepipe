@@ -357,10 +357,11 @@ pub fn stage_order(stage: &str) -> usize {
         "model/load" => 7,
         "transcribe" => 8,
         "llm" => 9,
-        "summary" => 10,
-        "render" => 11,
-        "export" | "exports" => 12,
-        _ => 13,
+        "translate" => 10,
+        "summary" => 11,
+        "render" => 12,
+        "export" | "exports" => 13,
+        _ => 14,
     }
 }
 
@@ -385,6 +386,7 @@ pub fn title(stage: &str) -> String {
         "transcribe" => course2md::tr!("语音转写"),
         "subtitle" => course2md::tr!("读取字幕"),
         "llm" => course2md::tr!("AI 校对"),
+        "translate" => course2md::tr!("AI 翻译"),
         "summary" => course2md::tr!("生成摘要"),
         "export" | "exports" => course2md::tr!("导出文件"),
         "render" => course2md::tr!("生成笔记"),

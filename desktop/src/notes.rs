@@ -225,6 +225,11 @@ pub enum PreviewBlock {
         text: SharedString,
         anchor: String,
     },
+    /// A bilingual note's translation of the paragraph before it.
+    Translation {
+        text: SharedString,
+        anchor: String,
+    },
 }
 impl PreviewBlock {
     /// Summary blocks are identified here once, not by anchor prefixes in the reader.
@@ -234,7 +239,7 @@ impl PreviewBlock {
             Self::Paragraph { anchor, .. } => {
                 anchor == "summary-tldr" || anchor.starts_with("key-point-")
             }
-            Self::Image(_) => false,
+            Self::Image(_) | Self::Translation { .. } => false,
         }
     }
     /// Section headings are the document's own frame timestamps.
@@ -261,6 +266,7 @@ pub enum ProcessingStage {
     Transcript,
     Screenshots,
     Proofreading,
+    Translation,
     Summary,
 }
 impl ProcessingStage {
@@ -269,6 +275,7 @@ impl ProcessingStage {
             Self::Transcript => course2md::tr!("文字转写"),
             Self::Screenshots => course2md::tr!("截图"),
             Self::Proofreading => course2md::tr!("AI 校对"),
+            Self::Translation => course2md::tr!("AI 翻译"),
             Self::Summary => course2md::tr!("摘要"),
         }
     }
@@ -296,6 +303,7 @@ fn processing_issues(manifest: &artifact::Manifest) -> Vec<ProcessingIssue> {
             ProcessingStage::Proofreading,
             &manifest.outcomes.proofreading,
         ),
+        (ProcessingStage::Translation, &manifest.outcomes.translation),
         (ProcessingStage::Summary, &manifest.outcomes.summary),
     ]
     .into_iter()
@@ -398,6 +406,18 @@ pub fn read_preview(mut course: Course) -> Result<Preview> {
                 });
                 plain_text.push_str(&paragraph.text);
                 plain_text.push_str("\n\n");
+                if let Some(translation) = paragraph
+                    .translation
+                    .as_ref()
+                    .filter(|text| !text.trim().is_empty())
+                {
+                    blocks.push(PreviewBlock::Translation {
+                        text: translation.clone().into(),
+                        anchor: format!("translation-{section_index}-{paragraph_index}"),
+                    });
+                    plain_text.push_str(translation);
+                    plain_text.push_str("\n\n");
+                }
             }
         }
     }
@@ -474,6 +494,17 @@ pub(crate) mod fixtures {
         times: &[f64],
         outcomes: artifact::Outcomes,
     ) -> Course {
+        published_note_translated(root, revision, times, outcomes, None)
+    }
+
+    /// A published note whose paragraphs carry `translation`.
+    pub(crate) fn published_note_translated(
+        root: &Path,
+        revision: u64,
+        times: &[f64],
+        outcomes: artifact::Outcomes,
+        translation: Option<&str>,
+    ) -> Course {
         let work = root.join(format!("work-{revision}"));
         std::fs::create_dir_all(work.join("frames")).unwrap();
         let sections = times
@@ -493,7 +524,7 @@ pub(crate) mod fixtures {
                         end: *time + 10.,
                         text: format!("第 {revision} 版，{time} 秒的正文"),
                         raw: None,
-                        translation: None,
+                        translation: translation.map(str::to_owned),
                     }],
                 }
             })
@@ -531,6 +562,30 @@ pub(crate) mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::{fixtures::published_note, *};
+
+    #[test]
+    fn translations_follow_their_paragraphs_in_the_reader() {
+        let root = tempfile::tempdir().unwrap();
+        let course = super::fixtures::published_note_translated(
+            root.path(),
+            1,
+            &[10.],
+            Default::default(),
+            Some("Body of version 1"),
+        );
+        let preview = read_preview(course).unwrap();
+        let position = preview
+            .blocks
+            .iter()
+            .position(|block| matches!(block, PreviewBlock::Paragraph { .. }))
+            .unwrap();
+        assert!(matches!(
+            &preview.blocks[position + 1],
+            PreviewBlock::Translation { text, .. } if text.as_ref() == "Body of version 1"
+        ));
+        assert!(preview.plain_text.contains("Body of version 1"));
+        assert!(preview.markdown_text.contains("> Body of version 1"));
+    }
 
     #[test]
     fn optional_export_failure_does_not_describe_readable_content_as_incomplete() {

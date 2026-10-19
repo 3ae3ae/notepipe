@@ -130,6 +130,8 @@ pub struct GenerationPreferences {
     pub options: Defaults,
     pub ai_proofread: bool,
     pub ai_summary: bool,
+    /// Bilingual notes: target language code, or None for no translation.
+    pub translate: Option<String>,
     pub vision: bool,
     pub prompt: Option<String>,
     /// Durable editor text is not an active processing rule until explicitly applied.
@@ -154,6 +156,7 @@ impl Default for GenerationPreferences {
             },
             ai_proofread: false,
             ai_summary: false,
+            translate: None,
             vision: false,
             prompt: None,
             prompt_draft: None,
@@ -201,6 +204,7 @@ impl GenerationPreferences {
         config.defaults.resume = Some(true);
         config.llm.enabled = self.ai_proofread;
         config.llm.summarize = self.ai_summary;
+        config.llm.translate = self.translate.clone();
         config.llm.vision = self.effective_vision();
         config.llm.prompt = self.prompt.clone();
         config.llm.concurrency = self.ai_concurrency;
@@ -617,7 +621,9 @@ impl ServiceRefs {
                 && config.defaults.transcript_source != Some(TranscriptSource::Subtitle))
             .then(|| self.asr.clone())
             .flatten(),
-            llm: (config.llm.enabled || config.llm.summarize)
+            llm: config
+                .llm
+                .uses_service()
                 .then(|| self.llm.clone())
                 .flatten(),
         }
@@ -1707,7 +1713,7 @@ impl Store {
                 _ => AsrApiMode::Chat,
             };
         }
-        if base.llm.enabled || base.llm.summarize {
+        if base.llm.uses_service() {
             let id = required
                 .llm
                 .as_deref()
