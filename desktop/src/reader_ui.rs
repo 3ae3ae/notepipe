@@ -1217,7 +1217,7 @@ fn paragraph(
         .font_weight(FontWeight::NORMAL)
         .line_height(relative(1.88));
     if crate::math::has_math(&text) {
-        return view.child(math_paragraph(&text, TEXT_READER));
+        return view.child(math_paragraph(&text, TEXT_READER, color(INK).into()));
     }
     view.child(
         ReaderText::new(id, text, order as u64, highlights).with_search_target(search_target),
@@ -1227,7 +1227,7 @@ fn paragraph(
 /// Prose with formulas. GPUI text cannot hold inline elements, so the prose is
 /// laid out as wrapping tokens (one per CJK character, one per Latin word)
 /// around the typeset formulas; a display formula takes a centered row.
-fn math_paragraph(text: &str, em: Rems) -> Div {
+fn math_paragraph(text: &str, em: Rems, ink: Hsla) -> Div {
     let mut view = v_flex().w_full().min_w_0().gap_2();
     let mut row = Vec::new();
     let flush = |view: Div, row: &mut Vec<AnyElement>| {
@@ -1246,7 +1246,31 @@ fn math_paragraph(text: &str, em: Rems) -> Div {
     };
     for piece in crate::math::pieces(text) {
         match piece {
-            crate::math::Piece::Text(prose) => row.extend(prose_tokens(prose)),
+            crate::math::Piece::Text(prose) => {
+                // Closing punctuation never starts a line: it stays with the
+                // formula or word before it.
+                let split = prose
+                    .char_indices()
+                    .find(|(_, c)| !closes_line(*c))
+                    .map_or(prose.len(), |(index, _)| index);
+                let (lead, rest) = prose.split_at(split);
+                match (!lead.is_empty()).then(|| row.pop()).flatten() {
+                    Some(previous) => row.push(
+                        h_flex()
+                            .flex_none()
+                            .items_center()
+                            .child(previous)
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .child(SharedString::from(lead.to_owned())),
+                            )
+                            .into_any_element(),
+                    ),
+                    None => row.extend(prose_tokens(lead)),
+                }
+                row.extend(prose_tokens(rest));
+            }
             crate::math::Piece::Math { latex, display } => {
                 let typeset = crate::math::formula(latex, display);
                 match (typeset, display) {
@@ -1258,14 +1282,14 @@ fn math_paragraph(text: &str, em: Rems) -> Div {
                                 .justify_center()
                                 .py_2()
                                 .overflow_x_scroll()
-                                .child(formula.element(em, true)),
+                                .child(formula.element(em, true, ink)),
                         );
                     }
                     (Some(formula), false) => {
                         row.push(
                             div()
                                 .px(em * 0.1)
-                                .child(formula.element(em, false))
+                                .child(formula.element(em, false, ink))
                                 .into_any_element(),
                         );
                     }
@@ -1276,6 +1300,11 @@ fn math_paragraph(text: &str, em: Rems) -> Div {
         }
     }
     flush(view, &mut row)
+}
+
+/// Punctuation that may not begin a line (CJK and Latin closing marks).
+fn closes_line(c: char) -> bool {
+    "，。、；：！？）」』”’》〉】,.;:!?)]}".contains(c)
 }
 
 /// Line-break opportunities of prose: Latin words with their trailing space,
@@ -1290,10 +1319,14 @@ fn prose_tokens(prose: &str) -> impl Iterator<Item = AnyElement> + '_ {
             .chars()
             .next()
             .is_some_and(|next| next.is_ascii_alphanumeric() || next.is_ascii_punctuation());
-        if !(word && next_word) {
+        let next_closes = prose[end..].chars().next().is_some_and(closes_line);
+        if !(word && next_word) && !next_closes {
             tokens.push(&prose[start..end]);
             start = end;
         }
+    }
+    if start < prose.len() {
+        tokens.push(&prose[start..]);
     }
     tokens.into_iter().map(|token| {
         div()
@@ -1831,11 +1864,16 @@ fn render_note_image(flow: &NoteFlow, index: usize, path: &std::path::Path) -> A
                     .bg(color(SURFACE_HIGH))
                     .accessibility_label(course2md::tr!("放大{}", label))
                     .disabled(frame.is_none())
+                    // The image fills the frame itself, not the button's centered
+                    // content box, and shows the whole slide.
+                    .relative()
                     .child(
                         img(path.to_path_buf())
+                            .absolute()
+                            .inset_0()
                             .size_full()
                             .rounded(RADIUS_CARD)
-                            .object_fit(ObjectFit::Cover)
+                            .object_fit(ObjectFit::Contain)
                             .with_fallback(move || {
                                 theme::accessible_text(
                                     ("failed-reader-image", index),
@@ -3113,9 +3151,16 @@ impl Desktop {
         }
         // The return leads the tool bar; title and facts share the article's
         // left edge below it.
-        page = page.children(heading);
+        // Once the note scrolls, the title bar carries the title and tools;
+        // the page header gives its height back to the text.
+        let top = self.reader_ui.note_list.logical_scroll_top();
+        let scrolled = self.result_tab == 0 && (top.item_ix > 0 || top.offset_in_item > px(0.));
         let (inline_meta, panel_meta) = if short { (None, meta) } else { (meta, None) };
-        page = page.children(inline_meta);
+        if !scrolled {
+            page = page.children(heading).children(inline_meta);
+        } else {
+            page = page.pb_2();
+        }
         let (fixed_header, mut page) = if compact {
             (
                 Some(page),
@@ -3196,6 +3241,21 @@ impl Desktop {
             note_list: self.reader_ui.note_list.clone(),
             desktop: cx.weak_entity(),
         };
+        // The page re-renders when the top item changes: the header collapses
+        // once the article leaves its top, and the outline follows the text.
+        let entity = cx.weak_entity();
+        let last_top = std::cell::Cell::new(self.reader_ui.note_list.logical_scroll_top().item_ix);
+        let list_state = self.reader_ui.note_list.clone();
+        self.reader_ui
+            .note_list
+            .set_scroll_handler(move |_, _, cx| {
+                let top = list_state.logical_scroll_top();
+                let at_top = top.item_ix == 0 && top.offset_in_item <= px(0.);
+                let key = if at_top { usize::MAX } else { top.item_ix };
+                if last_top.replace(key) != key {
+                    let _ = entity.update(cx, |_, cx| cx.notify());
+                }
+            });
         div()
             .id("note-reader")
             .role(Role::Document)

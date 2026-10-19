@@ -84,13 +84,15 @@ pub fn asset(path: &str) -> Option<Cow<'static, [u8]>> {
 }
 
 impl Formula {
-    /// The formula at `em` text size, tinted with the surrounding text color.
+    /// The formula at `em` text size in `ink`. GPUI paints an SVG only in its
+    /// own text color, which it does not inherit from the paragraph.
     /// Inline formulas sit on the text baseline: a line's content box centers
     /// near 0.35 em above the baseline, the formula's own center at
     /// (height − depth) / 2.
-    pub fn element(&self, em: Rems, display: bool) -> AnyElement {
+    pub fn element(&self, em: Rems, display: bool, ink: Hsla) -> AnyElement {
         let svg = svg()
             .path(self.path.clone())
+            .text_color(ink)
             .flex_shrink_0()
             .w(em * self.width)
             .h(em * (self.height + self.depth));
