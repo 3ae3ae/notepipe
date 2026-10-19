@@ -152,9 +152,20 @@ const MAX_CONCURRENCY: usize = 16;
 const MAX_ATTEMPTS: u32 = 3;
 
 /// 校对/摘要共享的 HTTP agent：整个任务复用同一连接池（clone 共享底层池）。
+/// A response that sends nothing for [`STALL_TIMEOUT`] has stalled; it is
+/// abandoned then instead of holding the task for the whole request budget.
 pub(crate) fn chat_agent() -> ureq::Agent {
-    crate::runtime::http_agent(Duration::from_secs(300))
+    ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(300))
+        .timeout_read(STALL_TIMEOUT)
+        .redirects(0)
+        .build()
 }
+
+const STALL_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Times a Codex request is sent when its stream stalls or ends unfinished.
+const CODEX_STREAM_ATTEMPTS: u32 = 3;
 
 const ERROR_BODY_LIMIT: u64 = 4 * 1024 * 1024;
 /// 单次请求输出 token 上限（校对与摘要共用）。
@@ -730,26 +741,54 @@ fn request_chat_once(
         &url,
         body,
         || {
-            let mut request = agent.post(&url).set("Content-Type", "application/json");
-            for (name, value) in &headers {
-                request = request.set(name, value);
-            }
-            let response = crate::dispatch::receive(request.send_json(body))?;
-            // Codex Responses API 只提供 SSE 流：聚合为 chat/completions 形状，
-            // 下游校验与解析不变；非 2xx 原样上交（重试/降级逻辑要看状态码）
-            if sse && (200..300).contains(&response.status) {
-                let canonical = crate::provider::sse_to_chat_json(&response.body).map_err(|e| {
-                    crate::dispatch::NetworkFailure {
-                        message: format!("{e:#}"),
-                        definitely_unsent: false,
+            let send = || -> std::result::Result<
+                crate::dispatch::HttpResponse,
+                crate::dispatch::NetworkFailure,
+            > {
+                let mut request = agent.post(&url).set("Content-Type", "application/json");
+                for (name, value) in &headers {
+                    request = request.set(name, value);
+                }
+                let response = crate::dispatch::receive(request.send_json(body))?;
+                // Codex Responses API 只提供 SSE 流：聚合为 chat/completions 形状，
+                // 下游校验与解析不变；非 2xx 原样上交（重试/降级逻辑要看状态码）
+                if sse && (200..300).contains(&response.status) {
+                    let canonical =
+                        crate::provider::sse_to_chat_json(&response.body).map_err(|e| {
+                            crate::dispatch::NetworkFailure {
+                                message: format!("{e:#}"),
+                                definitely_unsent: false,
+                            }
+                        })?;
+                    return Ok(crate::dispatch::HttpResponse {
+                        status: response.status,
+                        body: serde_json::to_vec(&canonical).unwrap_or_default(),
+                    });
+                }
+                Ok(response)
+            };
+            // A Codex stream that stalls or ends unfinished returns nothing
+            // usable. Codex runs on the ChatGPT plan rather than per-request
+            // billing, so it is sent again here instead of becoming an
+            // uncertain result that stops every later request of the task.
+            let mut attempt = 1;
+            loop {
+                match send() {
+                    Err(failure)
+                        if sse
+                            && !failure.definitely_unsent
+                            && attempt < CODEX_STREAM_ATTEMPTS
+                            && crate::dispatch::check_control().is_ok() =>
+                    {
+                        tracing::warn!(
+                            attempt,
+                            "Codex 响应中断，重新发送 / Codex response stalled; sending again"
+                        );
+                        attempt += 1;
                     }
-                })?;
-                return Ok(crate::dispatch::HttpResponse {
-                    status: response.status,
-                    body: serde_json::to_vec(&canonical).unwrap_or_default(),
-                });
+                    result => return result,
+                }
             }
-            Ok(response)
         },
         |value| {
             // A gateway may return HTTP 200 with an error object. Missing content is a
