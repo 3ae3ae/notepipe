@@ -196,18 +196,17 @@ pub fn delete_course(root: &Path, course: &Path) -> Result<()> {
     })
 }
 
-/// Finder keeps "Put Back" available, but refuses items that exist only in
-/// iCloud until they are downloaded. The system file manager trashes those
-/// without downloading them.
+/// Deleting a note is the app's own action: the system file manager moves
+/// it to the trash without involving Finder, which would ask for automation
+/// permission, play its sound, and refuse items stored only in iCloud with
+/// a dialog of its own.
 fn move_to_trash(path: &Path) -> Result<(), trash::Error> {
     #[cfg(target_os = "macos")]
     {
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        trash::delete(path).or_else(|_| {
-            let mut context = trash::TrashContext::default();
-            context.set_delete_method(DeleteMethod::NsFileManager);
-            context.delete(path)
-        })
+        let mut context = trash::TrashContext::default();
+        context.set_delete_method(DeleteMethod::NsFileManager);
+        context.delete(path)
     }
     #[cfg(not(target_os = "macos"))]
     trash::delete(path)
