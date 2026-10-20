@@ -390,6 +390,13 @@ impl TaskRecord {
         }
     }
 
+    /// Queued, or paused by the person, and not replaced by a later attempt.
+    pub fn waiting(&self) -> bool {
+        self.handled_by.is_none()
+            && (self.state == TaskState::Queued
+                || self.state == TaskState::Paused && !self.has_uncertain())
+    }
+
     /// 是否有结果尚未确认的请求（BlockedRequest::is_uncertain 的任务级汇总）。
     pub fn has_uncertain(&self) -> bool {
         self.blocked.iter().any(BlockedRequest::is_uncertain)
@@ -863,16 +870,16 @@ impl State {
         Ok(())
     }
 
-    /// Queued tasks run in list order. Put one at `position` among them,
+    /// Waiting tasks run in list order. Put one at `position` among them,
     /// taking the place of the task that was there.
-    pub fn move_queued_task(&mut self, id: &str, position: usize) -> Result<()> {
+    pub fn move_waiting_task(&mut self, id: &str, position: usize) -> Result<()> {
         let from = self
             .tasks
             .iter()
             .position(|task| task.id == id)
             .context(course2md::tr!("任务记录不存在"))?;
         ensure!(
-            self.tasks[from].state == TaskState::Queued,
+            self.tasks[from].waiting(),
             course2md::tr!("只能调整排队中的任务")
         );
         let task = self.tasks.remove(from);
@@ -880,7 +887,7 @@ impl State {
             .tasks
             .iter()
             .enumerate()
-            .filter(|(_, task)| task.state == TaskState::Queued)
+            .filter(|(_, task)| task.waiting())
             .map(|(index, _)| index)
             .collect();
         let at = match queued.get(position) {
@@ -896,6 +903,11 @@ impl State {
         self.tasks
             .iter()
             .filter(|task| task.state == TaskState::Queued)
+    }
+
+    /// Queued and paused tasks in queue order; a paused task resumes in its place.
+    pub fn waiting_tasks(&self) -> impl Iterator<Item = &TaskRecord> {
+        self.tasks.iter().filter(|task| task.waiting())
     }
 
     pub fn authorize_uncertain(&mut self, id: &str, requests: &[String]) -> Result<()> {
@@ -2384,17 +2396,23 @@ mod tests {
                 .clone()
         };
         let d = id(&state, "d");
-        state.move_queued_task(&d, 0).unwrap();
+        state.move_waiting_task(&d, 0).unwrap();
         assert_eq!(order(&state), ["d", "a", "b", "c"]);
         assert_eq!(state.next_task().unwrap().plan.title, "d");
         let d = id(&state, "d");
-        state.move_queued_task(&d, 2).unwrap();
+        state.move_waiting_task(&d, 2).unwrap();
         assert_eq!(order(&state), ["a", "b", "d", "c"]);
         let a = id(&state, "a");
-        state.move_queued_task(&a, 99).unwrap();
+        state.move_waiting_task(&a, 99).unwrap();
         assert_eq!(order(&state), ["b", "d", "c", "a"]);
-        state.set_intent(&a, Intent::Pause).unwrap();
-        assert!(state.move_queued_task(&a, 0).is_err());
+        // A paused task keeps its place and moves with the queue.
+        let b = id(&state, "b");
+        state.set_intent(&b, Intent::Pause).unwrap();
+        state.move_waiting_task(&b, 3).unwrap();
+        assert_eq!(order(&state), ["d", "c", "a"]);
+        assert_eq!(state.waiting_tasks().last().unwrap().plan.title, "b");
+        state.set_intent(&b, Intent::Cancel).unwrap();
+        assert!(state.move_waiting_task(&b, 0).is_err());
     }
 
     #[test]

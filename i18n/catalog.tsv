@@ -2455,3 +2455,4 @@ AI 翻译	AI 翻译	AI translation	AI 翻譯	AI 翻訳
 不能把文件夹移到它自己里面	不能把文件夹移到它自己里面	A folder cannot move into itself	不能把資料夾移到它自己裡面	フォルダをそれ自身の中に移動することはできません
 其中的 {} 个子文件夹也会删除；笔记会保留，移到未分类	其中的 {} 个子文件夹也会删除；笔记会保留，移到未分类	Its {} subfolders are deleted too; notes are kept and move to Unfiled	其中的 {} 個子資料夾也會刪除；筆記會保留，移到未分類	中の {} 個のサブフォルダも削除されます。ノートは残り、未分類に移動します
 {} 项	{} 项	{} items	{} 項	{} 項目
+{} 个已暂停	{} 个已暂停	{} paused	{} 個已暫停	一時停止中 {} 件

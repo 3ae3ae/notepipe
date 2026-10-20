@@ -330,6 +330,8 @@ struct Desktop {
     entered: HashSet<String>,
     // Disclosure open state that outlives a virtualized row's unmount.
     task_panels_open: HashSet<(task_ui::TaskPanel, String)>,
+    /// The task row showing its details on the task page.
+    expanded_task: Option<String>,
     event_repaint_pending: bool,
     message: Option<String>,
     _subscriptions: Vec<Subscription>,
@@ -713,6 +715,7 @@ impl Desktop {
             library_rem: f32::NAN,
             entered: HashSet::new(),
             task_panels_open: HashSet::new(),
+            expanded_task: None,
             event_repaint_pending: false,
             message,
             _subscriptions: subscriptions,

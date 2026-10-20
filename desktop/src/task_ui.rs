@@ -49,7 +49,10 @@ enum QueueItem {
     Row {
         task: usize,
         group: TaskGroup,
+        /// Place among the waiting tasks, for reordering.
         number: Option<usize>,
+        /// Run order, shown for queued tasks.
+        runs: Option<usize>,
         first: bool,
         last: bool,
     },
@@ -78,6 +81,16 @@ impl QueueItem {
             QueueItem::HistoryToggle { .. } => "history-toggle".to_owned(),
         }
     }
+}
+
+/// Where a row sits on its group's surface.
+#[derive(Clone, Copy)]
+struct RowPlace {
+    group: TaskGroup,
+    number: Option<usize>,
+    runs: Option<usize>,
+    first: bool,
+    last: bool,
 }
 
 /// Queued rows shown before the rest of the queue folds.
@@ -153,6 +166,8 @@ fn task_group(task: &TaskRecord) -> TaskGroup {
         TaskGroup::History
     } else {
         match task.state {
+            // A task the person paused keeps its place in the queue.
+            TaskState::Paused if !task.has_uncertain() => TaskGroup::Queued,
             TaskState::Paused
             | TaskState::NeedsAttention
             | TaskState::Uncertain
@@ -1971,6 +1986,14 @@ impl Desktop {
             self.workspace_error =
                 Some(course2md::tr!("任务选择尚未保存：{}", format!("{error:#}")));
         }
+        // Going to a task opens its details when there is something to read
+        // or decide; new and running work stays a compact row.
+        let waiting = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.state.task(id))
+            .is_some_and(|task| matches!(task_group(task), TaskGroup::Running | TaskGroup::Queued));
+        self.expanded_task = (!waiting).then(|| id.to_owned());
         cx.notify();
     }
 
@@ -2598,11 +2621,17 @@ impl Desktop {
             } else {
                 members.len()
             };
+            // Queued tasks are numbered in the order they will run; paused
+            // ones keep their place without a number.
+            let mut next = 0;
             for (position, &task) in members.iter().take(shown).enumerate() {
+                let runs = tasks[task].state == TaskState::Queued;
+                next += usize::from(runs);
                 items.push(QueueItem::Row {
                     task,
                     group,
                     number: (group == TaskGroup::Queued).then_some(position + 1),
+                    runs: runs.then_some(next),
                     first: position == 0,
                     last: position + 1 == shown && !folds,
                 });
@@ -2668,14 +2697,17 @@ impl Desktop {
                 .filter(|task| task_group(task) == group)
                 .count()
         };
-        let (running, queued, attention) = (
-            count(TaskGroup::Running),
-            count(TaskGroup::Queued),
-            count(TaskGroup::Attention),
-        );
+        let running = count(TaskGroup::Running);
+        let attention = count(TaskGroup::Attention);
+        let queued = tasks
+            .iter()
+            .filter(|task| task.state == TaskState::Queued)
+            .count();
+        let resumable = tasks.iter().filter(|task| resumable(task)).count();
         let summary = [
             (running, course2md::tr!("{} 个正在处理", running)),
             (queued, course2md::tr!("{} 个排队中", queued)),
+            (resumable, course2md::tr!("{} 个已暂停", resumable)),
             (attention, course2md::tr!("{} 个需要处理", attention)),
         ]
         .into_iter()
@@ -2683,24 +2715,28 @@ impl Desktop {
         .map(|(_, text)| text)
         .collect::<Vec<_>>()
         .join(" · ");
-        let resumable = tasks.iter().filter(|task| resumable(task)).count();
-        let action = if running + queued > 0 {
-            Some(
-                outline_pill("tasks-pause-all")
-                    .icon(icons::pause())
-                    .label(course2md::tr!("全部暂停"))
-                    .on_click(cx.listener(|this, _, _, cx| this.pause_all_tasks(cx))),
-            )
-        } else if resumable > 0 {
-            Some(
-                outline_pill("tasks-resume-all")
-                    .icon(icons::play_arrow())
-                    .label(course2md::tr!("全部继续"))
-                    .on_click(cx.listener(|this, _, _, cx| this.resume_all_tasks(cx))),
-            )
-        } else {
-            None
-        };
+        // Pausing applies to work that is still meant to run; a task already
+        // stopping has nothing left to pause.
+        let pausable = tasks
+            .iter()
+            .filter(|task| {
+                matches!(task.state, TaskState::Running | TaskState::Queued)
+                    && task.intent == Intent::Run
+                    && task.handled_by.is_none()
+            })
+            .count();
+        let pause = (pausable > 0).then(|| {
+            outline_pill("tasks-pause-all")
+                .icon(icons::pause())
+                .label(course2md::tr!("全部暂停"))
+                .on_click(cx.listener(|this, _, _, cx| this.pause_all_tasks(cx)))
+        });
+        let resume = (resumable > 0).then(|| {
+            outline_pill("tasks-resume-all")
+                .icon(icons::play_arrow())
+                .label(course2md::tr!("全部继续"))
+                .on_click(cx.listener(|this, _, _, cx| this.resume_all_tasks(cx)))
+        });
         h_flex()
             .w_full()
             .min_w_0()
@@ -2724,31 +2760,45 @@ impl Desktop {
                         )
                     }),
             )
-            .children(action)
+            .child(h_flex().gap_2().children(pause).children(resume))
     }
 
-    /// Pause queued work first, so the running task's stop does not start
-    /// the next one.
+    /// Stop the running task first, so its stop starts nothing new, then hold
+    /// the queue in one step, so no queued task starts between two pauses.
     pub(crate) fn pause_all_tasks(&mut self, cx: &mut Context<Self>) {
         let Some(workspace) = &self.workspace else {
             return;
         };
-        let ids: Vec<String> = workspace
+        let pausable = |task: &&TaskRecord| task.handled_by.is_none() && task.intent == Intent::Run;
+        let running: Vec<String> = workspace
             .state
-            .queued_tasks()
-            .chain(
-                workspace
-                    .state
-                    .tasks
-                    .iter()
-                    .filter(|task| task.state == TaskState::Running),
-            )
-            .filter(|task| task.handled_by.is_none() && task.intent == Intent::Run)
+            .tasks
+            .iter()
+            .filter(|task| task.state == TaskState::Running)
+            .filter(pausable)
             .map(|task| task.id.clone())
             .collect();
-        for id in ids {
+        let queued: Vec<String> = workspace
+            .state
+            .queued_tasks()
+            .filter(pausable)
+            .map(|task| task.id.clone())
+            .collect();
+        for id in running {
             self.set_task_intent(id, Intent::Pause, cx);
         }
+        // Queued work has no worker to tell; its record is the whole state.
+        if let Some(workspace) = &mut self.workspace
+            && let Err(error) = workspace.transaction(|state| {
+                queued
+                    .iter()
+                    .try_for_each(|id| state.set_intent(id, Intent::Pause))
+            })
+        {
+            self.workspace_error =
+                Some(course2md::tr!("任务状态尚未保存：{}", format!("{error:#}")));
+        }
+        cx.notify();
     }
 
     pub(crate) fn resume_all_tasks(&mut self, cx: &mut Context<Self>) {
@@ -2767,9 +2817,9 @@ impl Desktop {
         }
     }
 
-    pub(crate) fn move_queued_task(&mut self, id: &str, position: usize, cx: &mut Context<Self>) {
+    pub(crate) fn move_waiting_task(&mut self, id: &str, position: usize, cx: &mut Context<Self>) {
         if let Some(workspace) = &mut self.workspace
-            && let Err(error) = workspace.transaction(|state| state.move_queued_task(id, position))
+            && let Err(error) = workspace.transaction(|state| state.move_waiting_task(id, position))
         {
             self.workspace_error =
                 Some(course2md::tr!("任务顺序尚未保存：{}", format!("{error:#}")));
@@ -2870,11 +2920,19 @@ impl Desktop {
                 task,
                 group,
                 number,
+                runs,
                 first,
                 last: last_row,
             } => {
                 gap = *last_row && !last;
-                self.task_row(&tasks[*task], *group, *number, *first, *last_row, cx)
+                let place = RowPlace {
+                    group: *group,
+                    number: *number,
+                    runs: *runs,
+                    first: *first,
+                    last: *last_row,
+                };
+                self.task_row(&tasks[*task], place, cx)
             }
             QueueItem::QueueFold { hidden, open } => {
                 let toggle = open.clone();
@@ -2885,8 +2943,6 @@ impl Desktop {
                     .py_2()
                     .bg(color(SURFACE))
                     .rounded_b(RADIUS_CARD)
-                    .border_t_1()
-                    .border_color(color(HAIRLINE))
                     .child(
                         quiet("toggle-task-queue")
                             .text_color(color(ACCENT))
@@ -2963,28 +3019,33 @@ impl Desktop {
             let id = task.id.clone();
             let state = task.state;
             let active = desktop.is_running_task(&id);
-            let open = desktop
-                .workspace
-                .as_ref()
-                .and_then(|workspace| workspace.state.selected_task.as_ref())
-                == Some(&id);
+            let open = desktop.expanded_task.as_ref() == Some(&id);
             let queue: Vec<String> = desktop
                 .workspace
                 .as_ref()
                 .map(|workspace| {
                     workspace
                         .state
-                        .queued_tasks()
+                        .waiting_tasks()
                         .map(|task| task.id.clone())
                         .collect()
                 })
                 .unwrap_or_default();
-            let course = task.artifact.as_ref().and_then(|dir| {
+            // The note opens from its path, as the row's button does, even
+            // before the library has listed it.
+            let course = task.artifact.as_ref().map(|dir| {
                 desktop
                     .courses
                     .iter()
                     .find(|course| &course.dir == dir)
                     .cloned()
+                    .unwrap_or_else(|| {
+                        Course::from_completed(&Completed {
+                            out_dir: dir.clone(),
+                            title: task.plan.title.clone(),
+                            ..Default::default()
+                        })
+                    })
             });
             let has_exports = desktop
                 .task_library(&task)
@@ -3098,7 +3159,7 @@ impl Desktop {
                     let id = id.clone();
                     move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
                         let _ =
-                            entity.update(cx, |this, cx| this.move_queued_task(&id, position, cx));
+                            entity.update(cx, |this, cx| this.move_waiting_task(&id, position, cx));
                     }
                 };
                 menu = menu
@@ -3158,6 +3219,13 @@ impl Desktop {
                     );
                 }
                 _ => {}
+            }
+            if uncertain && !active {
+                menu = menu.item(
+                    PopupMenuItem::new(course2md::tr!("重新发送以上内容"))
+                        .icon(icons::refresh())
+                        .on_click(follow(|this, id, _, cx| this.resend_uncertain(id, cx))),
+                );
             }
             if task.artifact.is_some() && !uncertain {
                 let requires_repair = task_requires_service_repair(&task);
@@ -3220,26 +3288,14 @@ impl Desktop {
 
     /// Expand a row's details, or fold the expanded one.
     pub(crate) fn toggle_task_row(&mut self, id: &str, cx: &mut Context<Self>) {
-        let selected = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.state.selected_task.as_deref())
-            == Some(id);
-        if !selected {
-            self.select_task(id, cx);
+        if self.expanded_task.as_deref() == Some(id) {
+            self.clear_task_card_motion(id);
+            self.expanded_task = None;
+            cx.notify();
             return;
         }
-        self.clear_task_card_motion(id);
-        if let Some(workspace) = &mut self.workspace
-            && let Err(error) = workspace.transaction(|state| {
-                state.selected_task = None;
-                Ok(())
-            })
-        {
-            self.workspace_error =
-                Some(course2md::tr!("任务选择尚未保存：{}", format!("{error:#}")));
-        }
-        cx.notify();
+        self.select_task(id, cx);
+        self.expanded_task = Some(id.to_owned());
     }
 
     /// Open a task's details with its log shown.
@@ -3325,18 +3381,18 @@ impl Desktop {
     fn task_row(
         &mut self,
         task: &TaskRecord,
-        group: TaskGroup,
-        number: Option<usize>,
-        first: bool,
-        last: bool,
+        place: RowPlace,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let RowPlace {
+            group,
+            number,
+            runs,
+            first,
+            last,
+        } = place;
         let id = task.id.clone();
-        let expanded = self
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.state.selected_task.as_ref())
-            == Some(&id);
+        let expanded = self.expanded_task.as_ref() == Some(&id);
         let reason = (group == TaskGroup::Attention && !expanded)
             .then(|| attention_reason(task))
             .flatten();
@@ -3371,6 +3427,7 @@ impl Desktop {
                     .child(
                         accessible_text(SharedString::from(format!("task-created-{id}")), added)
                             .text_size(TEXT_AUX)
+                            .whitespace_normal()
                             .text_color(color(GRAY)),
                     )
                     .children(reason.map(|reason| {
@@ -3383,6 +3440,8 @@ impl Desktop {
         // The row carries the pointer feedback, so the whole row reads as one target.
         let toggle = control(SharedString::from(format!("select-{id}")))
             .text()
+            // Below this the commands wrap under the identity instead of squeezing it.
+            .min_w(rems(16.))
             .accessibility_label(course2md::tr!(
                 "{}，{}，{}",
                 task.plan.title,
@@ -3394,7 +3453,6 @@ impl Desktop {
                 }
             ))
             .flex_1()
-            .min_w_0()
             .h_auto()
             .min_h(px(0.))
             .p_0()
@@ -3409,11 +3467,14 @@ impl Desktop {
             .flex_shrink_0()
             .gap_2()
             .items_center()
-            .child(badge(task_badge_kind(task.state)).child(task_status_label(task)));
+            // A queued row's number already says it waits.
+            .when(task.state != TaskState::Queued, |trailing| {
+                trailing.child(badge(task_badge_kind(task.state)).child(task_status_label(task)))
+            });
         if let Some(path) = task
             .artifact
             .clone()
-            .filter(|_| group == TaskGroup::Finished)
+            .filter(|_| matches!(group, TaskGroup::Finished | TaskGroup::Attention))
         {
             let title = task.plan.title.clone();
             trailing = trailing.child(
@@ -3443,12 +3504,15 @@ impl Desktop {
                 .dropdown_menu(move |popup, window, cx| dropdown(popup, window, cx)),
         );
         // The divider spans the row's identity and commands, from the cover on.
+        // At narrow widths or large text the commands move under the identity.
         let body = h_flex()
             .flex_1()
             .min_w_0()
-            .gap_4()
+            .gap_x_4()
+            .gap_y_2()
             .py_3()
             .items_center()
+            .flex_wrap()
             .when(!first, |body| {
                 body.border_t_1().border_color(color(HAIRLINE))
             })
@@ -3482,7 +3546,7 @@ impl Desktop {
                             .min_w(rems(20. / 14.))
                             .text_size(TEXT_BODY)
                             .text_color(color(GRAY))
-                            .child(number.to_string()),
+                            .children(runs.map(|runs| runs.to_string())),
                     ),
             );
             let drag = QueueDrag {
@@ -3493,7 +3557,7 @@ impl Desktop {
                 .on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
                 .drag_over::<QueueDrag>(|style, _, _, _| style.bg(color(SECONDARY_CONTAINER)))
                 .on_drop(cx.listener(move |this, drag: &QueueDrag, _, cx| {
-                    this.move_queued_task(&drag.id, number - 1, cx)
+                    this.move_waiting_task(&drag.id, number - 1, cx)
                 }));
         }
         let row = row.child(body);
@@ -3506,7 +3570,7 @@ impl Desktop {
             .child(row);
         if expanded {
             // Padding outside the detail keeps its divider on the rows' inset.
-            let detail = div().px_4().pb_4().child(self.task_detail(task, cx));
+            let detail = div().pl_4().pr_2().pb_4().child(self.task_detail(task, cx));
             let detail_id = format!("task-detail-{id}");
             surface = surface.child(if self.enter_once(detail_id.clone()) {
                 crate::motion::enter(SharedString::from(detail_id), detail)
@@ -4635,6 +4699,7 @@ fn task_log_box(id: &str, text: String) -> Stateful<Div> {
 fn task_row_cover(cover: Option<PathBuf>, queued: bool) -> Div {
     let slot = div()
         .w(rems(96. / 14.))
+        .max_w(relative(0.3))
         .flex_shrink_0()
         .aspect_ratio(16. / 9.)
         .flex()
@@ -4951,6 +5016,7 @@ mod tests {
                 task,
                 group: TaskGroup::Queued,
                 number: Some(task + 1),
+                runs: Some(task + 1),
                 first: task == 0,
                 last: false,
             };
