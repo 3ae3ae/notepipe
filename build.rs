@@ -36,25 +36,40 @@ fn main() {
     // 优先 swiftbuild 构建系统（Swift 6.2+）：旧 native 系统不会编译
     // mlx-swift Cmlx 里的 .metal shader，产不出 default.metallib，
     // CoreML 推理运行时必挂（CI macos-26 默认 Xcode 较老时踩中）。
-    // 工具链不支持 swiftbuild 时回退默认构建系统。
-    // 只在两种构建系统都失败时才打印输出，回退成功不留误导性的警告。
-    let first = run(Command::new("swift")
-        .args(["build", "-c", "release", "--build-system", "swiftbuild"])
-        .current_dir(&pkg));
-    let ok = first.is_ok()
-        || match run(Command::new("swift")
+    //
+    // 关闭 swift-syntax 预编译包：新工具链首次构建会从 download.swift.org
+    // 下载预编译宏库，SwiftPM 的下载没有超时，网络慢时整个 cargo build
+    // 无限挂起；从源码构建宏库只慢在首次。不认识该参数的旧工具链本就不下载
+    // 预编译包，依次回退到不带该参数、再到默认构建系统。
+    // 只在全部尝试都失败时才打印输出，回退成功不留误导性的警告。
+    let attempts: [&[&str]; 4] = [
+        &[
+            "--build-system",
+            "swiftbuild",
+            "--disable-experimental-prebuilts",
+        ],
+        &["--build-system", "swiftbuild"],
+        &["--disable-experimental-prebuilts"],
+        &[],
+    ];
+    let mut reports = Vec::new();
+    let ok = attempts.iter().any(|extra| {
+        match run(Command::new("swift")
             .args(["build", "-c", "release"])
+            .args(*extra)
             .current_dir(&pkg))
         {
             Ok(()) => true,
-            Err(second) => {
-                for report in [first.unwrap_err(), second] {
-                    println!("cargo:warning={report}");
-                }
+            Err(report) => {
+                reports.push(report);
                 false
             }
-        };
+        }
+    });
     if !ok {
+        for report in reports {
+            println!("cargo:warning={report}");
+        }
         println!(
             "cargo:warning=swift build 失败（见上方输出），跳过 Apple 原生模块；coreml 后端不可用"
         );
