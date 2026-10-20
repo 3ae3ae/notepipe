@@ -225,6 +225,10 @@ pub struct Library {
     pub courses: BTreeMap<PathBuf, u64>,
     #[serde(default)]
     next_id: u64,
+    /// Folder → its parent folder. A folder without an entry sits at the
+    /// top level, so records written before folders nested read unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    parents: BTreeMap<u64, u64>,
 }
 impl Library {
     pub fn load(root: &Path) -> Result<Self> {
@@ -250,7 +254,23 @@ impl Library {
         save_with_backup(&root.join(FILE), &serde_json::to_vec_pretty(&library)?)?;
         Ok(library)
     }
+    /// Rename a folder, or create one at the top level when `id` is `None`.
     pub fn rename(&mut self, id: Option<u64>, name: &str) -> Result<u64> {
+        match id {
+            Some(id) => {
+                ensure!(
+                    self.folders.contains_key(&id),
+                    course2md::tr!("文件夹已不存在，请重新扫描笔记库")
+                );
+                let name = self.valid_name(self.parent(id), Some(id), name)?;
+                self.folders.insert(id, name);
+                Ok(id)
+            }
+            None => self.create(None, name),
+        }
+    }
+    /// Names are unique among the folders that share a parent.
+    fn valid_name(&self, parent: Option<u64>, id: Option<u64>, name: &str) -> Result<String> {
         let name = name.trim();
         ensure!(!name.is_empty(), course2md::tr!("请输入文件夹名称"));
         ensure!(
@@ -261,30 +281,129 @@ impl Library {
             name != course2md::tr!("未分类"),
             course2md::tr!("「未分类」已被使用，请换一个文件夹名称")
         );
-        ensure!(!self.folders.iter().any(|(key, value)| Some(*key) != id && value.to_lowercase() == name.to_lowercase()), course2md::tr!("已有同名文件夹"));
-        let id = match id {
-            Some(id) => {
-                ensure!(
-                    self.folders.contains_key(&id),
-                    course2md::tr!("文件夹已不存在，请重新扫描笔记库")
-                );
-                id
-            }
-            None => {
-                self.next_id = self
-                    .next_id
-                    .max(self.folders.keys().copied().max().unwrap_or(0))
-                    .checked_add(1)
-                    .context(course2md::tr!("文件夹编号已耗尽"))?;
-                self.next_id
-            }
-        };
-        self.folders.insert(id, name.to_owned());
+        let lower = name.to_lowercase();
+        ensure!(
+            !self.children(parent).into_iter().any(|sibling| {
+                Some(sibling) != id && self.folders[&sibling].to_lowercase() == lower
+            }),
+            course2md::tr!("这里已有同名文件夹")
+        );
+        Ok(name.to_owned())
+    }
+    pub fn create(&mut self, parent: Option<u64>, name: &str) -> Result<u64> {
+        if let Some(parent) = parent {
+            ensure!(
+                self.folders.contains_key(&parent),
+                course2md::tr!("文件夹已不存在，请重新扫描笔记库")
+            );
+        }
+        let name = self.valid_name(parent, None, name)?;
+        self.next_id = self
+            .next_id
+            .max(self.folders.keys().copied().max().unwrap_or(0))
+            .checked_add(1)
+            .context(course2md::tr!("文件夹编号已耗尽"))?;
+        let id = self.next_id;
+        self.folders.insert(id, name);
+        if let Some(parent) = parent {
+            self.parents.insert(id, parent);
+        }
         Ok(id)
     }
+    /// The containing folder; a missing parent counts as the top level.
+    pub fn parent(&self, id: u64) -> Option<u64> {
+        self.parents
+            .get(&id)
+            .copied()
+            .filter(|parent| self.folders.contains_key(parent))
+    }
+    /// The folders directly inside `parent`, by name.
+    pub fn children(&self, parent: Option<u64>) -> Vec<u64> {
+        let mut children: Vec<u64> = self
+            .folders
+            .keys()
+            .copied()
+            .filter(|id| self.parent(*id) == parent)
+            .collect();
+        children.sort_by_cached_key(|id| (self.folders[id].to_lowercase(), *id));
+        children
+    }
+    /// `id` and every folder inside it.
+    pub fn subtree(&self, id: u64) -> Vec<u64> {
+        let mut found = vec![id];
+        let mut index = 0;
+        while let Some(&current) = found.get(index) {
+            found.extend(self.children(Some(current)));
+            index += 1;
+        }
+        found
+    }
+    /// Names from the top level down to `id`.
+    pub fn path(&self, id: u64) -> Vec<&str> {
+        let mut names = Vec::new();
+        let mut current = Some(id);
+        // A damaged record could hold a cycle; no real path is longer.
+        while let Some(id) = current.filter(|_| names.len() <= self.folders.len()) {
+            let Some(name) = self.folders.get(&id) else {
+                break;
+            };
+            names.push(name.as_str());
+            current = self.parent(id);
+        }
+        names.reverse();
+        names
+    }
+    /// Every folder in tree order with its depth.
+    pub fn tree(&self) -> Vec<(u64, usize)> {
+        fn visit(
+            library: &Library,
+            parent: Option<u64>,
+            depth: usize,
+            out: &mut Vec<(u64, usize)>,
+        ) {
+            for id in library.children(parent) {
+                if out.iter().any(|(seen, _)| *seen == id) {
+                    continue;
+                }
+                out.push((id, depth));
+                visit(library, Some(id), depth + 1, out);
+            }
+        }
+        let mut out = Vec::new();
+        visit(self, None, 0, &mut out);
+        out
+    }
+    /// Put a folder inside another, or at the top level.
+    pub fn move_folder(&mut self, id: u64, parent: Option<u64>) -> Result<()> {
+        ensure!(
+            self.folders.contains_key(&id),
+            course2md::tr!("文件夹已不存在，请重新扫描笔记库")
+        );
+        if let Some(parent) = parent {
+            ensure!(
+                self.folders.contains_key(&parent),
+                course2md::tr!("文件夹已不存在，请选择其他文件夹")
+            );
+            ensure!(
+                !self.subtree(id).contains(&parent),
+                course2md::tr!("不能把文件夹移到它自己里面")
+            );
+        }
+        self.valid_name(parent, Some(id), &self.folders[&id].clone())?;
+        match parent {
+            Some(parent) => self.parents.insert(id, parent),
+            None => self.parents.remove(&id),
+        };
+        Ok(())
+    }
+    /// Remove a folder with the folders inside it; their notes become unfiled.
     pub fn remove(&mut self, id: u64) {
-        self.folders.remove(&id);
-        self.courses.retain(|_, folder| *folder != id);
+        let removed = self.subtree(id);
+        for folder in &removed {
+            self.folders.remove(folder);
+            self.parents.remove(folder);
+        }
+        self.courses.retain(|_, folder| !removed.contains(folder));
     }
     #[cfg(test)]
     pub fn folder(&self, root: &Path, course: &Path) -> Option<u64> {
@@ -534,6 +653,49 @@ mod tests {
             "valuable notes"
         );
     }
+    #[test]
+    fn folders_nest_move_and_remove_with_their_contents() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let lecture = root.join("lecture");
+        std::fs::create_dir_all(&lecture).unwrap();
+        let mut library = Library::default();
+        let math = library.create(None, "数学").unwrap();
+        let algebra = library.create(Some(math), "线性代数").unwrap();
+        let matrices = library.create(Some(algebra), "矩阵").unwrap();
+        let physics = library.create(None, "物理").unwrap();
+        // Names repeat across parents but not among siblings.
+        assert!(library.create(Some(physics), "线性代数").is_ok());
+        assert!(library.create(Some(math), "线性代数").is_err());
+        assert_eq!(library.path(matrices), ["数学", "线性代数", "矩阵"]);
+        assert_eq!(library.children(None), [math, physics]);
+        assert_eq!(
+            library.tree()[..3],
+            [(math, 0), (algebra, 1), (matrices, 2)]
+        );
+        // A folder cannot move into itself or anything inside it.
+        assert!(library.move_folder(math, Some(matrices)).is_err());
+        assert!(library.move_folder(math, Some(math)).is_err());
+        library.move_folder(algebra, Some(physics)).unwrap_err();
+        library.move_folder(matrices, None).unwrap();
+        assert_eq!(library.path(matrices), ["矩阵"]);
+        library.move_folder(matrices, Some(math)).unwrap();
+        library.assign(root, &lecture, Some(matrices)).unwrap();
+        library.remove(math);
+        assert_eq!(library.children(None), [physics]);
+        assert!(!library.folders.contains_key(&matrices));
+        assert_eq!(library.folder(root, &lecture), None);
+    }
+
+    #[test]
+    fn flat_records_read_as_top_level_folders() {
+        let library: Library =
+            serde_json::from_str(r#"{"folders":{"1":"数学"},"courses":{},"next_id":1}"#).unwrap();
+        assert_eq!(library.children(None), [1]);
+        let written = serde_json::to_string(&library).unwrap();
+        assert!(!written.contains("parents"));
+    }
+
     #[test]
     fn stale_writers_merge_latest_state_and_failed_edits_do_not_write() {
         let root = tempfile::tempdir().unwrap();
