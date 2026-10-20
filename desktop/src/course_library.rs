@@ -1721,17 +1721,17 @@ impl Desktop {
                 .library_list_row(row.courses[0], layout, cx)
                 .into_any_element(),
         };
-        // The old single scroll column spaced its children with gap_6, folder
-        // groups with gap_2 and 20px between groups, card rows with gap_4 and
-        // list rows with gap_2; each item carries the same trailing spacing.
+        // Each item carries its trailing spacing as padding: the virtual
+        // list measures an item's padding but not its outer margin, so a
+        // margin would let the next item draw over the gap.
         let mut wrapper = v_flex().w_full().min_w_0();
         if !last {
             wrapper = match item {
-                LibraryItem::GroupHeader { .. } => wrapper.mb_2(),
-                LibraryItem::GroupBody { .. } => wrapper.mb(px(20.)),
-                LibraryItem::CardRow(_) => wrapper.mb_4(),
-                LibraryItem::ListRow(..) => wrapper.mb_2(),
-                _ => wrapper.mb_6(),
+                LibraryItem::GroupHeader { .. } => wrapper.pb_2(),
+                LibraryItem::GroupBody { .. } => wrapper.pb(px(20.)),
+                LibraryItem::CardRow(_) => wrapper.pb_4(),
+                LibraryItem::ListRow(..) => wrapper.pb_2(),
+                _ => wrapper.pb_6(),
             };
         }
         let mut wrapper = wrapper
