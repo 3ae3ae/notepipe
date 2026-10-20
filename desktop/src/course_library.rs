@@ -1156,6 +1156,13 @@ impl Desktop {
                 .collect(),
         };
         let coverage = scope.coverage();
+        let searched: Option<Vec<u64>> = match self.folder_filter {
+            FolderFilter::Folder(id) if !query.is_empty() => self
+                .library_indexes
+                .get(&self.library_root)
+                .map(|library| library.subtree(id)),
+            _ => None,
+        };
         let courses: Vec<usize> = self
             .courses
             .iter()
@@ -1185,8 +1192,15 @@ impl Desktop {
                             .is_some_and(|location| location.root == self.library_root)
                             && (!self.library_indexes.contains_key(&self.library_root)
                                 || match filter {
-                                    crate::FolderFilter::Unfiled => folder.is_none(),
-                                    crate::FolderFilter::Folder(id) => folder == Some(id),
+                                    // Searching a place covers everything below it, as
+                                    // in a file manager; browsing shows its own notes.
+                                    crate::FolderFilter::Unfiled => {
+                                        !query.is_empty() || folder.is_none()
+                                    }
+                                    crate::FolderFilter::Folder(id) => match &searched {
+                                        Some(inside) => folder.is_some_and(|f| inside.contains(&f)),
+                                        None => folder == Some(id),
+                                    },
                                     crate::FolderFilter::All => true,
                                 })
                     }

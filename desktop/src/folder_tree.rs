@@ -372,7 +372,7 @@ impl Desktop {
     /// One row of the tree: disclosure, icon and name, indented by depth.
     #[allow(clippy::too_many_arguments)]
     fn tree_row(
-        &self,
+        &mut self,
         target: TreeTarget,
         depth: usize,
         icon: gpui_component::Icon,
@@ -421,8 +421,51 @@ impl Desktop {
             }
             _ => div().size(TREE_GLYPH).flex_shrink_0().into_any_element(),
         };
+        // Rows take keyboard focus like a file manager's sidebar: arrows move
+        // and fold, Return or Space opens, ⌘⌫ deletes a folder.
+        let focus = self
+            .tree_focus
+            .entry(key.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let keys = {
+            let target = target.clone();
+            cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                let keystroke = &event.keystroke;
+                let (root, id) = match &target {
+                    TreeTarget::Root(root) => (Some(root.clone()), 0),
+                    TreeTarget::Folder(root, id) => (Some(root.clone()), *id),
+                    TreeTarget::All => (None, 0),
+                };
+                match keystroke.key.as_str() {
+                    "enter" | "space" => this.select_target(target.clone(), cx),
+                    "up" => window.focus_prev(cx),
+                    "down" => window.focus_next(cx),
+                    "left" | "right" => {
+                        let opening = keystroke.key == "right";
+                        if let (Some(root), Some(open)) = (root, disclosure)
+                            && open != opening
+                        {
+                            this.toggle_tree_node(&root, id, cx);
+                        }
+                    }
+                    "backspace" if keystroke.modifiers.platform => {
+                        if let TreeTarget::Folder(root, id) = &target {
+                            this.begin_delete_folder_at(root.clone(), *id, window, cx);
+                        }
+                    }
+                    _ => return,
+                }
+                cx.stop_propagation();
+            })
+        };
         let mut row = h_flex()
             .id(SharedString::from(key))
+            .track_focus(&focus)
+            .on_key_down(keys)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .focus_visible(|style| style.border_color(color(ACCENT)))
             .role(Role::TreeItem)
             .aria_label(label.clone())
             .when_some(disclosure, |row, open| row.aria_expanded(open))

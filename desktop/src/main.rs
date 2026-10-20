@@ -261,6 +261,8 @@ struct Desktop {
     folder_origin: Option<library_ui::FolderOrigin>,
     /// Tree nodes the person toggled: opened folders, or closed library tops (id 0).
     folder_tree_open: HashSet<(PathBuf, u64)>,
+    /// Focus of each tree row, kept so keyboard focus survives re-renders.
+    tree_focus: std::collections::HashMap<String, FocusHandle>,
     folder_error: Option<String>,
     /// The window this view lives in; deferred work returns to it.
     window: AnyWindowHandle,
@@ -658,6 +660,7 @@ impl Desktop {
             folder_parent: None,
             folder_origin: None,
             folder_tree_open: HashSet::new(),
+            tree_focus: std::collections::HashMap::new(),
             folder_error: None,
             window: window.window_handle(),
             result_origin: Page::Library,
