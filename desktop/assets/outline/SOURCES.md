@@ -53,3 +53,7 @@ Downloaded icons and the upstream license are pinned to Lucide commit `d672fc43d
 | `sparkles.svg` | `sparkles` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/sparkles.svg |
 | `server.svg` | `server` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/server.svg |
 | `tv.svg` | `tv` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/tv.svg |
+| `grip-vertical.svg` | `grip-vertical` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/grip-vertical.svg |
+| `folder-plus.svg` | `folder-plus` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/folder-plus.svg |
+| `folder-input.svg` | `folder-input` | https://raw.githubusercontent.com/lucide-icons/lucide/d672fc43dbf60962d9d829e35bc3b3e5ed89a178/icons/folder-input.svg |
+| `file-text.svg` | `file-text` | desktop/.deps/component/crates/assets/assets/icons/file-text.svg |

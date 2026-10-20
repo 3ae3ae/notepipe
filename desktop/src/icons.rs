@@ -42,9 +42,13 @@ icons! {
     edit => "outline" / "edit";
     error => "outline" / "circle-x";
     external_link => "outline" / "external-link";
+    file_text => "outline" / "file-text";
     file_upload => "outline" / "file-upload";
     folder => "outline" / "folder";
+    folder_input => "outline" / "folder-input";
     folder_open => "outline" / "folder-open";
+    folder_plus => "outline" / "folder-plus";
+    grip_vertical => "outline" / "grip-vertical";
     home => "outline" / "house";
     info => "outline" / "info";
     link => "outline" / "link";

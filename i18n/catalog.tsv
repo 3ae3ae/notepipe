@@ -2417,3 +2417,27 @@ AI 翻译	AI 翻译	AI translation	AI 翻譯	AI 翻訳
 双语翻译	双语翻译	Bilingual translation	雙語翻譯	バイリンガル翻訳
 不翻译	不翻译	Off	不翻譯	翻訳しない
 每段文字下方附上译文；已是该语言的视频不翻译	每段文字下方附上译文；已是该语言的视频不翻译	Each paragraph is followed by its translation; videos already in this language are not translated	每段文字下方附上譯文；已是該語言的影片不翻譯	各段落の下に訳文を添えます。すでにこの言語の動画は翻訳しません
+{} 个正在处理	{} 个正在处理	{} processing	{} 個正在處理	処理中 {} 件
+{} 个排队中	{} 个排队中	{} queued	{} 個排隊中	待機中 {} 件
+{} 个需要处理	{} 个需要处理	{} need attention	{} 個需要處理	対応が必要 {} 件
+全部暂停	全部暂停	Pause all	全部暫停	すべて一時停止
+全部继续	全部继续	Resume all	全部繼續	すべて再開
+任务顺序尚未保存：{}	任务顺序尚未保存：{}	Task order was not saved: {}	任務順序尚未儲存：{}	タスクの順序を保存できませんでした: {}
+拖动可以调整顺序	拖动可以调整顺序	Drag to reorder	拖曳可以調整順序	ドラッグして並べ替え
+显示另外 {} 个	显示另外 {} 个	Show {} more	顯示另外 {} 個	さらに {} 件を表示
+复制视频链接	复制视频链接	Copy video link	複製影片連結	動画のリンクをコピー
+展开详情	展开详情	Show details	展開詳情	詳細を表示
+查看日志	查看日志	View log	查看日誌	ログを表示
+收起日志	收起日志	Hide log	收合日誌	ログを隠す
+移到最前	移到最前	Move to top	移到最前	先頭へ移動
+上移	上移	Move up	上移	上へ移動
+下移	下移	Move down	下移	下へ移動
+移到最后	移到最后	Move to bottom	移到最後	末尾へ移動
+{} 添加	{} 添加	Added {}	{} 新增	{} に追加
+更多操作	更多操作	More actions	更多操作	その他の操作
+保存到 {}	保存到 {}	Saved to {}	儲存到 {}	保存先: {}
+这次的设置	这次的设置	Settings for this task	這次的設定	このタスクの設定
+文字和截图会发送到这个服务	文字和截图会发送到这个服务	Text and screenshots are sent to this service	文字和截圖會傳送到這個服務	テキストとスクリーンショットがこのサービスに送信されます
+文字会发送到这个服务	文字会发送到这个服务	Text is sent to this service	文字會傳送到這個服務	テキストがこのサービスに送信されます
+只能调整排队中的任务	只能调整排队中的任务	Only queued tasks can be reordered	只能調整排隊中的任務	並べ替えられるのは待機中のタスクだけです
+第 {} 步 · {}	第 {} 步 · {}	Step {} · {}	第 {} 步 · {}	ステップ {} · {}
