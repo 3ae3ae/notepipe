@@ -29,7 +29,8 @@ pub(crate) struct FolderContext {
     pub(crate) folder: Option<u64>,
     pub(crate) load_error: Option<String>,
     pub(crate) label: String,
-    pub(crate) folders: BTreeMap<u64, String>,
+    /// Every folder in tree order, labelled with its path.
+    pub(crate) folders: Vec<(u64, String)>,
 }
 
 struct FolderDialog {
@@ -362,10 +363,38 @@ impl Desktop {
     }
 
     pub fn begin_folder(&mut self, id: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
+        let origin = self.current_folder_origin();
+        self.begin_folder_with(origin, id, None, window, cx)
+    }
+
+    /// Rename folder `id`, or create a folder inside `parent`, in the library at `root`.
+    pub(crate) fn begin_folder_at(
+        &mut self,
+        root: PathBuf,
+        id: Option<u64>,
+        parent: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let origin = FolderOrigin {
+            root,
+            draft_id: None,
+            saving: false,
+        };
+        self.begin_folder_with(origin, id, parent, window, cx)
+    }
+
+    fn begin_folder_with(
+        &mut self,
+        origin: FolderOrigin,
+        id: Option<u64>,
+        parent: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !matches!(self.page, Page::Library | Page::New) {
             self.navigate(Page::Library, cx);
         }
-        let origin = self.current_folder_origin();
         let Some(library) = self.library_indexes.get(&origin.root) else {
             self.message = Some(folders_unavailable().into());
             cx.notify();
@@ -377,6 +406,7 @@ impl Desktop {
             .unwrap_or_default();
         self.folder_origin = Some(origin);
         self.folder_editor = Some(id);
+        self.folder_parent = parent;
         self.folder_error = None;
         self.inputs[&Field::FolderName].update(cx, |state, cx| {
             state.set_value(name, window, cx);
@@ -384,6 +414,8 @@ impl Desktop {
         let desktop = cx.entity();
         let title = if id.is_some() {
             course2md::tr!("重命名文件夹")
+        } else if parent.is_some() {
+            course2md::tr!("新建子文件夹")
         } else {
             course2md::tr!("新建文件夹")
         };
@@ -476,9 +508,13 @@ impl Desktop {
         origin.saving = true;
         let root = origin.root.clone();
         let name = self.value(Field::FolderName, cx);
+        let parent = self.folder_parent;
         self.edit_folders(
             root,
-            move |library| library.rename(id, &name),
+            move |library| match id {
+                Some(id) => library.rename(Some(id), &name),
+                None => library.create(parent, &name),
+            },
             |this, result, cx| {
                 // A closed dialog keeps the saved folder but no longer navigates.
                 let Some(origin) = this.folder_origin.as_mut() else {
@@ -518,8 +554,7 @@ impl Desktop {
                 }
             }
         } else {
-            self.library_root = origin.root;
-            self.folder_filter = crate::FolderFilter::Folder(saved);
+            self.select_library_scope(origin.root, crate::FolderFilter::Folder(saved), cx);
             if self.page != Page::Library {
                 self.navigate(Page::Library, cx);
             }
@@ -596,18 +631,38 @@ impl Desktop {
         view
     }
 
-    pub fn begin_delete_folder(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let origin = self.current_folder_origin();
-        let name = self
-            .library_indexes
-            .get(&origin.root)
+    /// Deleting a folder removes the folders inside it; notes are kept and
+    /// return to their library's top level.
+    pub(crate) fn begin_delete_folder_at(
+        &mut self,
+        root: PathBuf,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let origin = FolderOrigin {
+            root,
+            draft_id: None,
+            saving: false,
+        };
+        let library = self.library_indexes.get(&origin.root);
+        let name = library
             .and_then(|library| library.folders.get(&id))
             .cloned()
             .unwrap_or_else(|| self.folder_name(Some(id)));
+        let nested = library.map_or(0, |library| library.subtree(id).len() - 1);
+        let detail = if nested > 0 {
+            course2md::tr!(
+                "其中的 {} 个子文件夹也会删除；笔记会保留，移到未分类",
+                nested
+            )
+        } else {
+            course2md::tr!("其中的笔记会移到未分类").to_owned()
+        };
         let answer = window.prompt(
             PromptLevel::Warning,
             &course2md::tr!("删除「{}」文件夹？", name),
-            Some(course2md::tr!("其中的笔记会移到未分类")),
+            Some(&detail),
             &[course2md::tr!("删除文件夹"), course2md::tr!("保留文件夹")],
             cx,
         );
@@ -626,9 +681,12 @@ impl Desktop {
                         // Drafts keep the deleted folder so their next submission
                         // asks for a deliberate destination.
                         Ok(()) => {
-                            if this.library_root == origin.root
-                                && this.folder_filter == crate::FolderFilter::Folder(id)
-                            {
+                            let removed = this.folder_filter.folder_id().is_some_and(|folder| {
+                                this.library_indexes
+                                    .get(&origin.root)
+                                    .is_none_or(|library| !library.folders.contains_key(&folder))
+                            });
+                            if this.library_root == origin.root && removed {
                                 this.folder_filter = crate::FolderFilter::Unfiled;
                             }
                         }
@@ -688,8 +746,8 @@ impl Desktop {
             course2md::tr!("文件夹暂不可用").to_owned()
         } else if let Some(id) = folder {
             loaded
-                .and_then(|organization| organization.folders.get(&id))
-                .cloned()
+                .filter(|organization| organization.folders.contains_key(&id))
+                .map(|organization| organization.path(id).join(" / "))
                 .unwrap_or_else(|| course2md::tr!("文件夹已删除，请重新选择").into())
         } else {
             course2md::tr!("未分类").into()
@@ -701,7 +759,13 @@ impl Desktop {
             load_error,
             label,
             folders: loaded
-                .map(|organization| organization.folders.clone())
+                .map(|organization| {
+                    organization
+                        .tree()
+                        .into_iter()
+                        .map(|(id, _)| (id, organization.path(id).join(" / ")))
+                        .collect()
+                })
                 .unwrap_or_default(),
         }
     }
@@ -710,12 +774,12 @@ impl Desktop {
         entity: WeakEntity<Desktop>,
         origin: FolderOrigin,
         storage: Option<PathBuf>,
-        folders: BTreeMap<u64, String>,
+        folders: Vec<(u64, String)>,
         current: Option<u64>,
     ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
         move |menu, _, _| {
             let mut entries = vec![(None, course2md::tr!("未分类").to_owned())];
-            entries.extend(folders.iter().map(|(id, name)| (Some(*id), name.clone())));
+            entries.extend(folders.iter().map(|(id, path)| (Some(*id), path.clone())));
             entries.into_iter().fold(menu, |menu, (id, name)| {
                 let entity = entity.clone();
                 let storage = storage.clone();

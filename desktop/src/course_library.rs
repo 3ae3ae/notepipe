@@ -7,74 +7,6 @@ use gpui_component::{
 };
 use std::rc::Rc;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LibraryFilterOption {
-    pub value: String,
-    pub label: String,
-    pub root: PathBuf,
-    pub folder: Option<u64>,
-}
-
-pub(crate) fn library_filter_options(
-    sections: &[LibrarySection],
-    current_root: &std::path::Path,
-    multi: bool,
-) -> Vec<LibraryFilterOption> {
-    let mut options = vec![LibraryFilterOption {
-        value: "all".into(),
-        label: course2md::tr!("全部笔记").into(),
-        root: current_root.to_path_buf(),
-        folder: None,
-    }];
-    for (index, (root, library_name, folders)) in sections.iter().enumerate() {
-        let unfiled = LibraryFilterOption {
-            value: format!("f-{index}-0"),
-            label: if multi {
-                course2md::tr!("{} · 未分类", library_name)
-            } else {
-                course2md::tr!("未分类").into()
-            },
-            root: root.clone(),
-            folder: Some(0),
-        };
-        options.push(unfiled);
-        for (id, name) in folders {
-            options.push(LibraryFilterOption {
-                value: format!("f-{index}-{id}"),
-                label: if multi {
-                    format!("{library_name} · {name}")
-                } else {
-                    name.clone()
-                },
-                root: root.clone(),
-                folder: Some(*id),
-            });
-        }
-    }
-    options
-}
-
-pub(crate) fn library_filter_selected(
-    options: &[LibraryFilterOption],
-    current_root: &std::path::Path,
-    filter: crate::FolderFilter,
-) -> String {
-    options
-        .iter()
-        .find(|option| match filter {
-            crate::FolderFilter::All => option.folder.is_none(),
-            crate::FolderFilter::Unfiled => option.folder == Some(0) && option.root == current_root,
-            crate::FolderFilter::Folder(id) => {
-                option.folder == Some(id) && option.root == current_root
-            }
-        })
-        .map(|option| option.value.clone())
-        .unwrap_or_else(|| "all".into())
-}
-
-/// 文件夹分区：(保存位置根, 库名, [(文件夹 id, 名称)])。
-pub(crate) type LibrarySection = (std::path::PathBuf, String, Vec<(u64, String)>);
-
 /// Section headings on the workbench ("正在处理", "最近的笔记").
 const SECTION_TITLE: Rems = rems(24. / 14.);
 const SECTION_TITLE_LINE: Rems = rems(32. / 14.);
@@ -103,6 +35,14 @@ fn inset_divider() -> Div {
         .child(div().flex_1().min_w_0().h(px(1.)).bg(color(HAIRLINE)))
 }
 
+/// A note picked up to file into a folder of the tree.
+fn note_drag(course: &Course) -> crate::folder_tree::NoteDrag {
+    crate::folder_tree::NoteDrag {
+        storage: course.storage_dir(),
+        title: course.title.clone().into(),
+    }
+}
+
 fn incomplete_badge() -> Div {
     h_flex().child(badge(BadgeKind::Warning).child(course2md::tr!("部分内容待补全")))
 }
@@ -126,6 +66,8 @@ enum LibraryItem {
     Loading,
     Empty,
     SearchScope(String),
+    /// The folders inside the selected library top or folder.
+    Folders(std::path::PathBuf, Option<u64>),
     GroupHeader(Box<LibraryGroupHeader>),
     GroupBody(Box<LibraryGroupBody>),
     CardRow(LibraryRow),
@@ -187,6 +129,9 @@ impl LibraryItem {
             LibraryItem::Loading => "loading".to_owned(),
             LibraryItem::Empty => "empty".to_owned(),
             LibraryItem::SearchScope(_) => "search-scope".to_owned(),
+            LibraryItem::Folders(root, parent) => {
+                format!("folders-{}-{}", root.display(), parent.unwrap_or(0))
+            }
             LibraryItem::GroupHeader(header) => format!("group-h-{}", header.key),
             LibraryItem::GroupBody(body) => format!("group-b-{}", body.key),
             LibraryItem::CardRow(row) | LibraryItem::ListRow(row) => row.key.clone(),
@@ -1171,7 +1116,16 @@ impl Desktop {
     pub fn library_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let scale = self.preferences.application().font_scale;
         let rem = f32::from(window.rem_size());
-        let content = crate::views::shell_content_width(Page::Library, window);
+        let tree_visible = self.folder_sidebar_visible(window, cx);
+        let content = crate::views::shell_content_width(Page::Library, window)
+            - if tree_visible {
+                f32::from(
+                    (crate::folder_tree::FOLDER_SIDEBAR + crate::folder_tree::FOLDER_SIDEBAR_GAP)
+                        .to_pixels(window.rem_size()),
+                )
+            } else {
+                0.
+            };
         // gap_4 is one rem, and card padding/menu spacing scales with that rem.
         let columns = ((content + 24.) / (17. * rem + 24.)).floor().max(1.) as usize;
         let layout = LibraryLayout {
@@ -1183,7 +1137,7 @@ impl Desktop {
         let mut items = Vec::new();
         let Some(all_access) = self.cached_library_access() else {
             items.push(LibraryItem::Checking);
-            return self.library_list_page(items, layout, rem, cx);
+            return self.library_list_page(items, layout, rem, tree_visible, cx);
         };
         let in_scope = |root: &&PathBuf| self.folder_filter.is_all() || **root == self.library_root;
         let scope = crate::storage::LibraryAccess {
@@ -1289,20 +1243,39 @@ impl Desktop {
             items.push(LibraryItem::Loading);
         }
         if self.loading && courses.is_empty() {
-            return self.library_list_page(items, layout, rem, cx);
+            return self.library_list_page(items, layout, rem, tree_visible, cx);
         }
         if coverage == crate::storage::LibraryCoverage::Unavailable {
-            return self.library_list_page(items, layout, rem, cx);
+            return self.library_list_page(items, layout, rem, tree_visible, cx);
+        }
+        // Inside a library top or a folder, its folders come before its notes.
+        let folders = match self.folder_filter {
+            FolderFilter::All => None,
+            FolderFilter::Unfiled => Some(None),
+            FolderFilter::Folder(id) => Some(Some(id)),
+        }
+        .filter(|parent| {
+            query.is_empty()
+                && self
+                    .library_indexes
+                    .get(&self.library_root)
+                    .is_some_and(|library| !library.children(*parent).is_empty())
+        });
+        if let Some(parent) = folders {
+            items.push(LibraryItem::Folders(self.library_root.clone(), parent));
+        }
+        if courses.is_empty() && folders.is_some() {
+            return self.library_list_page(items, layout, rem, tree_visible, cx);
         }
         if courses.is_empty() {
             if query.is_empty()
                 && (coverage == crate::storage::LibraryCoverage::Partial
                     || !self.library_issues.is_empty())
             {
-                return self.library_list_page(items, layout, rem, cx);
+                return self.library_list_page(items, layout, rem, tree_visible, cx);
             }
             items.push(LibraryItem::Empty);
-            return self.library_list_page(items, layout, rem, cx);
+            return self.library_list_page(items, layout, rem, tree_visible, cx);
         }
         if !query.is_empty() {
             let scoped = course2md::tr!("找到 {} 篇笔记", courses.len());
@@ -1343,8 +1316,8 @@ impl Desktop {
                 let folder_name = self
                     .library_indexes
                     .get(&root)
-                    .and_then(|lib| lib.folders.get(&id))
-                    .cloned()
+                    .filter(|lib| lib.folders.contains_key(&id))
+                    .map(|lib| lib.path(id).join(" / "))
                     .unwrap_or_else(|| {
                         if self.library_indexes.contains_key(&root) {
                             course2md::tr!("未分类")
@@ -1397,13 +1370,42 @@ impl Desktop {
         if !items.iter().any(|item| matches!(item, LibraryItem::Empty)) {
             self.entered.remove("library-empty-state");
         }
-        self.library_list_page(items, layout, rem, cx)
+        self.library_list_page(items, layout, rem, tree_visible, cx)
     }
 
     /// The library's variable-height list: notices, folder groups and card
     /// rows share one scroll region, spliced by identity so measured heights
     /// and the scroll anchor survive content updates.
     fn library_list_page(
+        &mut self,
+        items: Vec<LibraryItem>,
+        layout: LibraryLayout,
+        rem: f32,
+        tree_visible: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let notes = self.library_notes(items, layout, rem, cx);
+        let pane = v_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .min_h_0()
+            .child(self.library_toolbar(tree_visible, cx))
+            .child(notes);
+        if !tree_visible {
+            return pane.into_any_element();
+        }
+        h_flex()
+            .size_full()
+            .min_h_0()
+            .items_start()
+            .gap(crate::folder_tree::FOLDER_SIDEBAR_GAP)
+            .child(self.folder_sidebar(cx))
+            .child(pane)
+            .into_any_element()
+    }
+
+    fn library_notes(
         &mut self,
         items: Vec<LibraryItem>,
         layout: LibraryLayout,
@@ -1611,6 +1613,10 @@ impl Desktop {
                         })),
                 )
                 .into_any_element(),
+            LibraryItem::Folders(root, parent) => self
+                .folder_tiles(root, *parent, cx)
+                .map(IntoElement::into_any_element)
+                .unwrap_or_else(|| div().into_any_element()),
             LibraryItem::GroupHeader(header) => {
                 let LibraryGroupHeader {
                     index,
@@ -1737,81 +1743,6 @@ impl Desktop {
         wrapper.into_any_element()
     }
 
-    /// Sidebar successor: folder filter + creation entry, final form with M5.
-    fn folder_filter_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let multi = self
-            .workspace
-            .as_ref()
-            .is_some_and(|w| w.state.libraries.len() > 1);
-        let mut sections: Vec<LibrarySection> = self
-            .workspace
-            .as_ref()
-            .map(|w| w.state.libraries.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|location| {
-                self.library_indexes
-                    .get(&location.root)
-                    .map(|organization| {
-                        (
-                            location.root.clone(),
-                            location.name.clone(),
-                            organization
-                                .folders
-                                .iter()
-                                .map(|(id, name)| (*id, name.clone()))
-                                .collect(),
-                        )
-                    })
-            })
-            .collect();
-        if sections.is_empty() {
-            sections.push((
-                self.library_root.clone(),
-                course2md::tr!("笔记库").to_owned(),
-                self.library
-                    .folders
-                    .iter()
-                    .map(|(id, name)| (*id, name.clone()))
-                    .collect(),
-            ));
-        }
-        let options = library_filter_options(&sections, &self.library_root, multi);
-        let selected = library_filter_selected(&options, &self.library_root, self.folder_filter);
-        // M3 filter chips, one per scope; real folders carry the folder icon.
-        h_flex()
-            .id("folder-filter")
-            .role(Role::RadioGroup)
-            .aria_label(course2md::tr!("文件夹筛选"))
-            .gap_2()
-            .flex_wrap()
-            .items_center()
-            .children(options.into_iter().map(|option| {
-                let checked = option.value == selected;
-                let is_folder = option.folder.is_some_and(|id| id != 0);
-                filter_chip(
-                    SharedString::from(format!("folder-filter-{}", option.value)),
-                    checked,
-                    cx,
-                )
-                .label(option.label.clone())
-                .when(is_folder && !checked, |chip| chip.icon(icons::folder()))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.library_root = option.root.clone();
-                    if let Some(organization) = this.library_indexes.get(&option.root) {
-                        this.library = organization.clone();
-                    }
-                    this.folder_filter = match option.folder {
-                        None => crate::FolderFilter::All,
-                        Some(0) => crate::FolderFilter::Unfiled,
-                        Some(id) => crate::FolderFilter::Folder(id),
-                    };
-                    this.scrolls[Page::Library as usize].set_offset(point(px(0.), px(0.)));
-                    cx.notify();
-                }))
-            }))
-    }
-
     pub(super) fn library_controls_visible(&self, cx: &App) -> bool {
         !(self.courses.is_empty()
             && self.folder_filter.is_all()
@@ -1832,7 +1763,9 @@ impl Desktop {
         )
     }
 
-    pub fn library_toolbar(&self, _window: &Window, cx: &mut Context<Self>) -> Div {
+    /// The path to the notes shown, the selected folder's commands and the
+    /// presentation menu, above the notes.
+    pub fn library_toolbar(&self, tree_visible: bool, cx: &mut Context<Self>) -> Div {
         if !self.library_controls_visible(cx) {
             return div();
         }
@@ -1909,57 +1842,46 @@ impl Desktop {
                         }),
                 )
             });
+        let folder_menu = self
+            .folder_filter
+            .folder_id()
+            .map(|id| self.folder_node_menu(self.library_root.clone(), id, cx));
+        let create_root = self.library_root.clone();
+        let create_parent = self.folder_filter.folder_id();
         let filters = h_flex()
             .w_full()
             .min_w_0()
             .gap_2()
             .items_center()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(self.folder_filter_control(cx)),
-            )
-            .when_some(self.folder_filter.folder_id(), |row, id| {
-                let entity = cx.entity().downgrade();
+            .child(self.library_path_bar(tree_visible, cx))
+            .when(!self.folder_filter.is_all(), |row| {
                 row.child(
-                    control("manage-folder")
-                        .ghost()
-                        .icon(icons::edit())
-                        .label(course2md::tr!("管理文件夹"))
-                        .text_color(color(GRAY))
-                        .dropdown_menu(move |menu, _, _| {
-                            let rename = entity.clone();
-                            let remove = entity.clone();
-                            menu.item(
-                                PopupMenuItem::new(course2md::tr!("重命名"))
-                                    .icon(icons::edit())
-                                    .on_click(move |_, window, cx| {
-                                        let _ = rename.update(cx, |this, cx| {
-                                            this.begin_folder(Some(id), window, cx)
-                                        });
-                                    }),
+                    quiet("library-new-folder")
+                        .icon(icons::folder_plus())
+                        .accessibility_label(course2md::tr!("新建文件夹"))
+                        .tooltip(course2md::tr!("新建文件夹"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.begin_folder_at(
+                                create_root.clone(),
+                                None,
+                                create_parent,
+                                window,
+                                cx,
                             )
-                            .item(
-                                PopupMenuItem::new(course2md::tr!("删除文件夹…"))
-                                    .icon(icons::delete())
-                                    .on_click(move |_, window, cx| {
-                                        let _ = remove.update(cx, |this, cx| {
-                                            this.begin_delete_folder(id, window, cx)
-                                        });
-                                    }),
-                            )
-                        }),
+                        })),
+                )
+            })
+            .when_some(folder_menu, |row, menu| {
+                row.child(
+                    quiet("manage-folder")
+                        .icon(icons::ellipsis())
+                        .accessibility_label(course2md::tr!("文件夹操作"))
+                        .tooltip(course2md::tr!("文件夹操作"))
+                        .dropdown_menu(move |popup, window, cx| menu(popup, window, cx)),
                 )
             })
             .child(display);
-        v_flex()
-            .w_full()
-            .min_w_0()
-            .gap_4()
-            .pt_2()
-            .pb_4()
-            .child(filters)
+        v_flex().w_full().min_w_0().gap_4().pb_3().child(filters)
     }
 
     /// Source identity helps readers recognize a note; routine revision numbers
@@ -2221,6 +2143,7 @@ impl Desktop {
                             .children(self.course_export_feedback(course, cx))
                     }),
             )
+            .on_drag(note_drag(course), |drag, _, _, cx| cx.new(|_| drag.clone()))
             .context_menu(move |popup, window, cx| menu(popup, window, cx))
             .into_any_element()
     }
@@ -2367,6 +2290,7 @@ impl Desktop {
                 self.course_export_feedback(course, cx)
                     .map(|feedback| feedback.px_4().pb_3()),
             )
+            .on_drag(note_drag(course), |drag, _, _, cx| cx.new(|_| drag.clone()))
             .context_menu(move |popup, window, cx| menu(popup, window, cx))
             .into_any_element()
     }
@@ -3021,26 +2945,5 @@ mod tests {
         // Content edits keep the row identity keyed by its first course; the
         // row re-measures when it is visible.
         assert_eq!(LibraryRow::cards(&all, &[0, 2], 3)[0].key, row(3).key);
-    }
-
-    #[test]
-    fn library_filters_are_surfaced_as_one_level_choices() {
-        let root = std::path::PathBuf::from("/notes");
-        let options = super::library_filter_options(
-            &[(root.clone(), "笔记库".into(), vec![(2, "讲座".into())])],
-            &root,
-            false,
-        );
-        assert_eq!(options[0].label, "全部笔记");
-        assert_eq!(options[1].folder, Some(0));
-        assert_eq!(options[2].label, "讲座");
-        assert_eq!(
-            super::library_filter_selected(&options, &root, crate::FolderFilter::All),
-            "all"
-        );
-        assert_eq!(
-            super::library_filter_selected(&options, &root, crate::FolderFilter::Folder(2)),
-            "f-0-2"
-        );
     }
 }

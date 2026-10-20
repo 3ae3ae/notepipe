@@ -544,9 +544,6 @@ impl Render for Desktop {
                         .child(self.page_header(window, cx)),
                 )
             })
-            .when(self.page == Page::Library, |v| {
-                v.child(shell_column_for(self.page).child(self.library_toolbar(window, cx)))
-            })
             .when(
                 self.page == Page::Library
                     && self

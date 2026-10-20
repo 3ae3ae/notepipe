@@ -10,6 +10,7 @@ mod codex_ui;
 mod course_library;
 mod credentials;
 mod focus_scroll;
+mod folder_tree;
 mod i18n;
 mod icons;
 mod import_ui;
@@ -255,7 +256,11 @@ struct Desktop {
     folder_filter: FolderFilter,
     target_folder: Option<u64>,
     folder_editor: Option<Option<u64>>,
+    /// The folder a new folder is created inside; `None` is the top level.
+    folder_parent: Option<u64>,
     folder_origin: Option<library_ui::FolderOrigin>,
+    /// Tree nodes the person toggled: opened folders, or closed library tops (id 0).
+    folder_tree_open: HashSet<(PathBuf, u64)>,
     folder_error: Option<String>,
     /// The window this view lives in; deferred work returns to it.
     window: AnyWindowHandle,
@@ -648,7 +653,9 @@ impl Desktop {
             folder_filter: FolderFilter::All,
             target_folder: None,
             folder_editor: None,
+            folder_parent: None,
             folder_origin: None,
+            folder_tree_open: HashSet::new(),
             folder_error: None,
             window: window.window_handle(),
             result_origin: Page::Library,

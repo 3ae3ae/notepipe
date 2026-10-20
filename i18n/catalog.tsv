@@ -2441,3 +2441,16 @@ AI 翻译	AI 翻译	AI translation	AI 翻譯	AI 翻訳
 文字会发送到这个服务	文字会发送到这个服务	Text is sent to this service	文字會傳送到這個服務	テキストがこのサービスに送信されます
 只能调整排队中的任务	只能调整排队中的任务	Only queued tasks can be reordered	只能調整排隊中的任務	並べ替えられるのは待機中のタスクだけです
 第 {} 步 · {}	第 {} 步 · {}	Step {} · {}	第 {} 步 · {}	ステップ {} · {}
+笔记只能移到它所在保存位置里的文件夹	笔记只能移到它所在保存位置里的文件夹	A note can only move to folders in its own storage location	筆記只能移到它所在儲存位置裡的資料夾	ノートは保存場所内のフォルダにのみ移動できます
+无法移动文件夹：{}	无法移动文件夹：{}	Could not move the folder: {}	無法移動資料夾：{}	フォルダを移動できません: {}
+顶层	顶层	Top level	頂層	最上位
+新建子文件夹…	新建子文件夹…	New subfolder…	新增子資料夾…	新しいサブフォルダ…
+重命名…	重命名…	Rename…	重新命名…	名前を変更…
+新建文件夹…	新建文件夹…	New folder…	新增資料夾…	新しいフォルダ…
+文件夹只能在同一个保存位置里移动	文件夹只能在同一个保存位置里移动	Folders can only move within the same storage location	資料夾只能在同一個儲存位置裡移動	フォルダは同じ保存場所の中でのみ移動できます
+{} 篇笔记	{} 篇笔记	{} notes	{} 篇筆記	{} 件のノート
+文件夹操作	文件夹操作	Folder actions	資料夾操作	フォルダの操作
+新建子文件夹	新建子文件夹	New subfolder	新增子資料夾	新しいサブフォルダ
+这里已有同名文件夹	这里已有同名文件夹	A folder with this name already exists here	這裡已有同名資料夾	ここには同じ名前のフォルダがすでにあります
+不能把文件夹移到它自己里面	不能把文件夹移到它自己里面	A folder cannot move into itself	不能把資料夾移到它自己裡面	フォルダをそれ自身の中に移動することはできません
+其中的 {} 个子文件夹也会删除；笔记会保留，移到未分类	其中的 {} 个子文件夹也会删除；笔记会保留，移到未分类	Its {} subfolders are deleted too; notes are kept and move to Unfiled	其中的 {} 個子資料夾也會刪除；筆記會保留，移到未分類	中の {} 個のサブフォルダも削除されます。ノートは残り、未分類に移動します
