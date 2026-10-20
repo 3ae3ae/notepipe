@@ -863,6 +863,41 @@ impl State {
         Ok(())
     }
 
+    /// Queued tasks run in list order. Put one at `position` among them,
+    /// taking the place of the task that was there.
+    pub fn move_queued_task(&mut self, id: &str, position: usize) -> Result<()> {
+        let from = self
+            .tasks
+            .iter()
+            .position(|task| task.id == id)
+            .context(course2md::tr!("任务记录不存在"))?;
+        ensure!(
+            self.tasks[from].state == TaskState::Queued,
+            course2md::tr!("只能调整排队中的任务")
+        );
+        let task = self.tasks.remove(from);
+        let queued: Vec<usize> = self
+            .tasks
+            .iter()
+            .enumerate()
+            .filter(|(_, task)| task.state == TaskState::Queued)
+            .map(|(index, _)| index)
+            .collect();
+        let at = match queued.get(position) {
+            Some(&index) => index,
+            None => queued.last().map_or(self.tasks.len(), |&index| index + 1),
+        };
+        self.tasks.insert(at, task);
+        Ok(())
+    }
+
+    /// Queued tasks in the order they will run.
+    pub fn queued_tasks(&self) -> impl Iterator<Item = &TaskRecord> {
+        self.tasks
+            .iter()
+            .filter(|task| task.state == TaskState::Queued)
+    }
+
     pub fn authorize_uncertain(&mut self, id: &str, requests: &[String]) -> Result<()> {
         let task = self
             .task_mut(id)
@@ -2323,6 +2358,45 @@ mod tests {
             ai_service: None,
         }
     }
+    #[test]
+    fn moving_a_queued_task_changes_which_runs_next() {
+        let mut state = State::initial(PathBuf::from("/library"), ConversionOptions::default());
+        let library = state.default_library.clone();
+        for title in ["a", "b", "c", "d"] {
+            let mut plan = plan(&library);
+            plan.source_id = title.into();
+            plan.title = title.into();
+            state.enqueue(plan, None).unwrap();
+        }
+        let order = |state: &State| -> Vec<String> {
+            state
+                .queued_tasks()
+                .map(|task| task.plan.title.clone())
+                .collect()
+        };
+        let id = |state: &State, title: &str| {
+            state
+                .tasks
+                .iter()
+                .find(|task| task.plan.title == title)
+                .unwrap()
+                .id
+                .clone()
+        };
+        let d = id(&state, "d");
+        state.move_queued_task(&d, 0).unwrap();
+        assert_eq!(order(&state), ["d", "a", "b", "c"]);
+        assert_eq!(state.next_task().unwrap().plan.title, "d");
+        let d = id(&state, "d");
+        state.move_queued_task(&d, 2).unwrap();
+        assert_eq!(order(&state), ["a", "b", "d", "c"]);
+        let a = id(&state, "a");
+        state.move_queued_task(&a, 99).unwrap();
+        assert_eq!(order(&state), ["b", "d", "c", "a"]);
+        state.set_intent(&a, Intent::Pause).unwrap();
+        assert!(state.move_queued_task(&a, 0).is_err());
+    }
+
     #[test]
     fn failed_commit_does_not_publish_an_unpersisted_task() {
         let dir = tempfile::tempdir().unwrap();
