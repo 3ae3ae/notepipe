@@ -853,7 +853,7 @@ impl Desktop {
             );
             // 归属修改：与分组标题/筛选轨不重复，放进子菜单
             menu = menu.submenu_with_icon(
-                Some(crate::icons::folder()),
+                Some(crate::icons::folder_input()),
                 course2md::tr!("移动到"),
                 window,
                 cx,
@@ -882,6 +882,7 @@ impl Desktop {
                 .item(
                     PopupMenuItem::new(course2md::tr!("删除笔记…"))
                         .icon(icons::delete())
+                        .danger(true)
                         .on_click(move |_, window, cx| {
                             let _ = delete.update(cx, |this, cx| {
                                 this.confirm_course_delete(doomed.clone(), window, cx)

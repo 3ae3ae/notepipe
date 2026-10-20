@@ -58,6 +58,16 @@ impl Render for FolderDrag {
     }
 }
 
+/// A drop target under a dragged note or folder, distinct from selection.
+fn drop_highlight(style: StyleRefinement) -> StyleRefinement {
+    style.bg(blend(color(SECONDARY_CONTAINER), color(ACCENT), 0.3))
+}
+
+/// A truncated name shows in full on hover.
+fn name_tooltip(name: SharedString) -> impl Fn(&mut Window, &mut App) -> AnyView {
+    move |window, cx| gpui_component::tooltip::Tooltip::new(name.clone()).build(window, cx)
+}
+
 /// A place in the tree: every note, a library's top level, or a folder.
 #[derive(Clone, PartialEq)]
 enum TreeTarget {
@@ -242,6 +252,14 @@ impl Desktop {
             let Some(library) = desktop.read(cx).library_indexes.get(&root).cloned() else {
                 return menu;
             };
+            // The library's own name stands for its top level, as in the tree.
+            let library_name = desktop
+                .read(cx)
+                .tree_libraries()
+                .into_iter()
+                .find(|(candidate, _, _)| *candidate == root)
+                .map(|(_, name, _)| name)
+                .unwrap_or_else(|| course2md::tr!("笔记库").into());
             let act =
                 |action: fn(&mut Desktop, PathBuf, u64, &mut Window, &mut Context<Desktop>)| {
                     let entity = entity.clone();
@@ -258,7 +276,7 @@ impl Desktop {
                 move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
                     let inside = library.subtree(id);
                     let current = library.parent(id);
-                    let top = (None, course2md::tr!("顶层").to_owned());
+                    let top = (None, library_name.clone());
                     let folders = library
                         .tree()
                         .into_iter()
@@ -271,7 +289,11 @@ impl Desktop {
                             let root = root.clone();
                             menu.item(
                                 PopupMenuItem::new(label)
-                                    .icon(icons::folder())
+                                    .icon(if parent.is_some() {
+                                        icons::folder()
+                                    } else {
+                                        icons::storage()
+                                    })
                                     .checked(parent == current)
                                     .disabled(parent == current)
                                     .on_click(move |_, _, cx| {
@@ -381,7 +403,7 @@ impl Desktop {
                     .flex_shrink_0()
                     .rounded(px(4.))
                     .cursor_pointer()
-                    .hover(|style| style.bg(blend(color(SURFACE), color(INK), 0.08)))
+                    .hover(|style| style.bg(blend(color(CANVAS), color(INK), 0.12)))
                     .child(
                         if open {
                             icons::chevron_down()
@@ -421,9 +443,14 @@ impl Desktop {
                     .text_color(color(ON_SECONDARY_CONTAINER))
                     .font_weight(FontWeight::SEMIBOLD)
             })
-            .when(!selected, |row| {
-                row.hover(|style| style.bg(blend(color(CANVAS), color(INK), 0.05)))
+            .hover(move |style| {
+                style.bg(if selected {
+                    blend(color(SECONDARY_CONTAINER), color(INK), 0.08)
+                } else {
+                    blend(color(CANVAS), color(INK), 0.08)
+                })
             })
+            .tooltip(name_tooltip(label.clone()))
             .child(expander)
             .child(
                 div()
@@ -452,8 +479,8 @@ impl Desktop {
             let note_root = root.clone();
             let folder_root = root.clone();
             row = row
-                .drag_over::<NoteDrag>(|style, _, _, _| style.bg(color(SECONDARY_CONTAINER)))
-                .drag_over::<FolderDrag>(|style, _, _, _| style.bg(color(SECONDARY_CONTAINER)))
+                .drag_over::<NoteDrag>(|style, _, _, _| drop_highlight(style))
+                .drag_over::<FolderDrag>(|style, _, _, _| drop_highlight(style))
                 .on_drop(cx.listener(move |this, drag: &NoteDrag, _, cx| {
                     this.file_note(note_root.clone(), drag.storage.clone(), folder, cx)
                 }))
@@ -709,11 +736,8 @@ impl Desktop {
             }
         }
         let tiles = children.into_iter().map(|id| {
-            let notes: usize = library
-                .subtree(id)
-                .iter()
-                .map(|folder| counts.get(folder).copied().unwrap_or(0))
-                .sum();
+            // What opening the folder shows: its folders and its own notes.
+            let items = library.children(Some(id)).len() + counts.get(&id).copied().unwrap_or(0);
             let name: SharedString = library.folders[&id].clone().into();
             let menu = self.folder_node_menu(root.to_path_buf(), id, cx);
             let open_root = root.to_path_buf();
@@ -737,7 +761,8 @@ impl Desktop {
                 .rounded(RADIUS_CARD)
                 .bg(color(SURFACE))
                 .cursor_pointer()
-                .hover(|style| style.bg(blend(color(SURFACE), color(INK), 0.05)))
+                .hover(|style| style.bg(blend(color(SURFACE), color(INK), 0.08)))
+                .tooltip(name_tooltip(name.clone()))
                 .child(
                     icons::folder()
                         .size(rems(24. / 14.))
@@ -757,20 +782,24 @@ impl Desktop {
                             div()
                                 .text_size(TEXT_AUX)
                                 .text_color(color(GRAY))
-                                .child(course2md::tr!("{} 篇笔记", notes)),
+                                .child(course2md::tr!("{} 项", items)),
                         ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.select_library_scope(open_root.clone(), FolderFilter::Folder(id), cx)
                 }))
                 .on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
-                .drag_over::<NoteDrag>(|style, _, _, _| style.bg(color(SECONDARY_CONTAINER)))
-                .drag_over::<FolderDrag>(|style, _, _, _| style.bg(color(SECONDARY_CONTAINER)))
+                .drag_over::<NoteDrag>(|style, _, _, _| drop_highlight(style))
+                .drag_over::<FolderDrag>(|style, _, _, _| drop_highlight(style))
                 .on_drop(cx.listener(move |this, drag: &NoteDrag, _, cx| {
                     this.file_note(note_root.clone(), drag.storage.clone(), Some(id), cx)
                 }))
                 .on_drop(cx.listener(move |this, drag: &FolderDrag, _, cx| {
-                    if drag.root == folder_root && drag.id != id {
+                    if drag.root != folder_root {
+                        this.message =
+                            Some(course2md::tr!("文件夹只能在同一个保存位置里移动").into());
+                        cx.notify();
+                    } else if drag.id != id {
                         this.move_folder_into(folder_root.clone(), drag.id, Some(id), cx)
                     }
                 }))

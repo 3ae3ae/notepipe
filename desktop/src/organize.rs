@@ -8,6 +8,9 @@ use std::{
 
 const FILE: &str = ".course2md-library.json";
 const TITLES: &str = ".course2md-titles.json";
+/// Folder nesting lives beside the folder record, so versions that predate
+/// nested folders can rewrite that record without flattening the tree.
+const TREE: &str = ".course2md-folder-tree.json";
 
 #[derive(Clone)]
 pub struct Recovery {
@@ -225,9 +228,9 @@ pub struct Library {
     pub courses: BTreeMap<PathBuf, u64>,
     #[serde(default)]
     next_id: u64,
-    /// Folder → its parent folder. A folder without an entry sits at the
-    /// top level, so records written before folders nested read unchanged.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    /// Folder → its parent folder, stored in its own file. A folder without
+    /// an entry, or whose parent is gone, sits at the top level.
+    #[serde(skip)]
     parents: BTreeMap<u64, u64>,
 }
 impl Library {
@@ -236,12 +239,18 @@ impl Library {
             root.is_dir(),
             course2md::tr!("笔记库文件夹暂时无法访问，请重新连接磁盘后再试")
         );
-        match std::fs::read(root.join(FILE)) {
+        let mut library: Self = match std::fs::read(root.join(FILE)) {
             Ok(bytes) => serde_json::from_slice(&bytes)
-                .context(course2md::tr!("文件夹信息损坏；原文件已保留，请修复后重试")),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e.into()),
-        }
+                .context(course2md::tr!("文件夹信息损坏；原文件已保留，请修复后重试"))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => return Err(e.into()),
+        };
+        // A damaged tree only loses nesting; folders and notes stay listed.
+        library.parents = std::fs::read(root.join(TREE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        Ok(library)
     }
     pub fn edit(root: &Path, change: impl FnOnce(&mut Self) -> Result<()>) -> Result<Self> {
         ensure!(
@@ -250,8 +259,18 @@ impl Library {
         );
         let _lock = course2md::runtime::lock_file(&root.join(".course2md-library.lock"))?;
         let mut library = Self::load(root)?;
+        let parents = library.parents.clone();
         change(&mut library)?;
         save_with_backup(&root.join(FILE), &serde_json::to_vec_pretty(&library)?)?;
+        if library.parents != parents {
+            library.parents.retain(|id, parent| {
+                library.folders.contains_key(id) && library.folders.contains_key(parent)
+            });
+            save_with_backup(
+                &root.join(TREE),
+                &serde_json::to_vec_pretty(&library.parents)?,
+            )?;
+        }
         Ok(library)
     }
     /// Rename a folder, or create one at the top level when `id` is `None`.
@@ -312,10 +331,27 @@ impl Library {
     }
     /// The containing folder; a missing parent counts as the top level.
     pub fn parent(&self, id: u64) -> Option<u64> {
-        self.parents
+        let parent = self
+            .parents
             .get(&id)
             .copied()
-            .filter(|parent| self.folders.contains_key(parent))
+            .filter(|parent| self.folders.contains_key(parent))?;
+        // A damaged record whose ancestry loops back is read as top level, so
+        // its folders stay reachable from the tree.
+        let mut seen = vec![id];
+        let mut current = Some(parent);
+        while let Some(folder) = current {
+            if seen.contains(&folder) {
+                return None;
+            }
+            seen.push(folder);
+            current = self
+                .parents
+                .get(&folder)
+                .copied()
+                .filter(|parent| self.folders.contains_key(parent));
+        }
+        Some(parent)
     }
     /// The folders directly inside `parent`, by name.
     pub fn children(&self, parent: Option<u64>) -> Vec<u64> {
@@ -333,7 +369,12 @@ impl Library {
         let mut found = vec![id];
         let mut index = 0;
         while let Some(&current) = found.get(index) {
-            found.extend(self.children(Some(current)));
+            // A damaged record could hold a cycle.
+            for child in self.children(Some(current)) {
+                if !found.contains(&child) {
+                    found.push(child);
+                }
+            }
             index += 1;
         }
         found
@@ -688,12 +729,30 @@ mod tests {
     }
 
     #[test]
-    fn flat_records_read_as_top_level_folders() {
-        let library: Library =
-            serde_json::from_str(r#"{"folders":{"1":"数学"},"courses":{},"next_id":1}"#).unwrap();
-        assert_eq!(library.children(None), [1]);
-        let written = serde_json::to_string(&library).unwrap();
-        assert!(!written.contains("parents"));
+    fn nesting_survives_an_older_writer_and_damaged_cycles() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let mut ids = (0, 0);
+        Library::edit(root, |library| {
+            ids.0 = library.create(None, "数学")?;
+            ids.1 = library.create(Some(ids.0), "线性代数")?;
+            Ok(())
+        })
+        .unwrap();
+        // The folder record stays in the format older versions read and write.
+        let record = std::fs::read_to_string(root.join(FILE)).unwrap();
+        assert!(!record.contains("parents"));
+        std::fs::write(root.join(FILE), record).unwrap();
+        assert_eq!(Library::load(root).unwrap().parent(ids.1), Some(ids.0));
+        // A loop reads as top-level folders instead of hiding them.
+        std::fs::write(
+            root.join(TREE),
+            format!(r#"{{"{a}":{b},"{b}":{a}}}"#, a = ids.0, b = ids.1),
+        )
+        .unwrap();
+        let looped = Library::load(root).unwrap();
+        assert_eq!(looped.children(None).len(), 2);
+        assert_eq!(looped.subtree(ids.0), [ids.0]);
     }
 
     #[test]
