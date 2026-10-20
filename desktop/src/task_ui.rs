@@ -3052,6 +3052,15 @@ impl Desktop {
                 .is_some_and(|location| !workspace::task_export_files(&task, location).is_empty());
             let has_log = task_log_text(&task).is_some();
             let uncertain = task.has_uncertain();
+            let reassociate = desktop
+                .task_library(&task)
+                .filter(|library| {
+                    desktop
+                        .cached_location_check(library)
+                        .is_some_and(|check| check.needs_reassociation)
+                })
+                .map(|library| library.id.clone())
+                .filter(|_| !desktop.storage_ui.busy);
             let failures = if task.artifact.is_some() {
                 task_component_failures(&task)
             } else {
@@ -3219,6 +3228,18 @@ impl Desktop {
                     );
                 }
                 _ => {}
+            }
+            if let Some(library) = reassociate {
+                let entity = entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(course2md::tr!("重新关联此保存位置"))
+                        .icon(icons::storage())
+                        .on_click(move |_, window, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.begin_library_reassociation(library.clone(), window, cx)
+                            });
+                        }),
+                );
             }
             if uncertain && !active {
                 menu = menu.item(
