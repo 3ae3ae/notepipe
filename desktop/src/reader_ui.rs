@@ -808,8 +808,8 @@ fn note_items(blocks: &[PreviewBlock]) -> Vec<NoteItem> {
 }
 
 /// `None` at the top of the note, otherwise the top item: the page re-renders
-/// when this changes. Items before the first that draws a block (the title,
-/// which is empty when the header is outside the list) count as the top.
+/// when this changes. Items before the first that draws a block (the note's
+/// header) count as the top.
 fn note_scroll_key(items: &[NoteItem], list: &ListState) -> Option<usize> {
     let top = list.logical_scroll_top();
     let first = items
@@ -858,8 +858,11 @@ fn note_capture_position(
     layout: &nav::ReadingLayout,
 ) -> Option<workspace::ReadingPosition> {
     let top = list.logical_scroll_top();
-    // The top is a document boundary, not the first measured paragraph.
-    if top.item_ix == 0 && top.offset_in_item <= px(0.) {
+    // The top is a document boundary, not the first measured paragraph. A
+    // position inside the header, which draws no block, reads from the top.
+    if top.item_ix == 0 && top.offset_in_item <= px(0.)
+        || items.get(top.item_ix) == Some(&NoteItem::Title)
+    {
         return Some(workspace::ReadingPosition::default());
     }
     let index = note_top_block(items, top.item_ix)?;
