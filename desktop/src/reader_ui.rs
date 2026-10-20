@@ -1365,7 +1365,8 @@ struct NoteFlow {
     match_index: usize,
     find_open: bool,
     data_loading: bool,
-    show_title: bool,
+    compact: bool,
+    short: bool,
     /// Sections put the screenshot and text side by side; narrow, they stack.
     wide: bool,
     layout: Rc<RefCell<nav::ReadingLayout>>,
@@ -1437,9 +1438,7 @@ impl NoteFlow {
             .min_w_0()
             .flex_shrink_0()
             // Virtual list measurements include padding, not external margins.
-            .when(item != NoteItem::Title || self.show_title, |view| {
-                view.pb_8()
-            });
+            .pb_8();
         let blocks = item.blocks();
         if !blocks.is_empty() {
             let positions = self.layout.clone();
@@ -1484,22 +1483,32 @@ impl NoteFlow {
 
 /// Render one note-flow item: the scrolling title, the summary card, a
 /// section, or a block that precedes the sections.
-fn render_note_item(flow: &NoteFlow, item_ix: usize) -> AnyElement {
+fn render_note_item(flow: &NoteFlow, item_ix: usize, cx: &mut App) -> AnyElement {
     let Some(&item) = flow.items.get(item_ix) else {
         return div().into_any_element();
     };
     let preview = &flow.preview;
     let content = match item {
-        NoteItem::Title if !flow.show_title => div().into_any_element(),
-        NoteItem::Title => theme::accessible_text("reader-title", preview.course.title.clone())
-            .role(Role::Heading)
-            .flex_shrink_0()
-            .min_w_0()
-            .whitespace_normal()
-            .font_family(READER_SERIF)
-            .text_size(TEXT_DISPLAY)
-            .font_weight(FontWeight::SEMIBOLD)
-            .into_any_element(),
+        NoteItem::Title => flow
+            .desktop
+            .update(cx, |this, cx| {
+                let ReaderHeaderParts { title, meta } = this.reader_metadata_row(
+                    preview,
+                    flow.compact,
+                    flow.short,
+                    HeaderContainer::List(flow.note_list.clone()),
+                    cx,
+                );
+                // Short windows show the facts in the information panel.
+                v_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_3()
+                    .child(title)
+                    .when(!flow.short, |header| header.children(meta))
+                    .into_any_element()
+            })
+            .unwrap_or_else(|_| div().into_any_element()),
         NoteItem::Summary { start, end } => render_note_summary(flow, start..end),
         NoteItem::Section {
             heading,
@@ -3165,8 +3174,17 @@ impl Desktop {
             // The header is as tall as its content; only the details panel
             // below it is bounded.
             .when(!compact, |view| view.pt_2().pb(rems(32. / 14.)));
-        let ReaderHeaderParts { title, meta } =
-            self.reader_metadata_row(preview, compact, short, &controls_scroll, cx);
+        let ReaderHeaderParts { title, meta } = self.reader_metadata_row(
+            preview,
+            compact,
+            short,
+            if compact {
+                HeaderContainer::Fixed
+            } else {
+                HeaderContainer::Scroll(controls_scroll.clone())
+            },
+            cx,
+        );
         let (heading, scrolling_title) = if compact {
             (None, Some(title))
         } else {
@@ -3186,15 +3204,15 @@ impl Desktop {
         }
         // The return leads the tool bar; title and facts share the article's
         // left edge below it.
-        // Once the note scrolls, the title bar carries the title and tools;
-        // the page header gives its height back to the text.
-        let scrolled = self.result_tab == 0
-            && note_scroll_key(&self.reader_ui.note_items, &self.reader_ui.note_list).is_some();
+        // The note tab draws its header as the list's first item, so it
+        // scrolls away with the text instead of collapsing above it, which
+        // would move every line by the header's height.
+        let header_in_list = self.result_tab == 0;
         let (inline_meta, panel_meta) = if short { (None, meta) } else { (meta, None) };
-        if !scrolled {
-            page = page.children(heading).children(inline_meta);
-        } else {
+        if header_in_list {
             page = page.pb_2();
+        } else {
+            page = page.children(heading).children(inline_meta);
         }
         let (fixed_header, mut page) = if compact {
             (
@@ -3269,7 +3287,8 @@ impl Desktop {
             match_index: self.reader_ui.match_index,
             find_open: self.reader_ui.find_open,
             data_loading: self.reader_ui.data_loading,
-            show_title: metrics.compact,
+            compact: metrics.compact,
+            short: metrics.short,
             wide,
             layout: self.reader_ui.note_layout.clone(),
             restore_target: self.reader_ui.restore_target.clone(),
@@ -3312,8 +3331,8 @@ impl Desktop {
             .h_full()
             .max_w(READER_MEASURE)
             .child(
-                list(self.reader_ui.note_list.clone(), move |index, _, _| {
-                    render_note_item(&flow, index)
+                list(self.reader_ui.note_list.clone(), move |index, _, cx| {
+                    render_note_item(&flow, index, cx)
                 })
                 .w_full()
                 .h_full()
@@ -3431,6 +3450,13 @@ impl ReaderMetrics {
     }
 }
 
+/// Where the note header is drawn, so a focused control in it can be revealed.
+enum HeaderContainer {
+    Fixed,
+    Scroll(ScrollHandle),
+    List(ListState),
+}
+
 struct ReaderHeaderParts {
     title: AnyElement,
     meta: Option<AnyElement>,
@@ -3474,14 +3500,18 @@ impl Desktop {
         preview: &Rc<notes::Preview>,
         compact: bool,
         short_reader: bool,
-        controls_scroll: &ScrollHandle,
+        container: HeaderContainer,
         cx: &mut Context<Self>,
     ) -> ReaderHeaderParts {
-        let reveal = |id: &'static str, child: AnyElement| {
-            if compact {
-                child
-            } else {
-                crate::focus_scroll::RevealFocus::new(id, child, controls_scroll.clone())
+        let reveal = |id: &'static str, child: AnyElement| match &container {
+            HeaderContainer::Fixed => child,
+            HeaderContainer::Scroll(scroll) => {
+                crate::focus_scroll::RevealFocus::new(id, child, scroll.clone())
+                    .inline()
+                    .into_any_element()
+            }
+            HeaderContainer::List(list) => {
+                crate::focus_scroll::RevealFocus::in_list(id, child, list.clone())
                     .inline()
                     .into_any_element()
             }
