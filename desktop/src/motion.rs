@@ -26,9 +26,7 @@ pub fn enter<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, view: 
     // under reduce-motion; removing it here remounts every keyed child.
     view.with_animation(
         id,
-        Animation::new(Duration::from_millis(ENTER_MS))
-            .with_easing(ease_out)
-            .with_max_fps(60.),
+        Animation::new(Duration::from_millis(ENTER_MS)).with_easing(ease_out),
         |view, t| view.opacity(t),
     )
     .into_any_element()
@@ -63,9 +61,7 @@ fn rise_in<E: IntoElement + Styled + 'static>(
     let trace_id = id.clone();
     view.with_animation(
         id,
-        Animation::new(Duration::from_millis(VALUE_MS))
-            .with_easing(ease_out)
-            .with_max_fps(60.),
+        Animation::new(Duration::from_millis(VALUE_MS)).with_easing(ease_out),
         move |view, t| {
             #[cfg(feature = "performance")]
             crate::performance::record_motion(trace_id.clone(), 1., t);
@@ -91,9 +87,7 @@ fn spin(icon: gpui_component::Icon, id: impl Into<ElementId>, cx: &App) -> AnyEl
     }
     icon.with_animation(
         id,
-        Animation::new(Duration::from_millis(SPINNER_TURN_MS))
-            .repeat()
-            .with_max_fps(60.),
+        Animation::new(Duration::from_millis(SPINNER_TURN_MS)).repeat(),
         |icon, t| icon.rotate(radians(std::f32::consts::TAU * t)),
     )
     .into_any_element()
@@ -113,9 +107,7 @@ pub fn indeterminate_progress(id: impl Into<ElementId>, cx: &App) -> AnyElement 
         segment
             .with_animation(
                 id,
-                Animation::new(Duration::from_millis(INDETERMINATE_SWEEP_MS))
-                    .repeat()
-                    .with_max_fps(60.),
+                Animation::new(Duration::from_millis(INDETERMINATE_SWEEP_MS)).repeat(),
                 |segment, t| segment.left(relative(t * 1.3 - 0.3)),
             )
             .into_any_element()
