@@ -4,7 +4,7 @@
 
 [English](readme.md) · **中文** · [GitHub Wiki](https://github.com/mizorewww/course2md/wiki)
 
-**试用 2.0（RC14）：**[发布说明](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.14)。Homebrew 用户运行 `brew install --cask mizorewww/tap/course2md-gui@rc`。下面的安装方式提供的是稳定版。
+**试用 2.0（RC15）：**[发布说明](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.15)。Homebrew 用户运行 `brew install --cask mizorewww/tap/course2md-gui@rc`。下面的安装方式提供的是稳定版。
 
 ## 功能特性
 
