@@ -196,6 +196,18 @@ impl RenderOnce for RevealFocus {
     }
 }
 
+/// A scroll area inside a scrolling page keeps the wheel while it has content
+/// to scroll, so the page does not move with it. Its own scroll listener runs
+/// first, then this one stops the event before it reaches the page.
+pub fn contain_scroll(view: Stateful<Div>, handle: &ScrollHandle) -> Stateful<Div> {
+    let observed = handle.clone();
+    view.track_scroll(handle).on_scroll_wheel(move |_, _, cx| {
+        if observed.max_offset().y > px(0.) {
+            cx.stop_propagation();
+        }
+    })
+}
+
 fn reveal_delta(top: f32, bottom: f32, visible_top: f32, visible_bottom: f32) -> f32 {
     if top < visible_top || bottom - top > visible_bottom - visible_top {
         visible_top - top

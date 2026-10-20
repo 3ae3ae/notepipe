@@ -1328,12 +1328,13 @@ impl Desktop {
             })
             .count();
         let any_batchable = identities.iter().any(Option::is_some);
-        let mut list = v_flex()
+        let list = v_flex()
             .id("source-candidates")
             // 视口按字号缩放（约 3 行 + 露出第 4 行一角）；内边距让
             // 行的 hover/press 涂层不贴容器发丝边
             .max_h(rems(20.))
-            .overflow_y_scroll()
+            .overflow_y_scroll();
+        let mut list = crate::focus_scroll::contain_scroll(list, &self.candidate_scroll)
             .p_1()
             .rounded(RADIUS_CARD)
             .border_1()
