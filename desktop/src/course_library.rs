@@ -736,8 +736,7 @@ impl Desktop {
                         ));
                     }
                     Err(error) => {
-                        this.message =
-                            Some(course2md::tr!("笔记尚未删除：{}", format!("{error:#}")))
+                        this.message = Some(course2md::tr!("笔记尚未删除：{}", format!("{error}")))
                     }
                 }
                 cx.notify();

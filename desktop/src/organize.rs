@@ -191,9 +191,26 @@ pub fn trash_name() -> &'static str {
 /// note and are ignored.
 pub fn delete_course(root: &Path, course: &Path) -> Result<()> {
     delete_course_with(root, course, |course| {
-        trash::delete(course)
+        move_to_trash(course)
             .with_context(|| course2md::tr!("笔记未能移到{}", trash_name()).to_string())
     })
+}
+
+/// Finder keeps "Put Back" available, but refuses items that exist only in
+/// iCloud until they are downloaded. The system file manager trashes those
+/// without downloading them.
+fn move_to_trash(path: &Path) -> Result<(), trash::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        trash::delete(path).or_else(|_| {
+            let mut context = trash::TrashContext::default();
+            context.set_delete_method(DeleteMethod::NsFileManager);
+            context.delete(path)
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    trash::delete(path)
 }
 
 fn delete_course_with(
