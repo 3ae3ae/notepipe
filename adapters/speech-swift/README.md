@@ -28,3 +28,6 @@ concurrency = 1
 
 `--model` selects `qwen3-1.7b` (default), `qwen3-0.6b` or `whisper`. The first run downloads the model.
 `[transcript].language` is passed to the model.
+
+The Qwen models write at most 448 tokens per segment, roughly a minute of speech. Keep
+`[speech.detection].max_segment` at its default of 20 seconds, or below 60, so that long segments are not cut short.
