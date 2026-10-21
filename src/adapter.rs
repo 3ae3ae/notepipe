@@ -1,4 +1,4 @@
-//! Managed HTTP adapter lifecycle, generalized from the OpenVINO worker.
+//! Speech adapters: start one for the run, wait for its health check, and stop its process tree.
 
 use anyhow::{Context, Result};
 use std::{
