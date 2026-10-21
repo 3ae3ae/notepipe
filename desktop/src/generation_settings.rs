@@ -23,6 +23,42 @@ fn subtitle_language_label(id: &str) -> &'static str {
 use course2md::config::{AsrProvider, local_models, model_label};
 
 impl Desktop {
+    /// The bilingual target menu shared by Settings and the per-task options.
+    pub(crate) fn translation_select(
+        &self,
+        id: &'static str,
+        current: Option<&'static str>,
+        pick: impl Fn(&mut Self, Option<&'static str>, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> SelectField {
+        let entity = cx.weak_entity();
+        let pick = std::rc::Rc::new(pick);
+        SelectField::new(
+            id,
+            current
+                .map(course2md::language::native_name)
+                .unwrap_or(course2md::tr!("不翻译")),
+            move |menu, _, _| {
+                std::iter::once((None, course2md::tr!("不翻译")))
+                    .chain(
+                        course2md::language::TARGETS
+                            .iter()
+                            .map(|(code, _)| (Some(*code), course2md::language::native_name(code))),
+                    )
+                    .fold(menu, |menu, (code, label)| {
+                        let entity = entity.clone();
+                        let pick = pick.clone();
+                        menu.item(PopupMenuItem::new(label).checked(code == current).on_click(
+                            move |_, _, cx| {
+                                let _ = entity.update(cx, |this, cx| pick(this, code, cx));
+                            },
+                        ))
+                    })
+            },
+        )
+        .label(course2md::tr!("双语翻译"))
+    }
+
     /// Bilingual notes: the language each paragraph is also translated into.
     fn translation_setting(
         &self,
@@ -33,7 +69,6 @@ impl Desktop {
             .translate
             .as_deref()
             .and_then(course2md::language::target);
-        let entity = cx.weak_entity();
         settings_outlined_row(
             "default-ai-translate-row",
             if current.is_some() {
@@ -41,33 +76,16 @@ impl Desktop {
             } else {
                 ""
             },
-            SelectField::new(
+            self.translation_select(
                 "default-ai-translate",
-                current
-                    .map(course2md::language::native_name)
-                    .unwrap_or(course2md::tr!("不翻译")),
-                move |menu, _, _| {
-                    std::iter::once((None, course2md::tr!("不翻译")))
-                        .chain(
-                            course2md::language::TARGETS.iter().map(|(code, _)| {
-                                (Some(*code), course2md::language::native_name(code))
-                            }),
-                        )
-                        .fold(menu, |menu, (code, label)| {
-                            let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(label).checked(code == current).on_click(
-                                move |_, _, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        let mut next = this.generation_edit_base();
-                                        next.translate = code.map(str::to_owned);
-                                        this.commit_generation(next, cx);
-                                    });
-                                },
-                            ))
-                        })
+                current,
+                |this, code, cx| {
+                    let mut next = this.generation_edit_base();
+                    next.translate = code.map(str::to_owned);
+                    this.commit_generation(next, cx);
                 },
-            )
-            .label(course2md::tr!("双语翻译")),
+                cx,
+            ),
         )
     }
 

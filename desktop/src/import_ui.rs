@@ -2344,40 +2344,21 @@ impl Desktop {
             .translate
             .as_deref()
             .and_then(course2md::language::target);
-        let entity = cx.weak_entity();
-        let mut translate = SelectField::new(
+        let mut translate = self.translation_select(
             "import-ai-translate",
-            translated
-                .map(course2md::language::native_name)
-                .unwrap_or(course2md::tr!("不翻译")),
-            move |menu, _, _| {
-                std::iter::once((None, course2md::tr!("不翻译")))
-                    .chain(
-                        course2md::language::TARGETS
-                            .iter()
-                            .map(|(code, _)| (Some(*code), course2md::language::native_name(code))),
-                    )
-                    .fold(menu, |menu, (code, label)| {
-                        let entity = entity.clone();
-                        menu.item(
-                            PopupMenuItem::new(label)
-                                .checked(code == translated)
-                                .on_click(move |_, _, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.task_options.translate = code.map(str::to_owned);
-                                        this.persist_task_options(cx);
-                                    });
-                                }),
-                        )
-                    })
+            translated,
+            |this, code, cx| {
+                this.task_options.translate = code.map(str::to_owned);
+                this.persist_task_options(cx);
             },
+            cx,
         );
         if translated.is_some() {
             translate = translate.detail(course2md::tr!(
                 "每段文字下方附上译文；已是该语言的视频不翻译"
             ));
         }
-        choices = choices.child(translate.label(course2md::tr!("双语翻译")));
+        choices = choices.child(translate);
         let mut view = v_flex()
             .w_full()
             .min_w_0()
