@@ -614,6 +614,10 @@ fn request_chat_once(
                 value.get("error").is_none_or(serde_json::Value::is_null),
                 "The AI service returned an error"
             );
+            anyhow::ensure!(
+                value["choices"][0]["finish_reason"] != "length",
+                "The model stopped at its output limit; raise it with a max_tokens field in request"
+            );
             let content = value["choices"][0]["message"]["content"]
                 .as_str()
                 .filter(|s| !s.trim().is_empty())
@@ -781,6 +785,107 @@ mod tests {
             );
             assert_eq!(second.calls.load(Ordering::SeqCst), 0);
         }
+    }
+
+    #[test]
+    fn truncated_chat_is_not_retried_validated_or_cached() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        use std::sync::atomic::Ordering;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        for (input, content) in [
+            (
+                Input::Paragraphs,
+                r#"{"segments":[{"id":0,"text":"Changed."}]}"#,
+            ),
+            (Input::Transcript, "## Summary\nA complete-looking result."),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let _cache = crate::dispatch::install(root.path()).unwrap();
+            let mock = MockAi::respond_with(move |call, _| {
+                Some((
+                    200,
+                    json!({"choices":[{"finish_reason":if call == 0 { "length" } else { "stop" },"message":{"content":content}}]}),
+                ))
+            });
+            let settings = LlmSettings {
+                base_url: mock.url.clone(),
+                ..Default::default()
+            };
+            let body = chat_body(&settings, "System", "User", input).unwrap();
+            let validations = std::cell::Cell::new(0);
+            let validate = |value: &str| {
+                validations.set(validations.get() + 1);
+                assert_eq!(value, content);
+                Ok(())
+            };
+            let agent = chat_agent();
+            let error = request_chat(&agent, &settings, &body, &validate).unwrap_err();
+            let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
+            assert!(!failure.retryable);
+            assert!(!failure.unsupported_response_format);
+            assert_eq!(
+                error.to_string(),
+                "The model stopped at its output limit; raise it with a max_tokens field in request"
+            );
+            assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(validations.get(), 0);
+            assert!(!root.path().join("llm").exists());
+
+            let response = request_chat(&agent, &settings, &body, &validate).unwrap();
+            assert_eq!(response["choices"][0]["message"]["content"], content);
+            let cached = request_chat(&agent, &settings, &body, &validate).unwrap();
+            assert_eq!(cached[crate::dispatch::CACHED], true);
+            assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
+            assert_eq!(validations.get(), 2);
+        }
+    }
+
+    #[test]
+    fn truncated_paragraph_stage_retains_original_text_and_failure_note() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let mock = MockAi::respond_with(|_, _| {
+            Some((
+                200,
+                json!({"choices":[{"finish_reason":"length","message":{"content":json!({"segments":[{"id":0,"text":"Changed."}]}).to_string()}}]}),
+            ))
+        });
+        let event = TranscriptEvent {
+            start: 0.,
+            end: 1.,
+            text: "Original.".into(),
+            raw: None,
+            below: Vec::new(),
+        };
+        let mut sections = vec![Section {
+            t: 0.,
+            end: 1.,
+            image: String::new(),
+            speech: vec![event.clone()],
+        }];
+        let settings = LlmSettings {
+            base_url: mock.url.clone(),
+            ..Default::default()
+        };
+        let root = tempfile::tempdir().unwrap();
+        let report = paragraphs(
+            &mut sections,
+            root.path(),
+            &settings,
+            &Stage::builtin("proofread").unwrap(),
+        )
+        .unwrap();
+        assert_eq!((report.attempted, report.failed), (1, 1));
+        assert_eq!(
+            report.note.as_deref(),
+            Some(
+                "The model stopped at its output limit; raise it with a max_tokens field in request"
+            )
+        );
+        assert_eq!(sections[0].speech, vec![event]);
+        assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

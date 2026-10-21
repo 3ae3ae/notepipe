@@ -352,7 +352,13 @@ fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_js
                 );
                 let has_text = match t.mode {
                     crate::settings::AsrMode::Transcriptions => value["text"].is_string(),
-                    crate::settings::AsrMode::Chat => chat_content_has_text(value),
+                    crate::settings::AsrMode::Chat => {
+                        anyhow::ensure!(
+                            value["choices"][0]["finish_reason"] != "length",
+                            "The speech model stopped at its output limit"
+                        );
+                        chat_content_has_text(value)
+                    }
                 };
                 anyhow::ensure!(has_text, "The speech service returned no text");
                 Ok(())
@@ -555,6 +561,44 @@ mod http_tests {
     use super::*;
     use crate::settings::{Asr, AsrMode};
     use std::io::{Read, Write};
+
+    #[test]
+    fn truncated_speech_chat_is_not_retried_or_cached() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        for content in [
+            json!("Recognized."),
+            json!([{"type":"text","text":"Recognized."}]),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let _cache = crate::dispatch::install(root.path()).unwrap();
+            let mock = MockAi::respond_with(move |_, _| {
+                Some((
+                    200,
+                    json!({"choices":[{"finish_reason":"length","message":{"content":content}}]}),
+                ))
+            });
+            let target = ApiTarget {
+                client: &ureq::agent(),
+                url: &format!("{}/chat/completions", mock.url),
+                model: "",
+                key: "",
+                mode: AsrMode::Chat,
+                language: "",
+                check_control: &crate::runtime::check_cancelled,
+            };
+            let error = post_cloud(&target, "application/json", b"{}").unwrap_err();
+            let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
+            assert!(!failure.retryable);
+            assert_eq!(
+                error.to_string(),
+                "The speech model stopped at its output limit"
+            );
+            assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(!root.path().join("llm").exists());
+        }
+    }
 
     #[test]
     fn cancellation_is_checked_immediately_before_the_http_send() {
