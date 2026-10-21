@@ -19,6 +19,7 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Verify release version
@@ -31,6 +32,7 @@ jobs:
 
   build:
     needs: validate
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -113,6 +115,7 @@ jobs:
   sdist:
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: PyO3/maturin-action@v1
@@ -128,6 +131,7 @@ jobs:
   speech-swift-adapter:
     needs: validate
     runs-on: macos-26
+    timeout-minutes: 90
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.0'
     defaults:
@@ -141,6 +145,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: adapters/speech-swift
+      # Restores the Swift packages built by CI on main; a tag run can read the default branch's caches.
+      - uses: actions/cache@v4
+        with:
+          path: adapters/speech-swift/native/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('adapters/speech-swift/native/Package.resolved') }}
+          restore-keys: swiftpm-${{ runner.os }}-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -200,29 +210,20 @@ jobs:
   python-adapters:
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         adapter: [llama, meta, openvino, xai, ytdlp]
     steps:
       - uses: actions/checkout@v4
-      - name: Find adapter
-        id: adapter
-        shell: bash
-        run: |
-          if [ -f "adapters/${{ matrix.adapter }}/pyproject.toml" ]; then
-            echo 'exists=true' >> "$GITHUB_OUTPUT"
-          fi
       - uses: astral-sh/setup-uv@v6
-        if: steps.adapter.outputs.exists == 'true'
         with:
           python-version: '3.12'
       - name: Build wheel and sdist
-        if: steps.adapter.outputs.exists == 'true'
         working-directory: adapters/${{ matrix.adapter }}
         run: uv build
       - uses: actions/upload-artifact@v4
-        if: steps.adapter.outputs.exists == 'true'
         with:
           name: package-${{ matrix.adapter }}
           path: adapters/${{ matrix.adapter }}/dist/*
@@ -231,6 +232,7 @@ jobs:
   release:
     needs: [build, sdist, speech-swift-adapter, python-adapters]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
@@ -255,6 +257,7 @@ jobs:
   pypi:
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -285,6 +288,7 @@ jobs:
   crates-io:
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: crates-io
     permissions:
       contents: read

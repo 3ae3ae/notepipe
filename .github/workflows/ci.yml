@@ -16,7 +16,41 @@ permissions:
   contents: read
 
 jobs:
+  # Decide which jobs this change needs; a manual run or a change to this file runs everything.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      core: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.core == 'true' }}
+      speech_swift: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.speech_swift == 'true' }}
+      python: ${{ github.event_name == 'workflow_dispatch' && '["llama","meta","openvino","xai","ytdlp"]' || steps.adapters.outputs.changes || '[]' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: paths
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            core: [src/**, tests/**, Cargo.toml, Cargo.lock, .github/workflows/ci.yml]
+            speech_swift: [adapters/speech-swift/**, .github/workflows/ci.yml]
+      - uses: dorny/paths-filter@v3
+        id: adapters
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            llama: [adapters/llama/**, .github/workflows/ci.yml]
+            meta: [adapters/meta/**, .github/workflows/ci.yml]
+            openvino: [adapters/openvino/**, .github/workflows/ci.yml]
+            xai: [adapters/xai/**, .github/workflows/ci.yml]
+            ytdlp: [adapters/ytdlp/**, .github/workflows/ci.yml]
+
   test:
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +83,7 @@ jobs:
         run: choco install ffmpeg --no-progress --yes
 
       - name: Formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --check
 
       - name: Clippy
@@ -65,7 +100,10 @@ jobs:
         run: cargo test --features integration --test scene_synthetic
 
   speech-swift-adapter:
+    needs: changes
+    if: needs.changes.outputs.speech_swift == 'true'
     runs-on: macos-26
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: adapters/speech-swift
@@ -77,36 +115,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: adapters/speech-swift
+      # Building MLX and the other Swift packages takes most of this job; keep them between runs.
+      - uses: actions/cache@v4
+        with:
+          path: adapters/speech-swift/native/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('adapters/speech-swift/native/Package.resolved') }}
+          restore-keys: swiftpm-${{ runner.os }}-
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test
 
   python-adapters:
+    needs: changes
+    if: needs.changes.outputs.python != '[]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        adapter: [llama, meta, openvino, xai, ytdlp]
+        adapter: ${{ fromJSON(needs.changes.outputs.python) }}
     steps:
       - uses: actions/checkout@v4
-      - name: Find adapter
-        id: adapter
-        shell: bash
-        run: |
-          if [ -f "adapters/${{ matrix.adapter }}/pyproject.toml" ]; then
-            echo 'exists=true' >> "$GITHUB_OUTPUT"
-          fi
       - uses: astral-sh/setup-uv@v6
-        if: steps.adapter.outputs.exists == 'true'
         with:
           python-version: '3.12'
       - name: Tests
-        if: steps.adapter.outputs.exists == 'true'
         working-directory: adapters/${{ matrix.adapter }}
         run: uv run --with pytest pytest
       - name: Build wheel and sdist
-        if: steps.adapter.outputs.exists == 'true'
         working-directory: adapters/${{ matrix.adapter }}
         run: uv build
 
