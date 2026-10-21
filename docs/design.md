@@ -88,7 +88,7 @@ live instead:
 
 - **Notes are replaced whole.** A new note is built completely before it replaces the previous one. A run that fails or
   is cancelled before its note is written leaves the previous note as it was. If a run is interrupted while swapping
-  folders, the next run finishes or undoes the swap from a transaction record before doing anything else.
+  folders, the next run finishes or undoes the swap from a transaction record before it writes a note.
 - **Finished work is reused.** Downloads, screenshots, transcripts and successful AI responses are cached per source and
   keyed by the inputs that affect them, so changing an AI prompt does not repeat speech recognition. Failed responses are
   never cached.

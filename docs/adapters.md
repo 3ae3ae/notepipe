@@ -1,8 +1,8 @@
 # Adapters
 
 The notepipe core turns a local media file into a note and talks to the outside world only through standard interfaces.
-Anything tied to a particular engine, vendor or website is an **adapter**: a separate program that notepipe runs. To attach
-one, install it and name it in `config.toml`; to detach it, remove that line.
+Anything tied to a particular engine, vendor or website is an **adapter**: a separate program that notepipe runs. To
+attach one, install it; a speech adapter is also named in `config.toml`. To detach one, uninstall it or remove its line.
 
 There are two kinds:
 
@@ -145,8 +145,8 @@ with `[download].adapter`.
 adapter = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
 ```
 
-Results are cached per URL and adapter. Media is deleted after a successful run, so a later run that only changes AI
-stages reuses the cached screenshots and transcript, while one that changes screenshot or speech settings downloads again.
+Results are cached per URL and adapter. Media is deleted just before the note is written, so a later run that only
+changes AI stages reuses the cached screenshots and transcript, while one that needs the media again downloads it again.
 
 ### Contract
 

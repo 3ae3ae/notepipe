@@ -54,7 +54,7 @@ recordings.
 |---|---|---|---|
 | `threshold` | — | `0.5` | Speech confidence from 0 to 1; lower keeps quieter speech |
 | `min_silence` | — | `0.4` | Pauses shorter than this many seconds do not split segments |
-| `max_segment` | `--max-segment` | `20.0` | Longest segment sent in one request, 1 to 600 seconds |
+| `max_segment` | `--max-segment` | `20.0` | Longest stretch of speech in one request, 1 to 600 seconds; up to 0.25 s of silence is added on each side |
 
 ## `[screenshots]`
 

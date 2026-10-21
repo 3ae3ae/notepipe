@@ -48,13 +48,13 @@ component that other programs can build on.
 - **Extensible without forking.** Websites, local speech engines and vendor APIs are *adapters*: small separate programs
   with a documented contract, written in any language, installed as extras and attached with one line of configuration.
   What the AI does is a prompt you write. A hook runs your own program after each note.
-- **Portable.** One binary for Linux, macOS and Windows on x86_64 and arm64, and Android through Termux. Its only
-  requirement is ffmpeg. Speech recognition and AI go through OpenAI-compatible APIs, so any provider, a server of your
+- **Portable.** A single binary for Linux and macOS on x86_64 and arm64 and for Windows on x86_64, and it builds on
+  Android through Termux. Its only requirement is ffmpeg. Speech recognition and AI go through OpenAI-compatible APIs, so any provider, a server of your
   own or a local engine will do; no account, vendor or model is built in.
 - **Reliable.** A note is built completely before it replaces the previous one, so a failed or interrupted run never
   leaves a half-written or lost note. Finished work is cached: downloads, screenshots, transcripts and AI responses are
   reused, and an interrupted transcription resumes where it stopped. Ctrl-C stops every process notepipe started. Every
-  change is tested on Linux, macOS and Windows.
+  code change is tested in CI on Linux, macOS and Windows.
 - **Plain, durable output.** Markdown, JPEG and JSON in an ordinary folder, readable by any editor, notes app or script.
 - **Private.** No telemetry. Audio and text go only to the services you configure, or nowhere at all with local
   adapters.
@@ -94,7 +94,7 @@ Other ways to install:
 
 - **Cargo:** `cargo install notepipe` installs the CLI; add adapters with pip or uv.
 - **Prebuilt binaries:** every [GitHub release](https://github.com/3ae3ae/notepipe/releases) has binaries and
-  checksums for each platform below.
+  checksums for Linux, macOS and Windows.
 - **Android:** in [Termux](https://termux.dev), run `pkg install rust ffmpeg python`, then `cargo install notepipe`;
   add adapters with `pip install notepipe-source-ytdlp` and the like.
 
@@ -127,8 +127,9 @@ notepipe config path    # print where it is
 notepipe config show    # show the settings in effect
 ```
 
-The file is `~/.config/notepipe/config.toml`, or `%APPDATA%\notepipe\config.toml` on Windows. Its sections follow the
-order in which a note is made, and every command-line option names the setting it overrides:
+The file is `~/.config/notepipe/config.toml`, or `%APPDATA%\notepipe\config.toml` on Windows (`$XDG_CONFIG_HOME/notepipe/`
+when that is set). Its sections follow the order in which a note is made, and every command-line option names the
+setting it overrides:
 
 ```toml
 [output]
@@ -317,8 +318,8 @@ Introduction to Compilers/
 └── images/        0001.jpg, 0002.jpg, …
 ```
 
-A later run on the same recording replaces the folder; a different recording with the same title gets a `-2`, `-3`, …
-suffix. Each section's time links to the recording, at that moment where the source allows it.
+A later run on the same recording replaces its folder; a different recording with the same title gets a `-2`, `-3`, …
+suffix, and a recording whose title has changed gets a folder for its new title. Each section's time links to the recording, at that moment where the source allows it.
 
 ## Using notepipe from other programs
 

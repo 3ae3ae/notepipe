@@ -28,7 +28,7 @@ The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizoreww
 
 - Speech detection uses earshot, a small built-in neural detector, instead of a fixed loudness threshold.
 - Notes are written as `<out>/<title>/note.md`, `images/` and `note.json`; `note.md` starts with YAML front matter.
-  Running again replaces the note; intermediate results are cached per source.
+  Running again on the same source replaces its note; intermediate results are cached per source.
 - Default prompts are English and replaceable; summaries are Markdown written by the model in the transcript's language.
 - The CLI and `--json` output are English; NDJSON events are limited to `stage`, `progress`, `tokens`, `log`, `done` and
   `error`.

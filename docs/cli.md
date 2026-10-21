@@ -118,6 +118,7 @@ A failing hook produces a warning; the note and the exit status are unaffected.
 
 Downloads, screenshots, transcripts and AI responses are cached per source in `$XDG_CACHE_HOME/notepipe` when that is
 set, otherwise in `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and
-`~/.cache/notepipe` elsewhere. Media and extracted audio are deleted after a successful run, so changing screenshot or
-speech settings later downloads the media again; changing only AI stages does not. The cache can be deleted whenever
+`~/.cache/notepipe` elsewhere. Media and extracted audio are deleted once the AI stages have run, just before the note
+is written. A later run that needs them again, because screenshot settings changed or, when speech is recognized, speech
+settings changed, downloads the media again; one that changes only AI stages does not. The cache can be deleted whenever
 notepipe is not running; `--no-resume` clears one source's entry.
