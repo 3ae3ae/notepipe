@@ -17,11 +17,6 @@ parser.add_argument('--record', required=True, type=Path)
 parser.add_argument('--behavior', default='healthy')
 args = parser.parse_args()
 args.record.mkdir(exist_ok=True)
-(args.record / 'pid').write_text(str(os.getpid()))
-print('adapter stdout', flush=True)
-print('adapter stderr', file=sys.stderr, flush=True)
-if args.behavior == 'exit':
-    sys.exit(3)
 
 
 def stop(signum, frame):
@@ -29,7 +24,13 @@ def stop(signum, frame):
     sys.exit(0)
 
 
+# Install the handler before announcing the pid, so tests that wait for the pid can rely on it.
 signal.signal(signal.SIGTERM, stop)
+(args.record / 'pid').write_text(str(os.getpid()))
+print('adapter stdout', flush=True)
+print('adapter stderr', file=sys.stderr, flush=True)
+if args.behavior == 'exit':
+    sys.exit(3)
 if args.behavior == 'launcher':
     child = subprocess.Popen([
         sys.executable, '-u', __file__, '--host', args.host, '--port', str(args.port),

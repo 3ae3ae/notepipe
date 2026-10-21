@@ -86,13 +86,19 @@ fn no_arguments_or_help_succeed_with_guidance() {
         text.contains("Create, find and show the configuration file"),
         "{text}"
     );
-    assert!(text.contains("notepipe config <COMMAND>"), "{text}");
+    // clap names the binary notepipe.exe on Windows.
+    assert!(text.contains(" config <COMMAND>"), "{text}");
 }
 
 #[test]
 fn config_path_and_missing_file_guidance_use_the_configuration_path() {
     let cli = CliTest::new();
-    let path = cli.dir.path().join("config/notepipe/config.toml");
+    let path = cli
+        .dir
+        .path()
+        .join("config")
+        .join("notepipe")
+        .join("config.toml");
     let result = cli.run(&["config", "path"]);
     assert!(result.status.success());
     assert!(result.stderr.is_empty(), "{}", stderr(&result));
@@ -224,7 +230,12 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
     let cli = CliTest::new();
     let created = cli.run(&["config", "init"]);
     assert!(created.status.success());
-    let path = cli.dir.path().join("config/notepipe/config.toml");
+    let path = cli
+        .dir
+        .path()
+        .join("config")
+        .join("notepipe")
+        .join("config.toml");
     assert_eq!(
         stdout(&created),
         format!(

@@ -172,7 +172,11 @@ mod tests {
         let start = Instant::now();
         let result = Adapter::start_with_control(&argv, &|| {
             polls.set(polls.get() + 1);
-            anyhow::ensure!(polls.get() < 4, "test cancellation");
+            // Cancel only once the fixture has installed its SIGTERM handler, which it announces with its pid.
+            anyhow::ensure!(
+                polls.get() < 4 || !dir.path().join("pid").is_file(),
+                "test cancellation"
+            );
             Ok(())
         });
         assert!(format!("{:#}", result.err().unwrap()).contains("test cancellation"));
