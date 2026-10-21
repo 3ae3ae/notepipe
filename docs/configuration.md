@@ -44,8 +44,9 @@ prints the effective values.
 | `min_silence` | — | `0.4` | Pauses shorter than this many seconds do not split segments |
 
 With `transcript_source = "auto"`, speech recognition runs when no subtitles are found; `asr` always uses it and
-`subtitle` never does. Subtitles that are found but cannot be read are an error. When an interactive `auto` run finds no
-subtitles and `[asr]` is empty, it asks for these settings and saves them; with `asr`, empty settings are an error.
+`subtitle` never does. `--subtitle FILE` takes precedence over all three. Subtitles that are found but cannot be read are
+an error. When an interactive `auto` run finds no subtitles and `[asr]` is empty, it asks for these settings and saves
+them; with `asr`, empty settings are an error.
 
 ## `[llm]` — AI stages
 
