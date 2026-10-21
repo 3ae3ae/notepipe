@@ -93,9 +93,18 @@ impl Transaction {
                 "Invalid note transaction path"
             );
         }
+        let names = [&self.name, &self.staging, &self.old].map(|name| name.to_lowercase());
         anyhow::ensure!(
-            self.name != self.staging && self.name != self.old && self.staging != self.old,
+            names[0] != names[1] && names[0] != names[2] && names[1] != names[2],
             "Note transaction paths must be distinct"
+        );
+        anyhow::ensure!(
+            self.staging
+                .starts_with(&format!(".{}.notepipe-new-", self.name))
+                && self
+                    .old
+                    .starts_with(&format!(".{}.notepipe-old-", self.name)),
+            "Note transaction paths do not match the note name"
         );
         Ok(())
     }
@@ -106,33 +115,67 @@ impl Transaction {
     }
 }
 
-fn remove_dir_if_exists(path: &Path) -> std::io::Result<()> {
-    match std::fs::remove_dir_all(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        result => result,
+fn warn(warnings: &mut Vec<String>, message: String) {
+    tracing::warn!("{message}");
+    warnings.push(message);
+}
+
+fn remove_dir_if_exists(path: &Path, kind: &str, warnings: &mut Vec<String>) {
+    if let Err(error) = std::fs::remove_dir_all(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        warn(
+            warnings,
+            format!(
+                "Could not remove {kind} {}: {error}. Remove it manually.",
+                path.display()
+            ),
+        );
     }
 }
 
-fn finish(root: &Path, previous: &Path, warnings: &mut Vec<String>) {
-    if let Err(error) = remove_dir_if_exists(previous) {
-        warnings.push(format!("Note published; could not remove the previous note backup {}: {error}. Remove it manually.", previous.display()));
+fn discard_record(root: &Path, warnings: &mut Vec<String>) {
+    if let Err(error) = std::fs::remove_file(root.join(TRANSACTION_FILE))
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        warn(
+            warnings,
+            format!(
+                "Could not remove note transaction record {}: {error}",
+                root.join(TRANSACTION_FILE).display()
+            ),
+        );
     }
-    if let Err(error) = std::fs::remove_file(root.join(TRANSACTION_FILE)) {
-        warnings.push(format!(
-            "Could not remove note transaction record {}: {error}",
-            root.join(TRANSACTION_FILE).display()
-        ));
-    }
+}
+
+fn restore(previous: &Path, destination: &Path) -> Result<()> {
+    let metadata = previous.symlink_metadata().with_context(|| {
+        format!(
+            "Could not inspect previous note backup {}",
+            previous.display()
+        )
+    })?;
+    anyhow::ensure!(
+        metadata.is_dir(),
+        "Previous note backup {} must be a real directory",
+        previous.display()
+    );
+    std::fs::rename(previous, destination).context("Could not restore the previous note")
 }
 
 fn recover_locked(root: &Path) -> Result<Vec<String>> {
     let record = root.join(TRANSACTION_FILE);
-    let bytes = match std::fs::read(&record) {
+    let metadata = match record.symlink_metadata() {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         result => result?,
     };
-    let transaction: Transaction =
-        serde_json::from_slice(&bytes).context("Invalid note transaction record")?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "Note transaction record must be a regular file: {}",
+        record.display()
+    );
+    let transaction: Transaction = serde_json::from_slice(&std::fs::read(&record)?)
+        .context("Invalid note transaction record")?;
     transaction.validate()?;
     let destination = root.join(&transaction.name);
     let staging = root.join(&transaction.staging);
@@ -140,25 +183,29 @@ fn recover_locked(root: &Path) -> Result<Vec<String>> {
     let mut warnings = Vec::new();
     match transaction.phase {
         Phase::Staged => {
-            remove_dir_if_exists(&staging)?;
-            std::fs::remove_file(record)?;
+            remove_dir_if_exists(&staging, "note staging folder", &mut warnings);
         }
-        Phase::OldMoved => {
-            match destination.symlink_metadata() {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    std::fs::rename(&previous, &destination).context("Could not restore the previous note")?;
-                    remove_dir_if_exists(&staging)?;
-                }
-                Err(error) => return Err(error.into()),
-                Ok(_) => warnings.push(format!("Note recovery conflict: {} exists; previous note {} and staging {} left untouched.", destination.display(), previous.display(), staging.display())),
+        Phase::OldMoved => match destination.symlink_metadata() {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                restore(&previous, &destination)?;
+                remove_dir_if_exists(&staging, "note staging folder", &mut warnings);
             }
-            std::fs::remove_file(record)?;
+            Err(error) => return Err(error.into()),
+            Ok(_) => warn(
+                &mut warnings,
+                format!(
+                    "Note recovery conflict: {} exists; previous note {} and staging {} left untouched.",
+                    destination.display(),
+                    previous.display(),
+                    staging.display()
+                ),
+            ),
+        },
+        Phase::Published => {
+            remove_dir_if_exists(&previous, "the previous note backup", &mut warnings)
         }
-        Phase::Published => finish(root, &previous, &mut warnings),
     }
-    for warning in &warnings {
-        tracing::warn!("{warning}");
-    }
+    discard_record(root, &mut warnings);
     Ok(warnings)
 }
 
@@ -176,20 +223,34 @@ fn commit(root: &Path, transaction: &mut Transaction, warnings: &mut Vec<String>
     if moved {
         // Record the intent first so interruption after the rename is always recoverable.
         transaction.phase = Phase::OldMoved;
-        transaction.write(root)?;
-        std::fs::rename(&destination, &previous).context("Could not preserve the previous note")?;
+        if let Err(error) = transaction.write(root).and_then(|()| {
+            std::fs::rename(&destination, &previous).context("Could not preserve the previous note")
+        }) {
+            remove_dir_if_exists(&staging, "note staging folder", warnings);
+            discard_record(root, warnings);
+            return Err(error);
+        }
     }
     if let Err(error) = std::fs::rename(&staging, &destination) {
         if moved {
-            std::fs::rename(&previous, &destination).with_context(|| format!("Could not publish note: {error}; could not restore the previous note retained at {}", previous.display()))?;
-            remove_dir_if_exists(&staging)?;
-            std::fs::remove_file(root.join(TRANSACTION_FILE))?;
+            restore(&previous, &destination).with_context(|| format!("Could not publish note: {error}; could not restore the previous note retained at {}", previous.display()))?;
         }
+        remove_dir_if_exists(&staging, "note staging folder", warnings);
+        discard_record(root, warnings);
         return Err(error).context("Could not publish note folder");
     }
     transaction.phase = Phase::Published;
-    transaction.write(root)?;
-    finish(root, &previous, warnings);
+    if let Err(error) = transaction.write(root) {
+        warn(
+            warnings,
+            format!(
+                "Note published; could not update note transaction record {}: {error:#}",
+                root.join(TRANSACTION_FILE).display()
+            ),
+        );
+    }
+    remove_dir_if_exists(&previous, "the previous note backup", warnings);
+    discard_record(root, warnings);
     Ok(())
 }
 
@@ -319,6 +380,15 @@ mod tests {
     fn publish(root: &Path, frames: &Path, document: &Document) -> Result<(PathBuf, Vec<String>)> {
         super::publish(root, frames, document.clone())
     }
+
+    fn transaction(name: &str, phase: Phase) -> Transaction {
+        Transaction {
+            name: name.into(),
+            staging: format!(".{name}.notepipe-new-recorded"),
+            old: format!(".{name}.notepipe-old-recorded"),
+            phase,
+        }
+    }
     #[test]
     fn publishing_replaces_only_its_source_and_preserves_old_notes_on_failure() {
         let temp = tempfile::tempdir().unwrap();
@@ -377,12 +447,7 @@ mod tests {
     #[test]
     fn recovery_conflict_preserves_every_folder_and_discards_the_record() {
         let root = tempfile::tempdir().unwrap();
-        let transaction = Transaction {
-            name: "note".into(),
-            staging: ".note.notepipe-new-recorded".into(),
-            old: ".note.notepipe-old-recorded".into(),
-            phase: Phase::OldMoved,
-        };
+        let transaction = transaction("note", Phase::OldMoved);
         for name in [&transaction.name, &transaction.staging, &transaction.old] {
             let path = root.path().join(name);
             std::fs::create_dir(&path).unwrap();
@@ -411,12 +476,8 @@ mod tests {
         let (note, _) = publish(root.path(), root.path(), &document("one")).unwrap();
         let markdown = std::fs::read(note.join("note.md")).unwrap();
         let json = std::fs::read(note.join("note.json")).unwrap();
-        let mut transaction = Transaction {
-            name: note.file_name().unwrap().to_str().unwrap().into(),
-            staging: ".note.notepipe-new-missing".into(),
-            old: ".note.notepipe-old-recorded".into(),
-            phase: Phase::Staged,
-        };
+        let mut transaction =
+            transaction(note.file_name().unwrap().to_str().unwrap(), Phase::Staged);
         let _lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
         transaction.write(root.path()).unwrap();
         assert!(commit(root.path(), &mut transaction, &mut Vec::new()).is_err());
@@ -429,7 +490,13 @@ mod tests {
     #[test]
     fn invalid_transaction_records_leave_every_path_untouched() {
         let root = tempfile::tempdir().unwrap();
-        for name in ["note", "staging", "old"] {
+        let names = [
+            "note",
+            ".note.notepipe-new-recorded",
+            ".note.notepipe-old-recorded",
+            "unrelated",
+        ];
+        for name in names {
             let path = root.path().join(name);
             std::fs::create_dir(&path).unwrap();
             std::fs::write(path.join("content"), name).unwrap();
@@ -444,28 +511,231 @@ mod tests {
             ("staging", "nested/path"),
             ("staging", "nested\\path"),
             ("staging", "note"),
-            ("old", "staging"),
+            ("staging", "NOTE"),
+            ("old", ".note.notepipe-new-recorded"),
+            ("old", ".NOTE.NOTEPIPE-NEW-RECORDED"),
+            ("staging", "unrelated"),
+            ("old", "unrelated"),
+            ("staging", ".other.notepipe-new-recorded"),
+            ("old", ".other.notepipe-old-recorded"),
             ("phase", "unknown"),
             ("unknown", "field"),
         ] {
-            let mut record = serde_json::json!({
-                "name":"note", "staging":"staging", "old":"old", "phase":"staged"
-            });
+            let mut record = serde_json::to_value(transaction("note", Phase::Staged)).unwrap();
             record[key] = value.into();
             let bytes = serde_json::to_vec(&record).unwrap();
             let path = root.path().join(TRANSACTION_FILE);
             let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
             crate::checkpoint::atomic_write(&path, &bytes).unwrap();
             drop(lock);
-            assert!(recover(root.path()).is_err(), "{record}");
+            let error = recover(root.path()).unwrap_err();
+            if matches!(value, "NOTE" | ".NOTE.NOTEPIPE-NEW-RECORDED") {
+                assert!(error.to_string().contains("must be distinct"));
+            }
             assert_eq!(std::fs::read(path).unwrap(), bytes);
-            for name in ["note", "staging", "old"] {
+            for name in names {
                 assert_eq!(
                     std::fs::read_to_string(root.path().join(name).join("content")).unwrap(),
                     name
                 );
             }
         }
+    }
+
+    #[test]
+    fn recovery_requires_a_directory_backup_and_retains_an_unresolved_record() {
+        let root = tempfile::tempdir().unwrap();
+        let transaction = transaction("note", Phase::OldMoved);
+        let previous = root.path().join(&transaction.old);
+        std::fs::write(&previous, "not a directory").unwrap();
+        let staging = root.path().join(&transaction.staging);
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("content"), "Staged note").unwrap();
+        let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
+        transaction.write(root.path()).unwrap();
+        drop(lock);
+        assert!(
+            recover(root.path())
+                .unwrap_err()
+                .to_string()
+                .contains("must be a real directory")
+        );
+        assert!(!root.path().join(&transaction.name).exists());
+        assert_eq!(
+            std::fs::read_to_string(previous).unwrap(),
+            "not a directory"
+        );
+        assert_eq!(
+            std::fs::read_to_string(staging.join("content")).unwrap(),
+            "Staged note"
+        );
+        assert!(root.path().join(TRANSACTION_FILE).is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_rejects_symlink_records_and_backups_without_touching_their_targets() {
+        use std::os::unix::fs::symlink;
+        for link_record in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("notes");
+            std::fs::create_dir(&root).unwrap();
+            let transaction = transaction("note", Phase::OldMoved);
+            let previous = root.join(&transaction.old);
+            let staging = root.join(&transaction.staging);
+            std::fs::create_dir(&staging).unwrap();
+            std::fs::write(staging.join("content"), "Staged note").unwrap();
+            let record = root.join(TRANSACTION_FILE);
+            let lock = runtime::lock_file(&root.join(".notepipe.lock")).unwrap();
+            transaction.write(&root).unwrap();
+            let target = temp.path().join("target");
+            if link_record {
+                std::fs::rename(&record, &target).unwrap();
+                symlink(&target, &record).unwrap();
+                std::fs::create_dir(&previous).unwrap();
+                std::fs::write(previous.join("content"), "Previous note").unwrap();
+            } else {
+                std::fs::create_dir(&target).unwrap();
+                std::fs::write(target.join("content"), "Previous note").unwrap();
+                symlink(&target, &previous).unwrap();
+            }
+            drop(lock);
+            let error = recover(&root).unwrap_err().to_string();
+            assert!(
+                error.contains(if link_record {
+                    "must be a regular file"
+                } else {
+                    "must be a real directory"
+                }),
+                "{error}"
+            );
+            assert_eq!(
+                std::fs::read(&record).unwrap(),
+                serde_json::to_vec(&transaction).unwrap()
+            );
+            assert_eq!(
+                std::fs::read_to_string(previous.join("content")).unwrap(),
+                "Previous note"
+            );
+            assert_eq!(
+                std::fs::read_to_string(staging.join("content")).unwrap(),
+                "Staged note"
+            );
+            assert!(!root.join(&transaction.name).exists());
+            assert!(
+                if link_record { record } else { previous }
+                    .symlink_metadata()
+                    .unwrap()
+                    .is_symlink()
+            );
+        }
+    }
+
+    #[test]
+    fn completed_publication_survives_record_write_and_removal_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let (note, _) = publish(root.path(), root.path(), &document("one")).unwrap();
+        let markdown = std::fs::read(note.join("note.md")).unwrap();
+        let json = std::fs::read(note.join("note.json")).unwrap();
+        let mut transaction =
+            transaction(note.file_name().unwrap().to_str().unwrap(), Phase::Staged);
+        std::fs::rename(&note, root.path().join(&transaction.staging)).unwrap();
+        let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
+        let record = root.path().join(TRANSACTION_FILE);
+        std::fs::create_dir(&record).unwrap();
+        std::fs::write(record.join("content"), "Record path conflict").unwrap();
+        let mut warnings = Vec::new();
+        commit(root.path(), &mut transaction, &mut warnings).unwrap();
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings[0].contains("could not update note transaction record"));
+        assert!(warnings[1].contains("Could not remove note transaction record"));
+        assert_eq!(std::fs::read(note.join("note.md")).unwrap(), markdown);
+        assert_eq!(std::fs::read(note.join("note.json")).unwrap(), json);
+        assert_eq!(
+            std::fs::read_to_string(record.join("content")).unwrap(),
+            "Record path conflict"
+        );
+        drop(lock);
+        assert!(
+            recover(root.path())
+                .unwrap_err()
+                .to_string()
+                .contains("must be a regular file")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_cleanup_failure_does_not_block_recovery_or_a_later_publication() {
+        use std::os::unix::fs::PermissionsExt;
+        for phase in [Phase::Staged, Phase::OldMoved] {
+            let root = tempfile::tempdir().unwrap();
+            let doc = document("one");
+            let (note, _) = publish(root.path(), root.path(), &doc).unwrap();
+            let transaction = transaction(note.file_name().unwrap().to_str().unwrap(), phase);
+            let staging = root.path().join(&transaction.staging);
+            std::fs::create_dir(&staging).unwrap();
+            std::fs::write(staging.join("content"), "Staged note").unwrap();
+            std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o500)).unwrap();
+            if matches!(&transaction.phase, Phase::OldMoved) {
+                std::fs::rename(&note, root.path().join(&transaction.old)).unwrap();
+            }
+            let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
+            transaction.write(root.path()).unwrap();
+            drop(lock);
+            let warnings = recover(root.path()).unwrap();
+            std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("Could not remove note staging folder"));
+            assert!(warnings[0].contains(&staging.display().to_string()));
+            assert!(!root.path().join(TRANSACTION_FILE).exists());
+            assert!(note.join("note.md").is_file() && note.join("note.json").is_file());
+            let (published, warnings) = publish(root.path(), root.path(), &doc).unwrap();
+            assert_eq!(published, note);
+            assert!(warnings.is_empty());
+            assert_eq!(
+                std::fs::read_to_string(staging.join("content")).unwrap(),
+                "Staged note"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_publication_keeps_its_original_error_when_staging_cleanup_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let (note, _) = publish(root.path(), root.path(), &document("one")).unwrap();
+        let markdown = std::fs::read(note.join("note.md")).unwrap();
+        let json = std::fs::read(note.join("note.json")).unwrap();
+        let mut transaction =
+            transaction(note.file_name().unwrap().to_str().unwrap(), Phase::Staged);
+        let previous = root.path().join(&transaction.old);
+        std::fs::create_dir(&previous).unwrap();
+        std::fs::write(previous.join("content"), "Conflicting folder").unwrap();
+        let staging = root.path().join(&transaction.staging);
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("content"), "Staged note").unwrap();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let _lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
+        transaction.write(root.path()).unwrap();
+        let mut warnings = Vec::new();
+        let error = commit(root.path(), &mut transaction, &mut warnings).unwrap_err();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("Could not preserve the previous note")
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("Could not remove note staging folder"));
+        assert!(!root.path().join(TRANSACTION_FILE).exists());
+        assert_eq!(std::fs::read(note.join("note.md")).unwrap(), markdown);
+        assert_eq!(std::fs::read(note.join("note.json")).unwrap(), json);
+        assert_eq!(
+            std::fs::read_to_string(previous.join("content")).unwrap(),
+            "Conflicting folder"
+        );
     }
 
     #[cfg(unix)]
@@ -480,7 +750,7 @@ mod tests {
         doc.sections[0].speech[0].text = "Updated body".into();
         let (note, warnings) = publish(&root, temp.path(), &doc).unwrap();
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("could not remove the previous note backup"));
+        assert!(warnings[0].contains("Could not remove the previous note backup"));
         assert!(
             std::fs::read_to_string(note.join("note.md"))
                 .unwrap()
