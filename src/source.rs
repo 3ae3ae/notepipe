@@ -4,18 +4,14 @@ use crate::{runtime, settings::Source, subtitle};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufRead, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
     time::Duration,
 };
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
-pub const INSTALL_HINT: &str = "This URL needs a source adapter. Install it with: uv tool install notepipe --with notepipe-source-ytdlp";
+pub const ADAPTER_HINT: &str =
+    "URLs need a source adapter; see the README, or set [source].command";
 const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
 /// Note metadata; field names are retained for existing note documents.
@@ -95,17 +91,16 @@ impl Output {
             .iter()
             .enumerate()
             .map(|(index, caption)| {
-                let mut track = subtitle::file_track(
-                    output_path(root, &caption.path)?,
-                    caption.language.clone(),
-                );
-                track.source_order = index;
-                track.kind = if caption.automatic {
-                    subtitle::SubtitleKind::Automatic
-                } else {
-                    subtitle::SubtitleKind::Manual
-                };
-                Ok(track)
+                Ok(subtitle::SubtitleTrack {
+                    path: output_path(root, &caption.path)?,
+                    language: caption.language.clone(),
+                    source_order: index,
+                    kind: if caption.automatic {
+                        subtitle::SubtitleKind::Automatic
+                    } else {
+                        subtitle::SubtitleKind::Manual
+                    },
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Resolved {
@@ -137,30 +132,95 @@ impl Output {
     }
 }
 
-/// Async callers can drop this future; the existing process guard kills and reaps the child.
+/// An explicit command wins; otherwise discover exactly one adapter, preferring sibling executables.
+pub fn command(source: &Source) -> Result<(PathBuf, &[String])> {
+    if let Some((program, args)) = source.command.split_first() {
+        ensure!(
+            !program.trim().is_empty(),
+            "The source adapter command must name an executable"
+        );
+        let path = crate::adapter::resolve_executable(program).context(ADAPTER_HINT)?;
+        ensure!(path.is_file(), "{ADAPTER_HINT}");
+        return Ok((path, args));
+    }
+    let executable = std::env::current_exe()?.canonicalize()?;
+    let search_path = std::env::var_os("PATH").unwrap_or_default();
+    let directories = std::iter::once(
+        executable
+            .parent()
+            .context("Missing executable directory")?
+            .to_path_buf(),
+    )
+    .chain(std::env::split_paths(&search_path));
+    Ok((discover(directories)?, &[]))
+}
+
+fn discover(directories: impl IntoIterator<Item = PathBuf>) -> Result<PathBuf> {
+    let mut found = std::collections::BTreeMap::new();
+    let cwd = std::env::current_dir()?;
+    for directory in directories {
+        let directory = cwd.join(directory);
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let key = if cfg!(windows) {
+                Path::new(name)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+            } else {
+                name.into()
+            };
+            if key.starts_with("notepipe-source-")
+                && let Ok(path) = which::which_in(name, Some(directory.as_os_str()), &directory)
+            {
+                found.entry(key).or_insert(path);
+            }
+        }
+    }
+    ensure!(!found.is_empty(), "{ADAPTER_HINT}");
+    ensure!(
+        found.len() == 1,
+        "Multiple source adapters found: {}. Set [source].command.",
+        found.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
+    Ok(found.into_values().next().unwrap())
+}
+
+fn accept_line(line: &[u8], last: &mut Option<Output>) -> Result<()> {
+    ensure!(
+        line.len() as u64 <= MAX_LINE_BYTES,
+        "Source adapter output line exceeds 1 MiB"
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(line).context("Invalid source adapter JSON")?;
+    if let Some(progress) = value.get("progress") {
+        let progress = progress
+            .as_f64()
+            .filter(|value| (0.0..=1.0).contains(value))
+            .context("Invalid source adapter progress")?;
+        crate::progress::download_progress((progress * 10000.).round() as u64, 10000);
+        *last = None;
+    } else {
+        *last = Some(serde_json::from_value(value).context("Invalid source adapter result")?);
+    }
+    Ok(())
+}
+
+/// Tokio reads stdout while the shared process guard retains ownership of the whole tree.
 pub async fn resolve(
     url: &str,
     source: &Source,
     cache: &Path,
     no_download: bool,
 ) -> Result<Resolved> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let _cancel_on_drop = runtime::CancelOnDrop(cancelled.clone());
-    let (url, source, cache) = (url.to_owned(), source.clone(), cache.to_path_buf());
-    tokio::task::spawn_blocking(move || {
-        resolve_blocking(&url, &source, &cache, no_download, &cancelled)
-    })
-    .await
-    .context("Source adapter task interrupted")?
-}
-
-fn resolve_blocking(
-    url: &str,
-    source: &Source,
-    cache: &Path,
-    no_download: bool,
-    cancelled: &AtomicBool,
-) -> Result<Resolved> {
+    runtime::check_cancelled()?;
     crate::config::ensure_http_url(url)?;
     std::fs::create_dir_all(cache)?;
     let _lock = runtime::lock_file(&cache.join(".lock"))?;
@@ -169,19 +229,24 @@ fn resolve_blocking(
     if marker.is_file() {
         let output: Output = serde_json::from_slice(&std::fs::read(&marker)?)
             .context("Invalid source adapter cache")?;
-        return output.resolve(&directory, url);
+        match output.resolve(&directory, url) {
+            Ok(resolved) => return Ok(resolved),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
+            Err(error) => return Err(error),
+        }
     }
     ensure!(
         !no_download,
         "Cached source media is missing; allow downloading it again"
     );
-    let program = source
-        .command
-        .first()
-        .filter(|program| !program.trim().is_empty())
-        .context("The source adapter command must name an executable")?;
-    let executable = crate::adapter::resolve_executable(program).with_context(|| INSTALL_HINT)?;
-    ensure!(executable.is_file(), "{INSTALL_HINT}");
+    let (executable, args) = command(source)?;
+    runtime::check_cancelled()?;
+    if marker.exists() {
+        std::fs::remove_file(&marker)?;
+    }
     // Only incomplete output owned by this cache is replaced on a retry.
     if directory.exists() {
         std::fs::remove_dir_all(&directory)?;
@@ -190,13 +255,14 @@ fn resolve_blocking(
     let directory = directory.canonicalize()?;
     let mut command = Command::new(executable);
     command
-        .args(&source.command[1..])
+        .args(args)
         .arg(url)
         .arg("--out")
         .arg(&directory)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    runtime::check_cancelled()?;
     let mut child = runtime::ManagedChild::spawn_adapter("source adapter", &mut command)?;
     let stderr = runtime::StderrTail::default();
     let drain = stderr.drain(
@@ -205,84 +271,48 @@ fn resolve_blocking(
             .context("Missing source adapter stderr pipe")?,
         "source adapter",
     );
-    let stdout = child
-        .take_stdout()
-        .context("Missing source adapter stdout pipe")?;
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let reader = std::thread::spawn(move || {
-        let mut reader = std::io::BufReader::new(stdout);
-        loop {
-            let mut line = Vec::new();
-            let read = reader
-                .by_ref()
-                .take(MAX_LINE_BYTES + 1)
-                .read_until(b'\n', &mut line);
-            if matches!(read, Ok(0)) {
-                break;
-            }
-            let line = read.map_err(anyhow::Error::from).and_then(|_| {
-                ensure!(
-                    line.len() as u64 <= MAX_LINE_BYTES,
-                    "Source adapter output line exceeds 1 MiB"
-                );
-                Ok(line)
-            });
-            let failed = line.is_err();
-            if sender.send(line).is_err() || failed {
-                break;
-            }
-        }
-    });
+    let stdout = tokio::process::ChildStdout::from_std(
+        child
+            .take_stdout()
+            .context("Missing source adapter stdout pipe")?,
+    )?;
+    let mut stdout = tokio::io::BufReader::new(stdout);
+    let mut line = Vec::new();
+    let mut last = None;
+    let mut eof = false;
+    let poll = Duration::from_millis(50);
+    let mut exited = tokio::time::interval_at(tokio::time::Instant::now() + poll, poll);
     crate::progress::stage("download", "start");
-    let result = (|| {
-        let mut last = None;
+    let result = async {
         loop {
-            ensure!(
-                !cancelled.load(Ordering::Relaxed),
-                "Source adapter cancelled"
-            );
-            crate::runtime::check_cancelled()?;
-            match receiver.recv_timeout(Duration::from_millis(50)) {
-                Ok(line) => {
-                    let value: serde_json::Value =
-                        serde_json::from_slice(&line?).context("Invalid source adapter JSON")?;
-                    if let Some(progress) = value.get("progress") {
-                        let progress = progress
-                            .as_f64()
-                            .filter(|value| (0.0..=1.0).contains(value))
-                            .context("Invalid source adapter progress")?;
-                        crate::progress::download_progress(
-                            (progress * 10000.).round() as u64,
-                            10000,
-                        );
-                        last = None;
-                    } else {
-                        last = Some(
-                            serde_json::from_value::<Output>(value)
-                                .context("Invalid source adapter result")?,
-                        );
-                    }
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    if let Some(status) = child.try_wait() {
-                        ensure!(status.success(), "Source adapter failed ({status})");
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+            let mut bounded = (&mut stdout).take(MAX_LINE_BYTES + 1 - line.len() as u64);
+            tokio::select! {
+                biased;
+                error = runtime::watch_cancelled() => return Err(error),
+                count = bounded.read_until(b'\n', &mut line), if !eof => {
+                    if count? == 0 { eof = true; }
+                    else { accept_line(&line, &mut last)?; line.clear(); }
+                },
+                _ = exited.tick() => if let Some(status) = child.try_wait() {
+                    if !line.is_empty() { accept_line(&line, &mut last)?; }
+                    break Ok(status);
+                },
             }
         }
-        let output = last.context("Source adapter returned no result")?;
-        let resolved = output.resolve(&directory, url)?;
-        crate::checkpoint::atomic_write(&marker, &serde_json::to_vec(&output)?)?;
-        Ok(resolved)
-    })();
+    }
+    .await;
     child.stop();
-    drop(receiver);
-    let _ = reader.join();
     let _ = drain.join();
-    let result = result.map_err(|error| stderr.attach(error, "Source adapter diagnostics"))?;
+    let result = result
+        .and_then(|status| {
+            ensure!(status.success(), "Source adapter failed ({status})");
+            let output = last.context("Source adapter returned no result")?;
+            let resolved = output.resolve(&directory, url)?;
+            runtime::check_cancelled()?;
+            crate::checkpoint::atomic_write(&marker, &serde_json::to_vec(&output)?)?;
+            Ok(resolved)
+        })
+        .map_err(|error| stderr.attach(error, "Source adapter diagnostics"))?;
     crate::progress::stage("download", "done");
     Ok(result)
 }
@@ -388,6 +418,142 @@ mod tests {
             );
         })
         .unwrap();
+    }
+
+    #[test]
+    fn missing_media_or_caption_files_make_a_completed_cache_a_miss() {
+        let root = tempfile::tempdir().unwrap();
+        let record = root.path().join("record");
+        let Some(source) = command(&record, "files") else {
+            return;
+        };
+        runtime::block_on(async {
+            let cache = root.path().join("cache");
+            let first = resolve("https://example.test/media", &source, &cache, false)
+                .await
+                .unwrap();
+            for path in [&first.media, &first.subtitles[0].path] {
+                std::fs::remove_file(path).unwrap();
+                assert!(
+                    resolve("https://example.test/media", &source, &cache, true)
+                        .await
+                        .is_err()
+                );
+                let again = resolve("https://example.test/media", &source, &cache, false)
+                    .await
+                    .unwrap();
+                assert!(again.media.is_file());
+                assert!(again.subtitles.iter().all(|track| track.path.is_file()));
+            }
+            assert_eq!(
+                std::fs::read_to_string(record.join("calls"))
+                    .unwrap()
+                    .lines()
+                    .count(),
+                3
+            );
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn async_reads_preserve_partial_lines_and_reject_oversized_lines() {
+        let root = tempfile::tempdir().unwrap();
+        let Some(source) = command(&root.path().join("fragmented"), "fragmented") else {
+            return;
+        };
+        runtime::block_on(async {
+            assert!(
+                resolve(
+                    "https://example.test/media",
+                    &source,
+                    &root.path().join("cache"),
+                    false
+                )
+                .await
+                .is_ok()
+            );
+            let source = command(&root.path().join("oversized"), "oversized").unwrap();
+            let error = resolve(
+                "https://example.test/media",
+                &source,
+                &root.path().join("oversized-cache"),
+                false,
+            )
+            .await
+            .err()
+            .unwrap();
+            assert!(format!("{error:#}").contains("exceeds 1 MiB"));
+        })
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_exited_adapter_does_not_wait_for_a_helper_holding_stdout() {
+        let root = tempfile::tempdir().unwrap();
+        let Some(source) = command(&root.path().join("record"), "orphan") else {
+            return;
+        };
+        runtime::block_on(async {
+            let resolved = tokio::time::timeout(
+                Duration::from_secs(3),
+                resolve(
+                    "https://example.test/media",
+                    &source,
+                    &root.path().join("cache"),
+                    false,
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(resolved.media.is_file());
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn discovery_handles_none_one_and_multiple_adapters_and_prefers_siblings() {
+        let root = tempfile::tempdir_in(".").unwrap();
+        let sibling = root.path().join("sibling");
+        let path = root.path().join("path");
+        std::fs::create_dir(&sibling).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let directories = [sibling.clone(), path.clone()];
+        assert!(
+            discover(directories.clone())
+                .unwrap_err()
+                .to_string()
+                .contains(ADAPTER_HINT)
+        );
+        let executable = |directory: &Path, name: &str| {
+            let path = directory.join(if cfg!(windows) {
+                format!("{name}.cmd")
+            } else {
+                name.into()
+            });
+            std::fs::write(&path, "fixture").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            std::env::current_dir().unwrap().join(path)
+        };
+        let first = executable(&sibling, "notepipe-source-first");
+        assert_eq!(discover(directories.clone()).unwrap(), first);
+        executable(&path, "notepipe-source-first");
+        assert_eq!(discover(directories.clone()).unwrap(), first);
+        executable(&path, "notepipe-source-second");
+        let error = discover(directories).unwrap_err().to_string();
+        for text in [
+            "notepipe-source-first",
+            "notepipe-source-second",
+            "[source].command",
+        ] {
+            assert!(error.contains(text), "{error}");
+        }
     }
 
     #[cfg(unix)]

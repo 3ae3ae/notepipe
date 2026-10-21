@@ -53,7 +53,6 @@ fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config:
         stable_secs: 0.0,
         roi: None,
         formats: vec![notepipe::config::OutputFormat::Md],
-        keep_video: true,
         no_download: true,
         resume: false,
         llm: Default::default(),

@@ -10,11 +10,9 @@ use std::path::{Path, PathBuf};
 /// A track is a discovery result, not proof that its text can be read.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubtitleTrack {
-    pub id: String,
     pub language: Option<String>,
-    pub name: Option<String>,
     pub kind: SubtitleKind,
-    pub origin: SubtitleOrigin,
+    pub path: PathBuf,
     #[serde(default)]
     pub source_order: usize,
 }
@@ -25,12 +23,6 @@ pub enum SubtitleKind {
     Manual,
     Automatic,
     Unknown,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SubtitleOrigin {
-    File { path: PathBuf },
 }
 
 fn normalize_language(language: &str) -> String {
@@ -259,11 +251,9 @@ pub fn is_subtitle_file(path: &Path) -> bool {
 
 pub fn file_track(path: PathBuf, language: Option<String>) -> SubtitleTrack {
     SubtitleTrack {
-        id: format!("file:{}", path.display()),
         language,
-        name: None,
         kind: SubtitleKind::Unknown,
-        origin: SubtitleOrigin::File { path },
+        path,
         source_order: usize::MAX,
     }
 }
@@ -357,9 +347,7 @@ fn clean_cue_text(line: &str) -> String {
 pub fn sidecar_subtitle(video: &Path, preferred_language: &str) -> Option<PathBuf> {
     let mut tracks = sidecar_tracks(video);
     sort_tracks(&mut tracks, preferred_language, None);
-    tracks.into_iter().next().map(|track| match track.origin {
-        SubtitleOrigin::File { path } => path,
-    })
+    tracks.into_iter().next().map(|track| track.path)
 }
 
 #[cfg(test)]
@@ -368,14 +356,10 @@ mod tests {
 
     fn track(language: &str, kind: SubtitleKind) -> SubtitleTrack {
         SubtitleTrack {
-            id: format!("{language}:{kind:?}"),
             language: Some(language.into()),
-            name: None,
             kind,
             source_order: 0,
-            origin: SubtitleOrigin::File {
-                path: format!("{language}.srt").into(),
-            },
+            path: format!("{language}.srt").into(),
         }
     }
 

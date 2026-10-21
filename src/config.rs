@@ -152,7 +152,6 @@ pub struct PipelineConfig {
     pub stable_secs: f64,
     pub roi: Option<Roi>,
     pub formats: Vec<OutputFormat>,
-    pub keep_video: bool,
     pub no_download: bool,
     /// 断点续跑：跳过输出目录中已完成的 ASR chunk
     pub resume: bool,
@@ -450,7 +449,6 @@ mod tests {
             stable_secs: DEFAULT_STABLE_SECS,
             roi: None,
             formats: vec![OutputFormat::Md],
-            keep_video: false,
             no_download: false,
             resume: false,
             llm: Default::default(),

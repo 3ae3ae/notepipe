@@ -123,16 +123,6 @@ pub struct RunOpts {
     #[arg(help_heading = "Input and output")]
     pub formats: Option<Vec<crate::config::OutputFormat>>,
 
-    /// Keep the downloaded video
-    #[arg(long)]
-    #[arg(help_heading = "Input and output")]
-    pub keep_video: bool,
-
-    /// Delete newly downloaded video after success
-    #[arg(long, conflicts_with = "keep_video")]
-    #[arg(help_heading = "Input and output")]
-    pub no_keep_video: bool,
-
     /// Reuse the previously downloaded video
     #[arg(long)]
     #[arg(help_heading = "Input and output")]

@@ -85,7 +85,6 @@ pub fn resolve(
             .clone()
             .or_else(|| d.formats.clone())
             .unwrap_or_else(default_formats),
-        keep_video: config::resolve_flag(opts.keep_video, opts.no_keep_video, d.keep_video, false),
         no_download: opts.no_download || d.no_download.unwrap_or(false),
         resume: config::resolve_flag(opts.resume, opts.no_resume, d.resume, true),
         llm: resolve_llm(opts, file),
@@ -165,16 +164,14 @@ mod tests {
     #[test]
     fn explicit_false_overrides_config_and_invalid_values_are_not_clamped() {
         let mut file = settings::ConfigFile::default();
-        file.defaults.keep_video = Some(true);
         file.defaults.resume = Some(true);
         let opts = RunOpts {
-            no_keep_video: true,
             no_resume: true,
             stable_secs: Some(-1.0),
             ..Default::default()
         };
         let cfg = resolve("video".into(), &opts, &file).unwrap();
-        assert!(!cfg.keep_video && !cfg.resume);
+        assert!(!cfg.resume);
         assert_eq!(cfg.stable_secs, -1.0);
         assert!(cfg.validate().is_err());
     }

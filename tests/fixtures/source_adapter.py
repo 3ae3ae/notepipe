@@ -37,9 +37,12 @@ if args.behavior == 'malformed':
 if args.behavior in {'parent', 'absolute'}:
     print(json.dumps({'media': '../outside.mp4' if args.behavior == 'parent' else str(args.record / 'outside.mp4')}), flush=True)
     sys.exit(0)
+if args.behavior == 'oversized':
+    print('x' * (1024 * 1024 + 1), flush=True)
+    sys.exit(0)
 print(json.dumps({'progress': 0.25}), flush=True)
 media = out / 'media.mp4'
-if args.behavior == 'files':
+if args.behavior in {'files', 'orphan', 'fragmented'}:
     media.write_bytes(b'cached media')
 else:
     subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=64x32:d=3', '-c:v', 'mpeg4', str(media)], check=True)
@@ -49,4 +52,13 @@ for language, automatic, text in [('fr', False, 'French captions.'), ('en', True
     (out / name).write_text(f'1\n00:00:00,000 --> 00:00:02,500\n{text}\n', encoding='utf-8')
     tracks.append({'path': name, 'language': language, 'automatic': automatic})
 print(json.dumps({'progress': 1.0}), flush=True)
-print(json.dumps({'media': media.name, 'title': 'Fixture source', 'author': 'Fixture author', 'duration': 3, 'language': 'en', 'url': url, 'subtitles': tracks}), flush=True)
+result = json.dumps({'media': media.name, 'title': 'Fixture source', 'author': 'Fixture author', 'duration': 3, 'language': 'en', 'url': url, 'subtitles': tracks})
+if args.behavior == 'orphan':
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    (args.record / 'child-pid').write_text(str(child.pid))
+if args.behavior == 'fragmented':
+    sys.stdout.write(result[:20])
+    sys.stdout.flush()
+    time.sleep(0.15)
+    result = result[20:]
+print(result, flush=True)

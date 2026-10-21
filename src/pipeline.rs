@@ -36,6 +36,9 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     }
     let local = Path::new(&cfg.url);
     let is_local = local.is_file();
+    if !is_local && cfg.transcript_source == config::TranscriptSource::Asr {
+        cfg.validate_asr()?;
+    }
     progress::stage("fetch", "start");
     let probed = if is_local {
         None
@@ -569,15 +572,12 @@ async fn subtitles(
             &cfg.asr.language,
             source.language.as_deref(),
         );
-        source
-            .subtitles
-            .into_iter()
-            .next()
-            .map(|track| match track.origin {
-                crate::subtitle::SubtitleOrigin::File { path } => {
-                    (path, track.kind == crate::subtitle::SubtitleKind::Automatic)
-                }
-            })
+        source.subtitles.into_iter().next().map(|track| {
+            (
+                track.path,
+                track.kind == crate::subtitle::SubtitleKind::Automatic,
+            )
+        })
     } else {
         crate::subtitle::sidecar_subtitle(Path::new(&cfg.url), &cfg.asr.language)
             .map(|path| (path, false))
@@ -1222,7 +1222,6 @@ mod tests {
             stable_secs: 0.0,
             roi: None,
             formats: vec![c::OutputFormat::Md],
-            keep_video: true,
             no_download: true,
             resume: false,
             llm: Default::default(),

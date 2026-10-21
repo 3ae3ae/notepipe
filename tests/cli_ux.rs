@@ -298,7 +298,7 @@ fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
 }
 
 #[test]
-fn missing_source_adapter_reports_the_install_command() {
+fn missing_source_adapter_reports_generic_guidance() {
     let cli = CliTest::new();
     cli.config("[source]\ncommand = ['notepipe-test-missing-source-adapter']\n");
     let error = source_json_error(&cli.run(&["https://example.test/video", "--json"]));
@@ -306,7 +306,7 @@ fn missing_source_adapter_reports_the_install_command() {
         error["message"]
             .as_str()
             .unwrap()
-            .contains(notepipe::source::INSTALL_HINT)
+            .contains(notepipe::source::ADAPTER_HINT)
     );
 }
 
@@ -404,5 +404,98 @@ fn source_adapter_generates_notes_and_reuses_its_completed_output() {
     assert_eq!(
         calls[0]["extra"],
         serde_json::json!(["--format", "fixture quality"])
+    );
+}
+
+#[test]
+fn forced_asr_settings_are_checked_before_running_a_source_adapter() {
+    let cli = CliTest::new();
+    let Some(record) = source_config(&cli, "healthy") else {
+        return;
+    };
+    let error = source_json_error(&cli.run(&[
+        "https://example.test/media",
+        "--transcript-source",
+        "asr",
+        "--json",
+    ]));
+    assert!(error["message"].as_str().unwrap().contains("[asr]"));
+    assert!(!record.join("calls").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(python) =
+        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))
+    else {
+        return;
+    };
+    let cli = CliTest::new();
+    cli.config("[source]\ncommand = []\n");
+    let bin = cli.dir.path().join("bin");
+    let record = cli.dir.path().join("record");
+    std::fs::create_dir(&bin).unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_notepipe"))
+            .args(["https://example.test/media", "--json"])
+            .env("PATH", &bin)
+            .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
+            .env("XDG_CACHE_HOME", cli.dir.path().join("cache"))
+            .env_remove("RUST_LOG")
+            .current_dir(cli.dir.path())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let missing = source_json_error(&run());
+    assert!(
+        missing["message"]
+            .as_str()
+            .unwrap()
+            .contains(notepipe::source::ADAPTER_HINT)
+    );
+    let quote = |value: &std::path::Path| {
+        format!("'{}'", value.display().to_string().replace('\'', "'\\''"))
+    };
+    let script = format!(
+        "#!/bin/sh\nexec {} {} --record {} --behavior exit \"$@\"\n",
+        quote(&python),
+        quote(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/source_adapter.py"
+        ))),
+        quote(&record)
+    );
+    let install = |name: &str| {
+        let path = bin.join(name);
+        std::fs::write(&path, &script).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    install("notepipe-source-first");
+    let invoked = source_json_error(&run());
+    assert!(
+        invoked["message"]
+            .as_str()
+            .unwrap()
+            .contains("Source adapter failed")
+    );
+    install("notepipe-source-second");
+    let ambiguous = source_json_error(&run());
+    let message = ambiguous["message"].as_str().unwrap();
+    for text in [
+        "notepipe-source-first",
+        "notepipe-source-second",
+        "[source].command",
+    ] {
+        assert!(message.contains(text), "{message}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(record.join("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
     );
 }

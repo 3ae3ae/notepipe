@@ -19,24 +19,15 @@ pub struct Defaults {
     /// 转写来源：auto（字幕优先）| subtitle | asr
     pub transcript_source: Option<crate::config::TranscriptSource>,
     pub formats: Option<Vec<crate::config::OutputFormat>>,
-    pub keep_video: Option<bool>,
     pub no_download: Option<bool>,
     pub resume: Option<bool>,
 }
 
 /// External program that resolves an online URL into local media and subtitles.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Source {
     pub command: Vec<String>,
-}
-
-impl Default for Source {
-    fn default() -> Self {
-        Self {
-            command: vec!["notepipe-source-ytdlp".into()],
-        }
-    }
 }
 
 /// HTTP transcription dialect.
@@ -166,7 +157,6 @@ pub fn template() -> String {
         ("{MIN_SILENCE}", asr.min_silence.to_string()),
         ("{FORMATS}", formats),
         ("{SLIDE_MODE}", c::SlideMode::default().to_string()),
-        ("{KEEP_VIDEO}", "false".to_string()),
         ("{RESUME}", "true".to_string()),
         (
             "{TRANSCRIPT_SOURCE}",
@@ -209,14 +199,12 @@ const TEMPLATE: &str = r#"# Configuration
 #transcript_source = "{TRANSCRIPT_SOURCE}"
 # Output formats: md, html, json
 #formats = [{FORMATS}]
-# Keep downloaded video after success
-#keep_video = {KEEP_VIDEO}
 # Continue interrupted transcription
 #resume = {RESUME}
 
 [source]
-# Source adapter argv; notepipe appends URL --out DIR
-#command = ["notepipe-source-ytdlp"]
+# Source adapter argv; empty discovers a single notepipe-source-* executable
+#command = []
 
 [asr]
 # HTTP dialect: transcriptions, chat
@@ -279,7 +267,6 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
                 .collect::<Vec<_>>()
                 .join(","),
         ),
-        ("keep_video", r.keep_video.to_string()),
         ("no_download", r.no_download.to_string()),
         ("resume", r.resume.to_string()),
     ];

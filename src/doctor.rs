@@ -63,22 +63,14 @@ pub fn run() -> Result<()> {
     let loaded = crate::settings::load();
     let default_source = crate::settings::Source::default();
     let source = loaded.as_ref().map_or(&default_source, |cfg| &cfg.source);
-    match source
-        .command
-        .first()
-        .and_then(|program| crate::adapter::resolve_executable(program).ok())
-        .filter(|path| path.is_file())
-    {
-        Some(path) => check(
+    match crate::source::command(source) {
+        Ok((path, _)) => check(
             &mut out,
             true,
             "Source adapter",
             &format!("  {}", path.display()),
         ),
-        None => out.push(format!(
-            "- Source adapter unavailable. {}",
-            crate::source::INSTALL_HINT
-        )),
+        Err(error) => out.push(format!("- Source adapter unavailable. {error:#}")),
     }
     out.push("\nConfiguration".into());
     match &loaded {
