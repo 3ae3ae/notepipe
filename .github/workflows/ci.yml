@@ -3,9 +3,9 @@ name: ci
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'packaging/**', 'install.sh']
+    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'packaging/**']
   pull_request:
-    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'packaging/**', 'install.sh']
+    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'packaging/**']
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -26,7 +26,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
 
@@ -42,6 +42,9 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ffmpeg --no-progress --yes
 
+      - name: Formatting
+        run: cargo fmt --check
+
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
@@ -54,4 +57,50 @@ jobs:
       - name: Integration tests (synthetic video)
         if: runner.os != 'Windows'
         run: cargo test --features integration --test scene_synthetic
+
+  apple-adapter:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: adapters/apple
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: adapters/apple
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test
+
+  python-adapters:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [openvino, xai, meta, ytdlp]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find adapter
+        id: adapter
+        shell: bash
+        run: |
+          if [ -f "adapters/${{ matrix.adapter }}/pyproject.toml" ]; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@v6
+        if: steps.adapter.outputs.exists == 'true'
+        with:
+          python-version: '3.12'
+      - name: Tests
+        if: steps.adapter.outputs.exists == 'true'
+        working-directory: adapters/${{ matrix.adapter }}
+        run: uv run --with pytest pytest
+      - name: Build wheel and sdist
+        if: steps.adapter.outputs.exists == 'true'
+        working-directory: adapters/${{ matrix.adapter }}
+        run: uv build
 

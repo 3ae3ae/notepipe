@@ -2,9 +2,13 @@
 name = "notepipe"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
 description = "Extensible engine and CLI that turns video and audio into Markdown notes"
 repository = "https://github.com/3ae3ae/notepipe"
 license = "MIT"
+readme = "README.md"
+keywords = ["transcription", "markdown", "notes", "speech-to-text", "cli"]
+categories = ["command-line-utilities", "multimedia::audio", "multimedia::video"]
 
 [dependencies]
 earshot = "1.2.2"
