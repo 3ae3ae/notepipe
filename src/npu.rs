@@ -176,7 +176,7 @@ pub fn run_npu(
     cp: &mut Checkpoint,
 ) -> Result<Vec<TranscriptEvent>> {
     let t0 = Instant::now();
-    let segs = crate::asr::ffmpeg_vad(wav, max_speech as f32)?;
+    let segs = crate::asr::earshot_vad(wav, max_speech as f32)?;
     tracing::info!(segs = segs.len(), "npu vad");
     if segs.is_empty() {
         return Ok(crate::asr::no_speech_events());

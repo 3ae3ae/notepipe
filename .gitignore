@@ -3,6 +3,7 @@ out/
 .pi/
 models/
 *.wav
+!tests/fixtures/speech.wav
 *.mp4
 .DS_Store
 .venv/

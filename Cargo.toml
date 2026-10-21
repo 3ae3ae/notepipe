@@ -7,6 +7,7 @@ repository = "https://github.com/3ae3ae/notepipe"
 license = "MIT"
 
 [dependencies]
+earshot = "1.2.2"
 ratex-layout = "0.1.15"
 ratex-parser = "0.1.15"
 ratex-svg = { version = "0.1.15", features = ["embed-fonts"] }

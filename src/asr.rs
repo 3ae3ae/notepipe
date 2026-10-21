@@ -1,4 +1,4 @@
-//! 语音识别：ffmpeg 静音检测分段 + llama.cpp（Qwen3-ASR）。
+//! 语音识别：earshot 语音检测分段 + llama.cpp（Qwen3-ASR）。
 //!
 //! 通过 `llama-server` 常驻进程走 GPU（macOS Metal / NVIDIA CUDA / CPU），
 //! 跨平台只依赖 PATH 上的 llama.cpp。
@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 // ---------- 超参数（VAD 切分参数见 normalize_segments 附近） ----------
 
-/// ffmpeg 静音检测：低于 -28dB 且持续 0.4s 视为静音（课件停顿切分点）
-const SILENCEDETECT_AF: &str = "silencedetect=noise=-28dB:d=0.4";
+const VAD_THRESHOLD: f32 = 0.5;
+const MIN_SILENCE_SAMPLES: u64 = 6_400; // 0.4s @16k
 /// llama-server 上下文长度（token）：chunk 已被 VAD 限长在 max_speech 内，4096 足够
 const LLAMA_CTX: &str = "4096";
 /// 单 chunk 生成上限（token），server 的 -n 与请求的 max_tokens 共用。
@@ -33,8 +33,6 @@ const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(300);
 const API_HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 /// llama-server 单 chunk 转写超时
 const LLAMA_HTTP_TIMEOUT: Duration = Duration::from_secs(180);
-/// ffmpeg silencedetect 上限：整段音频 VAD 只做一次，但不得无限挂死
-const VAD_TIMEOUT: Duration = Duration::from_secs(900);
 /// ffmpeg 单段切音频上限（chunk 最长 max_speech 秒，处理应远快于此）
 const CUT_TIMEOUT: Duration = Duration::from_secs(120);
 /// 云端 STT 并发 worker 数：网络往返是主要瓶颈
@@ -250,7 +248,7 @@ fn run_blocking(
     cp: &mut crate::checkpoint::Checkpoint,
 ) -> Result<Vec<TranscriptEvent>> {
     let t0 = Instant::now();
-    let segs = ffmpeg_vad(wav, max_speech)?;
+    let segs = earshot_vad(wav, max_speech)?;
     tracing::info!(segs = segs.len(), "vad");
     if segs.is_empty() {
         return Ok(no_speech_events());
@@ -463,7 +461,7 @@ pub(crate) fn run_chunks(
     Ok(cp.sorted_events())
 }
 
-/// 云端 STT：ffmpeg VAD 分段 + 逐段 POST /audio/transcriptions（OpenAI 兼容 / OpenRouter）。
+/// 云端 STT：earshot VAD 分段 + 逐段 POST /audio/transcriptions（OpenAI 兼容 / OpenRouter）。
 fn run_api(
     api: &crate::settings::AsrApi,
     wav: &Path,
@@ -473,7 +471,7 @@ fn run_api(
     let t0 = Instant::now();
     // 凭据已在任务预检时解析（含环境变量）；空 key = 明确选择的无鉴权服务
     let api_key = api.api_key.trim().to_string();
-    let segs = ffmpeg_vad(wav, max_speech as f32)?;
+    let segs = earshot_vad(wav, max_speech as f32)?;
     tracing::info!(segs = segs.len(), endpoint = %api.base_url, model = %api.model, "api vad");
     if segs.is_empty() {
         return Ok(no_speech_events());
@@ -980,65 +978,42 @@ fn transcribe_file(client: &ureq::Agent, base: &str, wav: &Path) -> Result<Strin
         .to_string())
 }
 
-pub(crate) fn ffmpeg_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
-    // run_bounded：stdin 关闭 + 超时强制 kill（ffmpeg 在 GUI/管道 stdin 上可能挂死）
-    let mut cmd = Command::new("ffmpeg");
-    cmd.args(["-hide_banner", "-nostdin", "-i"]).arg(wav).args([
-        "-af",
-        SILENCEDETECT_AF,
-        "-f",
-        "null",
-        "-",
-    ]);
-    let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, VAD_TIMEOUT)?;
-    if !out.status.success() {
-        anyhow::bail!(
-            "无法分析音频中的停顿：{0} / Could not analyze pauses in the audio: {0}",
-            crate::error::tail_lines(&out.stderr, 3)
-        );
-    }
-    let log = &out.stderr;
-    // 时长缺失时不能按 0 处理：末段语音（或整段无停顿的音频）会被当成静音丢掉
-    let dur = ffmpeg_input_duration(log)
-        .or_else(|| crate::media::probe_duration_blocking(wav))
-        .filter(|d| d.is_finite() && *d > 0.0)
-        .context(crate::tr!(
-            "无法读取音频时长 / Could not read the audio duration"
-        ))?;
-    let mut silences: Vec<(f64, f64)> = vec![];
-    let mut start: Option<f64> = None;
-    for line in log.lines() {
-        if let Some(v) = line.split("silence_start:").nth(1) {
-            match v.trim().parse::<f64>() {
-                Ok(t) => start = Some(t),
-                // 解析失败不能静默丢弃：0.0 会产生倒挂区间进 invert_silence
-                Err(e) => {
-                    tracing::warn!("无法读取静音起点 / Could not read silence start ({v:?}): {e}")
-                }
-            }
-        } else if let Some(v) = line.split("silence_end:").nth(1) {
-            match v.split_whitespace().next().unwrap_or("").parse::<f64>() {
-                Ok(end) => {
-                    if let Some(s) = start.take() {
-                        silences.push((s, end));
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("无法读取静音终点 / Could not read silence end ({v:?}): {e}")
-                }
+/// Stream 16 kHz mono s16le PCM in 256-sample frames; pad only the final frame.
+pub(crate) fn earshot_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
+    let mut detector = earshot::Detector::default();
+    let mut speech: Vec<(u64, u64)> = Vec::new();
+    let mut detect = |frame: &[i16], start: u64, end: u64| {
+        if detector.predict_i16(frame) >= VAD_THRESHOLD {
+            if let Some(last) = speech.last_mut()
+                && start - last.1 < MIN_SILENCE_SAMPLES
+            {
+                last.1 = end;
+            } else {
+                speech.push((start, end));
             }
         }
+    };
+    let mut frame = [0i16; 256];
+    let mut filled = 0;
+    let mut offset = 0u64;
+    let samples = read_pcm_samples(wav, |sample| {
+        frame[filled] = sample;
+        filled += 1;
+        if filled == frame.len() {
+            detect(&frame, offset, offset + 256);
+            offset += 256;
+            filled = 0;
+        }
+    })?;
+    if filled > 0 {
+        frame[filled..].fill(0);
+        detect(&frame, offset, samples);
     }
-    normalize_segments(invert_silence(dur, &silences), max_speech as f64, wav, dur)
-}
-
-/// ffmpeg 输入信息里的 `Duration: HH:MM:SS.xx`（秒）。
-fn ffmpeg_input_duration(log: &str) -> Option<f64> {
-    let rest = log.split("Duration:").nth(1)?.trim_start();
-    let stamp = rest.split([',', ' ', '\n']).next()?;
-    let mut parts = stamp.split(':');
-    let (h, m, s) = (parts.next()?, parts.next()?, parts.next()?);
-    Some(h.parse::<f64>().ok()? * 3600.0 + m.parse::<f64>().ok()? * 60.0 + s.parse::<f64>().ok()?)
+    let speech = speech
+        .into_iter()
+        .map(|(start, end)| (start as f64 / 16_000.0, end as f64 / 16_000.0))
+        .collect();
+    normalize_segments(speech, max_speech as f64, wav, samples as f64 / 16_000.0)
 }
 
 /// 最终送入 ASR 的分段：`start/end` 是事件时间（用于时间线），`cut_*` 是切音频范围（含静音填充）。
@@ -1048,6 +1023,68 @@ pub struct Seg {
     pub end: f64,
     pub cut_start: f64,
     pub cut_end: f64,
+}
+
+/// Stream the pipeline's 16 kHz mono s16le WAV, returning its actual sample count.
+fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16)) -> Result<u64> {
+    use std::io::{BufReader, Read, Seek};
+    let file = std::fs::File::open(wav)
+        .with_context(|| format!("无法读取音频 / Could not read audio: {}", wav.display()))?;
+    let mut reader = BufReader::new(file);
+    // RIFF 头 + 逐 chunk 头扫描，流式定位 PCM data 块。
+    let mut header = [0u8; 12];
+    reader
+        .read_exact(&mut header)
+        .ok()
+        .filter(|_| &header[0..4] == b"RIFF" && &header[8..12] == b"WAVE")
+        .ok_or_else(|| {
+            anyhow::anyhow!(crate::tr!(
+                "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
+            ))
+        })?;
+    let data_size = loop {
+        let mut ch = [0u8; 8];
+        if reader.read_exact(&mut ch).is_err() {
+            anyhow::bail!(crate::tr!(
+                "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
+            ));
+        }
+        let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as u64;
+        if &ch[0..4] == b"data" {
+            break size;
+        }
+        // 跳过其他 chunk（含奇数对齐字节）
+        reader.seek(std::io::SeekFrom::Current((size + (size & 1)) as i64))?;
+    };
+    let mut buf = vec![0u8; 128 * 1024];
+    let mut half: Option<u8> = None; // 跨 read 边界的样本低字节
+    let mut samples = 0;
+    let mut emit = |sample| {
+        on_sample(sample);
+        samples += 1;
+    };
+    let mut remaining = data_size;
+    while remaining > 0 {
+        let want = remaining.min(buf.len() as u64) as usize;
+        let n = reader.read(&mut buf[..want])?;
+        if n == 0 {
+            break; // data 块声明长度超出文件实际（截断文件）：按实际读到的计
+        }
+        remaining -= n as u64;
+        let mut i = 0;
+        if let Some(lo) = half.take() {
+            emit(i16::from_le_bytes([lo, buf[0]]));
+            i = 1;
+        }
+        while i + 1 < n {
+            emit(i16::from_le_bytes([buf[i], buf[i + 1]]));
+            i += 2;
+        }
+        if i < n {
+            half = Some(buf[i]);
+        }
+    }
+    Ok(samples)
 }
 
 /// 音频逐 100ms 的 RMS 能量（用于在目标切点附近找最近的静音最低点）。
@@ -1061,71 +1098,12 @@ impl Energy {
     /// 分块读入并滑动累计每个 100ms 窗口的平方和，只保留 rms 数组——
     /// 不把整文件和全部样本读进内存（2h 音频约 1GB）。
     pub fn load(wav: &Path) -> Result<Self> {
-        use std::io::{BufReader, Read, Seek};
-        let file = std::fs::File::open(wav)
-            .with_context(|| format!("无法读取音频 / Could not read audio: {}", wav.display()))?;
-        let mut reader = BufReader::new(file);
-        // RIFF 头 + 逐 chunk 头扫描，定位 PCM data 块（流式等价于原 find_pcm_body）
-        let mut header = [0u8; 12];
-        reader
-            .read_exact(&mut header)
-            .ok()
-            .filter(|_| &header[0..4] == b"RIFF" && &header[8..12] == b"WAVE")
-            .ok_or_else(|| {
-                anyhow::anyhow!(crate::tr!(
-                    "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
-                ))
-            })?;
-        let data_size = loop {
-            let mut ch = [0u8; 8];
-            if reader.read_exact(&mut ch).is_err() {
-                anyhow::bail!(crate::tr!(
-                    "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
-                ));
-            }
-            let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as u64;
-            if &ch[0..4] == b"data" {
-                break size;
-            }
-            // 跳过其他 chunk（含奇数对齐字节）
-            reader.seek(std::io::SeekFrom::Current((size + (size & 1)) as i64))?;
-        };
         let mut rms = Vec::new();
-        let mut buf = vec![0u8; 128 * 1024];
-        let mut half: Option<u8> = None; // 跨 read 边界的样本低字节
         let mut sum = 0.0f64;
         let mut n_in_hop = 0usize;
-        let mut remaining = data_size;
-        while remaining > 0 {
-            let want = remaining.min(buf.len() as u64) as usize;
-            let n = reader.read(&mut buf[..want])?;
-            if n == 0 {
-                break; // data 块声明长度超出文件实际（截断文件）：按实际读到的计
-            }
-            remaining -= n as u64;
-            let mut i = 0;
-            if let Some(lo) = half.take() {
-                rms_accumulate(
-                    i16::from_le_bytes([lo, buf[0]]),
-                    &mut sum,
-                    &mut n_in_hop,
-                    &mut rms,
-                );
-                i = 1;
-            }
-            while i + 1 < n {
-                rms_accumulate(
-                    i16::from_le_bytes([buf[i], buf[i + 1]]),
-                    &mut sum,
-                    &mut n_in_hop,
-                    &mut rms,
-                );
-                i += 2;
-            }
-            if i < n {
-                half = Some(buf[i]);
-            }
-        }
+        read_pcm_samples(wav, |sample| {
+            rms_accumulate(sample, &mut sum, &mut n_in_hop, &mut rms);
+        })?;
         if n_in_hop > 0 {
             rms.push((sum / n_in_hop as f64).sqrt() as f32);
         }
@@ -1270,21 +1248,6 @@ fn split_smart(s: f64, e: f64, max: f64, energy: Option<&Energy>, out: &mut Vec<
     split_smart(cut, e, max, energy, out);
 }
 
-fn invert_silence(dur: f64, sil: &[(f64, f64)]) -> Vec<(f64, f64)> {
-    let mut t = 0.0;
-    let mut out = vec![];
-    for &(s, e) in sil {
-        if s > t + 0.15 {
-            out.push((t, s));
-        }
-        t = e.max(t);
-    }
-    if dur > t + 0.15 {
-        out.push((t, dur));
-    }
-    out
-}
-
 pub fn cut_wav(src: &Path, start: f64, end: f64, dest: &Path) -> Result<()> {
     let dur = (end - start).max(0.05);
     let mut cmd = Command::new("ffmpeg");
@@ -1369,17 +1332,99 @@ mod tests {
         assert!(String::from_utf8_lossy(&body).contains("name=\"file\"; filename=\"audio.wav\""));
     }
 
-    #[test]
-    fn vad_reads_duration_from_ffmpeg_and_keeps_speech_without_pauses() {
-        let log = "Input #0, wav, from 'a.wav':\n  Duration: 00:01:02.50, bitrate: 256 kb/s\n";
-        assert_eq!(ffmpeg_input_duration(log), Some(62.5));
-        assert_eq!(ffmpeg_input_duration("  Duration: N/A, bitrate: N/A"), None);
-        // 整段没有停顿：只要时长已知，就是一整段语音而不是空结果
-        assert_eq!(invert_silence(62.5, &[]), vec![(0.0, 62.5)]);
+    fn speech_fixture_samples() -> Vec<i16> {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/speech.wav"
+        ));
+        let mut samples = Vec::new();
+        let count = read_pcm_samples(path, |sample| samples.push(sample)).unwrap();
+        assert_eq!(count, samples.len() as u64);
+        samples
+    }
+
+    fn test_wav(samples: &[i16]) -> tempfile::NamedTempFile {
+        use std::io::Write as _;
+        let pcm: Vec<u8> = samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        let size = u32::try_from(pcm.len()).unwrap();
+        let header = [
+            b"RIFF".as_slice(),
+            &(size + 36).to_le_bytes(),
+            b"WAVEfmt ",
+            &16u32.to_le_bytes(),
+            &1u16.to_le_bytes(),
+            &1u16.to_le_bytes(),
+            &16_000u32.to_le_bytes(),
+            &32_000u32.to_le_bytes(),
+            &2u16.to_le_bytes(),
+            &16u16.to_le_bytes(),
+            b"data",
+            &size.to_le_bytes(),
+        ]
+        .concat();
+        let mut wav = tempfile::NamedTempFile::new().unwrap();
+        wav.write_all(&header).unwrap();
+        wav.write_all(&pcm).unwrap();
+        wav
     }
 
     #[test]
-    fn sanitize_and_vad_invert() {
+    fn earshot_detects_the_speech_fixture_between_silent_seconds() {
+        let mut samples = vec![0; 16_000];
+        samples.extend(speech_fixture_samples());
+        samples.extend([0; 16_000]);
+        let wav = test_wav(&samples);
+        let segments = earshot_vad(wav.path(), 20.0).unwrap();
+        assert_eq!(segments.len(), 1, "{segments:?}");
+        assert!((segments[0].start - 1.0).abs() <= 0.35, "{segments:?}");
+        assert!((segments[0].end - 3.4).abs() <= 0.35, "{segments:?}");
+        assert!(segments[0].cut_start >= 0.0);
+        assert!(segments[0].cut_end <= samples.len() as f64 / 16_000.0);
+    }
+
+    #[test]
+    fn earshot_silence_has_no_segments_including_a_partial_final_frame() {
+        let wav = test_wav(&vec![0; 16_000]);
+        assert!(earshot_vad(wav.path(), 20.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn earshot_merges_short_pauses_and_keeps_long_pauses_separate() {
+        let speech = speech_fixture_samples();
+        for (silence_samples, expected) in [(1_600, 1), (16_000, 2)] {
+            let mut samples = vec![0; 16_000];
+            samples.extend_from_slice(&speech);
+            samples.resize(samples.len() + silence_samples, 0);
+            samples.extend_from_slice(&speech);
+            samples.extend([0; 16_000]);
+            let wav = test_wav(&samples);
+            let segments = earshot_vad(wav.path(), 20.0).unwrap();
+            assert_eq!(
+                segments.len(),
+                expected,
+                "pause={silence_samples}: {segments:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_pcm_reader_preserves_energy_and_actual_sample_count() {
+        let samples = vec![16_384; 16_017];
+        let wav = test_wav(&samples);
+        let mut decoded = Vec::new();
+        assert_eq!(
+            read_pcm_samples(wav.path(), |sample| decoded.push(sample)).unwrap(),
+            16_017
+        );
+        assert_eq!(decoded, samples);
+        assert_eq!(Energy::load(wav.path()).unwrap().rms, vec![0.5; 11]);
+    }
+
+    #[test]
+    fn sanitize_markers() {
         assert_eq!(
             sanitize_qwen_text("**language Chinese<asr_text>你好世界。"),
             "你好世界。"
@@ -1387,8 +1432,6 @@ mod tests {
         assert_eq!(sanitize_qwen_text("内容</asr_text>尾巴"), "内容");
         // 语言名后跟多字节空白（全角空格）时不得在字符中间切片
         assert_eq!(sanitize_qwen_text("language Chinese\u{3000}你好"), "你好");
-        let s = invert_silence(10.0, &[(0.0, 1.0), (4.0, 5.0)]);
-        assert!((s[0].0 - 1.0).abs() < 1e-6 && (s[0].1 - 4.0).abs() < 1e-6);
     }
 
     #[test]
