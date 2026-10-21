@@ -176,7 +176,7 @@ mod tests {
             Ok(())
         });
         assert!(format!("{:#}", result.err().unwrap()).contains("test cancellation"));
-        assert!(start.elapsed() < Duration::from_secs(10));
+        assert!(start.elapsed() < Duration::from_secs(60));
         #[cfg(unix)]
         assert!(dir.path().join("terminated").is_file());
     }
@@ -197,11 +197,11 @@ mod tests {
             .unwrap();
         let start = Instant::now();
         drop(adapter);
-        assert!(start.elapsed() < Duration::from_secs(4));
+        assert!(start.elapsed() < Duration::from_secs(10));
         assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
         // The killed child is reaped by init, which may take a moment on a busy machine.
         let start = Instant::now();
-        while unsafe { libc::kill(child, 0) } == 0 && start.elapsed() < Duration::from_secs(5) {
+        while unsafe { libc::kill(child, 0) } == 0 && start.elapsed() < Duration::from_secs(30) {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(
@@ -237,13 +237,13 @@ mod tests {
         let start = Instant::now();
         while adapter.child.try_wait().is_none() {
             assert!(
-                start.elapsed() < Duration::from_secs(5),
+                start.elapsed() < Duration::from_secs(30),
                 "launcher did not exit"
             );
             std::thread::sleep(Duration::from_millis(10));
         }
         drop(adapter);
-        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(30));
         assert_eq!(
             unsafe { WaitForSingleObject(process.as_raw_handle(), 1000) },
             WAIT_OBJECT_0

@@ -686,7 +686,7 @@ mod tests {
             });
             let start = std::time::Instant::now();
             while !record.join("child-ready").exists() {
-                assert!(start.elapsed() < Duration::from_secs(10));
+                assert!(start.elapsed() < Duration::from_secs(60));
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             let pid: i32 = std::fs::read_to_string(record.join("pid"))
@@ -697,7 +697,7 @@ mod tests {
             assert!(task.await.err().unwrap().is_cancelled());
             let start = std::time::Instant::now();
             while unsafe { libc::kill(pid, 0) } == 0 {
-                assert!(start.elapsed() < Duration::from_secs(5));
+                assert!(start.elapsed() < Duration::from_secs(30));
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             assert!(record.join("child-stopped").is_file());

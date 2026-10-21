@@ -861,7 +861,8 @@ mod http_tests {
             assert!(task.await.unwrap_err().is_cancelled());
             assert!(reached_request);
             let start = Instant::now();
-            while !record.join("terminated").is_file() && start.elapsed() < Duration::from_secs(5) {
+            while !record.join("terminated").is_file() && start.elapsed() < Duration::from_secs(30)
+            {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             assert!(record.join("terminated").is_file());

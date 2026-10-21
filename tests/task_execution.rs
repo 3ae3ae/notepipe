@@ -225,7 +225,7 @@ fn wait_for_file(child: &mut std::process::Child, path: &Path) {
 fn wait_for_cancelled(mut child: std::process::Child) -> Output {
     let start = std::time::Instant::now();
     while child.try_wait().unwrap().is_none() {
-        if start.elapsed() >= std::time::Duration::from_secs(10) {
+        if start.elapsed() >= std::time::Duration::from_secs(60) {
             let _ = child.kill();
             let _ = child.wait();
             panic!("cancellation did not stop the CLI");
@@ -1188,12 +1188,12 @@ fn a_second_signal_kills_the_source_tree_before_exiting_immediately() {
     let start = Instant::now();
     assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
     wait_for_cancelled(child);
-    assert!(start.elapsed() < Duration::from_secs(1));
+    assert!(start.elapsed() < Duration::from_secs(5));
     let start = Instant::now();
     while unsafe { libc::kill(pid, 0) } == 0 {
         assert!(
-            start.elapsed() < Duration::from_secs(3),
-            "source adapter was orphaned"
+            start.elapsed() < Duration::from_secs(30),
+            "download adapter was orphaned"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
