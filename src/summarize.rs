@@ -155,4 +155,68 @@ mod tests {
                 .contains("Transcript is empty")
         );
     }
+    #[test]
+    fn transcript_map_reduce_keeps_part_order_and_uses_the_fixed_merge_template() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let mock = MockAi::respond_with(|_, body| {
+            assert!(body.get("temperature").is_none() && body.get("max_tokens").is_none());
+            assert_eq!(
+                body["messages"][0]["content"],
+                "EXTRACT ACTION ITEMS. Output only the Markdown, without code fences or any other text."
+            );
+            let user = body["messages"][1]["content"].as_str().unwrap();
+            let content = if user.contains("Below are results for consecutive parts") {
+                assert!(
+                    user.find("== Part 1 ==\nFirst part").unwrap()
+                        < user.find("== Part 2 ==\nSecond part").unwrap()
+                );
+                assert!(user.contains("each produced with the same instructions"));
+                assert!(user.ends_with("Combine them into one result for the whole recording, following the same instructions."));
+                "## Combined\n\nExact final Markdown."
+            } else {
+                assert!(user.starts_with("Title: Recording\nAuthor: Author\n\nTranscript (each line starts with its start time as [mm:ss]):\n\n"));
+                if user.contains("[00:00]") {
+                    "First part"
+                } else {
+                    "Second part"
+                }
+            };
+            Some((200, json!({"choices":[{"message":{"content":content}}]})))
+        });
+        let mut stage = crate::llm::Stage::builtin("summary").unwrap();
+        stage.prompt = "EXTRACT ACTION ITEMS.".into();
+        let settings = crate::llm::LlmSettings {
+            base_url: mock.url.clone(),
+            model: "fixture".into(),
+            concurrency: 2,
+            ..Default::default()
+        };
+        let events = (0..2)
+            .map(|index| crate::timeline::TranscriptEvent {
+                start: f64::from(index * 60),
+                end: f64::from(index * 60 + 1),
+                text: "x".repeat(15_000),
+                raw: None,
+                below: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let meta = crate::source::MediaMeta {
+            title: "Recording".into(),
+            author: "Author".into(),
+            duration: 120.,
+            source: "https://example.test/media".into(),
+            seek_url: None,
+        };
+        for name in ["summary", "actions"] {
+            stage.name = name.into();
+            let result =
+                crate::runtime::block_on(crate::summarize::run(&settings, &stage, &events, &meta))
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(result, "## Combined\n\nExact final Markdown.");
+        }
+        assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 6);
+    }
 }

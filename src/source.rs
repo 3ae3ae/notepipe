@@ -52,8 +52,6 @@ struct Caption {
 pub struct Resolved {
     pub media: PathBuf,
     pub meta: MediaMeta,
-    pub language: Option<String>,
-    pub subtitles: Vec<subtitle::SubtitleTrack>,
 }
 
 fn output_path(root: &Path, relative: &str) -> Result<PathBuf> {
@@ -138,11 +136,11 @@ impl Output {
     }
 
     fn resolve(&self, root: &Path, source: &str) -> Result<Resolved> {
+        // Validate caption paths even though callers select captions from the cached output.
+        self.tracks(root)?;
         Ok(Resolved {
             media: output_path(root, &self.media)?,
             meta: self.metadata(source)?,
-            language: self.language.clone(),
-            subtitles: self.tracks(root)?,
         })
     }
 }
@@ -488,13 +486,26 @@ mod tests {
             let first = resolve("https://example.test/media", &source, &cache)
                 .await
                 .unwrap();
-            for path in [&first.media, &first.subtitles[0].path] {
+            let tracks = Output::read(&cache)
+                .unwrap()
+                .unwrap()
+                .tracks(&cache.join("files"))
+                .unwrap();
+            for path in [&first.media, &tracks[0].path] {
                 std::fs::remove_file(path).unwrap();
                 let again = resolve("https://example.test/media", &source, &cache)
                     .await
                     .unwrap();
                 assert!(again.media.is_file());
-                assert!(again.subtitles.iter().all(|track| track.path.is_file()));
+                assert!(
+                    Output::read(&cache)
+                        .unwrap()
+                        .unwrap()
+                        .tracks(&cache.join("files"))
+                        .unwrap()
+                        .iter()
+                        .all(|track| track.path.is_file())
+                );
             }
             assert_eq!(
                 std::fs::read_to_string(record.join("calls"))
@@ -575,7 +586,15 @@ mod tests {
                     .unwrap();
                 assert_eq!(resolved.meta.title.len(), 131072);
                 assert!(resolved.media.is_file());
-                assert_eq!(resolved.subtitles.len(), 3);
+                assert_eq!(
+                    Output::read(&cache)
+                        .unwrap()
+                        .unwrap()
+                        .tracks(&cache.join("files"))
+                        .unwrap()
+                        .len(),
+                    3
+                );
                 assert!(cache.join("complete.json").is_file());
             }
         })

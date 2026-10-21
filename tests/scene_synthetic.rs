@@ -40,27 +40,60 @@ fn make_test_video(path: &std::path::Path) {
     assert!(st.success());
 }
 
-/// 两个场景测试共享的 PipelineConfig 基座；差异字段在调用处用结构体更新语法覆盖。
-fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config::PipelineConfig {
-    notepipe::config::PipelineConfig {
-        url: video.display().to_string(),
-        config_path: None,
-        on_complete: Vec::new(),
-        out_dir: dir.to_path_buf(),
-        out_root: dir.to_path_buf(),
-        similarity: 0.9,
-        sample_interval: 0.5,
-        cooldown: 10.0,
-        screenshot_mode: notepipe::config::ScreenshotMode::First,
-        stable_secs: 0.0,
-        roi: None,
-        no_resume: false,
-        subtitle: None,
-        llm: Default::default(),
-        source: Default::default(),
-        asr: Default::default(),
-        transcript_source: notepipe::config::TranscriptSource::Asr,
-    }
+fn sections(
+    video: &std::path::Path,
+    dir: &std::path::Path,
+    options: &[&str],
+) -> Vec<serde_json::Value> {
+    use std::io::Write;
+    std::fs::write(
+        video.with_extension("srt"),
+        "1\n00:00:00,000 --> 00:00:20,000\nScene fixture.\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+        .arg(video)
+        .args([
+            "--config",
+            "-",
+            "--json",
+            "--transcript-source",
+            "subtitle",
+            "--similarity",
+            "0.9",
+            "--sample-interval",
+            "0.5",
+        ])
+        .args(options)
+        .arg("--out")
+        .arg(dir.join("notes"))
+        .current_dir(dir)
+        .env("XDG_CACHE_HOME", dir.join("cache"))
+        .env_remove("RUST_LOG")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"{}").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let done: serde_json::Value = serde_json::from_str(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(done["type"], "done");
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(done["json"].as_str().unwrap()).unwrap()).unwrap();
+    document["sections"].as_array().unwrap().clone()
 }
 
 #[test]
@@ -74,21 +107,27 @@ fn scene_detects_slides_with_true_timestamps() {
     let video = dir.join("synthetic.mp4");
     make_test_video(&video);
 
-    let cfg = test_cfg(&video, &dir);
-
-    let notepipe::scene::Output::Frames(frames) = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(notepipe::scene::run(&cfg, &video))
-        .expect("scene run")
-    else {
-        panic!("Expected a video stream");
-    };
+    let frames = sections(
+        &video,
+        &dir,
+        &[
+            "--cooldown",
+            "10",
+            "--screenshot-mode",
+            "first",
+            "--stable-secs",
+            "0",
+        ],
+    );
 
     // 期望（cooldown=10s、first 模式）：
     //   0s "A" 被发射；6.5s "B" 成为候选、7.5s 被 "C" 替换（候选持续更新，检测无盲区）；
     //   cooldown 在 ~10s 结束时发射的是 "C" 的首次出现时间 7.5s（而非 10s）；
     //   14.5s "D" 距上次发射 <10s，被跳过。
-    let ts: Vec<f64> = frames.iter().map(|f| f.t).collect();
+    let ts: Vec<f64> = frames
+        .iter()
+        .map(|frame| frame["t"].as_f64().unwrap())
+        .collect();
     assert!(ts.len() >= 2, "至少应检出 2 帧，got {ts:?}");
     assert!(
         (ts[0] - 0.0).abs() < 1.0,
@@ -127,21 +166,22 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
         .expect("spawn ffmpeg");
     assert!(st.success());
 
-    let cfg = notepipe::config::PipelineConfig {
-        cooldown: 2.0,
-        screenshot_mode: notepipe::config::ScreenshotMode::Stable,
-        stable_secs: 1.2,
-        ..test_cfg(&video, &dir)
-    };
-
-    let notepipe::scene::Output::Frames(frames) = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(notepipe::scene::run(&cfg, &video))
-        .expect("scene run")
-    else {
-        panic!("Expected a video stream");
-    };
-    let ts: Vec<f64> = frames.iter().map(|f| f.t).collect();
+    let frames = sections(
+        &video,
+        &dir,
+        &[
+            "--cooldown",
+            "2",
+            "--screenshot-mode",
+            "stable",
+            "--stable-secs",
+            "1.2",
+        ],
+    );
+    let ts: Vec<f64> = frames
+        .iter()
+        .map(|frame| frame["t"].as_f64().unwrap())
+        .collect();
     // 黑页（2~3.5s，持续 1.5s > stable_secs=1.2s）是否被单独发射取决于采样相位，
     // 非确定行为；这里只断言确定性行为：首页 ~0s 与稳定灰页 onset ~3.5s 都存在。
     assert!(ts.len() >= 2, "stable 模式至少检出 2 页，got {ts:?}");

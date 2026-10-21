@@ -99,4 +99,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(response)
 
 
-http.server.ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
+server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
+(args.record / 'ready').write_text('ready')
+server.serve_forever()

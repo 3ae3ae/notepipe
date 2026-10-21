@@ -35,10 +35,6 @@ fn resolve_from(program: &str, directory: &Path) -> Result<PathBuf> {
 }
 
 impl Adapter {
-    pub fn start(argv: &[String]) -> Result<Self> {
-        Self::start_with_control(argv, &crate::runtime::check_cancelled)
-    }
-
     pub(crate) fn start_with_control(
         argv: &[String],
         control: &dyn Fn() -> Result<()>,
@@ -135,7 +131,7 @@ mod tests {
         let Some(argv) = argv(dir.path(), "healthy") else {
             return;
         };
-        let adapter = Adapter::start(&argv).unwrap();
+        let adapter = Adapter::start_with_control(&argv, &crate::runtime::check_cancelled).unwrap();
         assert!(
             std::fs::read_to_string(dir.path().join("health-checks"))
                 .unwrap()
@@ -158,7 +154,9 @@ mod tests {
         let Some(argv) = argv(dir.path(), "exit") else {
             return;
         };
-        let error = Adapter::start(&argv).err().unwrap();
+        let error = Adapter::start_with_control(&argv, &crate::runtime::check_cancelled)
+            .err()
+            .unwrap();
         let error = format!("{error:#}");
         assert!(error.contains("adapter stderr"), "{error}");
         assert!(error.contains("adapter stdout"), "{error}");
@@ -191,7 +189,7 @@ mod tests {
         let Some(argv) = argv(dir.path(), "stubborn") else {
             return;
         };
-        let adapter = Adapter::start(&argv).unwrap();
+        let adapter = Adapter::start_with_control(&argv, &crate::runtime::check_cancelled).unwrap();
         let pid = adapter.child.id();
         let start = Instant::now();
         drop(adapter);
@@ -213,7 +211,8 @@ mod tests {
         let Some(argv) = argv(dir.path(), "launcher") else {
             return;
         };
-        let mut adapter = Adapter::start(&argv).unwrap();
+        let mut adapter =
+            Adapter::start_with_control(&argv, &crate::runtime::check_cancelled).unwrap();
         let pid = std::fs::read_to_string(dir.path().join("child-pid"))
             .unwrap()
             .parse()

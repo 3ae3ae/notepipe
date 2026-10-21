@@ -293,10 +293,11 @@ fn source_json_error(output: &Output) -> serde_json::Value {
 }
 
 fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
-    let python =
-        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))?;
+    let python = which::which("python3")
+        .ok()
+        .or_else(|| which::which("python").ok())?;
     let record = cli.dir.path().join("source record");
-    let command = vec![
+    let command: Vec<String> = vec![
         python.display().to_string(),
         concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -311,9 +312,7 @@ fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
         "--format".into(),
         "fixture quality".into(),
     ];
-    let mut config = notepipe::settings::ConfigFile::default();
-    config.source.command = command;
-    cli.config(&toml::to_string(&config).unwrap());
+    cli.config(&serde_json::json!({"source":{"command":command}}).to_string());
     Some(record)
 }
 
@@ -326,7 +325,7 @@ fn missing_source_adapter_reports_generic_guidance() {
         error["message"]
             .as_str()
             .unwrap()
-            .contains(notepipe::source::ADAPTER_HINT)
+            .contains("URLs need a source adapter")
     );
 }
 
@@ -353,8 +352,7 @@ fn invalid_source_adapter_output_is_rejected() {
 
 #[test]
 fn source_adapter_generates_notes_and_reuses_its_completed_output() {
-    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
-    {
+    if which::which("ffmpeg").ok().is_none() || which::which("ffprobe").ok().is_none() {
         return;
     }
     let cli = CliTest::new();
@@ -442,8 +440,9 @@ fn forced_asr_settings_are_checked_before_running_a_source_adapter() {
 #[test]
 fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
     use std::os::unix::fs::PermissionsExt;
-    let Some(python) =
-        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))
+    let Some(python) = which::which("python3")
+        .ok()
+        .or_else(|| which::which("python").ok())
     else {
         return;
     };
@@ -469,7 +468,7 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
         missing["message"]
             .as_str()
             .unwrap()
-            .contains(notepipe::source::ADAPTER_HINT)
+            .contains("URLs need a source adapter")
     );
     let quote = |value: &std::path::Path| {
         format!("'{}'", value.display().to_string().replace('\'', "'\\''"))
@@ -570,7 +569,7 @@ fn source_discovery_never_uses_unset_or_empty_path_entries_as_the_current_direct
             error["message"]
                 .as_str()
                 .unwrap()
-                .contains(notepipe::source::ADAPTER_HINT),
+                .contains("URLs need a source adapter"),
             "{error}"
         );
     }

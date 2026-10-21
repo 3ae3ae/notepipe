@@ -982,4 +982,90 @@ request = { temperature = 0.7, top_p = 0.8 }
         assert!(parse_segments("没有数组").is_none());
         assert!(parse_segments("[]").is_none());
     }
+    #[test]
+    fn paragraph_images_fall_back_to_text_and_warn_only_for_missing_assets() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let mock = MockAi::respond_with(|_, body| {
+            let content = body["messages"][1]["content"].as_array().unwrap();
+            assert_eq!(content.len(), 1);
+            let system = body["messages"][0]["content"].as_str().unwrap();
+            assert!(!system.contains("Each request includes the screenshot"));
+            let items: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+            let segments = items.as_array().unwrap().iter().map(|item| json!({"id":item["id"],"text":format!("Processed {}",item["text"].as_str().unwrap())})).collect::<Vec<_>>();
+            Some((
+                200,
+                json!({"choices":[{"message":{"content":json!({"segments":segments}).to_string()}}]}),
+            ))
+        });
+        let root = tempfile::tempdir().unwrap();
+        let mut sections = ["", "missing.jpg"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, image)| crate::timeline::Section {
+                t: index as f64,
+                end: index as f64 + 1.,
+                image: image.into(),
+                speech: (0..21)
+                    .map(|number| crate::timeline::TranscriptEvent {
+                        start: index as f64,
+                        end: index as f64 + 1.,
+                        text: format!("Original {number}."),
+                        raw: None,
+                        below: Vec::new(),
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        let settings = crate::llm::LlmSettings {
+            base_url: mock.url.clone(),
+            model: "fixture".into(),
+            ..Default::default()
+        };
+        let mut stage = crate::llm::Stage::builtin("proofread").unwrap();
+        stage.name = "annotate".into();
+        stage.images = true;
+        let report = crate::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
+        assert_eq!((report.attempted, report.failed), (42, 0));
+        assert!(report.note.is_none());
+        assert_eq!(
+            report.warnings.len(),
+            1,
+            "one warning per section, even across batches"
+        );
+        assert!(
+            report.warnings[0].contains("annotate")
+                && report.warnings[0].contains("section 2")
+                && report.warnings[0].contains("missing.jpg")
+        );
+        assert!(
+            sections
+                .iter()
+                .flat_map(|section| &section.speech)
+                .all(|event| event.text.starts_with("Processed Original"))
+        );
+        let sent = mock
+            .bodies
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|body| {
+                let items: Value = serde_json::from_str(
+                    body["messages"][1]["content"][0]["text"].as_str().unwrap(),
+                )
+                .unwrap();
+                items.as_array().unwrap().len()
+            })
+            .sum::<usize>();
+        assert_eq!(sent, 42);
+        assert!(
+            mock.headers
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|header| !header.to_ascii_lowercase().contains("authorization:"))
+        );
+        assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
 }

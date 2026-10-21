@@ -14,7 +14,6 @@ pub const CACHED: &str = "notepipe_cached";
 
 #[derive(Debug)]
 pub struct Failure {
-    pub status: Option<u16>,
     pub retryable: bool,
     pub message: String,
     pub unsupported_response_format: bool,
@@ -28,15 +27,13 @@ impl std::error::Error for Failure {}
 impl Failure {
     pub fn local(error: impl std::fmt::Display) -> Self {
         Self {
-            status: None,
             retryable: false,
             message: error.to_string(),
             unsupported_response_format: false,
         }
     }
-    fn with_status(status: Option<u16>, retryable: bool, message: impl Into<String>) -> Self {
+    fn new(retryable: bool, message: impl Into<String>) -> Self {
         Self {
-            status,
             retryable,
             message: message.into(),
             ..Self::local("")
@@ -182,11 +179,7 @@ pub fn json_request(
         let rejection = classify_rejection(response.status, &response.body);
         return Err(Failure {
             unsupported_response_format: rejection.unsupported_response_format,
-            ..Failure::with_status(
-                Some(response.status),
-                rejection.retryable,
-                rejection.message,
-            )
+            ..Failure::new(rejection.retryable, rejection.message)
         });
     }
     let value = serde_json::from_slice(&response.body)
@@ -203,8 +196,7 @@ pub fn receive(
     let response = match result {
         Ok(response) | Err(ureq::Error::Status(_, response)) => response,
         Err(ureq::Error::Transport(error)) => {
-            return Err(Failure::with_status(
-                None,
+            return Err(Failure::new(
                 matches!(
                     error.kind(),
                     ureq::ErrorKind::Dns
@@ -222,7 +214,7 @@ pub fn receive(
         .into_reader()
         .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut body)
-        .map_err(|_| Failure::with_status(None, true, "Service response was interrupted"))?;
+        .map_err(|_| Failure::new(true, "Service response was interrupted"))?;
     if body.len() as u64 > MAX_RESPONSE_BYTES {
         return Err(Failure::local(
             "Service response exceeds the receiving limit",
@@ -337,7 +329,7 @@ mod tests {
             cached_json_request(
                 "https://example.test",
                 &body,
-                || Err(Failure::with_status(None, true, "timeout")),
+                || Err(Failure::new(true, "timeout")),
                 valid
             )
             .is_err()

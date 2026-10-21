@@ -1,21 +1,17 @@
 //! End-to-end CLI contract with stdin configuration and offline service fixtures.
-use notepipe::{
-    config::{ScreenshotMode, TranscriptSource},
-    settings::ConfigFile,
-};
+mod support;
 use serde_json::{Value, json};
 use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
+use support::MockAi;
 
-fn config() -> ConfigFile {
-    let mut config = ConfigFile::default();
-    config.defaults.screenshot_mode = Some(ScreenshotMode::First);
-    config
+fn config() -> Value {
+    json!({"defaults":{"screenshot_mode":"first"},"source":{},"asr":{},"llm":{"stages":[]}})
 }
-fn spawn(root: &Path, source: &str, config: &ConfigFile, flags: &[&str]) -> std::process::Child {
+fn spawn(root: &Path, source: &str, config: &Value, flags: &[&str]) -> std::process::Child {
     let config_dir = root.join("config/notepipe");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(config_dir.join("config.toml"), "[broken").unwrap();
@@ -42,7 +38,7 @@ fn spawn(root: &Path, source: &str, config: &ConfigFile, flags: &[&str]) -> std:
         .unwrap();
     child
 }
-fn run(root: &Path, source: &str, config: &ConfigFile, flags: &[&str]) -> Output {
+fn run(root: &Path, source: &str, config: &Value, flags: &[&str]) -> Output {
     spawn(root, source, config, flags)
         .wait_with_output()
         .unwrap()
@@ -96,9 +92,61 @@ fn calls(record: &Path) -> usize {
         .lines()
         .count()
 }
+fn write_transaction(root: &Path, value: &Value) {
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join(".notepipe.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    let mut temporary = tempfile::NamedTempFile::new_in(root).unwrap();
+    temporary
+        .write_all(&serde_json::to_vec(value).unwrap())
+        .unwrap();
+    temporary
+        .persist(root.join(".notepipe-transaction.json"))
+        .unwrap();
+    lock.unlock().unwrap();
+}
+
+struct RemoteAsr {
+    child: std::process::Child,
+    base: String,
+}
+impl RemoteAsr {
+    fn start(argv: &[String], record: &Path) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let child = Command::new(&argv[0])
+            .args(&argv[1..])
+            .args(["--host", "127.0.0.1", "--port", &port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut service = Self {
+            child,
+            base: format!("http://127.0.0.1:{port}"),
+        };
+        wait_for_file(&mut service.child, &record.join("ready"));
+        service
+    }
+}
+impl Drop for RemoteAsr {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 fn source_command(record: &Path, behavior: &str) -> Option<Vec<String>> {
-    let python =
-        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))?;
+    let python = which::which("python3")
+        .ok()
+        .or_else(|| which::which("python").ok())?;
     Some(vec![
         python.to_string_lossy().into_owned(),
         concat!(
@@ -113,117 +161,9 @@ fn source_command(record: &Path, behavior: &str) -> Option<Vec<String>> {
     ])
 }
 
-struct MockAi {
-    url: String,
-    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    bodies: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
-    headers: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    worker: Option<std::thread::JoinHandle<()>>,
-}
-impl MockAi {
-    fn respond_with(
-        respond: impl Fn(usize, &serde_json::Value) -> Option<(u16, serde_json::Value)> + Send + 'static,
-    ) -> Self {
-        use std::{
-            io::Read,
-            sync::{
-                Arc,
-                atomic::{AtomicBool, AtomicUsize, Ordering},
-            },
-            time::Duration,
-        };
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        listener.set_nonblocking(true).unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let received = bodies.clone();
-        let headers = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let received_headers = headers.clone();
-        let stop = Arc::new(AtomicBool::new(false));
-        let (count, shutdown) = (calls.clone(), stop.clone());
-        let worker = std::thread::spawn(move || {
-            while !shutdown.load(Ordering::SeqCst) {
-                let Ok((mut stream, _)) = listener.accept() else {
-                    std::thread::sleep(Duration::from_millis(5));
-                    continue;
-                };
-                // BSD may inherit the listener's nonblocking mode. The request
-                // reader below uses blocking reads with a bounded timeout.
-                stream.set_nonblocking(false).unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .unwrap();
-                let mut data = Vec::new();
-                let mut buffer = [0u8; 4096];
-                let (header_end, length) = loop {
-                    let size = stream.read(&mut buffer).unwrap();
-                    if size == 0 {
-                        return;
-                    }
-                    data.extend_from_slice(&buffer[..size]);
-                    if let Some(index) = data.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
-                        let header = String::from_utf8_lossy(&data[..index]);
-                        let length = header
-                            .lines()
-                            .find_map(|line| {
-                                line.split_once(':')
-                                    .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
-                            })
-                            .unwrap();
-                        break (index + 4, length);
-                    }
-                };
-                while data.len() < header_end + length {
-                    let size = stream.read(&mut buffer).unwrap();
-                    if size == 0 {
-                        return;
-                    }
-                    data.extend_from_slice(&buffer[..size]);
-                }
-                let number = count.fetch_add(1, Ordering::SeqCst);
-                let body: serde_json::Value =
-                    serde_json::from_slice(&data[header_end..header_end + length]).unwrap();
-                received.lock().unwrap().push(body.clone());
-                received_headers
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8_lossy(&data[..header_end]).into_owned());
-                let Some((status, response)) = respond(number, &body) else {
-                    continue;
-                };
-                let response = serde_json::to_vec(&response).unwrap();
-                write!(stream,"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",response.len()).unwrap();
-                stream.write_all(&response).unwrap();
-            }
-        });
-        Self {
-            url,
-            calls,
-            bodies,
-            headers,
-            stop,
-            worker: Some(worker),
-        }
-    }
-}
-impl Drop for MockAi {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        if let Some(worker) = self.worker.take() {
-            let result = worker.join();
-            if !std::thread::panicking() {
-                result.unwrap();
-            }
-        }
-    }
-}
-
 fn speech_video(root: &Path) -> Option<std::path::PathBuf> {
-    let ffmpeg = notepipe::runtime::which("ffmpeg")?;
-    notepipe::runtime::which("ffprobe")?;
+    let ffmpeg = which::which("ffmpeg").ok()?;
+    which::which("ffprobe").ok()?;
     let video = root.join("speech.mp4");
     let generated = Command::new(ffmpeg)
         .args([
@@ -253,8 +193,9 @@ fn speech_video(root: &Path) -> Option<std::path::PathBuf> {
 }
 
 fn adapter_command(record: &Path, behavior: &str) -> Option<Vec<String>> {
-    let python =
-        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))?;
+    let python = which::which("python3")
+        .ok()
+        .or_else(|| which::which("python").ok())?;
     Some(vec![
         python.display().to_string(),
         "-u".into(),
@@ -362,7 +303,7 @@ fn explicit_subtitles_publish_plain_notes_and_replace_only_the_same_source() {
 
 #[test]
 fn broken_media_publishes_subtitles_with_matching_warnings_and_no_phantom_images() {
-    if notepipe::runtime::which("ffmpeg").is_none() {
+    if which::which("ffmpeg").ok().is_none() {
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -450,7 +391,7 @@ fn new_note_folders_and_files_follow_umask_on_replacement() {
 #[test]
 fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() {
     let root = tempfile::tempdir().unwrap();
-    if notepipe::runtime::which("ffmpeg").is_none() {
+    if which::which("ffmpeg").ok().is_none() {
         return;
     }
     let record = root.path().join("source");
@@ -464,7 +405,7 @@ fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() 
         let Some(command) = source_command(&record, behavior) else {
             return;
         };
-        cfg.source.command = command;
+        cfg["source"]["command"] = json!(command);
         let output = run(root.path(), url, &cfg, &[]);
         let doc = document(&output);
         assert_eq!(doc["meta"]["source"], url);
@@ -493,7 +434,7 @@ fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() 
 #[test]
 fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr() {
     let root = tempfile::tempdir().unwrap();
-    if notepipe::runtime::which("ffmpeg").is_none() {
+    if which::which("ffmpeg").ok().is_none() {
         return;
     }
     let source_record = root.path().join("source");
@@ -512,9 +453,9 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
         ))
     });
     let mut cfg = config();
-    cfg.source.command = source;
-    cfg.asr.command = asr;
-    cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
+    cfg["source"]["command"] = json!(source);
+    cfg["asr"]["command"] = json!(asr);
+    cfg["defaults"]["transcript_source"] = json!("asr");
     let url = "https://example.test/media?episode=1";
     let first = run(root.path(), url, &cfg, &[]);
     let first_done = done(&first);
@@ -552,11 +493,12 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
         .unwrap();
     let stranded_media = source_marker.parent().unwrap().join("files/media.mp4");
     std::fs::write(&stranded_media, "cached media").unwrap();
-    cfg.llm
-        .stages
-        .push(notepipe::llm::Stage::builtin("summary").unwrap());
-    cfg.llm.base_url = mock.url.clone();
-    cfg.llm.model = "fixture".into();
+    cfg["llm"]["stages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"summary"}));
+    cfg["llm"]["base_url"] = json!(mock.url.clone());
+    cfg["llm"]["model"] = json!("fixture");
     for _ in 0..2 {
         let second = run(root.path(), url, &cfg, &[]);
         assert_eq!(done(&second)["note_dir"], first_done["note_dir"]);
@@ -625,8 +567,8 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
             return;
         };
         let mut cfg = config();
-        cfg.asr.command = command;
-        cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
+        cfg["asr"]["command"] = json!(command);
+        cfg["defaults"]["transcript_source"] = json!("asr");
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         assert_eq!(
             output.status.success(),
@@ -664,7 +606,7 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
 #[test]
 fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
     let root = tempfile::tempdir().unwrap();
-    if notepipe::runtime::which("ffmpeg").is_none() {
+    if which::which("ffmpeg").ok().is_none() {
         return;
     }
     let source_record = root.path().join("source");
@@ -686,9 +628,9 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
         ))
     });
     let mut cfg = config();
-    cfg.source.command = source;
-    cfg.asr.command = asr;
-    cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
+    cfg["source"]["command"] = json!(source);
+    cfg["asr"]["command"] = json!(asr);
+    cfg["defaults"]["transcript_source"] = json!("asr");
     let url = "https://example.test/audio";
     let first = run(root.path(), url, &cfg, &[]);
     assert!(done(&first)["warnings"].as_array().unwrap().is_empty());
@@ -715,11 +657,12 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
         .unwrap();
     assert_eq!(std::fs::read(marker).unwrap(), b"null");
     let modified = marker.metadata().unwrap().modified().unwrap();
-    let mut stage = notepipe::llm::Stage::builtin("proofread").unwrap();
-    stage.images = true;
-    cfg.llm.stages.push(stage);
-    cfg.llm.base_url = mock.url.clone();
-    cfg.llm.model = "fixture".into();
+    cfg["llm"]["stages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"proofread","images":true}));
+    cfg["llm"]["base_url"] = json!(mock.url.clone());
+    cfg["llm"]["model"] = json!("fixture");
     for _ in 0..2 {
         let output = run(root.path(), url, &cfg, &[]);
         assert!(done(&output)["warnings"].as_array().unwrap().is_empty());
@@ -748,7 +691,7 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
 fn completion_hooks_receive_note_paths_and_warning_counts_once_per_publication() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
-    if notepipe::runtime::which("ffmpeg").is_none() {
+    if which::which("ffmpeg").ok().is_none() {
         return;
     }
     let media = root.path().join("broken.mp4");
@@ -769,11 +712,11 @@ exit "$2"
     let record = root.path().join("hook calls");
     let mut cfg = config();
     for code in ["0", "7"] {
-        cfg.defaults.on_complete = vec![
-            "./completion hook.sh".into(),
+        cfg["defaults"]["on_complete"] = json!([
+            "./completion hook.sh",
             record.to_string_lossy().into_owned(),
-            code.into(),
-        ];
+            code,
+        ]);
         let output = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
         let completed = done(&output);
         let warnings = completed["warnings"].as_array().unwrap();
@@ -804,7 +747,7 @@ exit "$2"
         std::fs::read_to_string(&record).unwrap().lines().count(),
         10
     );
-    cfg.defaults.on_complete = vec!["notepipe-completion-fixture-that-does-not-exist".into()];
+    cfg["defaults"]["on_complete"] = json!(["notepipe-completion-fixture-that-does-not-exist"]);
     let missing = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
     assert!(
         done(&missing)["warnings"]
@@ -813,11 +756,11 @@ exit "$2"
             .iter()
             .any(|warning| warning.as_str().unwrap().contains("on_complete:"))
     );
-    cfg.defaults.on_complete = vec![
-        "./completion hook.sh".into(),
+    cfg["defaults"]["on_complete"] = json!([
+        "./completion hook.sh",
         record.to_string_lossy().into_owned(),
-        "0".into(),
-    ];
+        "0",
+    ]);
     std::fs::write(subtitle, "").unwrap();
     assert!(
         !run(root.path(), media.to_str().unwrap(), &cfg, &[])
@@ -856,14 +799,15 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
         })
     });
     let mut cfg = config();
-    cfg.llm
-        .stages
-        .push(notepipe::llm::Stage::builtin("proofread").unwrap());
-    cfg.llm.base_url = mock.url.clone();
-    cfg.llm.model = "fixture".into();
-    cfg.llm.stages[0].prompt = "CUSTOM-RULE-42".into();
-    cfg.llm.api_key = "private-test-key".into();
-    cfg.llm.stages[0].images = true;
+    cfg["llm"]["stages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"proofread"}));
+    cfg["llm"]["base_url"] = json!(mock.url.clone());
+    cfg["llm"]["model"] = json!("fixture");
+    cfg["llm"]["stages"][0]["prompt"] = json!("CUSTOM-RULE-42");
+    cfg["llm"]["api_key"] = json!("private-test-key");
+    cfg["llm"]["stages"][0]["images"] = json!(true);
     for _ in 0..2 {
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         assert!(document(&output).to_string().contains("Cached fallback."));
@@ -890,6 +834,9 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
 
 #[test]
 fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
+    if which::which("ffmpeg").is_err() || which::which("ffprobe").is_err() {
+        return;
+    }
     for phase in ["staged", "old-moved", "published"] {
         let root = tempfile::tempdir().unwrap();
         let notes = root.path().join("notes");
@@ -897,17 +844,22 @@ fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
         let Some(command) = source_command(&record, "exit") else {
             return;
         };
+        let mut cfg = config();
+        cfg["defaults"]["out"] = json!(notes);
         let mut published = Vec::new();
-        for source in ["https://example.test/one", "https://example.test/two"] {
-            let document: notepipe::artifact::Document = serde_json::from_value(json!({
-                "schema":1,
-                "meta":{"title":"Shared title","author":"","duration":1,"source":source},
-                "sections":[{"t":0,"end":1,"image":"","speech":[{"start":0,"end":1,"text":"Previous body"}]}],
-                "top":[],"warnings":["Known warning"]
-            })).unwrap();
-            let (note, _) =
-                notepipe::artifact::publish(&notes, root.path(), document.clone()).unwrap();
-            published.push((note, document));
+        for input in ["one", "two"] {
+            let directory = root.path().join(input);
+            std::fs::create_dir(&directory).unwrap();
+            let media = directory.join("Shared title.mp4");
+            std::fs::write(&media, "broken media").unwrap();
+            std::fs::write(
+                media.with_extension("srt"),
+                "1\n00:00:00,000 --> 00:00:01,000\nPrevious body\n",
+            )
+            .unwrap();
+            let output = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
+            let note = PathBuf::from(done(&output)["note_dir"].as_str().unwrap());
+            published.push((note, document(&output)));
         }
         assert_eq!(published[1].0.file_name().unwrap(), "Shared-title-2");
         let (note, expected) = &mut published[1];
@@ -917,11 +869,13 @@ fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
         let old = notes.join(&old_name);
         let new = notes.join(&new_name);
         let mut staged = expected.clone();
-        staged.sections[0].speech[0].text = "New body".into();
+        staged["sections"][0]["speech"][0]["text"] = json!("New body");
         std::fs::create_dir(&new).unwrap();
         std::fs::write(
             new.join("note.md"),
-            notepipe::render::render_markdown(&staged.meta, &staged.sections, &staged.top).unwrap(),
+            std::fs::read_to_string(note.join("note.md"))
+                .unwrap()
+                .replace("Previous body", "New body"),
         )
         .unwrap();
         std::fs::write(new.join("note.json"), serde_json::to_vec(&staged).unwrap()).unwrap();
@@ -932,30 +886,23 @@ fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
             std::fs::rename(&new, &*note).unwrap();
             *expected = staged;
         }
-        let transaction = notes.join(".notepipe-transaction.json");
-        let lock = notepipe::runtime::lock_file(&notes.join(".notepipe.lock")).unwrap();
-        notepipe::checkpoint::atomic_write(
-            &transaction,
-            &serde_json::to_vec(
-                &json!({"name":name,"staging":new_name,"old":old_name,"phase":phase}),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        drop(lock);
+        write_transaction(
+            &notes,
+            &json!({"name":name,"staging":new_name,"old":old_name,"phase":phase}),
+        );
         let unrelated = [notes.join(".x.notepipe-new"), notes.join(".x.notepipe-old")];
         for path in &unrelated {
             std::fs::create_dir(path).unwrap();
             std::fs::write(path.join("user-file"), "unrelated content").unwrap();
         }
-        let mut cfg = config();
-        cfg.defaults.out = Some(notes.clone());
-        cfg.source.command = command;
+        cfg["source"]["command"] = json!(command);
         let failed = run(root.path(), "https://example.test/unrelated", &cfg, &[]);
         assert!(!failed.status.success());
         assert_eq!(events(&failed).last().unwrap()["type"], "error");
         assert_eq!(calls(&record), 1);
-        assert!(!transaction.exists() && !new.exists() && !old.exists());
+        assert!(
+            !notes.join(".notepipe-transaction.json").exists() && !new.exists() && !old.exists()
+        );
         for path in &unrelated {
             assert_eq!(
                 std::fs::read_to_string(path.join("user-file")).unwrap(),
@@ -963,16 +910,17 @@ fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
             );
         }
         for (note, expected) in published {
-            let actual: notepipe::artifact::Document =
+            let actual: Value =
                 serde_json::from_slice(&std::fs::read(note.join("note.json")).unwrap()).unwrap();
-            assert_eq!(
-                serde_json::to_value(actual).unwrap(),
-                serde_json::to_value(&expected).unwrap()
-            );
+            assert_eq!(actual, expected);
             assert!(
                 std::fs::read_to_string(note.join("note.md"))
                     .unwrap()
-                    .contains(&expected.sections[0].speech[0].text)
+                    .contains(
+                        expected["sections"][0]["speech"][0]["text"]
+                            .as_str()
+                            .unwrap()
+                    )
             );
         }
     }
@@ -1008,17 +956,17 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
     let note_dir = Path::new(previous["note_dir"].as_str().unwrap());
     let backup = note_dir.with_file_name(".speech.notepipe-old-interrupted");
     std::fs::rename(note_dir, &backup).unwrap();
-    let transaction = root.path().join(".notepipe-transaction.json");
-    let lock = notepipe::runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-    notepipe::checkpoint::atomic_write(&transaction, &serde_json::to_vec(&json!({
-        "name":"speech","staging":".speech.notepipe-new-interrupted","old":".speech.notepipe-old-interrupted","phase":"old-moved"
-    })).unwrap()).unwrap();
-    drop(lock);
+    write_transaction(
+        root.path(),
+        &json!({
+            "name":"speech","staging":".speech.notepipe-new-interrupted","old":".speech.notepipe-old-interrupted","phase":"old-moved"
+        }),
+    );
     assert!(!note_dir.exists());
-    cfg.asr.command = command;
-    cfg.asr.concurrency = 1;
-    cfg.asr.max_speech = 1.;
-    cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
+    cfg["asr"]["command"] = json!(command);
+    cfg["asr"]["concurrency"] = json!(1);
+    cfg["asr"]["max_speech"] = json!(1.);
+    cfg["defaults"]["transcript_source"] = json!("asr");
     let failed = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     assert!(!failed.status.success());
     assert_eq!(events(&failed).last().unwrap()["type"], "error");
@@ -1070,17 +1018,13 @@ fn published_backup_cleanup_warning_reaches_stderr_and_done_without_blocking_pub
     std::fs::write(old.join("content"), "Previous note").unwrap();
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o500)).unwrap();
     let record = root.path().join(".notepipe-transaction.json");
-    let lock = notepipe::runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-    notepipe::checkpoint::atomic_write(
-        &record,
-        &serde_json::to_vec(&json!({
+    write_transaction(
+        root.path(),
+        &json!({
             "name":"speech", "staging":".speech.notepipe-new-recorded",
             "old":".speech.notepipe-old-recorded", "phase":"published"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    drop(lock);
+        }),
+    );
     let output = run(root.path(), video.to_str().unwrap(), &cfg, &flags);
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o700)).unwrap();
     let completed = done(&output);
@@ -1116,10 +1060,10 @@ fn sigint_and_sigterm_cancel_adapters_and_resume_completed_asr_chunks() {
             return;
         };
         let mut cfg = config();
-        cfg.asr.command = command;
-        cfg.asr.concurrency = 1;
-        cfg.asr.max_speech = 1.;
-        cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
+        cfg["asr"]["command"] = json!(command);
+        cfg["asr"]["concurrency"] = json!(1);
+        cfg["asr"]["max_speech"] = json!(1.);
+        cfg["defaults"]["transcript_source"] = json!("asr");
         let mut child = spawn(root.path(), video.to_str().unwrap(), &cfg, &[]);
         wait_for_file(&mut child, &record.join("transcribing"));
         assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
@@ -1162,7 +1106,7 @@ fn a_second_signal_kills_the_source_tree_before_exiting_immediately() {
         return;
     };
     let mut cfg = config();
-    cfg.source.command = command;
+    cfg["source"]["command"] = json!(command);
     let mut child = spawn(root.path(), "https://example.test/media", &cfg, &[]);
     wait_for_file(&mut child, &record.join("child-ready"));
     let pid: i32 = std::fs::read_to_string(record.join("pid"))
@@ -1196,12 +1140,12 @@ fn keyless_remote_asr_and_bounded_adapter_concurrency_still_work() {
         let Some(command) = adapter_command(&record, "parallel") else {
             return;
         };
-        let adapter = notepipe::adapter::Adapter::start(&command).unwrap();
+        let adapter = RemoteAsr::start(&command, &record);
         let mut cfg = config();
-        cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
-        cfg.asr.base_url = format!("{}/v1", adapter.base);
-        cfg.asr.max_speech = 1.;
-        cfg.asr.concurrency = concurrency;
+        cfg["defaults"]["transcript_source"] = json!("asr");
+        cfg["asr"]["base_url"] = json!(format!("{}/v1", adapter.base));
+        cfg["asr"]["max_speech"] = json!(1.);
+        cfg["asr"]["concurrency"] = json!(concurrency);
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         done(&output);
         assert_eq!(
@@ -1244,12 +1188,13 @@ fn proofreading_keys_prefer_flags_then_config_then_environment() {
             ))
         });
         let mut cfg = config();
-        cfg.llm
-            .stages
-            .push(notepipe::llm::Stage::builtin("proofread").unwrap());
-        cfg.llm.base_url = mock.url.clone();
-        cfg.llm.model = "fixture".into();
-        cfg.llm.api_key = configured.into();
+        cfg["llm"]["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"proofread"}));
+        cfg["llm"]["base_url"] = json!(mock.url.clone());
+        cfg["llm"]["model"] = json!("fixture");
+        cfg["llm"]["api_key"] = json!(configured);
         let path = root.path().join("settings.json");
         std::fs::write(&path, serde_json::to_vec(&cfg).unwrap()).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
@@ -1296,11 +1241,12 @@ fn retryable_and_terminal_llm_errors_preserve_text_and_never_enter_the_cache() {
         })
     });
     let mut cfg = config();
-    cfg.llm
-        .stages
-        .push(notepipe::llm::Stage::builtin("proofread").unwrap());
-    cfg.llm.base_url = mock.url.clone();
-    cfg.llm.model = "fixture".into();
+    cfg["llm"]["stages"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"proofread"}));
+    cfg["llm"]["base_url"] = json!(mock.url.clone());
+    cfg["llm"]["model"] = json!("fixture");
     let first = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     let doc = document(&first);
     assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -1327,15 +1273,15 @@ fn cancellation_during_audio_cutting_sends_no_http_request() {
     let Some(video) = speech_video(root.path()) else {
         return;
     };
-    let ffmpeg = notepipe::runtime::which("ffmpeg").unwrap();
+    let ffmpeg = which::which("ffmpeg").ok().unwrap();
     let record = root.path().join("asr");
     let Some(command) = adapter_command(&record, "healthy") else {
         return;
     };
-    let adapter = notepipe::adapter::Adapter::start(&command).unwrap();
+    let adapter = RemoteAsr::start(&command, &record);
     let mut cfg = config();
-    cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
-    cfg.asr.base_url = format!("{}/v1", adapter.base);
+    cfg["defaults"]["transcript_source"] = json!("asr");
+    cfg["asr"]["base_url"] = json!(format!("{}/v1", adapter.base));
     let bin = root.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let wrapper = bin.join("ffmpeg");
@@ -1460,7 +1406,7 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
         ))
     });
     let mut cfg = config();
-    cfg.llm = serde_json::from_value(json!({
+    cfg["llm"] = json!({
         "base_url":main.url,"api_key":"default-key","model":"default-model",
         "request":{"temperature":0.2,"top_p":0.8},
         "stages":[
@@ -1469,7 +1415,7 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
             {"name":"outline","input":"transcript","output":"top","prompt":"CUSTOM-TOP"},
             {"name":"summary"}
         ]
-    })).unwrap();
+    });
     let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     let doc = document(&output);
     assert_eq!(
@@ -1512,8 +1458,8 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
     assert_eq!(doc["sections"][0]["speech"][0]["text"], "Original words.");
     assert!(doc["sections"][0]["speech"][0].get("below").is_none());
     let calls = main.calls.load(Ordering::SeqCst);
-    cfg.llm.base_url = "invalid unused URL".into();
-    cfg.llm.model.clear();
+    cfg["llm"]["base_url"] = json!("invalid unused URL");
+    cfg["llm"]["model"] = json!("");
     let disabled = run(root.path(), video.to_str().unwrap(), &cfg, &["--no-stages"]);
     assert!(document(&disabled)["top"].as_array().unwrap().is_empty());
     assert_eq!(main.calls.load(Ordering::SeqCst), calls);
@@ -1522,8 +1468,7 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
 
 #[test]
 fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replacement() {
-    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
-    {
+    if which::which("ffmpeg").ok().is_none() || which::which("ffprobe").ok().is_none() {
         return;
     }
     for mode in ["partial", "blank", "failed"] {
@@ -1557,12 +1502,13 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
             ))
         });
         let mut cfg = config();
-        cfg.llm.base_url = mock.url.clone();
-        cfg.llm.model = "fixture".into();
-        cfg.llm.concurrency = 2;
-        cfg.llm
-            .stages
-            .push(notepipe::llm::Stage::builtin("proofread").unwrap());
+        cfg["llm"]["base_url"] = json!(mock.url.clone());
+        cfg["llm"]["model"] = json!("fixture");
+        cfg["llm"]["concurrency"] = json!(2);
+        cfg["llm"]["stages"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"proofread"}));
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         let doc = document(&output);
         let paragraphs = doc["sections"][0]["speech"].as_array().unwrap();
@@ -1617,130 +1563,4 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
             assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), calls);
         }
     }
-}
-
-#[test]
-fn paragraph_images_fall_back_to_text_and_warn_only_for_missing_assets() {
-    let mock = MockAi::respond_with(|_, body| {
-        let content = body["messages"][1]["content"].as_array().unwrap();
-        assert_eq!(content.len(), 1);
-        let system = body["messages"][0]["content"].as_str().unwrap();
-        assert!(!system.contains("Each request includes the screenshot"));
-        let items: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
-        let segments = items.as_array().unwrap().iter().map(|item| json!({"id":item["id"],"text":format!("Processed {}",item["text"].as_str().unwrap())})).collect::<Vec<_>>();
-        Some((
-            200,
-            json!({"choices":[{"message":{"content":json!({"segments":segments}).to_string()}}]}),
-        ))
-    });
-    let root = tempfile::tempdir().unwrap();
-    let mut sections = ["", "missing.jpg"]
-        .into_iter()
-        .enumerate()
-        .map(|(index, image)| notepipe::timeline::Section {
-            t: index as f64,
-            end: index as f64 + 1.,
-            image: image.into(),
-            speech: (0..21)
-                .map(|number| notepipe::timeline::TranscriptEvent {
-                    start: index as f64,
-                    end: index as f64 + 1.,
-                    text: format!("Original {number}."),
-                    raw: None,
-                    below: Vec::new(),
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
-    let settings = notepipe::llm::LlmSettings {
-        base_url: mock.url.clone(),
-        model: "fixture".into(),
-        ..Default::default()
-    };
-    let mut stage = notepipe::llm::Stage::builtin("proofread").unwrap();
-    stage.name = "annotate".into();
-    stage.images = true;
-    let report = notepipe::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
-    assert_eq!((report.attempted, report.failed), (42, 0));
-    assert!(report.note.is_none());
-    assert_eq!(
-        report.warnings.len(),
-        1,
-        "one warning per section, even across batches"
-    );
-    assert!(
-        report.warnings[0].contains("annotate")
-            && report.warnings[0].contains("section 2")
-            && report.warnings[0].contains("missing.jpg")
-    );
-    assert!(
-        sections
-            .iter()
-            .flat_map(|section| &section.speech)
-            .all(|event| event.text.starts_with("Processed Original"))
-    );
-    assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 4);
-}
-
-#[test]
-fn transcript_map_reduce_keeps_part_order_and_uses_the_fixed_merge_template() {
-    let mock = MockAi::respond_with(|_, body| {
-        assert!(body.get("temperature").is_none() && body.get("max_tokens").is_none());
-        assert_eq!(
-            body["messages"][0]["content"],
-            "EXTRACT ACTION ITEMS. Output only the Markdown, without code fences or any other text."
-        );
-        let user = body["messages"][1]["content"].as_str().unwrap();
-        let content = if user.contains("Below are results for consecutive parts") {
-            assert!(
-                user.find("== Part 1 ==\nFirst part").unwrap()
-                    < user.find("== Part 2 ==\nSecond part").unwrap()
-            );
-            assert!(user.contains("each produced with the same instructions"));
-            assert!(user.ends_with("Combine them into one result for the whole recording, following the same instructions."));
-            "## Combined\n\nExact final Markdown."
-        } else {
-            assert!(user.starts_with("Title: Recording\nAuthor: Author\n\nTranscript (each line starts with its start time as [mm:ss]):\n\n"));
-            if user.contains("[00:00]") {
-                "First part"
-            } else {
-                "Second part"
-            }
-        };
-        Some((200, json!({"choices":[{"message":{"content":content}}]})))
-    });
-    let mut stage = notepipe::llm::Stage::builtin("summary").unwrap();
-    stage.prompt = "EXTRACT ACTION ITEMS.".into();
-    let settings = notepipe::llm::LlmSettings {
-        base_url: mock.url.clone(),
-        model: "fixture".into(),
-        concurrency: 2,
-        ..Default::default()
-    };
-    let events = (0..2)
-        .map(|index| notepipe::timeline::TranscriptEvent {
-            start: f64::from(index * 60),
-            end: f64::from(index * 60 + 1),
-            text: "x".repeat(15_000),
-            raw: None,
-            below: Vec::new(),
-        })
-        .collect::<Vec<_>>();
-    let meta = notepipe::source::MediaMeta {
-        title: "Recording".into(),
-        author: "Author".into(),
-        duration: 120.,
-        source: "https://example.test/media".into(),
-        seek_url: None,
-    };
-    for name in ["summary", "actions"] {
-        stage.name = name.into();
-        let result = notepipe::runtime::block_on(notepipe::summarize::run(
-            &settings, &stage, &events, &meta,
-        ))
-        .unwrap()
-        .unwrap();
-        assert_eq!(result, "## Combined\n\nExact final Markdown.");
-    }
-    assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 6);
 }
