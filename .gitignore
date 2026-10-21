@@ -13,3 +13,4 @@ out-bench/
 out-gpu/
 out-smoke/
 adapters/apple/native/.build/
+/adapters/apple/target/

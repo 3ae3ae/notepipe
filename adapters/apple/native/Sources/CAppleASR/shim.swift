@@ -1,10 +1,9 @@
-// C ABI shim：Silero VAD (CoreML/ANE) + Qwen3-ASR (CoreML)。
+// C ABI for the Apple transcription adapter.
 // 供 Rust 侧静态链接；仅 macOS arm64 构建。
 
 import Foundation
 import Qwen3ASR
 import WhisperASR
-import SpeechVAD
 import AudioCommon
 
 /// 在同步 C ABI 里执行 async 代码（信号量 + 锁保护结果）。
@@ -48,66 +47,6 @@ private func setErr(_ message: String) {
 public func notepipeLastError() -> UnsafePointer<CChar> {
     if let p = lastErrorCStr { return UnsafePointer(p) }
     return ("unknown error" as NSString).utf8String!
-}
-
-// MARK: - Silero VAD
-
-@_cdecl("notepipe_vad_load")
-public func notepipeVadLoad() -> Int32 {
-    do {
-        _ = try runSync {
-            try await SileroVADModel.fromPretrained(
-                engine: .coreml, offlineMode: true, progressHandler: cachedLoadProgress)
-        }
-        return 0
-    } catch {
-        setErr("语音检测模型加载失败 / VAD model failed to load: \(error)")
-        return -1
-    }
-}
-
-@_cdecl("notepipe_vad_detect")
-public func notepipeVadDetect(
-    wavPath: UnsafePointer<CChar>,
-    minSpeech: Double,
-    minSilence: Double,
-    outStarts: UnsafeMutablePointer<UnsafeMutablePointer<Double>?>,
-    outEnds: UnsafeMutablePointer<UnsafeMutablePointer<Double>?>,
-    outN: UnsafeMutablePointer<Int32>
-) -> Int32 {
-    outStarts.pointee = nil
-    outEnds.pointee = nil
-    outN.pointee = 0
-    do {
-        let samples = try loadWav(String(cString: wavPath))
-        let vad = try runSync {
-            try await SileroVADModel.fromPretrained(engine: .coreml, offlineMode: true, progressHandler: cachedLoadProgress)
-        }
-        var config = VADConfig.sileroDefault
-        config.minSpeechDuration = Float(minSpeech)
-        config.minSilenceDuration = Float(minSilence)
-        let segments = vad.detectSpeech(audio: samples, sampleRate: 16000, config: config)
-        let n = segments.count
-        guard n > 0 else { return 0 }
-        let starts = malloc(MemoryLayout<Double>.stride * n)!.assumingMemoryBound(to: Double.self)
-        let ends = malloc(MemoryLayout<Double>.stride * n)!.assumingMemoryBound(to: Double.self)
-        for (i, s) in segments.enumerated() {
-            starts[i] = Double(s.startTime)
-            ends[i] = Double(s.endTime)
-        }
-        outStarts.pointee = starts
-        outEnds.pointee = ends
-        outN.pointee = Int32(n)
-        return 0
-    } catch {
-        setErr("语音检测失败 / Speech detection failed: \(error)")
-        return -1
-    }
-}
-
-@_cdecl("notepipe_free_doubles")
-public func notepipeFreeDoubles(_ p: UnsafeMutablePointer<Double>?) {
-    if let p = p { free(p) }
 }
 
 @_silgen_name("notepipe_model_progress")
@@ -228,21 +167,23 @@ public func notepipeAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRaw
 public func notepipeAsrTranscribe(
     _ handle: UnsafeMutableRawPointer,
     wavPath: UnsafePointer<CChar>,
+    language: UnsafePointer<CChar>?,
     outText: UnsafeMutablePointer<CChar>,
     outLen: Int
 ) -> Int32 {
     let box = Unmanaged<AsrBox>.fromOpaque(handle).takeUnretainedValue()
+    let language = language.map { String(cString: $0) }.flatMap { $0.isEmpty ? nil : $0 }
     do {
         let samples = try loadWav(String(cString: wavPath))
         let text: String
         switch box.model {
         case .qwen(let m):
-            text = try m.transcribe(audio: samples, sampleRate: 16000, language: nil, maxTokens: 448)
+            text = try m.transcribe(audio: samples, sampleRate: 16000, language: language, maxTokens: 448)
         case .qwenMlx(let m):
-            text = m.transcribe(audio: samples, sampleRate: 16000, language: nil, maxTokens: 448)
+            text = m.transcribe(audio: samples, sampleRate: 16000, language: language, maxTokens: 448)
         case .whisper(let m):
             text = try runSync {
-                try await m.transcribeAudio(samples, sampleRate: 16000, language: nil)
+                try await m.transcribeAudio(samples, sampleRate: 16000, language: language)
             }
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,7 +197,7 @@ public func notepipeAsrTranscribe(
         }
         if !fits {
             outText[outLen - 1] = 0 // strncpy 截断时不保证补 NUL
-            return 2 // 2 = 成功但被截断（Rust 侧据此 warn，不再静默截断）
+            return 2 // Rust reports buffer truncation as an error.
         }
         return 0
     } catch {
