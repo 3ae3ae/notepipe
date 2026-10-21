@@ -3,7 +3,6 @@ out/
 .pi/
 models/
 *.wav
-!desktop/assets/tests/service-speech.wav
 *.mp4
 .DS_Store
 .venv/
@@ -13,4 +12,3 @@ out-bench/
 out-gpu/
 out-smoke/
 native/apple-asr/.build/
-desktop/assets/icon-design/exports/

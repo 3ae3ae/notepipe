@@ -251,7 +251,7 @@ fn native_attempt(
     let mut buffer = vec![0u8; 512 * 1024];
     let mut since_check = 0u64;
     loop {
-        // Checking every 32MB lets the desktop cancel without waiting for 2GB.
+        // Checking every 32MB lets tasks cancel without waiting for 2GB.
         if since_check >= 32 << 20 {
             crate::dispatch::check_control()?;
             since_check = 0;
@@ -278,7 +278,7 @@ fn native_attempt(
 
 static ARIA2_BROKEN: AtomicBool = AtomicBool::new(false);
 
-/// aria2c beside the executable (desktop packages) or on PATH.
+/// aria2c beside the executable or on PATH.
 fn aria2_program() -> Option<PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
     if ARIA2_BROKEN.load(Ordering::Relaxed) || std::env::var_os("COURSE2MD_NO_ARIA2").is_some() {

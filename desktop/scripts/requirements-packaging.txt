@@ -1,2 +1,0 @@
-dmgbuild==1.6.7; sys_platform == "darwin"
-pefile==2024.8.26; sys_platform == "win32"

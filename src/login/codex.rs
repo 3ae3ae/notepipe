@@ -73,8 +73,7 @@ fn fetch_models(tokens: &CodexTokens) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-/// 需要（重新）登录 Codex 的标记错误：桌面端在错误链中识别它并替换为
-/// 界面内的连接引导，CLI 直接展示其双语说明。不含任何凭据内容。
+/// 需要（重新）登录 Codex 的标记错误。不含任何凭据内容。
 #[derive(Debug)]
 pub struct CodexLoginRequired;
 
@@ -86,24 +85,23 @@ impl std::fmt::Display for CodexLoginRequired {
 
 impl std::error::Error for CodexLoginRequired {}
 
-/// 桌面端登录动作的模型目录结果。`catalog_is_fallback = true` 表示目录拉取失败、
-/// 已回落默认模型——界面应如实说明，而不是把兜底冒充为账号目录。
+/// 登录后的模型目录；拉取失败时标记回落，让 CLI 如实提示。
 #[derive(Debug, Clone)]
-pub struct DesktopCatalog {
-    pub models: Vec<(String, String)>,
-    pub catalog_is_fallback: bool,
+struct ModelCatalog {
+    models: Vec<(String, String)>,
+    catalog_is_fallback: bool,
 }
 
 /// 登录成功后的目录：失败回落默认模型并标记，由调用方如实提示。
-fn desktop_catalog(tokens: &CodexTokens) -> DesktopCatalog {
+fn model_catalog(tokens: &CodexTokens) -> ModelCatalog {
     match fetch_models(tokens) {
-        Ok(models) => DesktopCatalog {
+        Ok(models) => ModelCatalog {
             models,
             catalog_is_fallback: false,
         },
         Err(e) => {
             tracing::warn!("{e:#}");
-            DesktopCatalog {
+            ModelCatalog {
                 models: vec![(DEFAULT_MODEL.into(), DEFAULT_MODEL.into())],
                 catalog_is_fallback: true,
             }
@@ -437,7 +435,7 @@ fn exchange_code(code: &str, verifier: &str, port: u16) -> Result<CodexTokens> {
 }
 
 /// 浏览器授权全流程：本地回调服务器 + PKCE + 令牌交换。
-fn browser_authorization(cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<CodexTokens> {
+fn browser_authorization() -> Result<CodexTokens> {
     use std::io::{Read as _, Write as _};
     use std::net::TcpListener;
 
@@ -463,11 +461,6 @@ fn browser_authorization(cancel: Option<&std::sync::atomic::AtomicBool>) -> Resu
 
     let deadline = std::time::Instant::now() + CALLBACK_TIMEOUT;
     let code = loop {
-        if cancel.is_some_and(|cancel| cancel.load(std::sync::atomic::Ordering::Relaxed)) {
-            bail!(crate::tr!(
-                "已取消浏览器授权 / Browser authorization cancelled"
-            ));
-        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 stream.set_nonblocking(false)?;
@@ -523,34 +516,6 @@ fn browser_authorization(cancel: Option<&std::sync::atomic::AtomicBool>) -> Resu
     exchange_code(&code, &verifier, port)
 }
 
-/// 桌面端使用：导入 codex CLI 登录态并保存 course2md 自有副本，返回账号可用
-/// 模型目录（目录拉取失败时回落默认模型并标记，见 [`DesktopCatalog`]）；导入失败不写任何文件。
-pub fn import_for_desktop() -> Result<DesktopCatalog> {
-    let mut tokens = import_from_codex_cli()?;
-    if needs_refresh(&tokens) {
-        tokens = refresh(&tokens)?;
-    }
-    save_tokens(&tokens)?;
-    Ok(desktop_catalog(&tokens))
-}
-
-/// 桌面端使用：浏览器 PKCE 授权（无 codex CLI 时），成功后保存并返回模型目录。
-/// 会打开系统浏览器并阻塞等待回调（最长 180 秒）；须在非 UI 线程调用。
-pub fn authorize_for_desktop(
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> Result<DesktopCatalog> {
-    let tokens = browser_authorization(Some(&cancel))?;
-    save_tokens(&tokens)?;
-    Ok(desktop_catalog(&tokens))
-}
-
-/// 桌面端使用：用已保存的登录态重新拉取账号可用的模型目录（临期先刷新令牌）。
-/// 与导入来源无关（codex CLI 导入或浏览器授权均可）；未登录时报错。
-pub fn refresh_models_for_desktop() -> Result<Vec<(String, String)>> {
-    let tokens = fresh_tokens()?;
-    fetch_models(&tokens)
-}
-
 /// 只删除 course2md 自有的 Codex 凭据副本，不改写配置。返回是否确有凭据被删除。
 pub fn remove_credentials() -> Result<bool> {
     match std::fs::remove_file(credential_path()) {
@@ -575,7 +540,7 @@ fn confirm_browser(prompt: &str) -> Result<CodexTokens> {
     if !browser {
         bail!(crate::tr!("已取消登录。/ Login cancelled."));
     }
-    browser_authorization(None)
+    browser_authorization()
 }
 
 /// `course2md --login codex`：导入 codex CLI 登录态（失败时可改用浏览器授权），选模型并启用 AI 校对。
@@ -614,7 +579,7 @@ pub(super) fn login() -> Result<()> {
     cfg.llm.provider = LlmProvider::Codex;
     cfg.llm.base_url.clear();
     cfg.llm.api_key.clear();
-    let catalog = desktop_catalog(&tokens);
+    let catalog = model_catalog(&tokens);
     if catalog.catalog_is_fallback {
         crate::println_tr!(
             "无法获取账号可用的模型列表，已使用默认模型 {}。",
@@ -661,26 +626,6 @@ pub(super) fn login() -> Result<()> {
         ),
     }
     Ok(())
-}
-
-/// Codex 登录状态（桌面账号卡片用）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LoginStatus {
-    Disconnected,
-    /// 已连接：展示用说明
-    Connected,
-    /// 凭据存在但无法再刷新，需要重新登录
-    Expired,
-}
-
-/// 本地判断登录状态（不触网）。access token 过期不算失效：只要有 refresh token，
-/// 下次请求会自动刷新；刷新被拒时请求路径会返回 [`CodexLoginRequired`]。
-pub fn status() -> Result<LoginStatus> {
-    Ok(match load_tokens()? {
-        None => LoginStatus::Disconnected,
-        Some(tokens) if tokens.refresh_token.is_empty() => LoginStatus::Expired,
-        Some(_) => LoginStatus::Connected,
-    })
 }
 
 /// `course2md --logout codex`：删除凭据；当前 AI 校对使用 Codex 时一并重置。

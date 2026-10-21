@@ -3,9 +3,9 @@ name: ci
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'desktop/**', 'packaging/**', 'install.sh']
+    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'packaging/**', 'install.sh']
   pull_request:
-    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'desktop/**', 'packaging/**', 'install.sh']
+    paths-ignore: ['**.md', 'docs/**', '.agents/**', 'packaging/**', 'install.sh']
 
 concurrency:
   group: ci-${{ github.ref }}

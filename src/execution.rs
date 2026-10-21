@@ -25,7 +25,7 @@ pub enum Operation {
 }
 
 /// A version component that a reprocess task can redo. The wire format stays the
-/// lowercase name so stored desktop plans keep loading.
+/// lowercase name so stored task plans keep loading.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Component {
@@ -387,75 +387,6 @@ pub async fn run(request: Request) -> Result<()> {
     )?;
     // No settings::load, environment credential resolution or wizard on this path.
     crate::pipeline::run_task(&request, &cfg).await
-}
-
-/// Call only while all writers are paused and the library copy has been verified.
-/// New bindings omit resolved output locations. This migrates older bindings by changing
-/// only owned work/output fields, and verifies each copied identity against the old one.
-pub fn relocate_work_bindings(root_old: &Path, root_new: &Path) -> Result<usize> {
-    anyhow::ensure!(
-        root_old.is_absolute() && root_new.is_absolute() && root_old != root_new,
-        crate::tr!("笔记库迁移位置无效 / Invalid relocation roots")
-    );
-    fn visit(root: &Path, current: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
-        for entry in std::fs::read_dir(current)? {
-            let entry = entry?;
-            if entry.file_type()?.is_symlink() {
-                continue;
-            }
-            let path = entry.path();
-            if path.strip_prefix(root)?.components().count() > 64 {
-                anyhow::bail!(crate::tr!(
-                    "笔记库目录层级过深 / Library directory depth exceeds the safe limit"
-                ));
-            }
-            if entry.file_type()?.is_dir() {
-                visit(root, &path, paths)?;
-            } else if entry.file_name() == "task-identity.json" {
-                paths.push(path);
-            }
-        }
-        Ok(())
-    }
-    let mut paths = Vec::new();
-    visit(root_new, root_new, &mut paths)?;
-    let mut changes = Vec::new();
-    for path in paths {
-        let old_path = root_old.join(path.strip_prefix(root_new)?);
-        let old: serde_json::Value = serde_json::from_slice(&std::fs::read(&old_path).context(
-            crate::tr!("缺少可核验的原任务身份 / Original task identity is missing"),
-        )?)?;
-        let current: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-        let mut relocated = old.clone();
-        for pointer in [
-            "/work_dir",
-            "/course_dir",
-            "/config/out_dir",
-            "/config/out_root",
-            "/config/model_dir",
-        ] {
-            if let Some(value) = relocated.pointer_mut(pointer)
-                && let Some(location) = value.as_str().filter(|s| !s.is_empty())
-                && let Ok(relative) = Path::new(location).strip_prefix(root_old)
-            {
-                *value = serde_json::Value::String(root_new.join(relative).display().to_string());
-            }
-        }
-        anyhow::ensure!(
-            current == old || current == relocated,
-            crate::tr!(
-                "迁移副本中的任务身份已经变化，未覆盖 / Copied task identity changed; not overwritten"
-            )
-        );
-        if relocated != current {
-            changes.push((path, relocated));
-        }
-    }
-    let count = changes.len();
-    for (path, value) in changes {
-        crate::checkpoint::atomic_write(&path, &serde_json::to_vec_pretty(&value)?)?;
-    }
-    Ok(count)
 }
 
 #[cfg(test)]

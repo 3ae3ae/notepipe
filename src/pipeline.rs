@@ -22,7 +22,7 @@ const STEM_MAX_CHARS: usize = 40;
 /// Screenshot checkpoint files are digest-verified across this many parallel lanes.
 const FRAME_DIGEST_LANES: usize = 4;
 
-/// One message for an empty screenshot result; the desktop matches this value.
+/// One message for an empty screenshot result.
 pub const NO_SCREENSHOTS: &str = "未提取到截图";
 
 /// Traditional CLI entry. Its generated task directory is stable for compatible recovery.
@@ -146,7 +146,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         .await
 }
 
-/// Desktop entry: all mutable configuration and credentials have already been resolved.
+/// Task entry: all mutable configuration and credentials have already been resolved.
 pub(crate) async fn run_task(request: &execution::Request, cfg: &PipelineConfig) -> Result<()> {
     // The caller (`execution::run`) validates through `Request::resolve`.
     let started = Instant::now();
@@ -682,7 +682,7 @@ struct TranscriptCache {
     events: Vec<timeline::TranscriptEvent>,
 }
 
-/// Where cloud credentials come from: the CLI may read the environment; a desktop task
+/// Where cloud credentials come from: the CLI may read the environment; a fixed task
 /// carries fully resolved credentials and an explicit no-auth decision.
 #[derive(Clone, Copy)]
 enum Credentials {

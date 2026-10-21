@@ -89,8 +89,7 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(error.exit_code() as u8);
         }
     };
-    // Machine protocol messages stay in the source language for stable consumers;
-    // the desktop pins this command to Simplified Chinese.
+    // Machine protocol messages stay in Simplified Chinese for stable consumers.
     if matches!(cli.command, Some(Command::RunTask)) {
         course2md::i18n::set_lang(course2md::i18n::Lang::ZhHans);
     } else if let Some(value) = &cli.lang {

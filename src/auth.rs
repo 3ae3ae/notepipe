@@ -337,7 +337,6 @@ pub struct AccountProfile {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccountStatus {
-    Disconnected,
     Connected(AccountProfile),
     Expired,
 }
@@ -346,37 +345,7 @@ fn login_agent() -> ureq::Agent {
     crate::runtime::http_agent(Duration::from_secs(12))
 }
 
-/// Check saved credentials against Bilibili. A network failure is an error, not logout.
-pub fn bilibili_account_status() -> Result<AccountStatus> {
-    let text = match std::fs::read_to_string(cookie_path()) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(AccountStatus::Disconnected);
-        }
-        Err(_) => bail!(crate::tr!(
-            "无法读取本地登录状态，请重新登录 / Cannot read the saved login state; log in again"
-        )),
-    };
-    let mut cookies = Cookies::new();
-    for line in text.lines().filter(|line| !line.starts_with('#')) {
-        let columns: Vec<_> = line.split('\t').collect();
-        if columns.len() == 7 && columns[0] == ".bilibili.com" {
-            insert_cookie(&mut cookies, columns[5], columns[6]);
-        }
-    }
-    if !complete(&cookies) {
-        return Ok(AccountStatus::Expired);
-    }
-    let value: Value = request(&login_agent(), NAV, &cookies)?
-        .into_json()
-        .map_err(|_| {
-            anyhow::anyhow!(crate::tr!("无法解析账号状态 / Cannot parse account status"))
-        })?;
-    nav_status(&value)
-}
-
-/// A successful poll returns credentials in memory. The caller explicitly commits
-/// only after checking that its GUI session is still current.
+/// A successful poll returns credentials in memory; the caller explicitly saves them.
 pub struct VerifiedLogin {
     cookies: Cookies,
     pub profile: AccountProfile,
@@ -395,7 +364,7 @@ pub enum QrPoll {
     Authenticated(VerifiedLogin),
 }
 
-/// Blocking, reusable session API. Run generation and polling off the UI thread.
+/// Blocking login session used by the CLI.
 /// Intentionally does not implement Debug: it owns one-use login tickets.
 pub struct QrSession {
     agent: ureq::Agent,
@@ -428,17 +397,6 @@ impl QrSession {
             code,
             started: Instant::now(),
         })
-    }
-
-    /// Renderable QR modules only; callers must add a four-module white quiet zone.
-    pub fn modules(&self) -> Vec<Vec<bool>> {
-        (0..self.code.width())
-            .map(|y| {
-                (0..self.code.width())
-                    .map(|x| self.code[(x, y)] == qrcode::Color::Dark)
-                    .collect()
-            })
-            .collect()
     }
 
     pub fn remaining(&self) -> Duration {
@@ -656,9 +614,6 @@ mod tests {
     #[ignore = "requires Bilibili network access; generates a QR session without logging in"]
     fn live_qr_generation_and_waiting_state() {
         let mut session = QrSession::generate().unwrap();
-        let modules = session.modules();
-        assert!(!modules.is_empty());
-        assert!(modules.iter().all(|row| row.len() == modules.len()));
         assert!(matches!(session.poll().unwrap(), QrPoll::Waiting));
         // Local deadline terminates without a further network request.
         session.started = Instant::now() - Duration::from_secs(181);

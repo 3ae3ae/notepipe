@@ -41,7 +41,7 @@ pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
 }
 
 /// Append `suffix` unless the path already ends with it — never double-append.
-/// 端点后缀策略的唯一事实源（core 的 asr/llm 与 desktop 的服务编辑器共用）。
+/// 端点后缀策略的唯一事实源（ASR 与 LLM 共用）。
 pub fn append_endpoint_suffix(base: &str, suffix: &str) -> String {
     let base = base.trim_end_matches('/');
     if base.ends_with(suffix) {
@@ -95,17 +95,6 @@ pub enum AsrProvider {
 }
 
 impl AsrProvider {
-    pub fn from_id(id: &str) -> Option<Self> {
-        match id {
-            "coreml" => Some(Self::Coreml),
-            "gpu" => Some(Self::Gpu),
-            "cpu" => Some(Self::Cpu),
-            "npu" => Some(Self::Npu),
-            "api" => Some(Self::Api),
-            _ => None,
-        }
-    }
-
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Coreml => "coreml",
@@ -191,14 +180,6 @@ pub fn local_models(provider: AsrProvider) -> &'static [LocalModel] {
         ],
         AsrProvider::Api => &[],
     }
-}
-
-/// 模型展示名；未知 id（如自定义仓库）原样返回。
-pub fn model_label(id: &str) -> &str {
-    local_models(AsrProvider::Npu)
-        .iter()
-        .find(|model| model.id == id)
-        .map_or(id, |model| model.label)
 }
 
 /// 别名 → 规范 id（大小写不敏感）。空值表示默认模型。
@@ -656,11 +637,6 @@ pub fn find_metallib(exe: &Path) -> Option<PathBuf> {
         .into_iter()
         .flat_map(|base| ["mlx.metallib", "default.metallib"].map(|name| base.join(name)))
         .find(|path| path.is_file())
-}
-
-/// Whether this build includes the native Apple speech backend.
-pub fn apple_native_available() -> bool {
-    cfg!(apple_native)
 }
 
 /// 已知视频站点（含子域名与短链），输入可以不带 http(s) 前缀。

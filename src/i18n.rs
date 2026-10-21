@@ -6,8 +6,8 @@
 //! the `zh` and `en` columns split them into their two halves, while
 //! Traditional Chinese and Japanese get their own translations.
 //!
-//! Machine-readable output (`--json`, `run-task`) is not localized: the desktop
-//! pins the protocol language so field meanings and messages stay stable.
+//! Machine-readable output (`--json`, `run-task`) stays in Simplified Chinese
+//! so field meanings and messages stay stable.
 //! Human output (help, progress, errors) follows the selected language.
 //!
 //! Call sites use the [`tr!`] macro: a bare literal becomes a translated
@@ -29,23 +29,13 @@ pub enum Lang {
 }
 
 impl Lang {
-    /// Stable BCP-47 code; also the value stored in desktop preferences.
+    /// Stable BCP-47 language code.
     pub fn code(self) -> &'static str {
         match self {
             Self::En => "en",
             Self::ZhHans => "zh-Hans",
             Self::ZhHant => "zh-Hant",
             Self::Ja => "ja",
-        }
-    }
-
-    /// The language's own name, used by the interface-language selector.
-    pub fn native_name(self) -> &'static str {
-        match self {
-            Self::En => "English",
-            Self::ZhHans => crate::tr!(crate::tr!("简体中文")),
-            Self::ZhHant => crate::tr!(crate::tr!("繁體中文")),
-            Self::Ja => crate::tr!(crate::tr!("日本語")),
         }
     }
 

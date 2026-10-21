@@ -46,34 +46,6 @@ pub enum SubtitleOrigin {
     },
 }
 
-impl SubtitleTrack {
-    pub fn label(&self) -> String {
-        let mut parts = Vec::new();
-        if let Some(name) = self.name.as_ref().filter(|value| !value.trim().is_empty()) {
-            parts.push(name.clone());
-        } else if let Some(language) = &self.language {
-            parts.push(language_label(language));
-        } else if let SubtitleOrigin::File { path } = &self.origin {
-            parts.push(
-                path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-        } else if let SubtitleOrigin::Embedded { stream_index, .. } = &self.origin {
-            parts.push(crate::tr!("内嵌字幕（轨道 {}）", stream_index));
-        } else {
-            parts.push(crate::tr!("字幕").into());
-        }
-        match self.kind {
-            SubtitleKind::Manual => parts.push(crate::tr!("人工字幕").into()),
-            SubtitleKind::Automatic => parts.push(crate::tr!("自动字幕").into()),
-            SubtitleKind::Unknown => {}
-        }
-        parts.join(" · ")
-    }
-}
-
 /// Failed discovery and successful discovery with no readable tracks are distinct.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -101,60 +73,6 @@ impl SubtitleEvidence {
             Self::Found { tracks, .. } => tracks,
             _ => &[],
         }
-    }
-}
-
-/// This value is created only after parsing nonempty text. Tasks may copy events,
-/// avoiding a later change to the attached file or an expired remote subtitle URL.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CachedSubtitle {
-    pub source_identity: String,
-    pub track_id: String,
-    pub label: String,
-    pub path: PathBuf,
-    pub events: Vec<TranscriptEvent>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum SubtitleReadError {
-    Failed { message: String },
-    NoReadableText { message: String },
-    Unsupported { message: String },
-    Cancelled,
-}
-
-impl std::fmt::Display for SubtitleReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Failed { message }
-            | Self::NoReadableText { message }
-            | Self::Unsupported { message } => f.write_str(message),
-            Self::Cancelled => {
-                f.write_str(crate::tr!("已取消读取字幕 / Subtitle reading cancelled"))
-            }
-        }
-    }
-}
-
-impl std::error::Error for SubtitleReadError {}
-
-pub fn language_label(language: &str) -> String {
-    match normalize_language(language).as_str() {
-        "zh" => crate::tr!("中文").into(),
-        "zh-hans" | "zh-cn" | "zh-sg" => crate::tr!("简体中文").into(),
-        "zh-hant" | "zh-tw" | "zh-hk" => crate::tr!("繁体中文").into(),
-        "en" => crate::tr!("英语").into(),
-        "fr" => crate::tr!("法语").into(),
-        "de" => crate::tr!("德语").into(),
-        "ja" => crate::tr!("日语").into(),
-        "ko" => crate::tr!("韩语").into(),
-        "es" => crate::tr!("西班牙语").into(),
-        "pt" => crate::tr!("葡萄牙语").into(),
-        "ru" => crate::tr!("俄语").into(),
-        "ar" => crate::tr!("阿拉伯语").into(),
-        "it" => crate::tr!("意大利语").into(),
-        _ => language.to_owned(),
     }
 }
 
@@ -527,7 +445,7 @@ pub fn pick_subtitle_file(dir: &Path) -> Option<PathBuf> {
     })
 }
 
-/// 本地视频的同名字幕 sidecar（`lecture.srt`、`lecture.zh.vtt` 等，与桌面端同一发现规则），
+/// 本地视频的同名字幕 sidecar（`lecture.srt`、`lecture.zh.vtt` 等），
 /// 中文优先、其次英文。
 pub fn sidecar_subtitle(video: &Path) -> Option<PathBuf> {
     let mut tracks = sidecar_tracks(video);
@@ -611,7 +529,6 @@ mod tests {
         sort_tracks(&mut tracks, &[], "zh-Hans", Some("ja"));
         assert_eq!(tracks[0].language.as_deref(), Some("zh-Hans"));
         assert_eq!(tracks[0].kind, SubtitleKind::Unknown);
-        assert!(!tracks[0].label().contains("人工"));
         assert_eq!(tracks[1].kind, SubtitleKind::Automatic);
     }
 

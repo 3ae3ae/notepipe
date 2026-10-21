@@ -77,36 +77,9 @@ impl Default for AsrApi {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct DesktopSettings {
-    pub library_cards: bool,
-    pub library_group_folders: bool,
-    pub setup_completed: bool,
-    pub system_titlebar: bool,
-    pub reduce_motion: bool,
-    /// The home page lists recent notes below the input.
-    pub home_recent_notes: bool,
-}
-
-/// New libraries open as a card grid; a saved choice is kept as written.
-impl Default for DesktopSettings {
-    fn default() -> Self {
-        Self {
-            library_cards: true,
-            library_group_folders: false,
-            setup_completed: false,
-            system_titlebar: false,
-            reduce_motion: false,
-            home_recent_notes: true,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConfigFile {
-    pub desktop: DesktopSettings,
     pub defaults: Defaults,
     pub llm: crate::llm::LlmSettings,
     pub asr_api: AsrApi,

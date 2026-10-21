@@ -36,21 +36,6 @@ pub fn english_name(code: &str) -> &'static str {
         .unwrap_or("English")
 }
 
-/// The language's own name, for menus.
-pub fn native_name(code: &str) -> &'static str {
-    match code {
-        "zh-Hans" => "简体中文",
-        "zh-Hant" => "繁體中文",
-        "en" => "English",
-        "ja" => "日本語",
-        "ko" => "한국어",
-        "fr" => "Français",
-        "de" => "Deutsch",
-        "es" => "Español",
-        _ => "English",
-    }
-}
-
 /// Language family of a target code: `zh-Hans` and `zh-Hant` are both `zh`.
 fn family(code: &str) -> &str {
     code.split('-').next().unwrap_or(code)

@@ -26,14 +26,9 @@ jobs:
           python3 - <<'PYCODE'
           import os, pathlib, tomllib
           root = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
-          desktop = tomllib.loads(pathlib.Path('desktop/Cargo.toml').read_text())['package']['version']
-          assert root == desktop and os.environ['VERSION'] == 'v' + root, (root, desktop)
+          assert os.environ['VERSION'] == 'v' + root, root
           assert pathlib.Path('docs/releases', 'v' + root + '.md').is_file(), 'missing release notes'
           PYCODE
-      - name: Test release packaging
-        run: |
-          python3 -m unittest discover -s packaging -p 'test_*.py'
-          python3 -m unittest discover -s desktop/scripts -p 'test_*.py'
 
   build:
     needs: validate
@@ -108,56 +103,8 @@ jobs:
         if: always() && runner.os == 'macOS'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain" 2>/dev/null || true
 
-  desktop:
-    needs: validate
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-26, ubuntu-24.04, windows-latest]
-    runs-on: ${{ matrix.os }}
-    env:
-      APPLE_API_P8: ${{ secrets.APPLE_API_KEY }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/desktop-deps
-      # Tag builds package the locked inputs; pull-request desktop tests are not implied here.
-      - name: Build CLI engine and desktop app
-        run: |
-          cargo build --release --locked
-          cargo build --release --locked --manifest-path desktop/Cargo.toml
-      - uses: ./.github/actions/macos-signing
-        if: runner.os == 'macOS'
-        with:
-          certificate: ${{ secrets.MACOS_CERT_P12 }}
-          password: ${{ secrets.MACOS_CERT_PASS }}
-      - name: Prepare notarization
-        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != '' && env.APPLE_API_P8 != ''
-        run: |
-          p8="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-          printf '%s' "$APPLE_API_P8" > "$p8"
-          chmod 600 "$p8"
-          echo "APPLE_API_KEY_PATH=$p8" >> "$GITHUB_ENV"
-      - name: Package native app
-        timeout-minutes: 30
-        run: python -u desktop/scripts/package.py --no-build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-${{ runner.os }}
-          path: |
-            desktop/target/packages/*.zip
-            desktop/target/packages/*.tar.gz
-            desktop/target/packages/*.dmg
-          if-no-files-found: error
-      - name: Remove signing material
-        if: always() && runner.os == 'macOS'
-        run: |
-          security delete-keychain "$RUNNER_TEMP/signing.keychain" 2>/dev/null || true
-          rm -f "$RUNNER_TEMP"/AuthKey_*.p8
-
   release:
-    needs: [build, desktop]
+    needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:

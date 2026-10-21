@@ -1,6 +1,5 @@
 //! LaTeX formulas in notes: `$…$` inside a sentence and `$$…$$` on a line of
-//! its own. Parsing and typesetting (RaTeX, monochrome SVG) are shared by the
-//! desktop reader and the HTML export.
+//! its own. HTML exports typeset formulas as monochrome SVG with RaTeX.
 
 /// A run of note text: prose, or one formula and whether it stands alone.
 #[derive(Debug, PartialEq, Eq)]
@@ -70,13 +69,6 @@ fn closing(text: &str, from: usize, display: bool) -> Option<usize> {
         }
     }
     None
-}
-
-pub fn has_math(text: &str) -> bool {
-    text.contains('$')
-        && pieces(text)
-            .iter()
-            .any(|piece| matches!(piece, Piece::Math { .. }))
 }
 
 /// A typeset formula as monochrome SVG, with its box in em: `height` above
