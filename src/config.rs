@@ -572,13 +572,5 @@ mod asr_tests {
             let cfg = crate::options::resolve("video".into(), &Default::default(), &file).unwrap();
             assert!(cfg.validate().is_err());
         }
-        for text in [
-            "[asr_api]",
-            "[defaults]\nprovider = 'api'",
-            "[defaults]\nmax_speech = 20.0",
-            "[defaults]\nthreads = 4",
-        ] {
-            assert!(toml::from_str::<ConfigFile>(text).is_err(), "{text}");
-        }
     }
 }

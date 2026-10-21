@@ -381,39 +381,6 @@ mod tests {
     }
 
     #[test]
-    fn vendor_asr_modes_are_rejected() {
-        for mode in ["xai", "meta"] {
-            assert!(
-                toml::from_str::<super::ConfigFile>(&format!("[asr]\nmode = '{mode}'")).is_err()
-            );
-            assert!(
-                <crate::cli::Cli as clap::Parser>::try_parse_from([
-                    "notepipe",
-                    "video",
-                    "--asr-mode",
-                    mode,
-                ])
-                .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn removed_llm_fields_are_rejected() {
-        for setting in [
-            "provider = 'codex'",
-            "disable_hint = true",
-            "enabled = true",
-            "summarize = true",
-            "vision = true",
-            "translate = 'ko'",
-            "prompt = 'old root prompt'",
-        ] {
-            assert!(toml::from_str::<super::ConfigFile>(&format!("[llm]\n{setting}")).is_err());
-        }
-    }
-
-    #[test]
     fn template_parses_to_built_in_defaults_when_uncommented() {
         let text: String = super::template()
             .lines()

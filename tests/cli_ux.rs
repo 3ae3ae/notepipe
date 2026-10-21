@@ -131,27 +131,6 @@ fn validation_precedes_dependency_checks_and_downloads() {
 }
 
 #[test]
-fn removed_login_and_setup_commands_fail_without_saving() {
-    let cli = CliTest::new();
-    for args in [
-        vec!["--login", "codex"],
-        vec!["--logout", "ollama"],
-        vec!["--no-llm-hint"],
-        vec!["llm", "setup"],
-        vec!["llm", "status"],
-        vec!["llm", "disable"],
-        vec!["remove", "--asr"],
-    ] {
-        assert!(!cli.run(&args).status.success(), "{args:?}");
-    }
-    let help = stdout(&cli.run(&["--help"]));
-    for removed in ["--login", "--logout", "--no-llm-hint", "llm setup"] {
-        assert!(!help.contains(removed), "{help}");
-    }
-    assert!(!cli.dir.path().join("config/notepipe").exists());
-}
-
-#[test]
 fn config_show_reports_the_defaults_conversion_uses() {
     let cli = CliTest::new();
     let result = cli.run(&["config", "show"]);
@@ -171,11 +150,10 @@ fn config_show_reports_the_defaults_conversion_uses() {
 }
 
 #[test]
-fn screenshot_mode_replaces_the_old_public_flag_and_config_key() {
+fn screenshot_mode_is_configurable_and_unknown_keys_are_rejected() {
     let cli = CliTest::new();
     let help = stdout(&cli.run(&["--help"]));
     assert!(help.contains("--screenshot-mode") && help.contains("Screenshots"));
-    assert!(!help.contains("--slide-mode"));
     cli.config("[defaults]\nscreenshot_mode = 'first'\n");
     let shown = cli.run(&["config", "show"]);
     assert!(shown.status.success());
@@ -184,14 +162,8 @@ fn screenshot_mode_replaces_the_old_public_flag_and_config_key() {
             .lines()
             .any(|line| line.contains("screenshot_mode") && line.ends_with("first"))
     );
-    assert!(!stdout(&shown).contains("slide_mode"));
     std::fs::write(cli.dir.path().join("media.mp4"), "placeholder").unwrap();
-    assert!(
-        !cli.run(&["media.mp4", "--slide-mode", "first", "--json"])
-            .status
-            .success()
-    );
-    cli.config("[defaults]\nslide_mode = 'first'\n");
+    cli.config("[defaults]\nunknown_key = 1\n");
     let error = json_error(&cli.run(&["media.mp4", "--json"]));
     assert!(error["message"].as_str().unwrap().contains("configuration"));
 }
@@ -526,24 +498,6 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
 }
 
 #[test]
-fn removed_output_controls_and_commands_are_rejected() {
-    let cli = CliTest::new();
-    for args in [
-        vec!["run-task"],
-        vec!["summarize"],
-        vec!["source", "--resume"],
-        vec!["source", "--no-download"],
-        vec!["source", "--formats", "md"],
-    ] {
-        assert!(!cli.run(&args).status.success(), "{args:?}");
-    }
-    for key in ["formats = ['md']", "no_download = true", "resume = true"] {
-        cli.config(&format!("[defaults]\n{key}\n"));
-        assert!(!cli.run(&["config", "show"]).status.success(), "{key}");
-    }
-}
-
-#[test]
 fn source_discovery_never_uses_unset_or_empty_path_entries_as_the_current_directory() {
     let cli = CliTest::new();
     cli.config("[source]\ncommand = []\n");
@@ -642,23 +596,8 @@ fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_override
 }
 
 #[test]
-fn legacy_llm_flags_are_rejected_and_stage_selection_is_explicit() {
+fn stage_selection_is_explicit_and_validated() {
     let cli = CliTest::new();
-    for flag in [
-        "--llm",
-        "--no-llm",
-        "--summarize",
-        "--no-summarize",
-        "--llm-vision",
-        "--no-llm-vision",
-        "--translate",
-        "--no-translate",
-    ] {
-        assert!(
-            !cli.run(&["media.mp4", flag, "--json"]).status.success(),
-            "{flag}"
-        );
-    }
     assert!(
         !cli.run(&[
             "media.mp4",

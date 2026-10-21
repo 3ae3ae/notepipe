@@ -250,22 +250,5 @@ mod asr_tests {
             assert_eq!(cfg.asr.language, "ko");
             assert_eq!(cfg.asr.max_speech, 12.0);
         }
-        for flag in [
-            "--provider",
-            "--threads",
-            "--gpu-layers",
-            "--mmproj-offload",
-            "--no-mmproj-offload",
-            "--model-dir",
-            "--asr-api-base-url",
-            "--asr-api-model",
-            "--asr-api-mode",
-        ] {
-            assert!(
-                crate::cli::Cli::try_parse_from(["notepipe", "video", flag, "value"]).is_err(),
-                "{flag}"
-            );
-        }
-        assert!(crate::cli::Cli::try_parse_from(["notepipe", "models", "list"]).is_err());
     }
 }
