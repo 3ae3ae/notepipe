@@ -239,7 +239,14 @@ impl Checkpoint {
                 needs_newline: false,
             });
         }
-        let content = std::fs::read_to_string(path)
+        let mut bytes =
+            std::fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
+        if std::str::from_utf8(&bytes).is_err_and(|e| e.error_len().is_none()) {
+            // A crash may cut a UTF-8 character in the final unterminated record.
+            let intact_len = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+            bytes.truncate(intact_len);
+        }
+        let content = std::str::from_utf8(&bytes)
             .with_context(|| format!("Failed to read {}", path.display()))?;
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         let last_idx = lines.len().saturating_sub(1);
@@ -585,6 +592,33 @@ mod tests {
         assert_eq!(cp.events().len(), 1);
         assert_eq!(cp.events()[0].text, "recovered");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn truncated_utf8_tail_is_cut_before_resume_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("asr.jsonl");
+        let mut cp = Checkpoint::open(dir.path(), true, &identity("qwen3")).unwrap();
+        cp.record(0.0, 1.0, "완료").unwrap();
+        drop(cp);
+        let intact = std::fs::read(&path).unwrap();
+        let partial = "{\"start\":1,\"end\":2,\"text\":\"한국어\"}";
+        let cut = partial.find('한').unwrap() + 1;
+        let mut bytes = intact.clone();
+        bytes.extend_from_slice(&partial.as_bytes()[..cut]);
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut cp = Checkpoint::open(dir.path(), true, &identity("qwen3")).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), intact);
+        assert!(cp.is_done(0.0, 1.0));
+        assert!(!cp.is_done(1.0, 2.0));
+        cp.record(1.0, 2.0, "복구").unwrap();
+        drop(cp);
+
+        let cp = Checkpoint::open(dir.path(), true, &identity("qwen3")).unwrap();
+        assert_eq!(cp.events().len(), 2);
+        assert_eq!(cp.events()[0].text, "완료");
+        assert_eq!(cp.events()[1].text, "복구");
     }
 
     #[test]
