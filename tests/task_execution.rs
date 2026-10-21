@@ -455,14 +455,16 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
         .unwrap();
     let stranded_media = source_marker.parent().unwrap().join("files/media.mp4");
     std::fs::write(&stranded_media, "cached media").unwrap();
-    cfg.llm.summarize = true;
+    cfg.llm
+        .stages
+        .push(notepipe::llm::Stage::builtin("summary").unwrap());
     cfg.llm.base_url = mock.url.clone();
     cfg.llm.model = "fixture".into();
     for _ in 0..2 {
         let second = run(root.path(), url, &cfg, &[]);
         assert_eq!(done(&second)["note_dir"], first_done["note_dir"]);
         assert!(
-            document(&second)["summary"]
+            document(&second)["top"][0]["text"]
                 .as_str()
                 .unwrap()
                 .contains("Verbatim **Markdown**.")
@@ -551,12 +553,14 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
         })
     });
     let mut cfg = config();
-    cfg.llm.enabled = true;
+    cfg.llm
+        .stages
+        .push(notepipe::llm::Stage::builtin("proofread").unwrap());
     cfg.llm.base_url = mock.url.clone();
     cfg.llm.model = "fixture".into();
-    cfg.llm.prompt = Some("CUSTOM-RULE-42".into());
+    cfg.llm.stages[0].prompt = "CUSTOM-RULE-42".into();
     cfg.llm.api_key = "private-test-key".into();
-    cfg.llm.vision = true;
+    cfg.llm.stages[0].images = true;
     for _ in 0..2 {
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         assert!(document(&output).to_string().contains("Cached fallback."));
@@ -722,7 +726,9 @@ fn proofreading_keys_prefer_flags_then_config_then_environment() {
             ))
         });
         let mut cfg = config();
-        cfg.llm.enabled = true;
+        cfg.llm
+            .stages
+            .push(notepipe::llm::Stage::builtin("proofread").unwrap());
         cfg.llm.base_url = mock.url.clone();
         cfg.llm.model = "fixture".into();
         cfg.llm.api_key = configured.into();
@@ -772,7 +778,9 @@ fn retryable_and_terminal_llm_errors_preserve_text_and_never_enter_the_cache() {
         })
     });
     let mut cfg = config();
-    cfg.llm.enabled = true;
+    cfg.llm
+        .stages
+        .push(notepipe::llm::Stage::builtin("proofread").unwrap());
     cfg.llm.base_url = mock.url.clone();
     cfg.llm.model = "fixture".into();
     let first = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
@@ -864,4 +872,243 @@ exec "$REAL_FFMPEG" "$@"
         !record.join("request").exists(),
         "HTTP was sent after cancellation"
     );
+}
+
+#[test]
+fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
+    use std::sync::{Arc, Mutex, atomic::Ordering};
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    std::fs::write(
+        video.with_extension("srt"),
+        "1\n00:00:00,000 --> 00:00:02,000\nOriginal words.\n",
+    )
+    .unwrap();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let main_order = order.clone();
+    let main = MockAi::respond_with(move |_, body| {
+        let system = body["messages"][0]["content"].as_str().unwrap();
+        assert_eq!(body["model"], "default-model");
+        assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["top_p"], 0.8);
+        assert!(body.get("max_tokens").is_none());
+        let content = if system.starts_with("You proofread") {
+            main_order.lock().unwrap().push("proofread");
+            r#"{"segments":[{"id":0,"text":"Proofread words."}]}"#
+        } else if system.starts_with("CUSTOM-TOP") {
+            main_order.lock().unwrap().push("outline");
+            assert!(!system.contains("language of the transcript"));
+            assert!(
+                body["messages"][1]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Proofread words.")
+                    || body["messages"][1]["content"]
+                        .as_str()
+                        .unwrap()
+                        .contains("Original words.")
+            );
+            "## First block\n\nCustom **Markdown**."
+        } else {
+            assert!(system.starts_with("You summarize recordings"));
+            main_order.lock().unwrap().push("summary");
+            "## Second block\n\nSummary text."
+        };
+        Some((200, json!({"choices":[{"message":{"content":content}}]})))
+    });
+    let below_order = order.clone();
+    let below = MockAi::respond_with(move |_, body| {
+        below_order.lock().unwrap().push("gloss");
+        assert_eq!(body["model"], "below-model");
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["top_p"], 0.8);
+        assert_eq!(body["top_k"], 5);
+        assert!(
+            body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("CUSTOM-BELOW Output a JSON object")
+        );
+        assert!(
+            body["messages"][1]["content"]
+                .to_string()
+                .contains("Proofread words.")
+        );
+        Some((
+            200,
+            json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"Des mots en français.\nMore detail."}]}"#}}]}),
+        ))
+    });
+    let mut cfg = config();
+    cfg.llm = serde_json::from_value(json!({
+        "base_url":main.url,"api_key":"default-key","model":"default-model",
+        "request":{"temperature":0.2,"top_p":0.8},
+        "stages":[
+            {"name":"proofread"},
+            {"name":"gloss","input":"paragraphs","output":"below","prompt":"CUSTOM-BELOW","base_url":below.url,"api_key":"stage-key","model":"below-model","request":{"temperature":0.7,"top_k":5}},
+            {"name":"outline","input":"transcript","output":"top","prompt":"CUSTOM-TOP"},
+            {"name":"summary"}
+        ]
+    })).unwrap();
+    let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
+    let doc = document(&output);
+    assert_eq!(
+        *order.lock().unwrap(),
+        ["proofread", "gloss", "outline", "summary"]
+    );
+    assert_eq!(doc["top"][0]["stage"], "outline");
+    assert_eq!(doc["top"][1]["stage"], "summary");
+    assert!(doc.get("summary").is_none());
+    let event = &doc["sections"][0]["speech"][0];
+    assert_eq!(event["text"], "Proofread words.");
+    assert_eq!(event["raw"], "Original words.");
+    assert_eq!(event["below"][0]["stage"], "gloss");
+    assert!(event.get("translation").is_none());
+    let markdown = std::fs::read_to_string(done(&output)["markdown"].as_str().unwrap()).unwrap();
+    assert!(markdown.find("## First block").unwrap() < markdown.find("## Second block").unwrap());
+    assert!(markdown.find("## Second block").unwrap() < markdown.find("Proofread words.").unwrap());
+    assert!(markdown.contains("> Des mots en français.\n> More detail.\n"));
+    assert!(below.headers.lock().unwrap()[0].contains("Authorization: Bearer stage-key"));
+    assert!(
+        main.headers
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|header| header.contains("Authorization: Bearer default-key"))
+    );
+    let selected = run(
+        root.path(),
+        video.to_str().unwrap(),
+        &cfg,
+        &["--stages", "outline"],
+    );
+    let doc = document(&selected);
+    assert_eq!(doc["top"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["top"][0]["stage"], "outline");
+    assert_eq!(doc["sections"][0]["speech"][0]["text"], "Original words.");
+    assert!(doc["sections"][0]["speech"][0].get("below").is_none());
+    let calls = main.calls.load(Ordering::SeqCst);
+    cfg.llm.base_url = "invalid unused URL".into();
+    cfg.llm.model.clear();
+    let disabled = run(root.path(), video.to_str().unwrap(), &cfg, &["--no-stages"]);
+    assert!(document(&disabled)["top"].as_array().unwrap().is_empty());
+    assert_eq!(main.calls.load(Ordering::SeqCst), calls);
+    assert_eq!(below.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replacement() {
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
+    {
+        return;
+    }
+    for blank in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let video = root.path().join("broken.mp4");
+        std::fs::write(&video, "broken media, readable subtitles").unwrap();
+        let cue = |n| {
+            format!(
+                "{n}\n00:{:02}:{:02},000 --> 00:{:02}:{:02},000\nOriginal {n}.\n\n",
+                n * 5 / 60,
+                n * 5 % 60,
+                (n * 5 + 1) / 60,
+                (n * 5 + 1) % 60
+            )
+        };
+        std::fs::write(
+            video.with_extension("srt"),
+            (0..21).map(cue).collect::<String>(),
+        )
+        .unwrap();
+        let mock = MockAi::respond_with(move |_, body| {
+            let payload = body["messages"][1]["content"][0]["text"].as_str().unwrap();
+            let items: Vec<Value> = serde_json::from_str(payload).unwrap();
+            if !blank && items.len() == 1 {
+                return Some((400, json!({"error":{"message":"rejected"}})));
+            }
+            let segments = items.iter().map(|item| json!({"id":item["id"],"text":if blank { String::new() } else { format!("Processed {}", item["text"].as_str().unwrap()) }})).collect::<Vec<_>>();
+            Some((
+                200,
+                json!({"choices":[{"message":{"content":json!({"segments":segments}).to_string()}}]}),
+            ))
+        });
+        let mut cfg = config();
+        cfg.llm.base_url = mock.url.clone();
+        cfg.llm.model = "fixture".into();
+        cfg.llm.concurrency = 1;
+        cfg.llm
+            .stages
+            .push(notepipe::llm::Stage::builtin("proofread").unwrap());
+        let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
+        let doc = document(&output);
+        let paragraphs = doc["sections"][0]["speech"].as_array().unwrap();
+        assert_eq!(paragraphs.len(), 21);
+        assert_eq!(paragraphs[20]["text"], "Original 20.");
+        if blank {
+            assert_eq!(paragraphs[0]["text"], "Original 0.");
+        } else {
+            assert_eq!(paragraphs[0]["text"], "Processed Original 0.");
+        }
+        assert!(
+            doc["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|warning| warning.as_str().unwrap().contains("proofread incomplete"))
+        );
+    }
+}
+
+#[test]
+fn transcript_map_reduce_keeps_part_order_and_uses_the_fixed_merge_template() {
+    let mock = MockAi::respond_with(|_, body| {
+        assert!(body.get("temperature").is_none() && body.get("max_tokens").is_none());
+        let user = body["messages"][1]["content"].as_str().unwrap();
+        let content = if user.contains("Below are summaries of consecutive parts") {
+            assert!(
+                user.find("== Part 1 ==\nFirst part").unwrap()
+                    < user.find("== Part 2 ==\nSecond part").unwrap()
+            );
+            assert!(user.ends_with("Merge them into one summary of the whole recording, following the same instructions."));
+            "## Combined\n\nExact final Markdown."
+        } else {
+            assert!(user.starts_with("Title: Recording\nAuthor: Author\n\nTranscript (each line starts with its start time as [mm:ss]):\n\n"));
+            if user.contains("[00:00]") {
+                "First part"
+            } else {
+                "Second part"
+            }
+        };
+        Some((200, json!({"choices":[{"message":{"content":content}}]})))
+    });
+    let stage = notepipe::llm::Stage::builtin("summary").unwrap();
+    let settings = notepipe::llm::LlmSettings {
+        base_url: mock.url.clone(),
+        model: "fixture".into(),
+        concurrency: 2,
+        ..Default::default()
+    };
+    let events = (0..2)
+        .map(|index| notepipe::timeline::TranscriptEvent {
+            start: f64::from(index * 60),
+            end: f64::from(index * 60 + 1),
+            text: "x".repeat(15_000),
+            raw: None,
+            below: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let meta = notepipe::source::MediaMeta {
+        title: "Recording".into(),
+        author: "Author".into(),
+        duration: 120.,
+        source: "https://example.test/media".into(),
+    };
+    let result =
+        notepipe::runtime::block_on(notepipe::summarize::run(&settings, &stage, &events, &meta))
+            .unwrap()
+            .unwrap();
+    assert_eq!(result, "## Combined\n\nExact final Markdown.");
+    assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
 }

@@ -77,7 +77,7 @@ pub fn stage(name: &str, status: &str) {
             "render" => "Writing notes",
             "model/prepare" => "Checking speech model",
             name if name.starts_with("model/") => "Downloading speech model",
-            _ => return,
+            _ => name,
         };
         eprintln!("{label}…");
     }

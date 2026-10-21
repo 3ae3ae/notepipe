@@ -125,65 +125,38 @@ pub struct RunOpts {
     #[arg(long, value_name = "FILE", help_heading = "Input and output")]
     pub subtitle: Option<PathBuf>,
 
-    /// Enable AI proofreading for this run
+    /// LLM connection base URL (OpenAI-compatible)
     #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
-    pub llm: bool,
-
-    /// Disable AI proofreading for this run
-    #[arg(long, conflicts_with = "llm")]
-    #[arg(help_heading = "AI proofreading")]
-    pub no_llm: bool,
-
-    /// AI proofreading base URL (OpenAI-compatible)
-    #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
+    #[arg(help_heading = "LLM stages")]
     pub llm_base_url: Option<String>,
 
-    /// AI proofreading key; prefer NOTEPIPE_LLM_API_KEY to keep it out of shell history
+    /// LLM connection key; prefer NOTEPIPE_LLM_API_KEY to keep it out of shell history
     #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
+    #[arg(help_heading = "LLM stages")]
     pub llm_api_key: Option<String>,
 
-    /// AI proofreading model name
+    /// LLM connection model name
     #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
+    #[arg(help_heading = "LLM stages")]
     pub llm_model: Option<String>,
 
-    /// AI proofreading instructions
+    /// Override the selected proofread stage's prompt
     #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
+    #[arg(help_heading = "LLM stages")]
     pub llm_prompt: Option<String>,
 
-    /// Attach slides for proofreading (requires image support)
-    #[arg(long, conflicts_with = "no_llm_vision")]
-    #[arg(help_heading = "AI proofreading")]
-    pub llm_vision: bool,
+    /// Ordered built-in or configured LLM stage names, comma-separated
+    #[arg(
+        long,
+        value_delimiter = ',',
+        conflicts_with = "no_stages",
+        help_heading = "LLM stages"
+    )]
+    pub stages: Option<Vec<String>>,
 
-    /// Disable image-assisted proofreading
-    #[arg(long, conflicts_with = "llm_vision")]
-    #[arg(help_heading = "AI proofreading")]
-    pub no_llm_vision: bool,
-
-    /// Generate a video summary and add it to the notes
-    #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
-    pub summarize: bool,
-
-    /// Disable video summary for this run
-    #[arg(long, conflicts_with = "summarize")]
-    #[arg(help_heading = "AI proofreading")]
-    pub no_summarize: bool,
-
-    /// Bilingual notes: target language code or name (e.g. en, pt-BR, Arabic)
-    #[arg(long, value_name = "LANG", conflicts_with = "no_translate", value_parser = parse_translation_target)]
-    #[arg(help_heading = "AI proofreading")]
-    pub translate: Option<String>,
-
-    /// Do not translate this run
-    #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
-    pub no_translate: bool,
+    /// Run without LLM stages
+    #[arg(long, help_heading = "LLM stages")]
+    pub no_stages: bool,
 
     /// Diagnostic logs; -vv for debug details
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -225,10 +198,4 @@ pub enum ConfigCmd {
     },
     /// Show the config path and file settings
     Show,
-}
-
-fn parse_translation_target(value: &str) -> Result<String, String> {
-    crate::language::target(value)
-        .map(str::to_owned)
-        .map_err(str::to_owned)
 }

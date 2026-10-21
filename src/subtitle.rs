@@ -296,7 +296,7 @@ pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
                         end,
                         text,
                         raw: None,
-                        translation: None,
+                        below: Vec::new(),
                     }),
                 }
             }

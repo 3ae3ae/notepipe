@@ -1,135 +1,242 @@
-//! LLM 字幕校对（可选，默认关闭）。
-//!
-//! 配置文件：`~/.config/notepipe/config.toml`（XDG；Windows 为 `%APPDATA%\notepipe\config.toml`）。
-//! 支持 OpenAI 兼容 /chat/completions 端点；所有配置项均可被命令行覆盖。
-//!
-//! 视觉校对（`vision = true`）：按 Section 分批，每个请求附该节幻灯片截图，
-//! 供模型校正技术词汇拼写；请求失败时该批保留原文，不改发纯文本请求。
+//! Prompt-driven paragraph and transcript stages over OpenAI-compatible HTTP.
+use crate::timeline::{Section, StageText, TranscriptEvent};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value};
+use std::{path::Path, time::Duration};
 
-use crate::timeline::{Section, TranscriptEvent};
-use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::time::Duration;
+pub(crate) const PROOFREAD_PROMPT: &str = r#"You proofread transcripts of spoken recordings. Each input item is a stretch of continuous speech, already split at natural pauses. Fix obvious speech-recognition errors (misheard words, homophones, misspelled names and terms), remove filler that adds nothing, and repair awkward sentence breaks and punctuation so the text reads naturally. Do not summarize, expand, translate, add or remove substantive content, or change the meaning. Keep the original language. If an item contains only filler or meaningless fragments (such as a lone "um" or "you know"), return an empty text for it; never empty an item that has real content. Write mathematical formulas, symbols and expressions as LaTeX: wrap inline math in $...$ and put display math on its own line in $$...$$; rewrite spoken formulas, such as "x squared", as LaTeX too; do not add $ when there is no math."#;
+pub(crate) const PROOFREAD_CONTRACT: &str = r#"Output a JSON object {"segments":[{"id":number,"text":proofread text}]} with exactly one entry per input id; an item that contains only filler gets an empty text. Inside JSON strings, escape every backslash as \\."#;
+pub(crate) const PROOFREAD_VISION_NOTE: &str = r#" Each request includes the screenshot shown during this passage. Use it only to correct the spelling of terms and proper names; do not describe or comment on the image."#;
+pub(crate) const PARAGRAPHS_CONTRACT: &str = r#"Output a JSON object {"segments":[{"id":number,"text":result}]} with exactly one entry per input id. Inside JSON strings, escape every backslash as \\."#;
 
-pub const DEFAULT_PROMPT: &str = "你是视频逐字稿校对器。输入的每一项是一段已按自然停顿组织的连续讲解。\
-修正明显的语音识别错误（错别字、同音字、专有名词拼写），删除不影响原意的冗余口头填充，\
-并修复不自然的断句和标点，使文字自然、书面化。不得概括、扩写、翻译、增删实质内容或改变原意；\
-保持原语言。若某条内容仅由语气词、口头禅或无实义片段构成（如单独的\"啊\"、\"对吧\"），\
-该条的 text 返回空字符串 \"\"（系统会删除该条）；有实质内容的条目不得删除。\
-";
-
-/// 公式书写约定：校对与摘要输出共用，系统自动追加，自定义 prompt 无法覆盖。
-/// 阅读器与导出按 `$` / `$$` 识别公式并排版。
-pub const MATH_RULE: &str = "数学公式、符号与表达式一律写成 LaTeX：行内公式用 $...$ 包围，\
-独立成行的公式用 $$...$$ 包围（如 $f(x)=x^2$、$$\\int_a^b f(x)\\,dx$$）；\
-口述的公式（如“x 的平方”“从 a 到 b 积分”）同样改写为 LaTeX；没有公式时不要添加 $。\
-JSON 字符串里的反斜杠必须写成 \\\\（如 \\\\frac）。";
-
-/// 每次请求合并的语音段数。
 const BATCH: usize = 20;
+const DEFAULT_CONCURRENCY: usize = 8;
+const MAX_CONCURRENCY: usize = 16;
+const MAX_ATTEMPTS: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Input {
+    Paragraphs,
+    Transcript,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Output {
+    Replace,
+    Below,
+    Top,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Stage {
+    pub name: String,
+    pub input: Input,
+    pub output: Output,
+    pub prompt: String,
+    pub images: bool,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub request: Map<String, Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StageFields {
+    name: String,
+    input: Option<Input>,
+    output: Option<Output>,
+    prompt: Option<String>,
+    #[serde(default)]
+    images: bool,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    model: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_request")]
+    request: Map<String, Value>,
+}
+
+fn builtin_defaults(name: &str) -> Option<(Input, Output, &'static str)> {
+    match name {
+        "proofread" => Some((Input::Paragraphs, Output::Replace, PROOFREAD_PROMPT)),
+        "summary" => Some((
+            Input::Transcript,
+            Output::Top,
+            crate::summarize::SUMMARY_PROMPT,
+        )),
+        _ => None,
+    }
+}
+impl<'de> Deserialize<'de> for Stage {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        use serde::de::Error;
+        let fields = StageFields::deserialize(deserializer)?;
+        let defaults = builtin_defaults(&fields.name);
+        let stage = Self {
+            name: fields.name,
+            input: fields
+                .input
+                .or(defaults.map(|value| value.0))
+                .ok_or_else(|| D::Error::custom("Custom stages require input"))?,
+            output: fields
+                .output
+                .or(defaults.map(|value| value.1))
+                .ok_or_else(|| D::Error::custom("Custom stages require output"))?,
+            prompt: fields
+                .prompt
+                .or_else(|| defaults.map(|value| value.2.to_owned()))
+                .ok_or_else(|| D::Error::custom("Custom stages require prompt"))?,
+            images: fields.images,
+            base_url: fields.base_url,
+            api_key: fields.api_key,
+            model: fields.model,
+            request: fields.request,
+        };
+        stage.validate().map_err(D::Error::custom)?;
+        Ok(stage)
+    }
+}
+impl Stage {
+    pub fn builtin(name: &str) -> Option<Self> {
+        let (input, output, prompt) = builtin_defaults(name)?;
+        Some(Self {
+            name: name.into(),
+            input,
+            output,
+            prompt: prompt.into(),
+            images: false,
+            base_url: None,
+            api_key: None,
+            model: None,
+            request: Map::new(),
+        })
+    }
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.name.trim().is_empty(),
+            "LLM stage names must not be empty"
+        );
+        anyhow::ensure!(
+            matches!(
+                (self.input, self.output),
+                (Input::Paragraphs, Output::Replace | Output::Below)
+                    | (Input::Transcript, Output::Top)
+            ),
+            "Invalid LLM stage input/output combination"
+        );
+        anyhow::ensure!(
+            !self.images || self.input == Input::Paragraphs,
+            "Only paragraphs stages support images"
+        );
+        validate_request(&self.request)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct LlmSettings {
-    pub enabled: bool,
-    /// OpenAI 兼容 base URL，如 https://api.deepseek.com/v1
     pub base_url: String,
     pub api_key: String,
     pub model: String,
-    /// 自定义校对指令（输出格式约束由系统自动追加，prompt 无法覆盖）
-    pub prompt: Option<String>,
-    /// 视觉校对：每个请求附对应幻灯片截图，辅助纠正技术词汇（模型须支持图片输入）
-    pub vision: bool,
-    /// 独立生成视频摘要并写入笔记（不依赖校对 enabled）
-    pub summarize: bool,
-    /// Bilingual notes: the target language code or name.
-    /// Skipped when already in that language, except for Chinese script/region targets.
-    pub translate: Option<String>,
-    /// 校对并发数（chunk 间相互独立；自建网关/代理可调高）
     pub concurrency: usize,
+    #[serde(deserialize_with = "deserialize_request")]
+    pub request: Map<String, Value>,
+    pub stages: Vec<Stage>,
 }
-
 impl Default for LlmSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
             base_url: String::new(),
             api_key: String::new(),
             model: String::new(),
-            prompt: None,
-            vision: false,
-            summarize: false,
-            translate: None,
             concurrency: DEFAULT_CONCURRENCY,
+            request: Map::new(),
+            stages: Vec::new(),
         }
     }
 }
-
-/// Token usage stage for a chat request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Purpose {
-    Proofreading,
-    Summary,
-    Translation,
-}
-
-impl Purpose {
-    fn usage_stage(self) -> &'static str {
-        match self {
-            Self::Proofreading => "llm",
-            Self::Summary => "summary",
-            Self::Translation => "translate",
-        }
+impl LlmSettings {
+    pub fn for_stage(&self, stage: &Stage) -> Result<Self> {
+        validate_request(&self.request)?;
+        stage.validate()?;
+        let mut request = self.request.clone();
+        request.extend(stage.request.clone());
+        Ok(Self {
+            base_url: stage
+                .base_url
+                .clone()
+                .unwrap_or_else(|| self.base_url.clone()),
+            api_key: stage
+                .api_key
+                .clone()
+                .unwrap_or_else(|| self.api_key.clone()),
+            model: stage.model.clone().unwrap_or_else(|| self.model.clone()),
+            concurrency: self.concurrency.clamp(1, MAX_CONCURRENCY),
+            request,
+            stages: Vec::new(),
+        })
     }
 }
 
-/// Standard OpenAI-compatible chat body. Temperature is fixed at 0 because
-/// proofreading and summaries require deterministic output.
+fn validate_request(request: &Map<String, Value>) -> Result<()> {
+    // The engine owns the protocol and output contract.
+    anyhow::ensure!(
+        !["model", "messages", "stream", "response_format"]
+            .iter()
+            .any(|key| request.contains_key(*key)),
+        "LLM request cannot override model, messages, stream or response_format"
+    );
+    Ok(())
+}
+fn deserialize_request<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Map<String, Value>, D::Error> {
+    let request = Map::deserialize(deserializer)?;
+    validate_request(&request).map_err(serde::de::Error::custom)?;
+    Ok(request)
+}
+
 pub(crate) fn chat_body(
-    s: &LlmSettings,
+    settings: &LlmSettings,
     system: &str,
-    user: impl Into<serde_json::Value>,
-    max_tokens: u32,
-) -> serde_json::Value {
-    serde_json::json!({
-        "model": s.model,
-        "temperature": 0.0,
-        "max_tokens": max_tokens,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user.into()},
-        ]
-    })
+    user: impl Into<Value>,
+    input: Input,
+) -> Result<Value> {
+    validate_request(&settings.request)?;
+    let mut body = settings.request.clone();
+    body.insert("model".into(), settings.model.clone().into());
+    body.insert("messages".into(), serde_json::json!([{"role":"system","content":system},{"role":"user","content":user.into()}]));
+    if input == Input::Paragraphs {
+        body.insert(
+            "response_format".into(),
+            serde_json::json!({"type":"json_object"}),
+        );
+    }
+    Ok(body.into())
 }
 
-/// base_url -> 完整 chat/completions URL。
 pub fn endpoint(base_url: &str) -> String {
     crate::config::append_endpoint_suffix(base_url.trim(), "/chat/completions")
 }
-
-/// 校验配置可直接使用。
-pub fn validate(s: &LlmSettings) -> Result<()> {
-    if let Some(target) = &s.translate {
-        crate::language::target(target).map_err(anyhow::Error::msg)?;
+pub fn validate(settings: &LlmSettings) -> Result<()> {
+    validate_request(&settings.request)?;
+    for stage in &settings.stages {
+        let settings = settings.for_stage(stage)?;
+        anyhow::ensure!(
+            !settings.base_url.trim().is_empty(),
+            "AI service URL is not set. Set [llm].base_url or the stage's base_url."
+        );
+        anyhow::ensure!(
+            !settings.model.trim().is_empty(),
+            "AI model is not set. Set [llm].model or the stage's model."
+        );
+        crate::config::ensure_http_url(&settings.base_url)
+            .with_context(|| format!("Invalid service for stage {}", stage.name))?;
     }
-    if s.base_url.trim().is_empty() {
-        bail!("AI service URL is not set. Set [llm].base_url or pass --llm-base-url.");
-    }
-    if s.model.trim().is_empty() {
-        bail!("AI model is not set. Set [llm].model or pass --llm-model.");
-    }
-    crate::config::ensure_http_url(&s.base_url)?;
     Ok(())
 }
-
-/// LLM 校对默认并发数（chunk 间相互独立；可经 [llm] concurrency 调整）。
-const DEFAULT_CONCURRENCY: usize = 8;
-/// 校对并发上限：再高对端点限流没有好处，只放大 429 风险
-const MAX_CONCURRENCY: usize = 16;
-/// LLM 请求最大尝试次数（1 次原始 + 重试）。
-const MAX_ATTEMPTS: u32 = 3;
 
 /// 校对/摘要共享的 HTTP agent：整个任务复用同一连接池（clone 共享底层池）。
 /// A response that sends nothing for [`STALL_TIMEOUT`] has stalled; it is
@@ -144,11 +251,8 @@ pub(crate) fn chat_agent() -> ureq::Agent {
 
 const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// 单次请求输出 token 上限（校对与摘要共用）。
-pub(crate) const CHAT_MAX_TOKENS: u32 = 16384;
-
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct PolishReport {
+pub struct StageReport {
     pub attempted: usize,
     pub succeeded: usize,
     pub failed: usize,
@@ -157,64 +261,15 @@ pub struct PolishReport {
     pub note: Option<String>,
 }
 
-/// 校对 worker 池骨架：
-/// `Mutex` 队列 + `std::thread::scope` workers 抢占式取活，每轮先 `check_control`，
-/// 中止（或锁中毒）记 `aborted` 并由首个错误胜出；队列取走即计进度，
-/// `work` 返回本批成功条数（0 = 该批被跳过/失败，与成功语义一致地不累加）。
-/// Err = 任务被中止，携带首个 check_control 错误。
-fn run_pool<T: Send>(
-    queue: &std::sync::Mutex<impl Iterator<Item = T> + Send>,
-    workers: usize,
-    succeeded: &std::sync::atomic::AtomicUsize,
-    pb: &crate::progress::Bar,
-    work: &(dyn Fn(T) -> usize + Sync),
-) -> Result<()> {
-    let aborted = std::sync::Mutex::new(None::<anyhow::Error>);
-    std::thread::scope(|scope| {
-        for _ in 0..workers {
-            scope.spawn(|| {
-                loop {
-                    if let Err(e) = crate::runtime::check_cancelled() {
-                        let mut guard = crate::runtime::lock_recover(&aborted);
-                        if guard.is_none() {
-                            *guard = Some(e);
-                        }
-                        break;
-                    }
-                    let next = queue.lock().map(|mut it| it.next());
-                    match next {
-                        Ok(Some(item)) => {
-                            // 从队列取走即计入进度：被跳过的批次也不再卡住进度条
-                            pb.inc(1);
-                            let count = work(item);
-                            succeeded.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        Ok(None) | Err(_) => break,
-                    }
-                }
-            });
-        }
-    });
-    if let Some(e) = crate::runtime::lock_recover(&aborted).take() {
-        return Err(e);
-    }
-    Ok(())
-}
-
-/// 对已合并的 Section 做校对（在 merge 之后调用；配置已由调用方校验）。
-/// - 失败批次保留原文（校对失败不阻断转换），不拆分、不改发另一种请求
-/// - vision=true 时附对应截图（每节只读盘 + base64 一次）；截图不可用的节保留原文
-/// - 模型对纯语气词条目返回空 text → 该条被删除
-/// - 队列单元为 chunk：纯文本跨 Section 展平后每 BATCH 条一批；vision 按节分批
-///   （同一请求只能附一张截图）。worker 池抢占式取活，已确认响应由成功响应缓存复用。
-pub fn polish_sections_report(
+pub fn paragraphs(
     sections: &mut [Section],
     frames_root: &Path,
     s: &LlmSettings,
-) -> Result<PolishReport> {
+    stage: &Stage,
+) -> Result<StageReport> {
     let attempted = sections.iter().map(|section| section.speech.len()).sum();
     if attempted == 0 {
-        return Ok(PolishReport::default());
+        return Ok(StageReport::default());
     }
     let warned = std::sync::atomic::AtomicBool::new(false);
     // Paths only: the image is read and encoded once per request batch, not all up front.
@@ -222,10 +277,10 @@ pub fn polish_sections_report(
     for sec in sections.iter() {
         crate::runtime::check_cancelled()?;
         image_paths
-            .push((s.vision && !sec.speech.is_empty()).then(|| frames_root.join(&sec.image)));
+            .push((stage.images && !sec.speech.is_empty()).then(|| frames_root.join(&sec.image)));
     }
     let mut chunks: Vec<(Option<std::path::PathBuf>, Vec<&mut TranscriptEvent>)> = Vec::new();
-    if s.vision {
+    if stage.images {
         for (sec, image) in sections.iter_mut().zip(&image_paths) {
             let Some(image) = image else { continue };
             let mut refs: Vec<_> = sec.speech.iter_mut().collect();
@@ -244,215 +299,43 @@ pub fn polish_sections_report(
             chunks.push((None, std::mem::replace(&mut refs, rest)));
         }
     }
-    let pb = crate::progress::Bar::new("llm", chunks.len() as u64)
+    let pb = crate::progress::Bar::new(&stage.name, chunks.len() as u64)
         .with_template("{spinner:.green} llm {pos}/{len} [{bar:32.cyan/blue}] {msg}");
     let agent = chat_agent();
-    let succeeded = std::sync::atomic::AtomicUsize::new(0);
     let first_error = std::sync::Mutex::new(None::<String>);
-    let queue = std::sync::Mutex::new(chunks.into_iter());
-    run_pool(
-        &queue,
+    let completed = crate::runtime::map_pool(
+        chunks,
         s.concurrency.clamp(1, MAX_CONCURRENCY),
-        &succeeded,
-        &pb,
-        &|(image_path, mut chunk)| {
+        |(image_path, mut chunk)| {
+            pb.inc(1);
             let image = image_path
                 .as_deref()
                 .and_then(|path| section_image_b64(path, &warned));
-            polish_chunk(
+            Ok(paragraph_chunk(
                 &agent,
                 s,
+                stage,
                 &mut chunk,
                 image.as_deref(),
                 &warned,
                 &first_error,
-            )
+            ))
         },
     )?;
     pb.finish();
-    // A formula spoken across a subtitle boundary comes back in two pieces.
-    for sec in sections.iter_mut() {
-        join_split_formulas(&mut sec.speech);
-    }
     // 删除「成功校对为空串」的纯语气词条目（全部 chunk 完成后统一过滤）
-    for sec in sections.iter_mut() {
-        sec.speech.retain(|e| !e.text.trim().is_empty());
+    if stage.output == Output::Replace {
+        for sec in sections.iter_mut() {
+            sec.speech.retain(|e| !e.text.trim().is_empty());
+        }
     }
-    let succeeded = succeeded.load(std::sync::atomic::Ordering::Relaxed);
-    Ok(PolishReport {
+    let succeeded = completed.into_iter().sum();
+    Ok(StageReport {
         attempted,
         succeeded,
         failed: attempted.saturating_sub(succeeded),
         note: crate::runtime::lock_recover(&first_error).take(),
     })
-}
-
-impl LlmSettings {
-    /// Whether any requested step sends text to the AI service.
-    pub fn uses_service(&self) -> bool {
-        self.enabled || self.summarize || self.translation_target().is_some()
-    }
-
-    /// The bilingual target, if one is set; validated during preflight.
-    pub fn translation_target(&self) -> Option<&str> {
-        self.translate.as_deref().map(str::trim)
-    }
-}
-
-/// Translates every paragraph into `target`, kept beside the original.
-/// Failed batches stay untranslated; the note is published either way.
-pub fn translate_sections_report(
-    sections: &mut [Section],
-    s: &LlmSettings,
-    target: &str,
-) -> Result<PolishReport> {
-    let mut chunks: Vec<Vec<&mut TranscriptEvent>> = Vec::new();
-    let mut refs: Vec<_> = sections
-        .iter_mut()
-        .flat_map(|section| section.speech.iter_mut())
-        .filter(|event| !event.text.trim().is_empty())
-        .collect();
-    let attempted = refs.len();
-    if attempted == 0 {
-        return Ok(PolishReport::default());
-    }
-    while !refs.is_empty() {
-        let rest = refs.split_off(refs.len().min(BATCH));
-        chunks.push(std::mem::replace(&mut refs, rest));
-    }
-    let pb = crate::progress::Bar::new("translate", chunks.len() as u64)
-        .with_template("{spinner:.green} translate {pos}/{len} [{bar:32.cyan/blue}] {msg}");
-    let agent = chat_agent();
-    let warned = std::sync::atomic::AtomicBool::new(false);
-    let succeeded = std::sync::atomic::AtomicUsize::new(0);
-    let first_error = std::sync::Mutex::new(None::<String>);
-    let queue = std::sync::Mutex::new(chunks.into_iter());
-    run_pool(
-        &queue,
-        s.concurrency.clamp(1, MAX_CONCURRENCY),
-        &succeeded,
-        &pb,
-        &|mut chunk| translate_chunk(&agent, s, target, &mut chunk, &warned, &first_error),
-    )?;
-    pb.finish();
-    let succeeded = succeeded.load(std::sync::atomic::Ordering::Relaxed);
-    Ok(PolishReport {
-        attempted,
-        succeeded,
-        failed: attempted.saturating_sub(succeeded),
-        note: crate::runtime::lock_recover(&first_error).take(),
-    })
-}
-
-fn translate_chunk(
-    agent: &ureq::Agent,
-    s: &LlmSettings,
-    target: &str,
-    chunk: &mut [&mut TranscriptEvent],
-    warned: &std::sync::atomic::AtomicBool,
-    first_error: &std::sync::Mutex<Option<String>>,
-) -> usize {
-    if chunk.is_empty() {
-        return 0;
-    }
-    let items: Vec<&str> = chunk.iter().map(|e| e.text.as_str()).collect();
-    let result = translation_body(s, target, &items).and_then(|body| {
-        let expected = items.len();
-        let content = send_chat(agent, s, &body, Purpose::Translation, &|content| {
-            let parsed = parse_segments(content).context("Invalid translation structure")?;
-            anyhow::ensure!(
-                segment_ids_match(&parsed, expected),
-                "Translated segments do not match the input"
-            );
-            Ok(())
-        })?;
-        parse_segments(&content).context("Invalid translation structure")
-    });
-    match result {
-        Ok(translated) => {
-            for (id, text) in translated {
-                if let Some(event) = chunk.get_mut(id) {
-                    let text = text.trim();
-                    event.translation = (!text.is_empty()).then(|| text.to_owned());
-                }
-            }
-            chunk.len()
-        }
-        Err(error) => {
-            warn_once(warned, &format!("Translation incomplete: {error:#}"));
-            record_first_error(first_error, format!("{error:#}"));
-            0
-        }
-    }
-}
-
-fn translation_body(s: &LlmSettings, target: &str, items: &[&str]) -> Result<serde_json::Value> {
-    let payload: Vec<serde_json::Value> = items
-        .iter()
-        .enumerate()
-        .map(|(i, t)| serde_json::json!({"id": i, "text": t}))
-        .collect();
-    let target = target.trim();
-    let name = crate::language::english_name(target);
-    let name = if target.contains(['-', '_']) && name != target {
-        format!("{name} ({target})")
-    } else {
-        name.to_owned()
-    };
-    // The instruction stays in English: it names the target for any service.
-    let system = format!(
-        "You translate lecture transcripts. Translate each item into {name}. Keep the meaning, \
-         terminology and tone; do not summarize, add or omit content. Keep names, code and \
-         formulas as they are. Output a JSON object {{\"segments\":[{{\"id\":number,\"text\":translation}}]}} \
-         with exactly one entry per input id. {MATH_RULE}"
-    );
-    Ok(chat_body(
-        s,
-        &system,
-        serde_json::Value::String(serde_json::to_string(&payload)?),
-        CHAT_MAX_TOKENS,
-    ))
-}
-
-/// Joins an inline formula that a segment ends unfinished (`$0.$`, `$a+$`)
-/// with the formula the next segment opens with, so `加上 $0.$` + `$2\cos 2x$`
-/// reads `加上 $0.2\cos 2x$`. The next segment keeps the rest of its text.
-fn join_split_formulas(events: &mut [TranscriptEvent]) {
-    for index in 1..events.len() {
-        let (before, after) = events.split_at_mut(index);
-        let (previous, next) = (&mut before[index - 1].text, &mut after[0].text);
-        let Some(head) = unfinished_tail_formula(previous) else {
-            continue;
-        };
-        let rest = next.trim_start();
-        let Some(body) = rest.strip_prefix('$').filter(|body| !body.starts_with('$')) else {
-            continue;
-        };
-        let Some(close) = body.find('$') else {
-            continue;
-        };
-        let joined = format!("{head}{}$", &body[..close]);
-        let remainder = body[close + 1..].to_owned();
-        let keep = previous.trim_end().len() - 1;
-        previous.truncate(keep - (head.len() + 1));
-        previous.push('$');
-        previous.push_str(&joined);
-        *next = remainder;
-    }
-}
-
-/// The content of a closing inline formula that cannot end where it does.
-fn unfinished_tail_formula(text: &str) -> Option<String> {
-    let trimmed = text.trim_end().strip_suffix('$')?;
-    let open = trimmed.rfind('$')?;
-    let content = &trimmed[open + 1..];
-    if content.is_empty() || trimmed[..open].ends_with('$') {
-        return None;
-    }
-    let tail = content.trim_end();
-    let unfinished = tail.ends_with(['+', '-', '=', '(', '[', '{', '^', '_', ',', '\\'])
-        || (tail.ends_with('.') && tail[..tail.len() - 1].ends_with(|c: char| c.is_ascii_digit()));
-    unfinished.then(|| content.to_owned())
 }
 
 /// 读取本节校对截图的 base64；None = 截图不可用（已告警）。
@@ -475,9 +358,10 @@ fn section_image_b64(path: &Path, warned: &std::sync::atomic::AtomicBool) -> Opt
 }
 
 /// 校对一个分块；返回成功条数（失败保留原文并记录首个错误）。
-fn polish_chunk(
+fn paragraph_chunk(
     agent: &ureq::Agent,
     s: &LlmSettings,
+    stage: &Stage,
     chunk: &mut [&mut TranscriptEvent],
     image_b64: Option<&str>,
     warned: &std::sync::atomic::AtomicBool,
@@ -487,16 +371,17 @@ fn polish_chunk(
         return 0;
     }
     let items: Vec<&str> = chunk.iter().map(|e| e.text.as_str()).collect();
-    match chat(agent, s, &items, image_b64) {
+    match chat(agent, s, stage, &items, image_b64) {
         Ok(polished) => {
-            apply_polish(chunk, &polished);
+            apply_results(chunk, &polished, stage);
             chunk.len()
         }
         Err(error) => {
             warn_once(
                 warned,
                 &format!(
-                    "Proofreading has not been completed, the original text has been retained: {error:#}"
+                    "LLM stage {} failed; original text retained: {error:#}",
+                    stage.name
                 ),
             );
             record_first_error(first_error, format!("{error:#}"));
@@ -528,16 +413,23 @@ fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
     polished.len() == expected && ids.len() == expected && (0..expected).all(|id| ids.contains(&id))
 }
 
-/// 把 (id, 新文本) 应用到一批事件上；空字符串 = 删除该条（由调用方 retain）。
-/// IDs must cover this batch exactly ([`segment_ids_match`]).
-fn apply_polish(chunk: &mut [&mut TranscriptEvent], polished: &[(usize, String)]) {
-    for (id, new) in polished {
-        let Some(ev) = chunk.get_mut(*id) else {
+fn apply_results(chunk: &mut [&mut TranscriptEvent], results: &[(usize, String)], stage: &Stage) {
+    for (id, text) in results {
+        let Some(event) = chunk.get_mut(*id) else {
             continue;
         };
-        if *new != ev.text {
-            ev.raw.get_or_insert_with(|| ev.text.clone());
-            ev.text = new.clone();
+        match stage.output {
+            Output::Replace if *text != event.text => {
+                event.raw.get_or_insert_with(|| event.text.clone());
+                event.text = text.clone();
+            }
+            Output::Below if !text.trim().is_empty() && text.trim() != event.text.trim() => {
+                event.below.push(StageText {
+                    stage: stage.name.clone(),
+                    text: text.trim().into(),
+                });
+            }
+            _ => {}
         }
     }
 }
@@ -551,65 +443,50 @@ fn warn_once(warned: &std::sync::atomic::AtomicBool, msg: &str) {
     }
 }
 
-/// 发一批（id, 文本）给 LLM，返回校对后的 (id, 文本) 列表。
-/// `image_b64` 提供时在用户消息中附上该幻灯片截图（OpenAI 兼容 image_url 协议）。
-/// Failures leave the original transcript intact.
 fn chat(
     agent: &ureq::Agent,
-    s: &LlmSettings,
+    settings: &LlmSettings,
+    stage: &Stage,
     items: &[&str],
-    image_b64: Option<&str>,
+    image: Option<&str>,
 ) -> Result<Vec<(usize, String)>> {
-    let body = build_chat_body(s, items, image_b64)?;
-    let expected = items.len();
-    let content = send_chat(agent, s, &body, Purpose::Proofreading, &|content| {
-        let parsed = parse_segments(content).context("Invalid proofreading structure")?;
+    let body = build_chat_body(settings, stage, items, image)?;
+    let content = send_chat(agent, settings, &body, &stage.name, &|content| {
+        let parsed = parse_segments(content).context("Invalid paragraphs response")?;
         anyhow::ensure!(
-            segment_ids_match(&parsed, expected),
-            "Proofread segments do not match the input"
+            segment_ids_match(&parsed, items.len()),
+            "Result segments do not match the input"
         );
         Ok(())
     })?;
-    parse_segments(&content).context("Invalid proofreading structure")
+    parse_segments(&content).context("Invalid paragraphs response")
 }
-
-/// 构造 /chat/completions 请求体（独立出来便于单测覆盖视觉路径）。
 fn build_chat_body(
-    s: &LlmSettings,
+    settings: &LlmSettings,
+    stage: &Stage,
     items: &[&str],
-    image_b64: Option<&str>,
-) -> Result<serde_json::Value> {
-    let payload: Vec<serde_json::Value> = items
+    image: Option<&str>,
+) -> Result<Value> {
+    let payload: Vec<Value> = items
         .iter()
         .enumerate()
-        .map(|(i, t)| serde_json::json!({"id": i, "text": t}))
+        .map(|(id, text)| serde_json::json!({"id":id,"text":text}))
         .collect();
-    let vision_note = if image_b64.is_some() {
-        " 消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。"
+    let contract = if stage.name == "proofread" {
+        PROOFREAD_CONTRACT
     } else {
-        ""
+        PARAGRAPHS_CONTRACT
     };
-    let system = format!(
-        "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{} {MATH_RULE}",
-        effective_prompt(s),
-        vision_note
-    );
-    let mut content = vec![serde_json::json!({
-        "type": "text",
-        "text": serde_json::to_string(&payload)?,
-    })];
-    if let Some(b64) = image_b64 {
-        content.push(serde_json::json!({
-            "type": "image_url",
-            "image_url": {"url": format!("data:image/jpeg;base64,{b64}")},
-        }));
+    let mut system = format!("{} {contract}", stage.prompt);
+    if image.is_some() && stage.name == "proofread" {
+        system.push_str(PROOFREAD_VISION_NOTE);
     }
-    Ok(chat_body(
-        s,
-        &system,
-        serde_json::Value::Array(content),
-        CHAT_MAX_TOKENS,
-    ))
+    let mut content =
+        vec![serde_json::json!({"type":"text","text":serde_json::to_string(&payload)?})];
+    if let Some(image) = image {
+        content.push(serde_json::json!({"type":"image_url","image_url":{"url":format!("data:image/jpeg;base64,{image}")}}));
+    }
+    chat_body(settings, &system, Value::Array(content), stage.input)
 }
 
 /// 从模型输出提取校对结果。约定契约为顶层对象 {"segments":[{"id":n,"text":"..."}]}
@@ -674,49 +551,11 @@ pub fn parse_id_text_pairs(content: &str) -> Option<Vec<(usize, String)>> {
     lenient_scan(slice)
 }
 
-/// A model that writes `\frac` or `\times` unescaped in JSON gets a form feed
-/// or tab back from the parser. Those characters never belong in a transcript,
-/// so before a letter they are restored to the LaTeX command they came from;
-/// a newline is restored only inside a `$` formula, where it cannot be prose.
-pub(crate) fn restore_latex(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut in_math = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        let letter_follows = chars.peek().is_some_and(char::is_ascii_alphabetic);
-        let escape = match c {
-            '\u{8}' => Some('b'),
-            '\u{c}' => Some('f'),
-            '\t' => Some('t'),
-            '\r' => Some('r'),
-            '\n' if in_math => Some('n'),
-            _ => None,
-        };
-        match escape {
-            Some(letter) if letter_follows => {
-                out.push('\\');
-                out.push(letter);
-            }
-            _ => {
-                if c == '$' && !out.ends_with('\\') {
-                    // `$$` opens or closes one display formula.
-                    if chars.peek() == Some(&'$') {
-                        out.push(chars.next().unwrap_or('$'));
-                    }
-                    in_math = !in_math;
-                }
-                out.push(c);
-            }
-        }
-    }
-    out
-}
-
 fn parse_items(v: &[serde_json::Value]) -> Option<Vec<(usize, String)>> {
     let mut out = vec![];
     for item in v {
         let id = item.get("id")?.as_u64()? as usize;
-        let text = restore_latex(item.get("text")?.as_str()?);
+        let text = item.get("text")?.as_str()?.to_owned();
         out.push((id, text));
     }
     if out.is_empty() { None } else { Some(out) }
@@ -791,7 +630,7 @@ fn lenient_scan(s: &str) -> Option<Vec<(usize, String)>> {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[obj_start..end])
             && let (Some(id), Some(text)) = (
                 v.get("id").and_then(|x| x.as_u64()).map(|x| x as usize),
-                v.get("text").and_then(|x| x.as_str()).map(restore_latex),
+                v.get("text").and_then(|x| x.as_str()).map(str::to_owned),
             )
         {
             out.push((id, text));
@@ -810,7 +649,7 @@ pub(crate) fn send_chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
     body: &serde_json::Value,
-    purpose: Purpose,
+    stage: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> Result<String> {
     let resp = match request_chat(agent, s, body, validate) {
@@ -837,7 +676,7 @@ pub(crate) fn send_chat(
     let usage = &resp["usage"];
     if resp[crate::dispatch::CACHED] != true {
         crate::progress::note_tokens(
-            purpose.usage_stage(),
+            stage,
             usage["prompt_tokens"].as_u64().unwrap_or(0),
             usage["completion_tokens"].as_u64().unwrap_or(0),
         );
@@ -910,42 +749,9 @@ fn request_chat(
     }
 }
 
-/// 用户自定义校对指令；空白视为未设置，回落到内置提示词。
-/// 注意：输出格式约束（{"segments":[...]} 契约 / id 对应）由系统在构造
-/// 请求体时自动追加，自定义 prompt 无法覆盖（见 build_chat_body）。
-fn effective_prompt(s: &LlmSettings) -> &str {
-    s.prompt
-        .as_deref()
-        .filter(|p| !p.trim().is_empty())
-        .unwrap_or(DEFAULT_PROMPT)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn formulas_split_across_segments_are_joined() {
-        let event = |text: &str| TranscriptEvent {
-            start: 0.,
-            end: 1.,
-            text: text.into(),
-            raw: None,
-            translation: None,
-        };
-        let mut events = vec![
-            event("加上 $0.$"),
-            event("$2\\cos 2x$，等等。"),
-            event("这是 $x$"),
-            event("$y$ 不变"),
-        ];
-        join_split_formulas(&mut events);
-        assert_eq!(events[0].text, "加上 $0.2\\cos 2x$");
-        assert_eq!(events[1].text, "，等等。");
-        // A complete formula followed by another stays two formulas.
-        assert_eq!(events[2].text, "这是 $x$");
-        assert_eq!(events[3].text, "$y$ 不变");
-    }
 
     #[test]
     fn validate_rejects_unusable_service_urls() {
@@ -953,6 +759,7 @@ mod tests {
             let settings = LlmSettings {
                 base_url: base_url.into(),
                 model: "test-model".into(),
+                stages: vec![Stage::builtin("proofread").unwrap()],
                 ..Default::default()
             };
             assert!(validate(&settings).is_err(), "accepted {base_url}");
@@ -966,16 +773,10 @@ mod tests {
     }
 
     #[test]
-    fn unescaped_latex_commands_survive_json_parsing() {
-        // `{"text":"$\frac{a}{b}\times c$"}` written without escaping the backslashes.
-        let content = "{\"segments\":[{\"id\":0,\"text\":\"面积 $\\frac{a}{b}\\times c$ 与 $$\\neq 0$$\\n下一句\"}]}";
-        let parsed = parse_segments(content).unwrap();
-        assert_eq!(
-            parsed[0].1,
-            "面积 $\\frac{a}{b}\\times c$ 与 $$\\neq 0$$\n下一句"
-        );
-        // Properly escaped LaTeX is left as written.
-        assert_eq!(restore_latex("$\\frac{1}{2}$"), "$\\frac{1}{2}$");
+    fn valid_json_string_content_keeps_formatting_and_escaped_formulas() {
+        let text = "First\n\tIndented $\\frac{1}{2}$";
+        let response = serde_json::json!({"segments":[{"id":0,"text":text}]}).to_string();
+        assert_eq!(parse_segments(&response).unwrap(), vec![(0, text.into())]);
     }
 
     #[test]
@@ -1003,101 +804,12 @@ mod tests {
 
     fn test_settings() -> LlmSettings {
         LlmSettings {
-            enabled: true,
-            base_url: "https://api.x.com/v1".into(),
+            base_url: "https://example.test/v1".into(),
             api_key: "k".into(),
             model: "m".into(),
-            prompt: None,
-            vision: false,
-            summarize: false,
-            translate: None,
-            concurrency: 8,
+            stages: vec![Stage::builtin("proofread").unwrap()],
+            ..Default::default()
         }
-    }
-
-    #[test]
-    fn translation_instructions_preserve_region_and_script_targets() {
-        for (target, name) in [
-            ("pt-BR", "Portuguese (pt-BR)"),
-            ("zh-TW", "Chinese (zh-TW)"),
-            ("sr-Latn", "Serbian (sr-Latn)"),
-            ("zh-Hant", "Traditional Chinese (zh-Hant)"),
-            ("pt", "Portuguese"),
-            ("English", "English"),
-            ("xx-custom", "xx-custom"),
-        ] {
-            let body = translation_body(&test_settings(), target, &["Hello"]).unwrap();
-            let system = body["messages"][0]["content"].as_str().unwrap();
-            assert!(system.contains(&format!("Translate each item into {name}.")));
-        }
-    }
-
-    #[test]
-    fn translation_keeps_originals_and_adds_each_translation() {
-        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0u8; 4096];
-            // Read the head, then the body announced by Content-Length.
-            let body_start = loop {
-                let n = stream.read(&mut buffer).unwrap();
-                request.extend_from_slice(&buffer[..n]);
-                if let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                    break at + 4;
-                }
-            };
-            let head = String::from_utf8_lossy(&request[..body_start]).to_ascii_lowercase();
-            let length: usize = head
-                .lines()
-                .find_map(|line| line.strip_prefix("content-length:"))
-                .and_then(|value| value.trim().parse().ok())
-                .unwrap();
-            while request.len() < body_start + length {
-                let n = stream.read(&mut buffer).unwrap();
-                request.extend_from_slice(&buffer[..n]);
-            }
-            let content = serde_json::json!({"segments":[{"id":0,"text":"Today: compilers."},{"id":1,"text":"Next, parsing."}]});
-            let body = serde_json::json!({"choices":[{"message":{"content":content.to_string()}}]})
-                .to_string();
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
-            String::from_utf8_lossy(&request[body_start..]).into_owned()
-        });
-        let event = |text: &str| TranscriptEvent {
-            start: 0.0,
-            end: 1.0,
-            text: text.into(),
-            raw: None,
-            translation: None,
-        };
-        let mut sections = vec![Section {
-            t: 0.0,
-            end: 1.0,
-            image: String::new(),
-            speech: vec![event("今天讲编译原理。"), event("接下来是语法分析。")],
-        }];
-        let mut settings = test_settings();
-        settings.base_url = format!("http://{address}/v1");
-        settings.concurrency = 1;
-        let report = translate_sections_report(&mut sections, &settings, "en").unwrap();
-        let request = server.join().unwrap();
-        assert!(request.contains("English"), "{request}");
-        assert_eq!((report.attempted, report.succeeded), (2, 2));
-        let speech = &sections[0].speech;
-        assert_eq!(speech[0].text, "今天讲编译原理。");
-        assert_eq!(speech[0].translation.as_deref(), Some("Today: compilers."));
-        assert_eq!(speech[1].translation.as_deref(), Some("Next, parsing."));
     }
 
     #[test]
@@ -1107,13 +819,13 @@ mod tests {
             end: 1.0,
             text: text.into(),
             raw: None,
-            translation: None,
+            below: Vec::new(),
         };
         let (mut a, mut b) = (event("今天讲编译原理"), event("啊"));
         let mut refs = vec![&mut a, &mut b];
         let polished = [(0, "今天讲编译原理".into()), (1, String::new())];
         assert!(segment_ids_match(&polished, refs.len()));
-        apply_polish(&mut refs, &polished);
+        apply_results(&mut refs, &polished, &Stage::builtin("proofread").unwrap());
         assert_eq!(a.raw, None, "未改动的条目不记 raw");
         assert_eq!(b.text, "", "纯语气词被置空，随后由调用方删除");
         assert_eq!(b.raw.as_deref(), Some("啊"), "原文进 raw 溯源");
@@ -1140,15 +852,16 @@ mod tests {
     fn chat_body_text_vs_vision() {
         let s = test_settings();
         let items = ["hello"];
-        let text_only = build_chat_body(&s, &items, None).unwrap();
+        let text_only = build_chat_body(&s, &s.stages[0], &items, None).unwrap();
         assert_eq!(text_only["response_format"]["type"], "json_object");
         assert_eq!(text_only["model"], "m");
-        assert_eq!(text_only["max_tokens"], CHAT_MAX_TOKENS);
+        assert!(text_only.get("max_tokens").is_none());
+        assert!(text_only.get("temperature").is_none());
         let user: &Vec<serde_json::Value> = text_only["messages"][1]["content"].as_array().unwrap();
         assert_eq!(user.len(), 1);
         assert_eq!(user[0]["type"], "text");
 
-        let vision = build_chat_body(&s, &items, Some("aGVsbG8=")).unwrap();
+        let vision = build_chat_body(&s, &s.stages[0], &items, Some("aGVsbG8=")).unwrap();
         let user: &Vec<serde_json::Value> = vision["messages"][1]["content"].as_array().unwrap();
         assert_eq!(user.len(), 2, "带图时附 image_url 内容块");
         assert_eq!(user[1]["type"], "image_url");
@@ -1157,10 +870,162 @@ mod tests {
             "data:image/jpeg;base64,aGVsbG8="
         );
         let sys = vision["messages"][0]["content"].as_str().unwrap();
-        assert!(sys.contains("课件截图"), "带图时系统提示说明截图用途");
+        assert_eq!(
+            sys,
+            format!("{PROOFREAD_PROMPT} {PROOFREAD_CONTRACT}{PROOFREAD_VISION_NOTE}")
+        );
         assert!(
             sys.contains("\"segments\""),
             "系统提示与 response_format=json_object 同为 segments 对象契约"
+        );
+    }
+
+    #[test]
+    fn builtins_and_custom_stages_have_their_declared_contracts() {
+        let settings: LlmSettings = serde_json::from_value(
+            serde_json::json!({"stages":[{"name":"proofread"},{"name":"summary"}]}),
+        )
+        .unwrap();
+        assert_eq!(settings.stages[0], Stage::builtin("proofread").unwrap());
+        assert_eq!(settings.stages[1], Stage::builtin("summary").unwrap());
+        assert_eq!(
+            (settings.stages[0].input, settings.stages[0].output),
+            (Input::Paragraphs, Output::Replace)
+        );
+        assert_eq!(
+            (settings.stages[1].input, settings.stages[1].output),
+            (Input::Transcript, Output::Top)
+        );
+        let custom: Stage = serde_json::from_value(serde_json::json!({"name":"annotate","input":"paragraphs","output":"below","prompt":"CUSTOM"})).unwrap();
+        let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
+        assert_eq!(
+            body["messages"][0]["content"],
+            format!("CUSTOM {PARAGRAPHS_CONTRACT}")
+        );
+        assert!(
+            !body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("LaTeX")
+        );
+        for field in ["input", "output", "prompt"] {
+            let mut fields = serde_json::to_value(&custom).unwrap();
+            fields.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<Stage>(fields).is_err());
+        }
+        for (input, output, images) in [
+            ("paragraphs", "top", false),
+            ("transcript", "below", false),
+            ("transcript", "top", true),
+        ] {
+            assert!(serde_json::from_value::<Stage>(serde_json::json!({"name":"custom","input":input,"output":output,"prompt":"CUSTOM","images":images})).is_err());
+        }
+    }
+
+    #[test]
+    fn stage_overrides_merge_requests_and_protected_keys_are_rejected_at_load() {
+        let settings = toml::from_str::<crate::settings::ConfigFile>(
+            r#"
+[llm]
+base_url = "invalid unused default"
+api_key = "default-key"
+model = "default-model"
+request = { temperature = 0.2, max_tokens = 99 }
+[[llm.stages]]
+name = "summary"
+base_url = "https://example.test/v1"
+api_key = "stage-key"
+model = "stage-model"
+request = { temperature = 0.7, top_p = 0.8 }
+"#,
+        )
+        .unwrap()
+        .llm;
+        validate(&settings).unwrap();
+        let effective = settings.for_stage(&settings.stages[0]).unwrap();
+        assert_eq!(effective.base_url, "https://example.test/v1");
+        assert_eq!(effective.api_key, "stage-key");
+        assert_eq!(effective.model, "stage-model");
+        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["max_tokens"], 99);
+        assert_eq!(body["top_p"], 0.8);
+        assert!(body.get("response_format").is_none());
+        for key in ["model", "messages", "stream", "response_format"] {
+            let request = serde_json::json!({key:"forbidden"});
+            assert!(
+                serde_json::from_value::<LlmSettings>(serde_json::json!({"request":request}))
+                    .is_err()
+            );
+            assert!(
+                serde_json::from_value::<Stage>(
+                    serde_json::json!({"name":"summary","request":request})
+                )
+                .is_err()
+            );
+        }
+        for request in [
+            serde_json::json!([]),
+            serde_json::json!("text"),
+            serde_json::json!(1),
+        ] {
+            assert!(
+                serde_json::from_value::<LlmSettings>(serde_json::json!({"request":request}))
+                    .is_err()
+            );
+            assert!(
+                serde_json::from_value::<Stage>(
+                    serde_json::json!({"name":"summary","request":request})
+                )
+                .is_err()
+            );
+        }
+        let unused: LlmSettings =
+            serde_json::from_value(serde_json::json!({"base_url":"invalid","model":""})).unwrap();
+        validate(&unused).unwrap();
+    }
+
+    #[test]
+    fn below_outputs_skip_empty_or_equal_text_and_keep_stage_order() {
+        let mut stage: Stage = serde_json::from_value(serde_json::json!({"name":"notes","input":"paragraphs","output":"below","prompt":"Annotate"})).unwrap();
+        let mut events = ["First", "Second", "Third"].map(|text| TranscriptEvent {
+            start: 0.,
+            end: 1.,
+            text: text.into(),
+            raw: None,
+            below: Vec::new(),
+        });
+        let mut refs = events.iter_mut().collect::<Vec<_>>();
+        apply_results(
+            &mut refs,
+            &[
+                (0, " First ".into()),
+                (1, " ".into()),
+                (2, " Different ".into()),
+            ],
+            &stage,
+        );
+        stage.name = "more".into();
+        apply_results(
+            &mut refs,
+            &[(0, "".into()), (1, "Second".into()), (2, "Another".into())],
+            &stage,
+        );
+        assert!(events[0].below.is_empty() && events[1].below.is_empty());
+        assert_eq!(events[2].text, "Third");
+        assert!(events[2].raw.is_none());
+        assert_eq!(
+            events[2].below,
+            vec![
+                StageText {
+                    stage: "notes".into(),
+                    text: "Different".into()
+                },
+                StageText {
+                    stage: "more".into(),
+                    text: "Another".into()
+                }
+            ]
         );
     }
 

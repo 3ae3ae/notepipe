@@ -79,9 +79,6 @@ fn selected_transcript(path: &Path) -> Result<(String, Vec<timeline::TranscriptE
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let mut cfg = cfg.clone();
     cfg.validate().context("Invalid settings")?;
-    if cfg.llm.uses_service() {
-        crate::llm::validate(&cfg.llm)?;
-    }
     if let Some(path) = &cfg.subtitle {
         selected_transcript(path)?;
     }
@@ -338,43 +335,41 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         artifact::has_readable_body(&sections),
         "No readable transcript"
     );
-    if cfg.llm.enabled {
-        progress::stage("llm", "start");
-        let (polished, report) = polish_with_rollback(sections, &frame_cfg).await?;
-        sections = polished;
-        report_warning(&mut warnings, "Proofreading", &report);
-        progress::stage("llm", "done");
-    }
-    runtime::check_cancelled()?;
-    if let Some(target) = cfg.llm.translation_target() {
-        sections = translate_step(sections, &cfg, target, &mut warnings).await?;
-    }
-    runtime::check_cancelled()?;
-    let summary = if cfg.llm.summarize {
-        progress::stage("summary", "start");
-        let events = sections
-            .iter()
-            .flat_map(|section| section.speech.iter().cloned())
-            .collect::<Vec<_>>();
-        let summary = match crate::summarize::summarize(&cfg.llm, &events, &meta).await {
-            Ok(summary) => Some(summary),
-            Err(error) => {
-                warnings.push(format!("Summary: {error:#}"));
-                None
+    let mut top = Vec::new();
+    for stage in &cfg.llm.stages {
+        runtime::check_cancelled()?;
+        let settings = cfg.llm.for_stage(stage)?;
+        progress::stage(&stage.name, "start");
+        match stage.input {
+            crate::llm::Input::Paragraphs => {
+                let (processed, report) =
+                    paragraphs_with_rollback(sections, &frames_root, &settings, stage).await?;
+                sections = processed;
+                report_warning(&mut warnings, &stage.name, &report);
             }
-        };
-        progress::stage("summary", "done");
-        summary
-    } else {
-        None
-    };
+            crate::llm::Input::Transcript => {
+                let events = sections
+                    .iter()
+                    .flat_map(|section| section.speech.iter().cloned())
+                    .collect::<Vec<_>>();
+                match crate::summarize::run(&settings, stage, &events, &meta).await {
+                    Ok(text) => top.push(timeline::StageText {
+                        stage: stage.name.clone(),
+                        text,
+                    }),
+                    Err(error) => warnings.push(format!("{}: {error:#}", stage.name)),
+                }
+            }
+        }
+        progress::stage(&stage.name, "done");
+    }
     runtime::check_cancelled()?;
     progress::stage("render", "start");
     let document = Document {
         schema: 1,
         meta,
         sections,
-        summary,
+        top,
         warnings: warnings.clone(),
     };
     let (root, cache, frames) = (cfg.out_root.clone(), cache_root, frames_root);
@@ -419,7 +414,7 @@ fn remove_file(path: &Path, warnings: &mut Vec<String>) {
     }
 }
 
-fn report_warning(warnings: &mut Vec<String>, stage: &str, report: &crate::llm::PolishReport) {
+fn report_warning(warnings: &mut Vec<String>, stage: &str, report: &crate::llm::StageReport) {
     if report.failed > 0 {
         warnings.push(format!(
             "{stage} incomplete ({}/{} failed); original text retained{}",
@@ -434,54 +429,26 @@ fn report_warning(warnings: &mut Vec<String>, stage: &str, report: &crate::llm::
     }
 }
 
-async fn polish_with_rollback(
+async fn paragraphs_with_rollback(
     mut sections: Vec<timeline::Section>,
-    cfg: &PipelineConfig,
-) -> Result<(Vec<timeline::Section>, crate::llm::PolishReport)> {
+    frames_root: &Path,
+    settings: &crate::llm::LlmSettings,
+    stage: &crate::llm::Stage,
+) -> Result<(Vec<timeline::Section>, crate::llm::StageReport)> {
     let original = sections.clone();
-    let llm = cfg.llm.clone();
-    let root = cfg.out_dir.clone();
+    let (settings, stage, root) = (settings.clone(), stage.clone(), frames_root.to_owned());
     let (mut sections, mut report) = tokio::task::spawn_blocking(move || {
-        crate::llm::polish_sections_report(&mut sections, &root, &llm)
+        crate::llm::paragraphs(&mut sections, &root, &settings, &stage)
             .map(|report| (sections, report))
     })
     .await
-    .context("Proofreading worker interrupted")??;
+    .context("Paragraphs stage interrupted")??;
     if !artifact::has_readable_body(&sections) {
         sections = original;
         report.succeeded = 0;
         report.failed = report.attempted;
     }
     Ok((sections, report))
-}
-
-async fn translate_step(
-    mut sections: Vec<timeline::Section>,
-    cfg: &PipelineConfig,
-    target: &str,
-    warnings: &mut Vec<String>,
-) -> Result<Vec<timeline::Section>> {
-    let sample = sections
-        .iter()
-        .flat_map(|section| &section.speech)
-        .map(|event| event.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if crate::language::already_in(crate::language::detect(&sample), target) {
-        return Ok(sections);
-    }
-    progress::stage("translate", "start");
-    let llm = cfg.llm.clone();
-    let target = target.to_owned();
-    let (sections, report) = tokio::task::spawn_blocking(move || {
-        crate::llm::translate_sections_report(&mut sections, &llm, &target)
-            .map(|report| (sections, report))
-    })
-    .await
-    .context("Translation worker interrupted")??;
-    report_warning(warnings, "Translation", &report);
-    progress::stage("translate", "done");
-    Ok(sections)
 }
 
 #[cfg(test)]
@@ -502,7 +469,9 @@ mod tests {
         )
         .unwrap();
         let first = screenshot_key(&cfg).unwrap();
-        cfg.llm.summarize = true;
+        cfg.llm
+            .stages
+            .push(crate::llm::Stage::builtin("summary").unwrap());
         cfg.asr.model = "different".into();
         assert_eq!(screenshot_key(&cfg).unwrap(), first);
         cfg.similarity = 0.5;

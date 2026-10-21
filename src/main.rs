@@ -1,6 +1,6 @@
 use clap::Parser;
 use notepipe::cli::{Cli, Command, ConfigCmd};
-use notepipe::{doctor, llm, pipeline, progress, settings};
+use notepipe::{doctor, pipeline, progress, settings};
 use tracing_subscriber::EnvFilter;
 
 fn init_logging(verbose: u8, quiet: bool, json: bool) {
@@ -160,9 +160,6 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             let initial = notepipe::options::resolve(source.clone(), &cli.opts, &file)?;
             // Fail before probing tools or starting a source adapter.
             initial.validate()?;
-            if initial.llm.enabled {
-                llm::validate(&initial.llm)?;
-            }
             tracing::info!(out = %initial.out_dir.display(), mode = %initial.asr.mode, "start");
             Ok(notepipe::runtime::block_on(pipeline::run(&initial))??)
         }

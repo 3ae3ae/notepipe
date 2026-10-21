@@ -328,7 +328,7 @@ impl Checkpoint {
             end,
             text: text.to_string(),
             raw: None,
-            translation: None,
+            below: Vec::new(),
         };
         if self.file.is_none() {
             if let Some(dir) = self.path.parent() {
@@ -537,7 +537,7 @@ mod tests {
                     end: 1.0,
                     text: "无身份标记".into(),
                     raw: None,
-                    translation: None,
+                    below: Vec::new(),
                 })
                 .unwrap()
             ),
@@ -558,7 +558,7 @@ mod tests {
                 end: s + 1.0,
                 text: t.into(),
                 raw: None,
-                translation: None,
+                below: Vec::new(),
             })
             .unwrap()
         };
@@ -586,7 +586,7 @@ mod tests {
                 end: s + 1.0,
                 text: t.into(),
                 raw: None,
-                translation: None,
+                below: Vec::new(),
             })
             .unwrap()
         };
@@ -634,7 +634,7 @@ mod tests {
             end: 1.0,
             text: "手改".into(),
             raw: None,
-            translation: None,
+            below: Vec::new(),
         })
         .unwrap();
         Checkpoint::open(&d, true, &identity("qwen3")).unwrap(); // 建立身份
@@ -683,7 +683,7 @@ mod tests {
             end: 1.0,
             text: "first".into(),
             raw: None,
-            translation: None,
+            below: Vec::new(),
         })
         .unwrap();
         let l2 = serde_json::to_string(&TranscriptEvent {
@@ -691,7 +691,7 @@ mod tests {
             end: 1.0,
             text: "second".into(),
             raw: None,
-            translation: None,
+            below: Vec::new(),
         })
         .unwrap();
         std::fs::write(d.join("asr.jsonl"), format!("{l}\n{l2}\n")).unwrap();

@@ -120,49 +120,6 @@ fn validation_precedes_dependency_checks_and_downloads() {
 }
 
 #[test]
-fn translation_accepts_language_names_and_rejects_invalid_cli_and_config_values() {
-    let cli = CliTest::new();
-    std::fs::write(cli.dir.path().join("lecture.mp4"), []).unwrap();
-    for target in [" pt-BR ", "Arabic", "Canadian French"] {
-        let error = json_error(&cli.run(&[
-            "./lecture.mp4",
-            "--translate",
-            target,
-            "--sample-interval",
-            "0",
-            "--json",
-        ]));
-        assert!(
-            error["message"]
-                .as_str()
-                .unwrap()
-                .contains("--sample-interval")
-        );
-    }
-    for target in ["", "  ", "en\n", &"語".repeat(41)] {
-        let error = json_error(&cli.run(&["./lecture.mp4", "--translate", target, "--json"]));
-        assert!(
-            error["message"]
-                .as_str()
-                .unwrap()
-                .contains("Translation target")
-        );
-        cli.config(&format!(
-            "[llm]\ntranslate = {}\n",
-            serde_json::to_string(target).unwrap()
-        ));
-        let error = json_error(&cli.run(&["./lecture.mp4", "--json"]));
-        assert!(
-            error["message"]
-                .as_str()
-                .unwrap()
-                .contains("Translation target")
-        );
-    }
-    assert!(!cli.dir.path().join("cache").exists());
-}
-
-#[test]
 fn removed_login_and_setup_commands_fail_without_saving() {
     let cli = CliTest::new();
     for args in [
@@ -342,7 +299,7 @@ fn source_adapter_generates_notes_and_reuses_its_completed_output() {
         return;
     };
     let url = "https://example.test/video?episode=2";
-    let invalid = source_json_error(&cli.run(&[url, "--summarize", "--json"]));
+    let invalid = source_json_error(&cli.run(&[url, "--stages", "summary", "--json"]));
     assert!(
         invalid["message"]
             .as_str()
@@ -609,4 +566,75 @@ fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_override
         assert!(error["message"].as_str().unwrap().contains("configuration"));
         assert!(!error.to_string().contains("private-test-key"));
     }
+}
+
+#[test]
+fn legacy_llm_flags_are_rejected_and_stage_selection_is_explicit() {
+    let cli = CliTest::new();
+    for flag in [
+        "--llm",
+        "--no-llm",
+        "--summarize",
+        "--no-summarize",
+        "--llm-vision",
+        "--no-llm-vision",
+        "--translate",
+        "--no-translate",
+    ] {
+        assert!(
+            !cli.run(&["media.mp4", flag, "--json"]).status.success(),
+            "{flag}"
+        );
+    }
+    assert!(
+        !cli.run(&[
+            "media.mp4",
+            "--stages",
+            "proofread",
+            "--no-stages",
+            "--json"
+        ])
+        .status
+        .success()
+    );
+    std::fs::write(cli.dir.path().join("media.mp4"), "placeholder").unwrap();
+    let error = json_error(&cli.run(&["media.mp4", "--stages", "unknown", "--json"]));
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown LLM stage")
+    );
+    cli.config("[llm]\nbase_url = 'invalid unused URL'\nmodel = ''\n");
+    let error = json_error(&cli.run(&["media.mp4", "--sample-interval", "0", "--json"]));
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("--sample-interval")
+    );
+}
+
+#[test]
+fn llm_request_tables_are_validated_before_any_source_work() {
+    let cli = CliTest::new();
+    for request in [
+        "1",
+        "[]",
+        "'text'",
+        "{ model = 'override' }",
+        "{ messages = [] }",
+        "{ stream = false }",
+        "{ response_format = {} }",
+    ] {
+        for config in [
+            format!("[llm]\nrequest = {request}\n"),
+            format!("[[llm.stages]]\nname = 'summary'\nrequest = {request}\n"),
+        ] {
+            cli.config(&config);
+            let error = json_error(&cli.run(&["https://example.test/media", "--json"]));
+            assert!(error["message"].as_str().unwrap().contains("configuration"));
+        }
+    }
+    assert!(!cli.dir.path().join("cache").exists());
 }

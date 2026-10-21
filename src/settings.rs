@@ -177,11 +177,8 @@ pub fn template() -> String {
             "{TRANSCRIPT_SOURCE}",
             c::TranscriptSource::default().to_string(),
         ),
-        ("{LLM_ENABLED}", llm.enabled.to_string()),
         ("{LLM_BASE_URL}", llm.base_url),
         ("{LLM_MODEL}", llm.model),
-        ("{LLM_VISION}", llm.vision.to_string()),
-        ("{LLM_SUMMARIZE}", llm.summarize.to_string()),
         ("{LLM_CONCURRENCY}", llm.concurrency.to_string()),
     ]
     .into_iter()
@@ -236,22 +233,24 @@ const TEMPLATE: &str = r#"# Configuration
 #min_silence = {MIN_SILENCE}
 
 [llm]
-# Optional AI proofreading
-enabled = {LLM_ENABLED}
+# Connection defaults for all stages
 #base_url = "{LLM_BASE_URL}"
 # Optional; CLI also reads NOTEPIPE_LLM_API_KEY
 #api_key = ""
 #model = "{LLM_MODEL}"
-# Custom proofreading instructions
-#prompt = ""
-# Attach slides; requires an image-capable model
-#vision = {LLM_VISION}
-# Concurrent requests
 #concurrency = {LLM_CONCURRENCY}
-# Add AI summaries
-#summarize = {LLM_SUMMARIZE}
-# Bilingual notes: target language; skipped when the text is already in it
-#translate = "en"
+# Extra request fields; model, messages, stream and response_format are reserved
+#request = {}
+# No stages run by default; --stages proofread,summary selects built-ins
+#stages = []
+
+# Example: enable a built-in stage using its default prompt
+# [[llm.stages]]
+# name = "proofread"
+# images = false
+# Per-stage overrides: prompt, base_url, api_key, model, request
+# Custom stages also require input (paragraphs/transcript), output (replace/below/top), and prompt
+
 "#;
 
 /// 打印配置文件与内置默认合并后的设置（不含本次命令行与环境变量覆盖）。
@@ -292,21 +291,31 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     println!("  {:<17}: {}", "vad_threshold", r.asr.vad_threshold);
     println!("  {:<17}: {}", "min_silence", r.asr.min_silence);
     println!("[llm]");
-    println!("  {:<17}: {}", "enabled", cfg.llm.enabled);
-    let model = if cfg.llm.model.is_empty() {
-        "-"
-    } else {
-        &cfg.llm.model
-    };
-    println!("  {:<17}: {model}", "model");
-    println!("  {:<17}: {}", "vision", cfg.llm.vision);
+    println!("  {:<17}: {}", "base_url", cfg.llm.base_url);
+    println!("  {:<17}: {}", "api_key", hidden(&cfg.llm.api_key));
+    println!("  {:<17}: {}", "model", cfg.llm.model);
     println!("  {:<17}: {}", "concurrency", cfg.llm.concurrency);
-    println!("  {:<17}: {}", "summarize", cfg.llm.summarize);
     println!(
-        "  {:<17}: {}",
-        "translate",
-        cfg.llm.translate.as_deref().unwrap_or("-")
+        "  {:<17}: {:?}",
+        "request keys",
+        cfg.llm.request.keys().collect::<Vec<_>>()
     );
+    for stage in &cfg.llm.stages {
+        let effective = cfg.llm.for_stage(stage)?;
+        println!("[[llm.stages]]");
+        println!("  {:<17}: {}", "name", stage.name);
+        println!("  {:<17}: {:?}", "input", stage.input);
+        println!("  {:<17}: {:?}", "output", stage.output);
+        println!("  {:<17}: {}", "images", stage.images);
+        println!("  {:<17}: {}", "base_url", effective.base_url);
+        println!("  {:<17}: {}", "api_key", hidden(&effective.api_key));
+        println!("  {:<17}: {}", "model", effective.model);
+        println!(
+            "  {:<17}: {:?}",
+            "request keys",
+            effective.request.keys().collect::<Vec<_>>()
+        );
+    }
     Ok(())
 }
 
@@ -332,7 +341,15 @@ mod tests {
 
     #[test]
     fn removed_llm_fields_are_rejected() {
-        for setting in ["provider = 'codex'", "disable_hint = true"] {
+        for setting in [
+            "provider = 'codex'",
+            "disable_hint = true",
+            "enabled = true",
+            "summarize = true",
+            "vision = true",
+            "translate = 'ko'",
+            "prompt = 'old root prompt'",
+        ] {
             assert!(toml::from_str::<super::ConfigFile>(&format!("[llm]\n{setting}")).is_err());
         }
     }

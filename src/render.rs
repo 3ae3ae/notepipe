@@ -63,7 +63,7 @@ fn md_inline(s: &str) -> String {
 pub fn render_markdown(
     meta: &MediaMeta,
     sections: &[Section],
-    summary: Option<&str>,
+    top: &[crate::timeline::StageText],
 ) -> Result<String> {
     let mut md = String::from("---\n");
     for (key, value) in [("title", &meta.title), ("source", &meta.source)] {
@@ -94,8 +94,8 @@ pub fn render_markdown(
     )
     .unwrap();
     writeln!(md, "# {}\n", md_inline(&meta.title)).unwrap();
-    if let Some(summary) = summary {
-        md.push_str(summary);
+    for output in top {
+        md.push_str(&output.text);
         md.push_str("\n\n");
     }
     let source = source_url(meta);
@@ -116,8 +116,11 @@ pub fn render_markdown(
         }
         for event in &section.speech {
             writeln!(md, "{}\n", event.text).unwrap();
-            if let Some(translation) = &event.translation {
-                writeln!(md, "> {}\n", md_inline(translation)).unwrap();
+            for output in &event.below {
+                for line in output.text.lines() {
+                    writeln!(md, "> {line}").unwrap();
+                }
+                md.push('\n');
             }
         }
     }
@@ -193,7 +196,15 @@ mod tests {
             source: "https://example.test/a".into(),
         };
         let summary = "## Custom heading\n\nExact **Markdown**.";
-        let md = render_markdown(&meta, &[], Some(summary)).unwrap();
+        let md = render_markdown(
+            &meta,
+            &[],
+            &[crate::timeline::StageText {
+                stage: "summary".into(),
+                text: summary.into(),
+            }],
+        )
+        .unwrap();
         assert!(md.starts_with(
             "---\ntitle: \"Title\\nsource: false\"\nsource: \"https://example.test/a\""
         ));

@@ -376,7 +376,7 @@ fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_js
 }
 
 /// chat 模式下让多模态 LLM 转录的指令（保持与本地 ASR 输出风格一致：忠实、带自然标点）。
-const CHAT_TRANSCRIBE_PROMPT: &str = "Transcribe this audio. Output only the transcript itself with natural punctuation, and no explanation, summary or formatting. If there is no speech, output an empty string.";
+const CHAT_TRANSCRIBE_PROMPT: &str = r#"Transcribe this audio. Output only the transcript itself with natural punctuation, and no explanation, summary or formatting. If there is no speech, output an empty string."#;
 
 /// 云端转录端点：地址、凭据与请求模式（worker 间共享借用）。
 struct ApiTarget<'a> {

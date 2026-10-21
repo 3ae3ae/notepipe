@@ -3,29 +3,43 @@ use crate::cli::RunOpts;
 use crate::{config, llm, settings};
 
 /// 配置文件 + CLI 覆盖 -> 生效 LLM 设置。
-fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> llm::LlmSettings {
-    let mut s = file.llm.clone();
-    s.enabled = config::resolve_flag(opts.llm, opts.no_llm, None, s.enabled);
-    s.vision = config::resolve_flag(opts.llm_vision, opts.no_llm_vision, None, s.vision);
-    if let Some(v) = &opts.llm_base_url {
-        s.base_url = v.clone();
+fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<llm::LlmSettings> {
+    let mut settings = file.llm.clone();
+    if let Some(value) = &opts.llm_base_url {
+        settings.base_url = value.clone();
     }
-    if let Some(v) = &opts.llm_api_key {
-        s.api_key = v.clone();
+    if let Some(value) = &opts.llm_api_key {
+        settings.api_key = value.clone();
     }
-    if let Some(v) = &opts.llm_model {
-        s.model = v.clone();
+    if let Some(value) = &opts.llm_model {
+        settings.model = value.clone();
     }
-    if let Some(v) = &opts.llm_prompt {
-        s.prompt = Some(v.clone());
+    if opts.no_stages {
+        settings.stages.clear();
+    } else if let Some(names) = &opts.stages {
+        settings.stages = names
+            .iter()
+            .map(|name| {
+                file.llm
+                    .stages
+                    .iter()
+                    .find(|stage| stage.name == *name)
+                    .cloned()
+                    .or_else(|| llm::Stage::builtin(name))
+                    .ok_or_else(|| anyhow::anyhow!("Unknown LLM stage: {name}"))
+            })
+            .collect::<anyhow::Result<_>>()?;
     }
-    s.summarize = config::resolve_flag(opts.summarize, opts.no_summarize, None, s.summarize);
-    if opts.no_translate {
-        s.translate = None;
-    } else if let Some(target) = &opts.translate {
-        s.translate = Some(target.clone());
+    if let Some(prompt) = &opts.llm_prompt {
+        for stage in settings
+            .stages
+            .iter_mut()
+            .filter(|stage| stage.name == "proofread")
+        {
+            stage.prompt = prompt.clone();
+        }
     }
-    s
+    Ok(settings)
 }
 
 /// 优先级：CLI 显式参数 > 配置文件 [defaults] > 内置默认。
@@ -77,7 +91,7 @@ pub fn resolve(
         },
         no_resume: opts.no_resume,
         subtitle: opts.subtitle.clone(),
-        llm: resolve_llm(opts, file),
+        llm: resolve_llm(opts, file)?,
         asr: resolve_asr(opts, file),
         transcript_source: opts
             .transcript_source
@@ -116,39 +130,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn translation_config_validates_and_preserves_arbitrary_targets_and_overrides() {
+    fn stage_flags_override_config_in_order_and_map_the_proofread_prompt() {
         let mut file = settings::ConfigFile::default();
-        for target in [" pt-BR ", "Arabic", "Canadian French"] {
-            file.llm.translate = Some(target.into());
-            let cfg = resolve("video".into(), &RunOpts::default(), &file).unwrap();
-            cfg.validate().unwrap();
-            assert_eq!(cfg.llm.translation_target(), Some(target.trim()));
-            assert!(cfg.llm.uses_service());
-        }
-        for target in ["", "  ", "en\n", &"語".repeat(41)] {
-            file.llm.translate = Some(target.into());
-            let cfg = resolve("video".into(), &RunOpts::default(), &file).unwrap();
-            assert!(
-                cfg.validate()
-                    .unwrap_err()
-                    .to_string()
-                    .contains("Translation target")
-            );
-        }
-        for opts in [
-            RunOpts {
-                no_translate: true,
-                ..Default::default()
-            },
-            RunOpts {
-                translate: Some("Arabic".into()),
-                ..Default::default()
-            },
-        ] {
-            let cfg = resolve("video".into(), &opts, &file).unwrap();
-            cfg.validate().unwrap();
-            assert_eq!(cfg.llm.translation_target(), opts.translate.as_deref());
-        }
+        let mut proofread = llm::Stage::builtin("proofread").unwrap();
+        proofread.images = true;
+        file.llm.stages = vec![proofread];
+        assert_eq!(
+            resolve("video".into(), &RunOpts::default(), &file)
+                .unwrap()
+                .llm
+                .stages,
+            file.llm.stages
+        );
+        let opts = RunOpts {
+            stages: Some(vec!["summary".into(), "proofread".into()]),
+            llm_prompt: Some("Override".into()),
+            ..Default::default()
+        };
+        let cfg = resolve("video".into(), &opts, &file).unwrap();
+        assert_eq!(
+            cfg.llm
+                .stages
+                .iter()
+                .map(|stage| stage.name.as_str())
+                .collect::<Vec<_>>(),
+            ["summary", "proofread"]
+        );
+        assert!(cfg.llm.stages[1].images);
+        assert_eq!(cfg.llm.stages[1].prompt, "Override");
+        let opts = RunOpts {
+            no_stages: true,
+            ..Default::default()
+        };
+        assert!(
+            resolve("video".into(), &opts, &file)
+                .unwrap()
+                .llm
+                .stages
+                .is_empty()
+        );
+        let opts = RunOpts {
+            stages: Some(vec!["missing".into()]),
+            ..Default::default()
+        };
+        assert!(resolve("video".into(), &opts, &file).is_err());
+        assert!(
+            resolve("video".into(), &RunOpts::default(), &Default::default())
+                .unwrap()
+                .llm
+                .stages
+                .is_empty()
+        );
     }
 
     #[test]
@@ -175,27 +207,6 @@ mod tests {
             .unwrap()
             .validate()
             .unwrap();
-    }
-
-    #[test]
-    fn cli_summarize_flag_overrides_config() {
-        let mut file = settings::ConfigFile::default();
-        file.llm.summarize = false;
-        let opts = RunOpts {
-            summarize: true,
-            ..Default::default()
-        };
-        let cfg = resolve("video".into(), &opts, &file).unwrap();
-        assert!(cfg.llm.summarize);
-
-        let mut file = settings::ConfigFile::default();
-        file.llm.summarize = true;
-        let opts = RunOpts {
-            no_summarize: true,
-            ..Default::default()
-        };
-        let cfg = resolve("video".into(), &opts, &file).unwrap();
-        assert!(!cfg.llm.summarize);
     }
 }
 

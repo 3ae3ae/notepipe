@@ -1,78 +1,146 @@
-//! Markdown summaries returned by the language model, without renderer-added labels.
+//! Whole-transcript stages, with bounded chunks and ordered map/reduce.
 use crate::{
-    llm::{self, LlmSettings},
+    llm::{self, LlmSettings, Stage},
     source::MediaMeta,
     timeline::TranscriptEvent,
 };
 use anyhow::{Context, Result};
 
+pub(crate) const SUMMARY_PROMPT: &str = r#"You summarize recordings from their timestamped transcript. Use only what the transcript says: never invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a one-sentence overview, a list of 3 to 6 key points, and an outline of 3 to 8 sections in time order that covers the whole recording; start each outline item with the section's start time as [mm:ss] and describe the section in one or two sentences. Write mathematical formulas as LaTeX in $...$ or $$...$$. Use Markdown with headings of level 2 or lower, and do not repeat the title."#;
+pub(crate) const SUMMARY_LANGUAGE: &str = r#"Write the summary in the language of the transcript."#;
+pub(crate) const SUMMARY_CONTRACT: &str =
+    r#"Output only the Markdown, without code fences or any other text."#;
+pub(crate) const SUMMARY_USER: &str = r#"Transcript (each line starts with its start time as [mm:ss]):
+
+{}"#;
+pub(crate) const SUMMARY_MERGE_USER: &str = r#"Below are summaries of consecutive parts of one recording, in order. Their times are already measured from the start of the recording.
+
+{}
+
+Merge them into one summary of the whole recording, following the same instructions."#;
 const CHUNK_CHAR_LIMIT: usize = 25_000;
 
-fn transcript(events: &[TranscriptEvent]) -> String {
-    events
-        .iter()
-        .map(|event| format!("[{}] {}\n", crate::render::fmt_ts(event.start), event.text))
-        .collect()
+fn system(stage: &Stage) -> String {
+    if stage.name == "summary" {
+        format!("{} {SUMMARY_LANGUAGE} {SUMMARY_CONTRACT}", stage.prompt)
+    } else {
+        format!("{} {SUMMARY_CONTRACT}", stage.prompt)
+    }
 }
-
-fn summarize_text(agent: &ureq::Agent, settings: &LlmSettings, text: &str) -> Result<String> {
-    let system = format!(
-        "Summarize the supplied transcript in Markdown, using its original language. Use only facts supported by the transcript. Return the summary directly, without a code fence. {}",
-        llm::MATH_RULE
-    );
-    let mut body = llm::chat_body(settings, &system, text, llm::CHAT_MAX_TOKENS);
-    body.as_object_mut().unwrap().remove("response_format");
-    llm::send_chat(agent, settings, &body, llm::Purpose::Summary, &|content| {
-        anyhow::ensure!(!content.trim().is_empty(), "Empty summary response");
+fn send(agent: &ureq::Agent, settings: &LlmSettings, stage: &Stage, user: &str) -> Result<String> {
+    let body = llm::chat_body(settings, &system(stage), user, stage.input)?;
+    llm::send_chat(agent, settings, &body, &stage.name, &|content| {
+        anyhow::ensure!(
+            !content.trim().is_empty(),
+            "Empty transcript-stage response"
+        );
         Ok(())
     })
 }
-
-pub async fn summarize(
-    settings: &LlmSettings,
-    events: &[TranscriptEvent],
-    meta: &MediaMeta,
-) -> Result<String> {
-    anyhow::ensure!(!events.is_empty(), "Transcript is empty; cannot summarize");
-    llm::validate(settings)?;
-    let mut chunks = Vec::new();
-    let mut text = String::new();
+fn context(meta: &MediaMeta) -> String {
+    let mut context = String::new();
+    if !meta.title.trim().is_empty() {
+        context.push_str(&format!("Title: {}\n", meta.title));
+    }
+    if !meta.author.trim().is_empty() {
+        context.push_str(&format!("Author: {}\n", meta.author));
+    }
+    if !context.is_empty() {
+        context.push('\n');
+    }
+    context
+}
+// shortcut: a single paragraph can exceed the chunk limit, split paragraphs if model context limits require it.
+fn chunks(events: &[TranscriptEvent]) -> Vec<String> {
+    let (mut chunks, mut text, mut chars) = (Vec::new(), String::new(), 0);
     for event in events {
-        let line = transcript(std::slice::from_ref(event));
-        if !text.is_empty() && text.chars().count() + line.chars().count() > CHUNK_CHAR_LIMIT {
+        let line = format!("[{}] {}\n", crate::render::fmt_ts(event.start), event.text);
+        let count = line.chars().count();
+        if !text.is_empty() && chars + count > CHUNK_CHAR_LIMIT {
             chunks.push(std::mem::take(&mut text));
+            chars = 0;
         }
         text.push_str(&line);
+        chars += count;
     }
     if !text.is_empty() {
         chunks.push(text);
     }
-    let settings = settings.clone();
-    let context = format!("Title: {}\nAuthor: {}\n\n", meta.title, meta.author);
+    chunks
+}
+pub async fn run(
+    settings: &LlmSettings,
+    stage: &Stage,
+    events: &[TranscriptEvent],
+    meta: &MediaMeta,
+) -> Result<String> {
+    anyhow::ensure!(
+        !events.is_empty(),
+        "Transcript is empty; cannot run a transcript stage"
+    );
+    let (settings, stage, context, chunks) = (
+        settings.clone(),
+        stage.clone(),
+        context(meta),
+        chunks(events),
+    );
     tokio::task::spawn_blocking(move || {
         let agent = llm::chat_agent();
-        let partials = crate::runtime::map_pool(chunks, 4, |chunk| {
-            summarize_text(&agent, &settings, &format!("{context}{chunk}"))
+        let partials = crate::runtime::map_pool(chunks, settings.concurrency, |chunk| {
+            send(
+                &agent,
+                &settings,
+                &stage,
+                &format!("{context}{}", SUMMARY_USER.replace("{}", &chunk)),
+            )
         })?;
         if partials.len() == 1 {
             return Ok(partials.into_iter().next().unwrap());
         }
-        summarize_text(
+        let mut parts = String::new();
+        for (index, text) in partials.iter().enumerate() {
+            parts.push_str(&format!("== Part {} ==\n{text}\n\n", index + 1));
+        }
+        send(
             &agent,
             &settings,
-            &format!(
-                "Merge the following summaries into one Markdown summary.\n\n{context}{}",
-                partials.join("\n\n")
-            ),
+            &stage,
+            &format!("{context}{}", SUMMARY_MERGE_USER.replace("{}", &parts)),
         )
     })
     .await
-    .context("Summary generation was interrupted")?
+    .context("Transcript stage interrupted")?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn built_in_and_custom_transcript_contracts_do_not_override_user_instructions() {
+        let mut stage = Stage::builtin("summary").unwrap();
+        assert_eq!(
+            system(&stage),
+            format!("{SUMMARY_PROMPT} {SUMMARY_LANGUAGE} {SUMMARY_CONTRACT}")
+        );
+        stage.name = "outline".into();
+        stage.prompt = "CUSTOM".into();
+        assert_eq!(system(&stage), format!("CUSTOM {SUMMARY_CONTRACT}"));
+        let events = (0..3)
+            .map(|index| TranscriptEvent {
+                start: f64::from(index * 60),
+                end: f64::from(index * 60 + 1),
+                text: "x".repeat(CHUNK_CHAR_LIMIT - 10),
+                raw: None,
+                below: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let chunks = chunks(&events);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks[0].starts_with("[00:00] "));
+        assert!(chunks[1].starts_with("[01:00] "));
+        assert!(chunks[2].starts_with("[02:00] "));
+    }
+
     #[tokio::test]
     async fn empty_transcript_bails_without_an_http_request() {
         let meta = MediaMeta {
@@ -81,8 +149,9 @@ mod tests {
             source: String::new(),
             duration: 0.,
         };
+        let stage = Stage::builtin("summary").unwrap();
         assert!(
-            summarize(&LlmSettings::default(), &[], &meta)
+            run(&LlmSettings::default(), &stage, &[], &meta)
                 .await
                 .unwrap_err()
                 .to_string()

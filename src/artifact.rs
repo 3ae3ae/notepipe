@@ -14,7 +14,7 @@ pub struct Document {
     pub schema: u32,
     pub meta: MediaMeta,
     pub sections: Vec<Section>,
-    pub summary: Option<String>,
+    pub top: Vec<crate::timeline::StageText>,
     pub warnings: Vec<String>,
 }
 
@@ -143,11 +143,7 @@ pub fn publish(
         };
         section.image = name;
     }
-    let markdown = render::render_markdown(
-        &document.meta,
-        &document.sections,
-        document.summary.as_deref(),
-    )?;
+    let markdown = render::render_markdown(&document.meta, &document.sections, &document.top)?;
     atomic_write_shared(&staging.path().join("note.md"), markdown.as_bytes())?;
     atomic_write_shared(
         &staging.path().join("note.json"),
@@ -187,10 +183,10 @@ mod tests {
                     end: 1.,
                     text: "Original body".into(),
                     raw: None,
-                    translation: None,
+                    below: Vec::new(),
                 }],
             }],
-            summary: None,
+            top: Vec::new(),
             warnings: vec![],
         }
     }
@@ -210,7 +206,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(two.file_name().unwrap(), "Shared-title-2");
-        first.summary = Some("Updated summary".into());
+        first.top.push(crate::timeline::StageText {
+            stage: "summary".into(),
+            text: "Updated summary".into(),
+        });
         assert_eq!(publish(&root, &cache, temp.path(), &first).unwrap(), one);
         let previous = std::fs::read(one.join("note.md")).unwrap();
         first.sections[0].image = "../missing.jpg".into();
