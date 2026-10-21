@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notepipe-asr-llama"
+version = "0.1.0"
+description = "llama.cpp speech recognition adapter for notepipe"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = []
+
+[project.scripts]
+notepipe-asr-llama = "notepipe_asr_llama:main"
