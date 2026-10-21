@@ -120,6 +120,31 @@ class AdapterTests(unittest.TestCase):
         model.transcribe(audio, "")
         self.assertIsNone(model.pipe.generate.call_args.args[1].language)
 
+    def test_language_subtags_use_primary_code_case_insensitively(self):
+        model = Model.__new__(Model)
+        model.path = Path("/nonexistent-model")
+        model.ov = Mock()
+        model.ov.WhisperGenerationConfig.return_value.is_multilingual = True
+        model.pipe = Mock()
+        model.pipe.generate.return_value.texts = ["result"]
+        audio = (Path(__file__).resolve().parents[3] / "tests/fixtures/speech.wav").read_bytes()
+        for whisper in [True, False]:
+            model.whisper = whisper
+            for language, primary, name in [
+                ("pt-BR", "pt", "Portuguese"), ("pT-br", "pt", "Portuguese"),
+                ("en-US", "en", "English"), ("EN-us", "en", "English"),
+                ("zh-Hant", "zh", "Chinese"), ("ZH-hANT", "zh", "Chinese"),
+            ]:
+                with self.subTest(whisper=whisper, language=language):
+                    model.transcribe(audio, language)
+                    expected = f"<|{primary}|>" if whisper else name
+                    self.assertEqual(model.pipe.generate.call_args.args[1].language, expected)
+        model.whisper = True
+        model.ov.WhisperGenerationConfig.return_value.is_multilingual = False
+        self.assertEqual(model.transcribe(audio, "EN-us"), "result")
+        with self.assertRaisesRegex(ValueError, "English-only Whisper model"):
+            model.transcribe(audio, "pt-BR")
+
 
 if __name__ == "__main__":
     unittest.main()

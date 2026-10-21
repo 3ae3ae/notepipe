@@ -75,6 +75,7 @@ class Model:
             if len(frames) != wav.getnframes() * 2 or not frames:
                 raise ValueError("Empty or truncated WAV")
         samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+        language = language.lower().split("-", 1)[0] if language else ""
         if self.whisper:
             config_path = self.path / "generation_config.json"
             config = self.ov.WhisperGenerationConfig(str(config_path)) if config_path.is_file() else self.ov.WhisperGenerationConfig()
