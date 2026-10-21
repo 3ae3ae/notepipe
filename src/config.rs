@@ -30,6 +30,16 @@ pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
 /// Append `suffix` unless the path already ends with it — never double-append.
 /// The single rule for endpoint suffixes, shared by speech and AI requests.
 pub fn append_endpoint_suffix(base: &str, suffix: &str) -> String {
+    if let Ok(mut url) = url::Url::parse(base) {
+        let path = url.path().trim_end_matches('/');
+        let path = if path.ends_with(suffix) {
+            path.to_owned()
+        } else {
+            format!("{path}{suffix}")
+        };
+        url.set_path(&path);
+        return url.into();
+    }
     let base = base.trim_end_matches('/');
     if base.ends_with(suffix) {
         base.to_string()
@@ -47,14 +57,15 @@ pub fn conflicting_endpoint_suffix(path: &str, desired: &str, known: &[&str]) ->
 
 /// Accept a service root or its exact supported endpoint, never double-append paths.
 pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
-    let base = api.base_url.trim().trim_end_matches('/');
+    let base = api.base_url.trim();
+    let url = ensure_http_url(base)?;
     let suffix = match api.mode {
         crate::settings::AsrMode::Transcriptions => "/audio/transcriptions",
         crate::settings::AsrMode::Chat => "/chat/completions",
     };
     anyhow::ensure!(
         !conflicting_endpoint_suffix(
-            base,
+            url.path(),
             suffix,
             &["/audio/transcriptions", "/chat/completions"]
         ),
@@ -313,7 +324,7 @@ pub fn home_dir() -> Option<PathBuf> {
 
 /// The configuration directory: XDG_CONFIG_HOME, %APPDATA% on Windows, otherwise ~/.config.
 pub fn config_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
+    if let Some(d) = std::env::var_os("XDG_CONFIG_HOME").filter(|p| !p.is_empty()) {
         return PathBuf::from(d).join("notepipe");
     }
     #[cfg(windows)]
@@ -419,6 +430,73 @@ pub fn sanitize_filename_with_fallback(s: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_suffix_preserves_queries_and_fragments() {
+        for suffix in ["/chat/completions", "/audio/transcriptions"] {
+            let expected = format!("https://example.test/v1{suffix}?api-version=1#fragment");
+            for base in [
+                "https://example.test/v1?api-version=1#fragment".to_owned(),
+                "https://example.test/v1/?api-version=1#fragment".to_owned(),
+                expected.clone(),
+                format!("https://example.test/v1{suffix}/?api-version=1#fragment"),
+            ] {
+                assert_eq!(append_endpoint_suffix(&base, suffix), expected);
+            }
+        }
+        assert_eq!(
+            crate::llm::endpoint("https://example.test/v1?api-version=1"),
+            "https://example.test/v1/chat/completions?api-version=1"
+        );
+    }
+
+    #[test]
+    fn empty_xdg_roots_use_platform_defaults() {
+        if let Some(home) = std::env::var_os("NOTEPIPE_TEST_XDG_HOME") {
+            let home = PathBuf::from(home);
+            let config = if cfg!(windows) {
+                home.join("config/notepipe")
+            } else {
+                home.join(".config/notepipe")
+            };
+            let cache = if cfg!(windows) {
+                home.join("local/notepipe/cache")
+            } else if cfg!(target_os = "macos") {
+                home.join("Library/Caches/notepipe")
+            } else {
+                home.join(".cache/notepipe")
+            };
+            assert_eq!(config_dir(), config);
+            assert_eq!(cache_dir(), cache);
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        for empty in [false, true] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "config::tests::empty_xdg_roots_use_platform_defaults",
+                ])
+                .env("NOTEPIPE_TEST_XDG_HOME", home.path())
+                .env("HOME", home.path())
+                .env("APPDATA", home.path().join("config"))
+                .env("LOCALAPPDATA", home.path().join("local"));
+            for name in ["XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {
+                if empty {
+                    command.env(name, "");
+                } else {
+                    command.env_remove(name);
+                }
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
 
     #[test]
     fn note_names_trim_after_truncation_and_avoid_windows_reserved_names() {
@@ -542,6 +620,18 @@ mod asr_tests {
             assert_eq!(asr_endpoint(&asr).unwrap(), expected);
             asr.base_url = format!("{expected}/");
             assert_eq!(asr_endpoint(&asr).unwrap(), expected);
+            asr.base_url = "https://example.test/v1?api-version=1".into();
+            assert_eq!(
+                asr_endpoint(&asr).unwrap(),
+                format!("{expected}?api-version=1")
+            );
+            asr.base_url = format!("{expected}?api-version=1");
+            assert_eq!(asr_endpoint(&asr).unwrap(), asr.base_url);
+            asr.base_url = "https://example.test/v1?redirect=/".into();
+            assert_eq!(
+                asr_endpoint(&asr).unwrap(),
+                format!("{expected}?redirect=/")
+            );
             asr.base_url = format!(
                 "https://example.test/v1{}",
                 if mode == AsrMode::Chat {
@@ -550,6 +640,8 @@ mod asr_tests {
                     "/chat/completions"
                 }
             );
+            assert!(asr_endpoint(&asr).is_err());
+            asr.base_url.push_str("?api-version=1");
             assert!(asr_endpoint(&asr).is_err());
         }
     }
