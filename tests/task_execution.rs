@@ -1200,7 +1200,7 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
     {
         return;
     }
-    for blank in [false, true] {
+    for mode in ["partial", "blank", "failed"] {
         let root = tempfile::tempdir().unwrap();
         let video = root.path().join("broken.mp4");
         std::fs::write(&video, "broken media, readable subtitles").unwrap();
@@ -1221,10 +1221,10 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
         let mock = MockAi::respond_with(move |_, body| {
             let payload = body["messages"][1]["content"][0]["text"].as_str().unwrap();
             let items: Vec<Value> = serde_json::from_str(payload).unwrap();
-            if !blank && items.len() == 1 {
+            if mode == "failed" || (mode == "partial" && items.len() == 1) {
                 return Some((400, json!({"error":{"message":"rejected"}})));
             }
-            let segments = items.iter().map(|item| json!({"id":item["id"],"text":if blank { String::new() } else { format!("Processed {}", item["text"].as_str().unwrap()) }})).collect::<Vec<_>>();
+            let segments = items.iter().map(|item| json!({"id":item["id"],"text":if mode == "blank" { String::new() } else { format!("Processed {}", item["text"].as_str().unwrap()) }})).collect::<Vec<_>>();
             Some((
                 200,
                 json!({"choices":[{"message":{"content":json!({"segments":segments}).to_string()}}]}),
@@ -1233,7 +1233,7 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
         let mut cfg = config();
         cfg.llm.base_url = mock.url.clone();
         cfg.llm.model = "fixture".into();
-        cfg.llm.concurrency = 1;
+        cfg.llm.concurrency = 2;
         cfg.llm
             .stages
             .push(notepipe::llm::Stage::builtin("proofread").unwrap());
@@ -1242,10 +1242,10 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
         let paragraphs = doc["sections"][0]["speech"].as_array().unwrap();
         assert_eq!(paragraphs.len(), 21);
         assert_eq!(paragraphs[20]["text"], "Original 20.");
-        if blank {
-            assert_eq!(paragraphs[0]["text"], "Original 0.");
-        } else {
+        if mode == "partial" {
             assert_eq!(paragraphs[0]["text"], "Processed Original 0.");
+        } else {
+            assert_eq!(paragraphs[0]["text"], "Original 0.");
         }
         assert!(
             doc["warnings"]
@@ -1254,6 +1254,42 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
                 .iter()
                 .any(|warning| warning.as_str().unwrap().contains("proofread incomplete"))
         );
+        if mode == "failed" {
+            assert_eq!(
+                events(&output)
+                    .iter()
+                    .filter(|event| event["type"] == "log"
+                        && event["message"]
+                            .as_str()
+                            .unwrap()
+                            .starts_with("LLM stage proofread failed;"))
+                    .count(),
+                1
+            );
+            assert!(
+                doc["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|warning| warning.as_str().unwrap().contains("21/21 failed"))
+            );
+        }
+        if mode == "blank" {
+            let calls = mock.calls.load(std::sync::atomic::Ordering::SeqCst);
+            let cached = document(&run(root.path(), video.to_str().unwrap(), &cfg, &[]));
+            assert_eq!(cached["sections"], doc["sections"]);
+            assert!(
+                cached["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|warning| warning
+                        .as_str()
+                        .unwrap()
+                        .starts_with("proofread incomplete"))
+            );
+            assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), calls);
+        }
     }
 }
 
@@ -1299,10 +1335,7 @@ fn paragraph_images_fall_back_to_text_and_warn_only_for_missing_assets() {
     stage.name = "annotate".into();
     stage.images = true;
     let report = notepipe::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
-    assert_eq!(
-        (report.attempted, report.succeeded, report.failed),
-        (42, 42, 0)
-    );
+    assert_eq!((report.attempted, report.failed), (42, 0));
     assert!(report.note.is_none());
     assert_eq!(
         report.warnings.len(),

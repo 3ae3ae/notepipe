@@ -272,15 +272,12 @@ pub(crate) fn chat_agent() -> ureq::Agent {
 
 const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct StageReport {
     pub attempted: usize,
-    pub succeeded: usize,
     pub failed: usize,
     /// 首个失败原因（截断），用于结果消息可见性；无失败或纯跳过时为 None
-    #[serde(default)]
     pub note: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
 
@@ -294,7 +291,6 @@ pub fn paragraphs(
     if attempted == 0 {
         return Ok(StageReport::default());
     }
-    let warned = std::sync::atomic::AtomicBool::new(false);
     let mut chunks: Vec<(Option<std::path::PathBuf>, usize, Vec<&mut TranscriptEvent>)> =
         Vec::new();
     if stage.images {
@@ -327,7 +323,7 @@ pub fn paragraphs(
     let agent = chat_agent();
     let first_error = std::sync::Mutex::new(None::<String>);
     let image_warnings = std::sync::Mutex::new(Vec::new());
-    let completed = crate::runtime::map_pool(
+    let failures = crate::runtime::map_pool(
         chunks,
         s.concurrency.clamp(1, MAX_CONCURRENCY),
         |(image_path, section, mut chunk)| {
@@ -344,15 +340,24 @@ pub fn paragraphs(
                     None
                 }
             });
-            Ok(paragraph_chunk(
-                &agent,
-                s,
-                stage,
-                &mut chunk,
-                image.as_deref(),
-                &warned,
-                &first_error,
-            ))
+            let items: Vec<&str> = chunk.iter().map(|event| event.text.as_str()).collect();
+            match chat(&agent, s, stage, &items, image.as_deref()) {
+                Ok(results) => {
+                    apply_results(&mut chunk, &results, stage);
+                    Ok(0)
+                }
+                Err(error) => {
+                    let mut first = crate::runtime::lock_recover(&first_error);
+                    if first.is_none() {
+                        tracing::warn!(
+                            "LLM stage {} failed; original text retained: {error:#}",
+                            stage.name
+                        );
+                        *first = Some(brief(&format!("{error:#}")));
+                    }
+                    Ok(chunk.len())
+                }
+            }
         },
     )?;
     pb.finish();
@@ -362,11 +367,9 @@ pub fn paragraphs(
             sec.speech.retain(|e| !e.text.trim().is_empty());
         }
     }
-    let succeeded = completed.into_iter().sum();
     Ok(StageReport {
         attempted,
-        succeeded,
-        failed: attempted.saturating_sub(succeeded),
+        failed: failures.into_iter().sum(),
         note: crate::runtime::lock_recover(&first_error).take(),
         warnings: crate::runtime::lock_recover(&image_warnings).clone(),
     })
@@ -375,47 +378,6 @@ pub fn paragraphs(
 fn section_image_b64(path: &Path) -> Result<String> {
     use base64::Engine as _;
     Ok(base64::engine::general_purpose::STANDARD.encode(std::fs::read(path)?))
-}
-
-/// 校对一个分块；返回成功条数（失败保留原文并记录首个错误）。
-fn paragraph_chunk(
-    agent: &ureq::Agent,
-    s: &LlmSettings,
-    stage: &Stage,
-    chunk: &mut [&mut TranscriptEvent],
-    image_b64: Option<&str>,
-    warned: &std::sync::atomic::AtomicBool,
-    first_error: &std::sync::Mutex<Option<String>>,
-) -> usize {
-    if chunk.is_empty() {
-        return 0;
-    }
-    let items: Vec<&str> = chunk.iter().map(|e| e.text.as_str()).collect();
-    match chat(agent, s, stage, &items, image_b64) {
-        Ok(polished) => {
-            apply_results(chunk, &polished, stage);
-            chunk.len()
-        }
-        Err(error) => {
-            warn_once(
-                warned,
-                &format!(
-                    "LLM stage {} failed; original text retained: {error:#}",
-                    stage.name
-                ),
-            );
-            record_first_error(first_error, format!("{error:#}"));
-            0
-        }
-    }
-}
-
-/// 记录首个失败原因（后续失败不覆盖），截断避免超长错误刷屏。
-fn record_first_error(slot: &std::sync::Mutex<Option<String>>, msg: String) {
-    let mut guard = crate::runtime::lock_recover(slot);
-    if guard.is_none() {
-        *guard = Some(brief(&msg));
-    }
 }
 
 fn brief(msg: &str) -> String {
@@ -450,15 +412,6 @@ fn apply_results(chunk: &mut [&mut TranscriptEvent], results: &[(usize, String)]
             }
             _ => {}
         }
-    }
-}
-
-fn warn_once(warned: &std::sync::atomic::AtomicBool, msg: &str) {
-    use std::sync::atomic::Ordering;
-    if !warned.swap(true, Ordering::Relaxed) {
-        tracing::warn!("{msg}");
-    } else {
-        tracing::debug!("{msg}");
     }
 }
 
@@ -504,64 +457,23 @@ fn build_chat_body(
     chat_body(settings, &system, Value::Array(content), stage.input)
 }
 
-/// 从模型输出提取校对结果。约定契约为顶层对象 {"segments":[{"id":n,"text":"..."}]}
-/// （与 response_format=json_object 一致）；兼容模型无视指令仍返回
-/// 顶层数组的情况。两者都容忍代码围栏、前后杂文与尾逗号。
+/// Parse one segments object or top-level array, allowing fences and trailing commas.
 pub fn parse_segments(content: &str) -> Option<Vec<(usize, String)>> {
-    // 1) 契约路径：{"segments":[...]}
-    if let Some(obj) = extract_json_object(content)
-        && let Some(arr) = obj.get("segments").and_then(|v| v.as_array())
-        && let Some(items) = parse_items(arr)
-    {
-        return Some(items);
-    }
-    // 2) Compatibility with top-level arrays; malformed items fail the batch.
-    parse_id_text_pairs(content)
-}
-
-/// 截取首个 { 到末个 } 解析为 JSON 对象；容忍尾逗号。
-fn extract_json_object(content: &str) -> Option<serde_json::Value> {
-    let start = content.find('{')?;
-    let end = content.rfind('}')?;
-    if end <= start {
-        return None;
-    }
-    let slice = &content[start..=end];
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(slice) {
-        return Some(v);
-    }
-    let cleaned = clean_trailing_commas(slice);
-    if cleaned != slice
-        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&cleaned)
-    {
-        return Some(v);
-    }
-    None
-}
-
-/// Extract id/text pairs, tolerating fences, surrounding text and trailing commas.
-pub fn parse_id_text_pairs(content: &str) -> Option<Vec<(usize, String)>> {
-    let start = content.find('[')?;
-    let end = content.rfind(']')?;
-    if end <= start {
-        return None;
-    }
-    let slice = &content[start..=end];
-    // 1) Parse every item strictly.
-    if let Ok(v) = serde_json::from_str::<Vec<serde_json::Value>>(slice)
-        && let Some(items) = parse_items(&v)
-    {
-        return Some(items);
-    }
-    // 2) 清除尾逗号后重试
-    let cleaned = clean_trailing_commas(slice);
-    if cleaned != slice
-        && let Ok(v) = serde_json::from_str::<Vec<serde_json::Value>>(&cleaned)
-        && let Some(items) = parse_items(&v)
-    {
-        return Some(items);
-    }
-    None
+    let content = content.trim();
+    let content = if content.starts_with("```") {
+        content.split_once('\n')?.1.strip_suffix("```")?.trim()
+    } else {
+        content
+    };
+    let value: Value = serde_json::from_str(content)
+        .or_else(|_| serde_json::from_str(&clean_trailing_commas(content)))
+        .ok()?;
+    let items = match &value {
+        Value::Array(items) => items,
+        Value::Object(object) => object.get("segments")?.as_array()?,
+        _ => return None,
+    };
+    parse_items(items)
 }
 
 fn parse_items(v: &[serde_json::Value]) -> Option<Vec<(usize, String)>> {
@@ -799,8 +711,8 @@ mod tests {
     #[test]
     fn parse_pairs_tolerates_trailing_commas() {
         // 尾逗号（推理模型常见输出）
-        let got = parse_id_text_pairs("[{\"id\":0,\"text\":\"a\",},{\"id\":1,\"text\":\"b\",},]")
-            .unwrap();
+        let got =
+            parse_segments("[{\"id\":0,\"text\":\"a\",},{\"id\":1,\"text\":\"b\",},]").unwrap();
         assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
     }
 
@@ -1046,13 +958,28 @@ request = { temperature = 0.7, top_p = 0.8 }
     }
 
     #[test]
-    fn parse_id_pairs_tolerates_fences() {
-        let got = parse_id_text_pairs(
-            "```json\n[{\"id\":0,\"text\":\"a\"},{\"id\":1,\"text\":\"b\"}]\n```",
-        )
-        .unwrap();
+    fn response_parsing_rejects_other_shapes_and_surrounding_values() {
+        for content in [
+            r#"{"segments":null,"other":[{"id":0,"text":"wrong array"}]}"#,
+            r#"{"other":[{"id":0,"text":"wrong array"}]}"#,
+            r#"{"segments":[],"other":[{"id":0,"text":"wrong array"}]}"#,
+            r#"{"segments":{"nested":[{"id":0,"text":"wrong array"}]}}"#,
+            r#"[{"id":0,"text":"a"}] [{"id":0,"text":"b"}]"#,
+            r#"Prose [{"id":0,"text":"a"}]"#,
+            r#""[{\"id\":0,\"text\":\"a\"}]""#,
+            "null",
+        ] {
+            assert!(parse_segments(content).is_none(), "accepted {content}");
+        }
+    }
+
+    #[test]
+    fn top_level_arrays_tolerate_fences() {
+        let got =
+            parse_segments("```json\n[{\"id\":0,\"text\":\"a\"},{\"id\":1,\"text\":\"b\"}]\n```")
+                .unwrap();
         assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
-        assert!(parse_id_text_pairs("没有数组").is_none());
-        assert!(parse_id_text_pairs("[]").is_none());
+        assert!(parse_segments("没有数组").is_none());
+        assert!(parse_segments("[]").is_none());
     }
 }

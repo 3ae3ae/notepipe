@@ -436,7 +436,6 @@ async fn paragraphs_with_rollback(
     .context("Paragraphs stage interrupted")??;
     if !artifact::has_readable_body(&sections) {
         sections = original;
-        report.succeeded = 0;
         report.failed = report.attempted;
     }
     Ok((sections, report))
