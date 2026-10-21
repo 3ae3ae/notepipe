@@ -4,8 +4,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 // —— 内置默认值（唯一来源）：options.rs 的合并与 settings.rs 的展示统一引用这里 ——
-/// 默认本地识别模型（canonical id）。
-pub const DEFAULT_ASR_MODEL: &str = "qwen3-1.7b";
 /// SSIM 画面相似度阈值（越高越敏感、截图越多）
 pub const DEFAULT_SIMILARITY: f64 = 0.85;
 /// 画面采样间隔（秒）
@@ -16,17 +14,11 @@ pub const DEFAULT_COOLDOWN: f64 = 10.0;
 pub const DEFAULT_MAX_HEIGHT: u32 = 1080;
 /// stable 模式下画面需保持不变的秒数
 pub const DEFAULT_STABLE_SECS: f64 = 0.8;
-/// ASR 识别线程数
-pub const DEFAULT_THREADS: i32 = 4;
 /// 单段语音最长秒数（过长会在静音点切分）
 pub const DEFAULT_MAX_SPEECH: f32 = 20.0;
 /// 默认输出根目录
 pub const DEFAULT_OUT_DIR: &str = "out";
-/// GPU 卸载层数默认（llama-server -ngl）：全量卸载。没有哪个非零层数在 AMD/ROCm
-/// 核显上被证实稳定，因此不按平台区分默认；不稳定时由用户用 --gpu-layers 调低。
-pub const DEFAULT_GPU_LAYERS: u32 = 99;
-
-/// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr_api 共用同一判定）。
+/// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr 共用同一判定）。
 pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
     let url = url::Url::parse(raw.trim()).context(
         crate::tr!("服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL."),
@@ -59,17 +51,24 @@ pub fn conflicting_endpoint_suffix(path: &str, desired: &str, known: &[&str]) ->
 }
 
 /// Accept a service root or its exact supported endpoint, never double-append paths.
-pub fn asr_endpoint(api: &crate::settings::AsrApi) -> AnyhowResult<String> {
+pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
     let base = api.base_url.trim().trim_end_matches('/');
     let suffix = match api.mode {
-        crate::settings::AsrApiMode::Transcriptions => "/audio/transcriptions",
-        crate::settings::AsrApiMode::Chat => "/chat/completions",
+        crate::settings::AsrMode::Transcriptions => "/audio/transcriptions",
+        crate::settings::AsrMode::Chat => "/chat/completions",
+        crate::settings::AsrMode::Xai => "/stt",
+        crate::settings::AsrMode::Meta => "/asr/transcribe",
     };
     anyhow::ensure!(
         !conflicting_endpoint_suffix(
             base,
             suffix,
-            &["/audio/transcriptions", "/chat/completions"]
+            &[
+                "/audio/transcriptions",
+                "/chat/completions",
+                "/stt",
+                "/asr/transcribe"
+            ]
         ),
         crate::tr!("服务地址与所选服务类型不一致 / Service endpoint and protocol do not match")
     );
@@ -81,161 +80,6 @@ pub fn asr_api_key_from_env() -> Option<String> {
     std::env::var("NOTEPIPE_ASR_API_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
-}
-
-/// ASR 后端。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AsrProvider {
-    Coreml,
-    Gpu,
-    Cpu,
-    Npu,
-    Api,
-}
-
-impl AsrProvider {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Coreml => "coreml",
-            Self::Gpu => "gpu",
-            Self::Cpu => "cpu",
-            Self::Npu => "npu",
-            Self::Api => "api",
-        }
-    }
-}
-
-impl AsrProvider {
-    /// 面向用户的识别方式名称（中文 / English）。
-    pub fn label(&self) -> (&'static str, &'static str) {
-        match self {
-            Self::Coreml => (crate::tr!("Apple 芯片本机识别"), "Apple silicon on-device"),
-            Self::Gpu => (crate::tr!("显卡加速"), "GPU"),
-            Self::Cpu => (crate::tr!("CPU（较慢）"), "CPU (slower)"),
-            Self::Npu => (crate::tr!("Intel NPU 加速"), "Intel NPU"),
-            Self::Api => (crate::tr!("云端语音识别"), "Cloud speech service"),
-        }
-    }
-}
-
-impl fmt::Display for AsrProvider {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// 一个本地识别模型的规范 id 与展示名。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LocalModel {
-    pub id: &'static str,
-    pub label: &'static str,
-    /// Optional choice hint; the selected language is resolved at display time.
-    pub note: &'static str,
-}
-
-const QWEN3_1_7B: LocalModel = LocalModel {
-    id: DEFAULT_ASR_MODEL,
-    label: "Qwen3 1.7B",
-    note: "（推荐，下载约 2.3GB / Recommended, ~2.3GB）",
-};
-const QWEN3_0_6B: LocalModel = LocalModel {
-    id: "qwen3-0.6b",
-    label: "Qwen3 0.6B",
-    note: "（低功耗，约 1GB / Low power, ~1GB）",
-};
-const WHISPER: LocalModel = LocalModel {
-    id: "whisper",
-    label: "Whisper",
-    note: "（多语种 / Multilingual）",
-};
-const WHISPER_TINY: LocalModel = LocalModel {
-    id: "whisper-tiny",
-    label: "Whisper Tiny",
-    note: "",
-};
-const WHISPER_BASE: LocalModel = LocalModel {
-    id: "whisper-base",
-    label: "Whisper Base",
-    note: "",
-};
-const WHISPER_SMALL: LocalModel = LocalModel {
-    id: "whisper-small",
-    label: "Whisper Small",
-    note: "",
-};
-
-/// 每种本地后端可选的模型（第一项为默认）。云端后端没有本地模型。
-pub fn local_models(provider: AsrProvider) -> &'static [LocalModel] {
-    match provider {
-        AsrProvider::Gpu | AsrProvider::Cpu => &[QWEN3_1_7B],
-        AsrProvider::Coreml => &[QWEN3_1_7B, QWEN3_0_6B, WHISPER],
-        AsrProvider::Npu => &[
-            QWEN3_1_7B,
-            QWEN3_0_6B,
-            WHISPER,
-            WHISPER_TINY,
-            WHISPER_BASE,
-            WHISPER_SMALL,
-        ],
-        AsrProvider::Api => &[],
-    }
-}
-
-/// 别名 → 规范 id（大小写不敏感）。空值表示默认模型。
-fn model_alias(lower: &str) -> Option<&'static str> {
-    Some(match lower {
-        ""
-        | "qwen"
-        | "qwen3"
-        | "1.7"
-        | "1.7b"
-        | "qwen3-1.7b"
-        | "qwen3-asr-1.7b"
-        | "qwen3-1.7b-gguf"
-        | "qwen3-asr-1.7b-q8_0.gguf" => QWEN3_1_7B.id,
-        "0.6" | "0.6b" | "qwen3-0.6b" | "qwen3-asr-0.6b" => QWEN3_0_6B.id,
-        "whisper"
-        | "whisper-large-v3-turbo"
-        | "whisper-turbo"
-        | "whisper-large"
-        | "turbo"
-        | "large" => WHISPER.id,
-        "tiny" | "whisper-tiny" => WHISPER_TINY.id,
-        "base" | "whisper-base" => WHISPER_BASE.id,
-        "small" | "whisper-small" => WHISPER_SMALL.id,
-        _ => return None,
-    })
-}
-
-/// 模型名的唯一规范化入口：别名 → 规范 id，并确认所选后端支持它。
-/// npu 另外接受 Hugging Face 仓库 ID（含 `/`，原样保留大小写）；云端后端不使用本地模型，原样返回。
-pub fn canonical_model(provider: AsrProvider, raw: &str) -> AnyhowResult<String> {
-    let raw = raw.trim();
-    if provider == AsrProvider::Api {
-        return Ok(raw.to_owned());
-    }
-    if provider == AsrProvider::Npu && raw.contains('/') {
-        return Ok(raw.to_owned());
-    }
-    let models = local_models(provider);
-    match model_alias(&raw.to_ascii_lowercase()) {
-        Some(id) if models.iter().any(|m| m.id == id) => Ok(id.to_owned()),
-        _ => {
-            let available = models.iter().map(|m| m.id).collect::<Vec<_>>().join(", ");
-            let (repo_zh, repo_en) = if provider == AsrProvider::Npu {
-                (
-                    crate::tr!("，或 Hugging Face 仓库名（如 org/model）"),
-                    ", or a Hugging Face repository (org/model)",
-                )
-            } else {
-                ("", "")
-            };
-            anyhow::bail!(
-                "所选识别方式不支持模型「{raw}」。可用：{available}{repo_zh} / The {provider} backend does not support model \"{raw}\". Available: {available}{repo_en}"
-            )
-        }
-    }
 }
 
 /// 截图发射模式：first（首个不同帧）| stable（等待画面稳定，适合动画课件）。
@@ -315,27 +159,17 @@ pub struct PipelineConfig {
     /// stable 模式下画面需保持不变的秒数
     pub stable_secs: f64,
     pub roi: Option<Roi>,
-    pub threads: i32,
-    pub provider: AsrProvider,
-    pub max_speech: f32,
     pub formats: Vec<OutputFormat>,
-    pub model_dir: PathBuf,
     pub keep_video: bool,
     pub no_download: bool,
     /// 断点续跑：跳过输出目录中已完成的 ASR chunk
     pub resume: bool,
     /// LLM 字幕校对（已合并 CLI 覆盖后的生效配置）
     pub llm: crate::llm::LlmSettings,
-    /// 云端 STT（provider=api；已合并 CLI 覆盖）
-    pub asr_api: crate::settings::AsrApi,
+    /// HTTP transcription settings with CLI overrides applied.
+    pub asr: crate::settings::Asr,
     /// 转写来源：字幕优先 / 强制字幕 / 强制 ASR
     pub transcript_source: TranscriptSource,
-    /// 本地识别模型（别名或规范 id，见 [`canonical_model`]）；None = 后端默认
-    pub asr_model: Option<String>,
-    /// GPU 卸载层数（llama-server -ngl；gpu 后端生效，cpu 后端恒为 0）
-    pub gpu_layers: u32,
-    /// 是否把多模态 projector（mmproj）卸载到 GPU
-    pub mmproj_offload: bool,
     /// `-o` 根目录（笔记库根），课程目录由 workspace/artifact 在其下布局
     pub out_root: PathBuf,
 }
@@ -409,7 +243,7 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
 }
 
 impl PipelineConfig {
-    /// 身份文件用的脱敏副本：clone 并清空 llm.api_key 与 asr_api.api_key。
+    /// 身份文件用的脱敏副本：clone 并清空 llm.api_key 与 asr.api_key。
     ///
     /// 安全不变量：身份/binding JSON 会落盘进输出目录，任何情况下不得携带
     /// 凭据——两处手写清密钥（pipeline.rs / execution.rs）已合并为这一单一事实源，
@@ -417,7 +251,7 @@ impl PipelineConfig {
     pub fn redacted_for_identity(&self) -> Self {
         let mut cfg = self.clone();
         cfg.llm.api_key.clear();
-        cfg.asr_api.api_key.clear();
+        cfg.asr.api_key.clear();
         cfg
     }
 
@@ -435,7 +269,9 @@ impl PipelineConfig {
         finite("sample_interval", self.sample_interval)?;
         finite("cooldown", self.cooldown)?;
         finite("stable_secs", self.stable_secs)?;
-        finite("max_speech", self.max_speech as f64)?;
+        finite("asr.max_speech", self.asr.max_speech as f64)?;
+        finite("asr.vad_threshold", self.asr.vad_threshold as f64)?;
+        finite("asr.min_silence", self.asr.min_silence as f64)?;
 
         anyhow::ensure!(
             self.similarity > 0.0 && self.similarity <= 1.0,
@@ -457,64 +293,44 @@ impl PipelineConfig {
             "--stable-secs 必须 >= 0 秒 / must be at least 0 seconds (received {})",
             self.stable_secs
         );
-        // 上限防御 split_smart 的 clamp panic（0 会让 clamp(min>max) abort）
         anyhow::ensure!(
-            self.max_speech >= 1.0 && self.max_speech <= 600.0,
-            "--max-speech 必须在 1–600 秒 / must be between 1 and 600 seconds (received {})",
-            self.max_speech
+            (0.0..=1.0).contains(&self.asr.vad_threshold),
+            crate::tr!("asr.vad_threshold must be between 0 and 1.")
         );
         anyhow::ensure!(
-            self.threads >= 1,
-            "--threads 必须 >= 1 / must be at least 1 (received {})",
-            self.threads
+            self.asr.min_silence >= 0.0,
+            crate::tr!("asr.min_silence must be non-negative.")
+        );
+        // 上限防御 split_smart 的 clamp panic（0 会让 clamp(min>max) abort）
+        anyhow::ensure!(
+            self.asr.max_speech >= 1.0 && self.asr.max_speech <= 600.0,
+            "--max-speech 必须在 1–600 秒 / must be between 1 and 600 seconds (received {})",
+            self.asr.max_speech
         );
         anyhow::ensure!(
             self.max_height >= 144,
             "--max-height 必须 >= 144 / must be at least 144 (received {})",
             self.max_height
         );
-        anyhow::ensure!(
-            self.gpu_layers <= 99,
-            "GPU 层数必须在 0 到 99 之间（当前 {0}）/ GPU layers must be between 0 and 99 (got {0})",
-            self.gpu_layers
-        );
 
         Ok(())
     }
 
-    pub fn validate_asr_with_auth(
-        &self,
-        require_key: bool,
-        allow_environment: bool,
-    ) -> AnyhowResult<()> {
-        // provider × 模型兼容性：静默忽略用户指定的模型属于静默错误结果
-        if let Some(model) = &self.asr_model {
-            canonical_model(self.provider, model)?;
-        }
-
-        // api 后端：key 缺失时立即报错，而不是切完音频才发现
-        if self.provider == AsrProvider::Api {
-            ensure_http_url(&asr_endpoint(&self.asr_api)?)?;
+    pub fn validate_asr(&self) -> AnyhowResult<()> {
+        anyhow::ensure!(
+            self.asr.is_configured(),
+            crate::tr!(
+                "Configure [asr] with a base_url or command; run `notepipe config init` to create the template."
+            )
+        );
+        if self.asr.command.is_empty() {
+            ensure_http_url(&asr_endpoint(&self.asr)?)?;
+        } else {
             anyhow::ensure!(
-                !self.asr_api.model.trim().is_empty(),
-                crate::tr!("请输入语音服务提供的模型 ID / Speech model ID is required")
+                !self.asr.command[0].trim().is_empty(),
+                crate::tr!("The ASR adapter command must name an executable.")
             );
-            let has_key = !self.asr_api.api_key.trim().is_empty()
-                || (allow_environment && asr_api_key_from_env().is_some());
-            if require_key && !has_key {
-                // 桌面任务不读环境变量，只有命令行才提示它
-                anyhow::bail!(if allow_environment {
-                    crate::tr!(
-                        "云端语音识别需要 API Key：用 --asr-api-key 或环境变量 NOTEPIPE_ASR_API_KEY 提供 / Cloud transcription requires an API key: pass --asr-api-key or set NOTEPIPE_ASR_API_KEY"
-                    )
-                } else {
-                    crate::tr!(
-                        "云端语音识别需要 API Key，请在服务设置中填写 / Cloud transcription requires an API key; add it in service settings"
-                    )
-                });
-            }
         }
-
         Ok(())
     }
 
@@ -560,28 +376,6 @@ pub fn config_dir() -> PathBuf {
         .join("notepipe")
 }
 
-/// 缓存目录（模型等）。
-pub fn cache_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("XDG_CACHE_HOME") {
-        return PathBuf::from(d).join("notepipe");
-    }
-    #[cfg(windows)]
-    {
-        if let Some(d) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(d).join("notepipe");
-        }
-    }
-    home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".cache")
-        .join("notepipe")
-}
-
-pub fn model_dir_from(opt: Option<&Path>) -> PathBuf {
-    opt.map(|p| expand_tilde(p.to_path_buf()))
-        .unwrap_or_else(|| cache_dir().join("models"))
-}
-
 /// 展开 `~` / `~/...`（仅 Unix 主目录约定；无 HOME 时原样返回）。
 /// 防止配置里的 "~/cache" 真的在当前目录创建名为 `~` 的子目录。
 pub fn expand_tilde(p: PathBuf) -> PathBuf {
@@ -608,37 +402,6 @@ pub fn resolve_flag(cli_on: bool, cli_off: bool, file: Option<bool>, default: bo
     } else {
         file.unwrap_or(default)
     }
-}
-
-/// 平台默认后端提示（doctor 展示与 main 实际选择保持同一逻辑）。
-/// 注意 NPU 只在 llama-server 缺席时兜底：装了 llama-server 的 Intel 机器默认仍走 gpu，
-/// 避免把「能跑 GPU」的机器静默降级到更慢的 NPU 管线。
-pub fn default_provider_hint() -> AsrProvider {
-    if cfg!(apple_native) {
-        AsrProvider::Coreml
-    } else if cfg!(target_os = "linux")
-        && Path::new(crate::npu::NPU_DEVICE_PATH).exists()
-        && crate::runtime::which("llama-server").is_none()
-    {
-        AsrProvider::Npu
-    } else {
-        AsrProvider::Gpu
-    }
-}
-
-/// MLX 为 `exe` 搜索 metallib 的顺序（mlx-swift load_default_library）：
-/// 可执行文件同目录 → exe/Resources → ../Resources → CWD，文件名 mlx.metallib / default.metallib。
-/// `.app` 包里 codesign 把 Contents/MacOS/ 当代码区，metallib 只能放 Contents/Resources/。
-/// 引擎（doctor / ensure_metallib）与桌面端环境检测共用这份清单。
-pub fn find_metallib(exe: &Path) -> Option<PathBuf> {
-    let dir = exe.parent().unwrap_or(Path::new("."));
-    let resources = dir.join("Resources");
-    let bundle_resources = dir.join("../Resources");
-    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
-    [dir, &resources, &bundle_resources, &cwd]
-        .into_iter()
-        .flat_map(|base| ["mlx.metallib", "default.metallib"].map(|name| base.join(name)))
-        .find(|path| path.is_file())
 }
 
 /// 已知视频站点（含子域名与短链），输入可以不带 http(s) 前缀。
@@ -792,19 +555,12 @@ mod tests {
             slide_mode: SlideMode::Stable,
             stable_secs: DEFAULT_STABLE_SECS,
             roi: None,
-            threads: DEFAULT_THREADS,
-            provider: AsrProvider::Gpu,
-            max_speech: DEFAULT_MAX_SPEECH,
             formats: vec![OutputFormat::Md],
-            model_dir: "/tmp/m".into(),
             keep_video: false,
             no_download: false,
             resume: false,
             llm: Default::default(),
-            asr_api: Default::default(),
-            asr_model: None,
-            gpu_layers: DEFAULT_GPU_LAYERS,
-            mmproj_offload: true,
+            asr: Default::default(),
             transcript_source: TranscriptSource::Auto,
         }
     }
@@ -818,11 +574,11 @@ mod tests {
     fn validate_rejects_out_of_range() {
         let mut c = valid_cfg();
         // max_speech=0 曾导致 split_smart 中 clamp(min>max) panic
-        c.max_speech = 0.0;
+        c.asr.max_speech = 0.0;
         assert!(c.validate().is_err());
-        c.max_speech = f32::INFINITY;
+        c.asr.max_speech = f32::INFINITY;
         assert!(c.validate().is_err());
-        c.max_speech = DEFAULT_MAX_SPEECH;
+        c.asr.max_speech = DEFAULT_MAX_SPEECH;
 
         c.similarity = 0.0;
         assert!(c.validate().is_err());
@@ -834,59 +590,11 @@ mod tests {
         assert!(c.validate().is_err());
         c.sample_interval = DEFAULT_SAMPLE_INTERVAL;
 
-        c.threads = 0;
-        assert!(c.validate().is_err());
-        c.threads = DEFAULT_THREADS;
-
         c.formats = vec![];
         assert!(
             c.validate().is_ok(),
             "Internal reading does not depend on optional exports"
         );
-    }
-
-    #[test]
-    fn validate_rejects_model_provider_mismatch() {
-        // gpu/cpu 只有 Qwen3 GGUF：显式要 whisper 必须报错而不是静默用 qwen
-        let mut c = valid_cfg();
-        c.asr_model = Some("whisper".into());
-        assert!(c.validate_asr_with_auth(true, true).is_err());
-        c.provider = AsrProvider::Coreml;
-        c.asr_model = Some("whisper".into());
-        c.validate_asr_with_auth(true, true).unwrap();
-        c.asr_model = Some("qwen-not-a-supported-model".into());
-        assert!(c.validate_asr_with_auth(true, true).is_err());
-        c.provider = AsrProvider::Npu;
-        c.asr_model = Some("org/custom-ov-model".into());
-        c.validate_asr_with_auth(true, true).unwrap();
-        c.asr_model = Some("not-a-repo-id".into());
-        assert!(c.validate_asr_with_auth(true, true).is_err());
-    }
-
-    #[test]
-    fn canonical_model_accepts_documented_aliases_per_backend() {
-        for (provider, raw, id) in [
-            (AsrProvider::Gpu, "qwen3", "qwen3-1.7b"),
-            (AsrProvider::Cpu, "Qwen3-ASR-1.7B-Q8_0.gguf", "qwen3-1.7b"),
-            (AsrProvider::Coreml, "qwen3", "qwen3-1.7b"),
-            (AsrProvider::Coreml, " 0.6b ", "qwen3-0.6b"),
-            (AsrProvider::Npu, "turbo", "whisper"),
-            (AsrProvider::Npu, "MyOrg/Model-INT8", "MyOrg/Model-INT8"),
-        ] {
-            assert_eq!(
-                canonical_model(provider, raw).unwrap(),
-                id,
-                "{provider} {raw}"
-            );
-        }
-        assert!(canonical_model(AsrProvider::Gpu, "whisper").is_err());
-        assert!(canonical_model(AsrProvider::Coreml, "whisper-tiny").is_err());
-        assert!(canonical_model(AsrProvider::Coreml, "foo-0.6-bar").is_err());
-        for provider in [AsrProvider::Gpu, AsrProvider::Coreml, AsrProvider::Npu] {
-            for model in local_models(provider) {
-                assert_eq!(canonical_model(provider, model.id).unwrap(), model.id);
-            }
-        }
     }
 
     #[test]
@@ -912,20 +620,78 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_gpu_layers_out_of_range() {
-        let mut c = valid_cfg();
-        c.gpu_layers = 100;
-        assert!(c.validate().is_err());
-        c.gpu_layers = 0;
-        c.validate().unwrap();
-        c.gpu_layers = 99;
-        c.validate().unwrap();
-    }
-
-    #[test]
     fn roi_parse() {
         let r = Roi::parse("25%,0%-100%,100%").unwrap();
         assert_eq!(r.pixels(1000, 800), (250, 0, 1000, 800));
         assert!(Roi::parse("nonsense").is_err());
+    }
+}
+
+#[cfg(test)]
+mod asr_tests {
+    use super::*;
+    use crate::settings::{Asr, AsrMode, ConfigFile};
+
+    #[test]
+    fn asr_endpoints_accept_roots_and_full_paths_and_reject_conflicts() {
+        for (mode, suffix) in [
+            (AsrMode::Transcriptions, "/audio/transcriptions"),
+            (AsrMode::Chat, "/chat/completions"),
+            (AsrMode::Xai, "/stt"),
+            (AsrMode::Meta, "/asr/transcribe"),
+        ] {
+            let mut asr = Asr {
+                mode,
+                base_url: " https://example.test/v1/ ".into(),
+                ..Default::default()
+            };
+            let expected = format!("https://example.test/v1{suffix}");
+            assert_eq!(asr_endpoint(&asr).unwrap(), expected);
+            asr.base_url = format!("{expected}/");
+            assert_eq!(asr_endpoint(&asr).unwrap(), expected);
+            asr.base_url = format!(
+                "https://example.test/v1{}",
+                if mode == AsrMode::Chat {
+                    "/stt"
+                } else {
+                    "/chat/completions"
+                }
+            );
+            assert!(asr_endpoint(&asr).is_err());
+        }
+    }
+
+    #[test]
+    fn asr_configuration_requires_a_destination_but_never_a_model_or_key() {
+        let mut cfg =
+            crate::options::resolve("video".into(), &Default::default(), &Default::default())
+                .unwrap();
+        let error = cfg.validate_asr().unwrap_err().to_string();
+        assert!(error.contains("[asr]") && error.contains("notepipe config init"));
+        cfg.asr.base_url = "http://localhost:8000/v1".into();
+        cfg.validate_asr().unwrap();
+        cfg.asr.base_url = "invalid ignored URL".into();
+        cfg.asr.command = vec!["adapter".into()];
+        cfg.validate_asr().unwrap();
+        cfg.asr.command[0] = "".into();
+        assert!(cfg.validate_asr().is_err());
+        for field in ["vad_threshold", "min_silence"] {
+            let mut file = ConfigFile::default();
+            if field == "vad_threshold" {
+                file.asr.vad_threshold = 1.1;
+            } else {
+                file.asr.min_silence = -0.1;
+            }
+            let cfg = crate::options::resolve("video".into(), &Default::default(), &file).unwrap();
+            assert!(cfg.validate().is_err());
+        }
+        for text in [
+            "[asr_api]",
+            "[defaults]\nprovider = 'api'",
+            "[defaults]\nmax_speech = 20.0",
+            "[defaults]\nthreads = 4",
+        ] {
+            assert!(toml::from_str::<ConfigFile>(text).is_err(), "{text}");
+        }
     }
 }

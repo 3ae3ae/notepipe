@@ -119,61 +119,34 @@ pub struct RunOpts {
     #[arg(help_heading = "截图 / Slides")]
     pub roi: Option<String>,
 
-    /// 语音识别线程数（至少 1）/ Speech recognition threads (minimum 1)
+    /// Speech service base URL or full endpoint
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub threads: Option<i32>,
-
-    /// 识别后端：coreml（Apple 芯片）、gpu、cpu、npu（Intel）、api（云端）/ Speech backend: coreml (Apple Silicon), gpu, cpu, npu (Intel), api (cloud)
-    #[arg(long, value_enum)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub provider: Option<crate::config::AsrProvider>,
-
-    /// 识别模型（需与后端兼容）/ Speech model (must match the backend)
-    /// gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b、qwen3-0.6b、whisper；npu: whisper 或 Hugging Face 仓库名 / or a Hugging Face repository
-    #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub asr_model: Option<String>,
-
-    /// 云端识别地址 / Cloud speech API base URL (OpenAI-compatible)
-    #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub asr_api_base_url: Option<String>,
+    pub asr_base_url: Option<String>,
 
     /// 云端识别密钥；建议改用 NOTEPIPE_ASR_API_KEY 环境变量，避免留在命令历史 / Cloud API key; prefer NOTEPIPE_ASR_API_KEY to keep it out of shell history
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub asr_api_key: Option<String>,
 
-    /// 云端识别模型名称 / Cloud speech model name
+    /// Speech service model; omitted when empty
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub asr_api_model: Option<String>,
+    pub asr_model: Option<String>,
 
-    /// 云端请求方式 / Cloud request mode: transcriptions (default) or chat (audio-capable models)
+    /// HTTP dialect: transcriptions, chat, xai, meta
     #[arg(long, value_enum)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub asr_api_mode: Option<crate::settings::AsrApiMode>,
+    pub asr_mode: Option<crate::settings::AsrMode>,
+
+    /// Speech language code; empty means automatic detection
+    #[arg(long, help_heading = "语音识别 / Speech recognition")]
+    pub asr_language: Option<String>,
 
     /// 文字来源：auto 优先字幕，subtitle 仅字幕，asr 语音识别 / Transcript source: auto, subtitle, asr
     #[arg(long, value_enum)]
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub transcript_source: Option<crate::config::TranscriptSource>,
-
-    /// 放到 GPU 上运行的层数（0–99，默认全部）；核显不稳定时调低 / Layers run on the GPU (0–99, all by default); lower on unstable integrated GPUs
-    #[arg(long, value_parser = clap::value_parser!(u32).range(0..=99))]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub gpu_layers: Option<u32>,
-
-    /// 音频编码部分也用 GPU（默认）/ Also run the audio encoder on the GPU (default)
-    #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub mmproj_offload: bool,
-
-    /// 音频编码部分改用 CPU（显存不足时）/ Run the audio encoder on the CPU (when GPU memory is low)
-    #[arg(long, conflicts_with = "mmproj_offload")]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub no_mmproj_offload: bool,
 
     /// 每段语音最长秒数 (1–600) / Maximum speech segment length in seconds
     #[arg(long)]
@@ -184,11 +157,6 @@ pub struct RunOpts {
     #[arg(long, value_delimiter = ',', value_enum)]
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub formats: Option<Vec<crate::config::OutputFormat>>,
-
-    /// 本地模型目录（默认使用系统缓存）/ Local model directory (default: platform cache)
-    #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
-    pub model_dir: Option<PathBuf>,
 
     /// 保留下载的视频 / Keep the downloaded video
     #[arg(long)]
@@ -301,11 +269,6 @@ pub enum Command {
     /// 执行已保存的任务；从标准输入读取完整 JSON 参数 / Execute a saved task from stdin JSON
     #[command(hide = true)]
     RunTask,
-    /// 管理本地识别模型 / Manage local speech models
-    Models {
-        #[command(subcommand)]
-        cmd: ModelsCmd,
-    },
     /// 配置可选的 AI 校对 / Configure optional AI proofreading
     Llm {
         #[command(subcommand)]
@@ -345,54 +308,6 @@ pub struct SummarizeArgs {
     /// 静默模式，仅报告错误 / Quiet mode: report errors only
     #[arg(short, long)]
     pub quiet: bool,
-}
-
-#[derive(Subcommand)]
-pub enum ModelsCmd {
-    /// 检查模型是否已下载 / Check whether a model is downloaded
-    Inspect {
-        #[command(flatten)]
-        target: ModelTarget,
-        /// 以 JSON 输出 / Print JSON
-        #[arg(long)]
-        json: bool,
-    },
-    /// 下载并验证模型 / Download and verify a model
-    Prepare {
-        #[command(flatten)]
-        target: ModelTarget,
-        /// 以 NDJSON 输出进度，禁用交互 / Stream NDJSON progress without prompts
-        #[arg(long)]
-        json: bool,
-    },
-    /// 下载 gpu/cpu 模型（约 2.4GB）/ Download gpu/cpu models (~2.4GB)
-    Download {
-        /// 模型目录 / Model directory
-        #[arg(long)]
-        dir: Option<PathBuf>,
-        /// 以 NDJSON 输出进度，禁用交互 / Stream NDJSON progress without prompts
-        #[arg(long)]
-        json: bool,
-    },
-    /// 检查 gpu/cpu 模型文件 / Check downloaded gpu/cpu model files
-    List {
-        /// 模型目录 / Model directory
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
-}
-
-#[derive(Args)]
-pub struct ModelTarget {
-    /// 识别方式 / Speech backend
-    #[arg(long, value_enum)]
-    pub provider: crate::config::AsrProvider,
-    /// 模型（默认为该识别方式的默认模型）/ Model (defaults to the backend's default)
-    #[arg(long, default_value = crate::config::DEFAULT_ASR_MODEL)]
-    pub model: String,
-    /// 模型目录 / Model directory
-    #[arg(long)]
-    pub dir: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]

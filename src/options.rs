@@ -95,40 +95,16 @@ pub fn resolve(
                 None => None,
             },
         },
-        threads: opts
-            .threads
-            .or(d.threads)
-            .unwrap_or(config::DEFAULT_THREADS),
-        provider: opts
-            .provider
-            .or(d.provider)
-            .unwrap_or_else(config::default_provider_hint),
-        max_speech: opts
-            .max_speech
-            .or(d.max_speech)
-            .unwrap_or(config::DEFAULT_MAX_SPEECH),
         formats: opts
             .formats
             .clone()
             .or_else(|| d.formats.clone())
             .unwrap_or_else(default_formats),
-        model_dir: config::model_dir_from(opts.model_dir.as_deref().or(d.model_dir.as_deref())),
         keep_video: config::resolve_flag(opts.keep_video, opts.no_keep_video, d.keep_video, false),
         no_download: opts.no_download || d.no_download.unwrap_or(false),
         resume: config::resolve_flag(opts.resume, opts.no_resume, d.resume, true),
         llm: resolve_llm(opts, file),
-        asr_api: resolve_asr_api(opts, file),
-        asr_model: opts.asr_model.clone().or_else(|| d.asr_model.clone()),
-        gpu_layers: opts
-            .gpu_layers
-            .or(d.gpu_layers)
-            .unwrap_or(config::DEFAULT_GPU_LAYERS),
-        mmproj_offload: config::resolve_flag(
-            opts.mmproj_offload,
-            opts.no_mmproj_offload,
-            d.mmproj_offload,
-            true,
-        ),
+        asr: resolve_asr(opts, file),
         transcript_source: opts
             .transcript_source
             .or(d.transcript_source)
@@ -136,21 +112,28 @@ pub fn resolve(
     })
 }
 
-/// 云端 STT 配置合并：CLI > 配置文件 > 默认（OpenRouter）。
-fn resolve_asr_api(opts: &RunOpts, file: &settings::ConfigFile) -> crate::settings::AsrApi {
-    let mut a = file.asr_api.clone();
-    if let Some(v) = &opts.asr_api_base_url {
+/// CLI overrides for [asr]; environment credentials are resolved only by the CLI pipeline.
+fn resolve_asr(opts: &RunOpts, file: &settings::ConfigFile) -> crate::settings::Asr {
+    let mut a = file.asr.clone();
+    if let Some(v) = &opts.asr_base_url {
         a.base_url = v.clone();
     }
     if let Some(v) = &opts.asr_api_key {
         a.api_key = v.clone();
     }
-    if let Some(v) = &opts.asr_api_model {
+    if let Some(v) = &opts.asr_model {
         a.model = v.clone();
     }
-    if let Some(v) = opts.asr_api_mode {
+    if let Some(v) = opts.asr_mode {
         a.mode = v;
     }
+    if let Some(v) = &opts.asr_language {
+        a.language = v.clone();
+    }
+    if let Some(v) = opts.max_speech {
+        a.max_speech = v;
+    }
+    a.concurrency = a.concurrency.clamp(1, 16);
     a
 }
 
@@ -186,25 +169,6 @@ mod tests {
         assert_eq!(cfg.cookies_from_browser.as_deref(), Some("chrome"));
     }
 
-    #[test]
-    fn offload_settings_reach_shared_pipeline_and_cli_overrides_config() {
-        let mut file = crate::settings::ConfigFile::default();
-        file.defaults.gpu_layers = Some(8);
-        file.defaults.mmproj_offload = Some(false);
-        let cfg =
-            super::resolve("lecture.mp4".into(), &crate::cli::RunOpts::default(), &file).unwrap();
-        assert_eq!(cfg.gpu_layers, 8);
-        assert!(!cfg.mmproj_offload);
-        let opts = crate::cli::RunOpts {
-            gpu_layers: Some(4),
-            mmproj_offload: true,
-            ..Default::default()
-        };
-        let cfg = super::resolve("lecture.mp4".into(), &opts, &file).unwrap();
-        assert_eq!(cfg.gpu_layers, 4);
-        assert!(cfg.mmproj_offload);
-    }
-
     use super::*;
 
     #[test]
@@ -227,7 +191,6 @@ mod tests {
     #[test]
     fn subtitle_configuration_does_not_require_api_credentials() {
         let opts = RunOpts {
-            provider: Some(config::AsrProvider::Api),
             transcript_source: Some(config::TranscriptSource::Subtitle),
             ..Default::default()
         };
@@ -256,5 +219,63 @@ mod tests {
         };
         let cfg = resolve("video".into(), &opts, &file).unwrap();
         assert!(!cfg.llm.summarize);
+    }
+}
+
+#[cfg(test)]
+mod asr_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn asr_flags_override_settings_and_concurrency_is_clamped() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "notepipe",
+            "video",
+            "--asr-base-url",
+            "http://localhost:1234/v1",
+            "--asr-api-key",
+            "key",
+            "--asr-model",
+            "model",
+            "--asr-mode",
+            "xai",
+            "--asr-language",
+            "ko",
+            "--max-speech",
+            "12",
+        ])
+        .unwrap();
+        let mut file = settings::ConfigFile::default();
+        file.asr.command = vec!["adapter".into()];
+        for (given, expected) in [(0, 1), (4, 4), (100, 16)] {
+            file.asr.concurrency = given;
+            let cfg = resolve("video".into(), &cli.opts, &file).unwrap();
+            assert_eq!(cfg.asr.concurrency, expected);
+            assert_eq!(cfg.asr.command, ["adapter"]);
+            assert_eq!(cfg.asr.base_url, "http://localhost:1234/v1");
+            assert_eq!(cfg.asr.api_key, "key");
+            assert_eq!(cfg.asr.model, "model");
+            assert_eq!(cfg.asr.mode, settings::AsrMode::Xai);
+            assert_eq!(cfg.asr.language, "ko");
+            assert_eq!(cfg.asr.max_speech, 12.0);
+        }
+        for flag in [
+            "--provider",
+            "--threads",
+            "--gpu-layers",
+            "--mmproj-offload",
+            "--no-mmproj-offload",
+            "--model-dir",
+            "--asr-api-base-url",
+            "--asr-api-model",
+            "--asr-api-mode",
+        ] {
+            assert!(
+                crate::cli::Cli::try_parse_from(["notepipe", "video", flag, "value"]).is_err(),
+                "{flag}"
+            );
+        }
+        assert!(crate::cli::Cli::try_parse_from(["notepipe", "models", "list"]).is_err());
     }
 }

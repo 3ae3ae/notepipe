@@ -79,7 +79,7 @@ fn no_arguments_or_help_succeed_with_localized_guidance() {
     let traditional = cli.run_with_lang(&["--help"], "zh-Hant");
     assert!(traditional.status.success());
     assert!(stdout(&traditional).contains("Cookie 檔案"));
-    for cmd in ["models", "llm", "config", "summarize", "remove", "doctor"] {
+    for cmd in ["llm", "config", "summarize", "remove", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
     }
 }
@@ -87,7 +87,7 @@ fn no_arguments_or_help_succeed_with_localized_guidance() {
 #[test]
 fn missing_or_invalid_sources_fail_with_recovery() {
     let cli = CliTest::new();
-    let missing = cli.run(&["--provider", "api"]);
+    let missing = cli.run(&["--asr-mode", "chat"]);
     assert!(!missing.status.success());
     assert!(
         stderr(&missing).contains("缺少视频来源"),
@@ -109,7 +109,7 @@ fn json_covers_missing_source_parse_and_config_errors() {
     let cli = CliTest::new();
     json_error(&cli.run(&["--json"]));
     json_error(&cli.run(&["./missing.mp4", "--json"]));
-    json_error(&cli.run(&["./missing.mp4", "--json", "--provider", "invalid"]));
+    json_error(&cli.run(&["./missing.mp4", "--json", "--asr-mode", "invalid"]));
     std::fs::write(cli.dir.path().join("lecture.mp4"), []).unwrap();
     cli.config("[defaults\n");
     let error = json_error(&cli.run(&["./lecture.mp4", "--json"]));
@@ -141,42 +141,6 @@ fn noninteractive_setup_explains_missing_values_without_saving() {
 }
 
 #[test]
-fn model_listing_uses_configured_directory_and_rejects_partial_files() {
-    let cli = CliTest::new();
-    cli.config("[defaults]\nmodel_dir = 'custom models'\n");
-    let dir = cli.dir.path().join("custom models/llama-qwen3-1.7b");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("Qwen3-ASR-1.7B-Q8_0.gguf"), b"partial").unwrap();
-    let result = cli.run_with_lang(&["models", "list"], "en");
-    assert!(result.status.success());
-    let text = stdout(&result);
-    assert!(text.contains("custom models"));
-    assert!(text.contains("Missing or incomplete"));
-    assert!(text.contains("models download --dir"));
-}
-
-#[test]
-fn model_inspection_accepts_aliases_and_uses_the_configured_directory() {
-    let cli = CliTest::new();
-    cli.config("[defaults]\nmodel_dir = 'custom models'\n");
-    let result = cli.run(&[
-        "models",
-        "inspect",
-        "--provider",
-        "gpu",
-        "--model",
-        "qwen3",
-        "--json",
-    ]);
-    assert!(result.status.success(), "{}", stderr(&result));
-    let status: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(status["model"], "qwen3-1.7b");
-    assert_eq!(status["can_prepare"], true);
-    let part = status["parts"][0]["path"].as_str().unwrap();
-    assert!(part.contains("custom models"), "{part}");
-}
-
-#[test]
 fn config_show_reports_the_defaults_conversion_uses() {
     let cli = CliTest::new();
     let result = cli.run(&["config", "show"]);
@@ -197,9 +161,7 @@ fn config_show_reports_the_defaults_conversion_uses() {
 #[test]
 fn settings_and_status_never_print_saved_keys() {
     let cli = CliTest::new();
-    cli.config(
-        "[llm]\napi_key = 'secret-llm-test-key'\n[asr_api]\napi_key = 'secret-asr-test-key'\n",
-    );
+    cli.config("[llm]\napi_key = 'secret-llm-test-key'\n[asr]\napi_key = 'secret-asr-test-key'\n");
     for args in [["config", "show"], ["llm", "status"]] {
         let result = cli.run(&args);
         assert!(result.status.success());
@@ -212,10 +174,10 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
     let cli = CliTest::new();
     assert!(cli.run(&["config", "init"]).status.success());
     assert!(cli.run(&["config", "show"]).status.success());
-    cli.config("[defaults]\nthreads = 7\n");
+    cli.config("[defaults]\nsimilarity = 0.7\n");
     assert!(!cli.run(&["config", "init"]).status.success());
     let file = std::fs::read_to_string(cli.dir.path().join("config/notepipe/config.toml")).unwrap();
-    assert!(file.contains("threads = 7"));
+    assert!(file.contains("similarity = 0.7"));
 }
 
 #[test]

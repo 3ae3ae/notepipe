@@ -2,7 +2,6 @@
 //! 用户报 issue 时附上 `notepipe doctor` 输出即可定位大多数环境问题。
 
 use anyhow::Result;
-use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
@@ -84,64 +83,7 @@ pub fn run() -> Result<()> {
             crate::tr!("重跑 install.sh 可安装随包版本")
         )),
     }
-    #[cfg(apple_native)]
-    {
-        // 与运行时 ensure_metallib 同一搜索清单（exe 同目录/Resources/上级 Resources/CWD）
-        if crate::apple::find_metallib().is_some() {
-            check(
-                &mut out,
-                true,
-                "coreml",
-                &format!(
-                    "  {}",
-                    crate::tr!("Apple 原生后端可用 / Apple native backend available")
-                ),
-            );
-        } else {
-            out.push(crate::tr!("! coreml  缺少 Metal 着色器资源，请重新安装 / Metal shader resources missing; reinstall notepipe").into());
-        }
-    }
-    #[cfg(not(apple_native))]
-    out.push(crate::tr!("- coreml  本构建不包含 Apple 原生后端 / Apple native backend is not included in this build").into());
-    match crate::runtime::which("llama-server") {
-        Some(path) => {
-            check(&mut out, true, "gpu/cpu", &format!("  {}", path.display()));
-            match crate::asr::gpu_devices(&path) {
-                Ok(devices) if !devices.is_empty() => {
-                    check(&mut out, true, "GPU", &format!("  {}", devices.join(", ")))
-                }
-                Ok(_) => out.push(crate::tr!(
-                    "- GPU  未检测到 GPU。{}",
-                    crate::asr::GPU_SETUP_HINT
-                )),
-                Err(error) => out.push(crate::tr!("! GPU  无法检查设备：{}", format!("{error:#}"))),
-            }
-        }
-        None => out.push(crate::tr!(
-            "- gpu/cpu  显卡/CPU 识别需要 llama.cpp：{}",
-            crate::error::install_hint("llama.cpp")
-        )),
-    }
-    if cfg!(target_os = "linux") {
-        let device = Path::new(crate::npu::NPU_DEVICE_PATH).exists();
-        out.push(if device {
-            crate::tr!("✓ npu  检测到 Intel NPU（首次使用会自动安装运行组件）/ Intel NPU detected (runtime components install on first use)")
-        } else {
-            crate::tr!("- npu  未检测到 Intel NPU 设备 / No Intel NPU device detected")
-        }.into());
-        if crate::runtime::which("uv").is_none()
-            && crate::runtime::which("python3").is_none()
-            && crate::runtime::which("python").is_none()
-        {
-            out.push(
-                crate::tr!(
-                    "- npu  缺少 Python/uv / Python or uv is required for NPU transcription"
-                )
-                .into(),
-            );
-        }
-    }
-    out.push(crate::tr!("\n配置与模型").into());
+    out.push(crate::tr!("\nConfiguration").into());
     let path = crate::settings::config_path();
     let loaded = crate::settings::load();
     match &loaded {
@@ -170,36 +112,41 @@ pub fn run() -> Result<()> {
                     );
                 }
             }
-            let root = crate::config::model_dir_from(cfg.defaults.model_dir.as_deref());
-            if crate::models::llama_ready(&root) {
-                check(
-                    &mut out,
-                    true,
-                    "gpu/cpu models",
-                    &format!("  {}", root.display()),
-                );
+            if cfg.asr.is_configured() {
+                match crate::options::resolve(String::new(), &Default::default(), cfg)
+                    .and_then(|cfg| cfg.validate_asr())
+                {
+                    Ok(()) => {
+                        if let Some(program) = cfg.asr.command.first() {
+                            match crate::adapter::resolve_executable(program) {
+                                Ok(path) if path.is_file() => check(
+                                    &mut out,
+                                    true,
+                                    "ASR adapter",
+                                    &format!("  {}", path.display()),
+                                ),
+                                _ => {
+                                    failures += 1;
+                                    check(&mut out, false, "ASR adapter", program);
+                                }
+                            }
+                        } else {
+                            check(
+                                &mut out,
+                                true,
+                                "ASR",
+                                &format!("  {} ({})", cfg.asr.base_url, cfg.asr.mode),
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        failures += 1;
+                        check(&mut out, false, "ASR", &format!("  {error:#}"));
+                    }
+                }
             } else {
-                out.push(crate::tr!(
-                    "- gpu/cpu models  未下载或不完整：{}",
-                    root.display()
-                ));
-                out.push(crate::tr!(
-                    "  仅 gpu/cpu 需要；下载约 2.4GB：notepipe models download --dir \"{}\"",
-                    root.display()
-                ));
+                out.push(crate::tr!("ASR is not configured; set [asr] in `notepipe config init` when transcription is needed.").into());
             }
-            let key = !cfg.asr_api.api_key.trim().is_empty()
-                || crate::config::asr_api_key_from_env().is_some();
-            out.push(if key { crate::tr!("✓ api  已设置密钥（隐藏）/ API key set (hidden)") } else { crate::tr!("- api  未设置密钥；仅云端识别需要 / API key not set; only required for cloud transcription: NOTEPIPE_ASR_API_KEY") }.into());
-            let provider = cfg
-                .defaults
-                .provider
-                .unwrap_or_else(crate::config::default_provider_hint);
-            let (zh, en) = provider.label();
-            out.push(format!(
-                "{}\n{provider}（{zh} / {en}）",
-                crate::tr!("\n当前识别方式")
-            ));
         }
         Err(error) => {
             failures += 1;

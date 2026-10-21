@@ -28,12 +28,12 @@ pub fn target(code: &str) -> Option<&'static str> {
 }
 
 /// The English name used in the translation instruction.
-pub fn english_name(code: &str) -> &'static str {
+pub fn english_name(code: &str) -> &str {
     TARGETS
         .iter()
         .find(|(target, _)| *target == code)
         .map(|(_, name)| *name)
-        .unwrap_or("English")
+        .unwrap_or(code)
 }
 
 /// Language family of a target code: `zh-Hans` and `zh-Hant` are both `zh`.

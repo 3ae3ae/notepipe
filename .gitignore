@@ -12,4 +12,4 @@ out-bv/
 out-bench/
 out-gpu/
 out-smoke/
-native/apple-asr/.build/
+adapters/apple/native/.build/

@@ -1,7 +1,7 @@
 //! ASR checkpoint：逐 chunk 追加写 asr.jsonl，重跑时按精确时间边界跳过已完成段。
 //!
 //! 语义：
-//! - **运行身份**：`.asr_identity` 记录 (schema 版本, provider, 模型, max_speech)。
+//! - **运行身份**：`.asr_identity` 记录 (schema version, dialect, endpoint/command, model, language and VAD settings)。
 //!   身份不一致的旧进度（换模型/换后端/换切分长度）整体作废并重算，
 //!   杜绝「换模型后 resume 混用两个模型的转写」。
 //! - **空结果也算完成**：成功但无语音的 chunk 记录为 `text: ""`，
@@ -23,26 +23,43 @@ use std::path::{Path, PathBuf};
 /// checkpoint 身份的 schema 版本：仅当 checkpoint 的格式/语义变化时才 bump。
 /// 与 notepipe 发布版本（CARGO_PKG_VERSION）解耦——patch 版本升级不应作废全部 ASR 进度。
 /// 注意：bump 会让所有旧 checkpoint 失效一次（身份不匹配 → 整体作废重算）。
-const CHECKPOINT_SCHEMA_VERSION: u32 = 2;
+const CHECKPOINT_SCHEMA_VERSION: u32 = 3;
 
 /// 一条 ASR 记录的身份：决定 checkpoint 能否被复用。
 /// 任何影响转写内容语义的字段变化都必须使旧进度作废。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AsrIdentity {
     pub schema_version: u32,
-    pub provider: String,
+    pub mode: crate::settings::AsrMode,
+    pub endpoint_or_command: String,
     pub model: String,
-    /// 语音分段上限（秒）：决定 chunk 边界，即 checkpoint 的 key
+    pub language: String,
     pub max_speech: f32,
+    pub vad_threshold: f32,
+    pub min_silence: f32,
 }
 
 impl AsrIdentity {
-    pub fn new(provider: &str, model: &str, max_speech: f32) -> Self {
+    pub fn new(asr: &crate::settings::Asr) -> Self {
+        let endpoint_or_command = if asr.command.is_empty() {
+            let base = asr.base_url.trim();
+            url::Url::parse(base)
+                .map(|url| url.to_string())
+                .unwrap_or_else(|_| base.to_owned())
+                .trim_end_matches('/')
+                .to_owned()
+        } else {
+            asr.command.join("\0")
+        };
         Self {
             schema_version: CHECKPOINT_SCHEMA_VERSION,
-            provider: provider.to_string(),
-            model: model.to_string(),
-            max_speech,
+            mode: asr.mode,
+            endpoint_or_command,
+            model: asr.model.clone(),
+            language: asr.language.clone(),
+            max_speech: asr.max_speech,
+            vad_threshold: asr.vad_threshold,
+            min_silence: asr.min_silence,
         }
     }
 }
@@ -194,6 +211,15 @@ impl Checkpoint {
                 path.display()
             )
         })?;
+        let header: serde_json::Value = serde_json::from_str(&s).context(crate::tr!(
+            "识别进度记录已损坏 / The transcription progress record is damaged"
+        ))?;
+        if header["schema_version"]
+            .as_u64()
+            .is_some_and(|version| version != u64::from(CHECKPOINT_SCHEMA_VERSION))
+        {
+            return Ok(None);
+        }
         Ok(Some(serde_json::from_str(&s).context(crate::tr!(
             "识别进度记录已损坏 / The transcription progress record is damaged"
         ))?))
@@ -434,7 +460,10 @@ mod tests {
     use super::*;
 
     fn identity(model: &str) -> AsrIdentity {
-        AsrIdentity::new("gpu", model, 20.0)
+        AsrIdentity::new(&crate::settings::Asr {
+            model: model.into(),
+            ..Default::default()
+        })
     }
 
     fn tmpdir(tag: &str) -> PathBuf {
@@ -712,5 +741,77 @@ mod tests {
         assert_eq!(cp.events().len(), 1);
         assert_eq!(cp.events()[0].text, "first");
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use crate::settings::{Asr, AsrMode};
+
+    #[test]
+    fn identity_tracks_semantic_settings_and_ignores_keys_and_concurrency() {
+        let asr = Asr {
+            base_url: " https://EXAMPLE.test/v1/ ".into(),
+            model: "model".into(),
+            ..Default::default()
+        };
+        let identity = AsrIdentity::new(&asr);
+        assert_eq!(identity.schema_version, 3);
+        assert_eq!(identity.endpoint_or_command, "https://example.test/v1");
+        let changes: &[fn(&mut Asr)] = &[
+            |a| a.mode = AsrMode::Chat,
+            |a| a.base_url.push_str("other"),
+            |a| a.model.push('2'),
+            |a| a.language = "ko".into(),
+            |a| a.max_speech = 30.0,
+            |a| a.vad_threshold = 0.6,
+            |a| a.min_silence = 0.5,
+            |a| a.command = vec!["adapter".into()],
+        ];
+        for change in changes {
+            let mut changed = asr.clone();
+            change(&mut changed);
+            let dir = tempfile::tempdir().unwrap();
+            let mut cp = Checkpoint::open(dir.path(), true, &identity).unwrap();
+            cp.record(0.0, 1.0, "original").unwrap();
+            drop(cp);
+            let changed = AsrIdentity::new(&changed);
+            assert_ne!(identity, changed);
+            assert!(
+                !Checkpoint::open(dir.path(), true, &changed)
+                    .unwrap()
+                    .is_done(0.0, 1.0)
+            );
+        }
+        let mut changed = asr.clone();
+        changed.api_key = "secret".into();
+        changed.concurrency = 1;
+        assert_eq!(identity, AsrIdentity::new(&changed));
+        let mut managed = asr.clone();
+        managed.command = vec!["adapter".into(), "--model".into(), "some model".into()];
+        let managed_id = AsrIdentity::new(&managed);
+        managed.base_url = "ignored".into();
+        assert_eq!(managed_id, AsrIdentity::new(&managed));
+        managed.command = vec!["adapter --model".into(), "some model".into()];
+        assert_ne!(managed_id, AsrIdentity::new(&managed));
+    }
+
+    #[test]
+    fn previous_schema_is_archived_without_reusing_its_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".asr_identity"),
+            br#"{"schema_version":2,"provider":"api","model":"old","max_speech":20.0}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("asr.jsonl"),
+            b"{\"start\":0,\"end\":1,\"text\":\"old\"}\n",
+        )
+        .unwrap();
+        let cp = Checkpoint::open(dir.path(), true, &AsrIdentity::new(&Asr::default())).unwrap();
+        assert!(!cp.is_done(0.0, 1.0));
+        assert!(dir.path().join(".previous-asr").is_dir());
     }
 }

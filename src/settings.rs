@@ -19,63 +19,71 @@ pub struct Defaults {
     pub stable_secs: Option<f64>,
     pub max_height: Option<u32>,
     pub roi: Option<String>,
-    pub threads: Option<i32>,
-    pub provider: Option<crate::config::AsrProvider>,
-    /// coreml 后端的模型：qwen3-1.7b（默认）| qwen3-0.6b | whisper（首次使用可交互选择）
-    pub asr_model: Option<String>,
     /// 转写来源：auto（字幕优先）| subtitle | asr
     pub transcript_source: Option<crate::config::TranscriptSource>,
-    pub max_speech: Option<f32>,
     pub formats: Option<Vec<crate::config::OutputFormat>>,
-    pub model_dir: Option<PathBuf>,
     pub keep_video: Option<bool>,
     pub no_download: Option<bool>,
     pub resume: Option<bool>,
-    /// GPU 卸载层数（llama-server -ngl，0-99；仅 gpu 后端生效）
-    pub gpu_layers: Option<u32>,
-    /// 是否把多模态 projector（mmproj）卸载到 GPU
-    pub mmproj_offload: Option<bool>,
 }
 
-/// 云端 STT 的请求模式。
+/// HTTP transcription dialect.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
-pub enum AsrApiMode {
-    /// POST {base_url}/audio/transcriptions（OpenAI 兼容转录端点，如 OpenRouter 的 qwen3-asr）
+pub enum AsrMode {
     #[default]
     Transcriptions,
-    /// POST {base_url}/chat/completions（支持音频输入的多模态 LLM，
-    /// 如 gpt-4o-audio-preview、Gemini、Qwen2-Audio 等 OpenAI 兼容端点）
     Chat,
+    Xai,
+    Meta,
 }
 
-impl std::fmt::Display for AsrApiMode {
+impl std::fmt::Display for AsrMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Transcriptions => "transcriptions",
             Self::Chat => "chat",
+            Self::Xai => "xai",
+            Self::Meta => "meta",
         })
     }
 }
 
-/// 云端 STT（provider = "api"，OpenAI 兼容端点，如 OpenRouter）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct AsrApi {
+pub struct Asr {
+    pub mode: AsrMode,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
-    pub mode: AsrApiMode,
+    pub language: String,
+    pub concurrency: usize,
+    pub command: Vec<String>,
+    pub max_speech: f32,
+    pub vad_threshold: f32,
+    pub min_silence: f32,
 }
 
-impl Default for AsrApi {
+impl Default for Asr {
     fn default() -> Self {
         Self {
-            base_url: "https://openrouter.ai/api/v1".into(),
+            mode: AsrMode::Transcriptions,
+            base_url: String::new(),
             api_key: String::new(),
-            model: "qwen/qwen3-asr-flash-2026-02-10".into(),
-            mode: AsrApiMode::Transcriptions,
+            model: String::new(),
+            language: String::new(),
+            concurrency: 4,
+            command: Vec::new(),
+            max_speech: crate::config::DEFAULT_MAX_SPEECH,
+            vad_threshold: 0.5,
+            min_silence: 0.4,
         }
+    }
+}
+
+impl Asr {
+    pub fn is_configured(&self) -> bool {
+        !self.command.is_empty() || !self.base_url.trim().is_empty()
     }
 }
 
@@ -84,7 +92,7 @@ impl Default for AsrApi {
 pub struct ConfigFile {
     pub defaults: Defaults,
     pub llm: crate::llm::LlmSettings,
-    pub asr_api: AsrApi,
+    pub asr: Asr,
 }
 
 pub fn config_path() -> PathBuf {
@@ -92,7 +100,7 @@ pub fn config_path() -> PathBuf {
 }
 
 /// 读取配置文件。文件不存在 → 默认值；存在但无法解析 → 硬错误（带位置信息），
-/// 避免用户写错一个引号后静默回落默认、甚至开始下载 2.4GB 模型。
+/// Invalid settings must not silently fall back to defaults.
 pub fn load() -> anyhow::Result<ConfigFile> {
     let p = config_path();
     if !p.is_file() {
@@ -143,7 +151,7 @@ pub fn template() -> String {
         .map(|f| format!("\"{f}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    let api = AsrApi::default();
+    let asr = Asr::default();
     let llm = crate::llm::LlmSettings::default();
     [
         ("{OUT}", c::DEFAULT_OUT_DIR.to_string()),
@@ -155,29 +163,17 @@ pub fn template() -> String {
         ("{COOLDOWN}", format!("{:?}", c::DEFAULT_COOLDOWN)),
         ("{MAX_HEIGHT}", c::DEFAULT_MAX_HEIGHT.to_string()),
         ("{STABLE_SECS}", format!("{:?}", c::DEFAULT_STABLE_SECS)),
-        ("{THREADS}", c::DEFAULT_THREADS.to_string()),
-        ("{GPU_LAYERS}", c::DEFAULT_GPU_LAYERS.to_string()),
-        ("{ASR_MODEL}", c::DEFAULT_ASR_MODEL.to_string()),
-        ("{MAX_SPEECH}", format!("{:?}", c::DEFAULT_MAX_SPEECH)),
+        ("{MAX_SPEECH}", format!("{:?}", asr.max_speech)),
+        ("{ASR_CONCURRENCY}", asr.concurrency.to_string()),
+        ("{VAD_THRESHOLD}", asr.vad_threshold.to_string()),
+        ("{MIN_SILENCE}", asr.min_silence.to_string()),
         ("{FORMATS}", formats),
-        ("{API_BASE_URL}", api.base_url),
-        ("{API_MODEL}", api.model),
         ("{SLIDE_MODE}", c::SlideMode::default().to_string()),
-        (
-            "{PROVIDER}",
-            c::default_provider_hint().as_str().to_string(),
-        ),
-        ("{MMPROJ_OFFLOAD}", "true".to_string()),
         ("{KEEP_VIDEO}", "false".to_string()),
         ("{RESUME}", "true".to_string()),
         (
             "{TRANSCRIPT_SOURCE}",
             c::TranscriptSource::default().to_string(),
-        ),
-        // A TOML string, escaped: Windows paths contain backslashes.
-        (
-            "{MODEL_DIR}",
-            toml::Value::String(c::model_dir_from(None).display().to_string()).to_string(),
         ),
         ("{LLM_ENABLED}", llm.enabled.to_string()),
         ("{LLM_BASE_URL}", llm.base_url),
@@ -217,44 +213,33 @@ const TEMPLATE: &str = r#"# notepipe 配置 / Configuration
 #stable_secs = {STABLE_SECS}
 # 仅比较指定画面区域 / Compare only this region
 #roi = "40%,0%-100%,100%"
-# 识别线程数 / Speech recognition threads
-#threads = {THREADS}
-# coreml: Apple Silicon 原生构建 / Apple Silicon native build
-# gpu/cpu: 需要 llama-server 和约 2.4GB 模型 / requires llama-server and ~2.4GB model
-# npu: Intel NPU，需要 OpenVINO / Intel NPU, requires OpenVINO
-# api: 云端识别，需要 API 密钥 / cloud transcription, requires an API key
-# 留空自动选择后端；notepipe doctor 查看可用性 / Leave unset for automatic selection; check with notepipe doctor
-#provider = "{PROVIDER}"
-# GPU 卸载层数（0–99）；核显不稳定时可降低 / GPU offload layers; lower on unstable integrated GPUs
-#gpu_layers = {GPU_LAYERS}
-# 将多模态 projector 放到 GPU；false 留在 CPU / Offload projector to GPU; false keeps it on CPU
-#mmproj_offload = {MMPROJ_OFFLOAD}
-# 识别模型，需与后端兼容 / Speech model; must match the backend
-# gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b, qwen3-0.6b, whisper；npu: whisper 或 Hugging Face 仓库名 / or a Hugging Face repository
-#asr_model = "{ASR_MODEL}"
 # auto 优先字幕，无字幕再识别 / auto: subtitles first, then speech recognition
 # subtitle 仅字幕；asr 仅识别 / subtitle: subtitles only; asr: speech recognition only
 #transcript_source = "{TRANSCRIPT_SOURCE}"
-# 每段语音最长秒数 (1–600) / Maximum speech segment length in seconds (1–600)
-#max_speech = {MAX_SPEECH}
 # 输出格式 / Output formats: md, html, json
 #formats = [{FORMATS}]
-# gpu/cpu 模型目录；默认使用系统缓存 / gpu/cpu model directory; platform cache by default
-#model_dir = {MODEL_DIR}
 # 成功后保留下载的视频 / Keep downloaded video after success
 #keep_video = {KEEP_VIDEO}
 # 继续上次中断的识别 / Continue interrupted transcription
 #resume = {RESUME}
 
-[asr_api]
-# OpenAI 兼容语音服务 / OpenAI-compatible speech service
-# transcriptions: /audio/transcriptions; chat: /chat/completions
-# 请求方式和模型需由服务商支持 / The provider must support the selected mode and model
+[asr]
+# HTTP dialect: transcriptions, chat, xai, meta
 #mode = "transcriptions"
-#base_url = "{API_BASE_URL}"
-# 推荐通过 NOTEPIPE_ASR_API_KEY 环境变量提供密钥 / Prefer the NOTEPIPE_ASR_API_KEY environment variable
+# Service root or full endpoint; ignored when command is set
+#base_url = ""
+# Optional; CLI also reads NOTEPIPE_ASR_API_KEY
 #api_key = ""
-#model = "{API_MODEL}"
+#model = ""
+# Empty language means automatic detection
+#language = ""
+# Parallel requests, clamped to 1..=16
+#concurrency = {ASR_CONCURRENCY}
+# Managed adapter argv; notepipe adds --host and --port
+#command = []
+#max_speech = {MAX_SPEECH}
+#vad_threshold = {VAD_THRESHOLD}
+#min_silence = {MIN_SILENCE}
 
 [llm]
 # 可选 AI 校对；运行 notepipe llm setup 配置 / Optional AI proofreading; configure with notepipe llm setup
@@ -303,22 +288,9 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         ("cooldown", r.cooldown.to_string()),
         ("max_height", r.max_height.to_string()),
         ("roi", d.roi.clone().unwrap_or_else(|| "-".into())),
-        ("threads", r.threads.to_string()),
-        (
-            "provider",
-            match d.provider {
-                Some(p) => p.to_string(),
-                None => crate::tr!("{}（自动选择）", r.provider),
-            },
-        ),
         ("slide_mode", r.slide_mode.to_string()),
         ("stable_secs", r.stable_secs.to_string()),
-        (
-            "asr_model",
-            r.asr_model.clone().unwrap_or_else(|| "-".into()),
-        ),
         ("transcript_source", r.transcript_source.to_string()),
-        ("max_speech", r.max_speech.to_string()),
         (
             "formats",
             r.formats
@@ -327,12 +299,9 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
                 .collect::<Vec<_>>()
                 .join(","),
         ),
-        ("model_dir", r.model_dir.display().to_string()),
         ("keep_video", r.keep_video.to_string()),
         ("no_download", r.no_download.to_string()),
         ("resume", r.resume.to_string()),
-        ("gpu_layers", r.gpu_layers.to_string()),
-        ("mmproj_offload", r.mmproj_offload.to_string()),
     ];
     println!("[defaults]");
     for (key, value) in rows {
@@ -345,11 +314,17 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
             crate::tr!("(已设置，隐藏 / set, hidden)")
         }
     };
-    println!("[asr_api]");
-    println!("  {:<17}: {}", "base_url", cfg.asr_api.base_url);
-    println!("  {:<17}: {}", "model", cfg.asr_api.model);
-    println!("  {:<17}: {}", "mode", cfg.asr_api.mode);
-    println!("  {:<17}: {}", "api_key", hidden(&cfg.asr_api.api_key));
+    println!("[asr]");
+    println!("  {:<17}: {}", "base_url", cfg.asr.base_url);
+    println!("  {:<17}: {}", "model", cfg.asr.model);
+    println!("  {:<17}: {}", "mode", cfg.asr.mode);
+    println!("  {:<17}: {}", "api_key", hidden(&cfg.asr.api_key));
+    println!("  {:<17}: {}", "language", r.asr.language);
+    println!("  {:<17}: {}", "concurrency", r.asr.concurrency);
+    println!("  {:<17}: {:?}", "command", r.asr.command);
+    println!("  {:<17}: {}", "max_speech", r.asr.max_speech);
+    println!("  {:<17}: {}", "vad_threshold", r.asr.vad_threshold);
+    println!("  {:<17}: {}", "min_silence", r.asr.min_silence);
     println!("[llm]");
     println!("  {:<17}: {}", "enabled", cfg.llm.enabled);
     let model = if cfg.llm.model.is_empty() {
@@ -371,13 +346,6 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn template_paths_are_escaped_toml_strings() {
-        let quoted = toml::Value::String(r"C:\Users\me\models".into()).to_string();
-        let parsed: toml::Table = toml::from_str(&format!("model_dir = {quoted}")).unwrap();
-        assert_eq!(parsed["model_dir"].as_str(), Some(r"C:\Users\me\models"));
-    }
-
     #[test]
     fn template_parses_to_built_in_defaults_when_uncommented() {
         let text: String = super::template()
@@ -401,9 +369,8 @@ mod tests {
         assert_eq!(from_template.stable_secs, built_in.stable_secs);
         assert_eq!(from_template.similarity, built_in.similarity);
         assert_eq!(from_template.cooldown, built_in.cooldown);
-        assert_eq!(from_template.max_speech, built_in.max_speech);
-        assert_eq!(from_template.gpu_layers, built_in.gpu_layers);
+        assert_eq!(from_template.asr, built_in.asr);
         assert_eq!(from_template.formats, built_in.formats);
-        assert_eq!(file.asr_api, super::AsrApi::default());
+        assert_eq!(file.asr, super::Asr::default());
     }
 }

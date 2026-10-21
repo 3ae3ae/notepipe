@@ -29,6 +29,7 @@ pub const NO_SCREENSHOTS: &str = "未提取到截图";
 /// New settings or --no-resume use another work directory and never overwrite old notes.
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let started = Instant::now();
+    let mut cfg = cfg.clone();
     cfg.validate()
         .context(crate::tr!("配置预检失败 / Invalid settings"))?;
     let local = Path::new(&cfg.url);
@@ -40,7 +41,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let probed = if is_local {
         None
     } else {
-        Some(Box::new(fetch::probe_video(cfg).await?))
+        Some(Box::new(fetch::probe_video(&cfg).await?))
     };
     // 本地视频先探时长：成功进 meta；失败不当 0 静默（merge 会失真），
     // 延迟到诊断作用域内返回，失败同样写 run.json
@@ -87,6 +88,19 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     };
     let note_id = execution::digest(source_id.as_bytes());
     let note_dir = cfg.out_root.join(&platform).join(&note_id);
+    let input = SubtitleInput::Discover(probed);
+    let input = if local_duration_error.is_none() && crate::wizard::is_first_run(&cfg.asr) {
+        let tmp = crate::runtime::TempWorkDir::new("subtitles")?;
+        let mut probe_cfg = cfg.clone();
+        probe_cfg.out_dir = tmp.path().into();
+        let selected = subtitles(&probe_cfg, is_local, input).await?;
+        if selected.is_none() {
+            cfg.asr = crate::wizard::run(&cfg.asr)?;
+        }
+        SubtitleInput::Resolved(selected)
+    } else {
+        input
+    };
     let identity_config = cfg.redacted_for_identity();
     let binding =
         serde_json::json!({"source_id": source_id, "config": identity_config, "title": meta.title});
@@ -107,13 +121,11 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         version_id: task_id.clone(),
         note_dir,
     };
-    let mut cfg = cfg.clone();
     cfg.out_dir = target.note_dir.join(".work").join(&task_id);
-    if cfg.provider == config::AsrProvider::Api
-        && cfg.asr_api.api_key.is_empty()
+    if cfg.asr.api_key.trim().is_empty()
         && let Some(key) = config::asr_api_key_from_env()
     {
-        cfg.asr_api.api_key = key;
+        cfg.asr.api_key = key;
     }
     cfg.resume = true;
     let _dispatch = crate::dispatch::install(&cfg.out_dir, None, &Default::default())?;
@@ -132,16 +144,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             if let Some(error) = local_duration_error {
                 return Err(error);
             }
-            run_prepared(
-                &cfg,
-                &meta,
-                &target,
-                is_local,
-                SubtitleInput::Discover(probed),
-                Credentials::Cli,
-                started,
-            )
-            .await
+            run_prepared(&cfg, &meta, &target, is_local, input, started).await
         })
         .await
 }
@@ -236,18 +239,7 @@ async fn run_task_inner(
     } else {
         SubtitleInput::Selected(subtitle)
     };
-    run_prepared(
-        cfg,
-        &meta,
-        target,
-        is_local,
-        subtitle_input,
-        Credentials::Task {
-            allow_unauthenticated_asr: request.allow_unauthenticated_asr,
-        },
-        started,
-    )
-    .await
+    run_prepared(cfg, &meta, target, is_local, subtitle_input, started).await
 }
 
 async fn reprocess(
@@ -605,6 +597,7 @@ fn export_for_task(
 }
 
 enum SubtitleInput {
+    Resolved(Option<(Vec<timeline::TranscriptEvent>, String)>),
     /// CLI path: the video probed once at fetch time; `None` for local files.
     Discover(Option<Box<fetch::OnlineVideo>>),
     Selected(Option<Vec<timeline::TranscriptEvent>>),
@@ -625,6 +618,7 @@ async fn subtitles(
     input: SubtitleInput,
 ) -> Result<Option<(Vec<timeline::TranscriptEvent>, String)>> {
     let probed = match input {
+        SubtitleInput::Resolved(selected) => return Ok(selected),
         SubtitleInput::Selected(selected) => {
             if let Some(events) = selected {
                 execution::validate_events(&events)?;
@@ -682,21 +676,12 @@ struct TranscriptCache {
     events: Vec<timeline::TranscriptEvent>,
 }
 
-/// Where cloud credentials come from: the CLI may read the environment; a fixed task
-/// carries fully resolved credentials and an explicit no-auth decision.
-#[derive(Clone, Copy)]
-enum Credentials {
-    Cli,
-    Task { allow_unauthenticated_asr: bool },
-}
-
 async fn run_prepared(
     cfg: &PipelineConfig,
     meta: &VideoMeta,
     target: &Target,
     is_local: bool,
     input: SubtitleInput,
-    credentials: Credentials,
     started: Instant,
 ) -> Result<()> {
     crate::dispatch::check_control()?;
@@ -727,36 +712,12 @@ async fn run_prepared(
     let selected = subtitles(cfg, is_local, input).await?;
     progress::stage("subtitle", "done");
     if selected.is_none() {
-        let (require_key, allow_environment) = match credentials {
-            Credentials::Cli => (true, true),
-            Credentials::Task {
-                allow_unauthenticated_asr,
-            } => (!allow_unauthenticated_asr, false),
-        };
-        cfg.validate_asr_with_auth(require_key, allow_environment)?;
-        if !matches!(
-            cfg.provider,
-            config::AsrProvider::Coreml | config::AsrProvider::Api | config::AsrProvider::Npu
-        ) {
-            crate::error::require_cmd("llama-server")?;
-        }
+        cfg.validate_asr()?;
     }
     crate::error::require_cmd("ffmpeg")?;
     crate::error::require_cmd("ffprobe")?;
     if !is_local {
         crate::error::require_ytdlp()?;
-    }
-    if selected.is_none() && cfg.provider != config::AsrProvider::Api {
-        progress::stage("model/prepare", "start");
-        crate::models::ensure_cache(
-            cfg.provider,
-            cfg.asr_model
-                .as_deref()
-                .unwrap_or(config::DEFAULT_ASR_MODEL),
-            &cfg.model_dir,
-        )
-        .await?;
-        progress::stage("model/prepare", "done");
     }
     meta.save(&cfg.meta_path())?;
     let media_path = if is_local {
@@ -1331,7 +1292,7 @@ impl FailureRecord<'_> {
         result
     }
 
-    /// Record version/source/final provider/asr_model/error text/elapsed time.
+    /// Record version/source/ASR mode and model/error text/elapsed time.
     /// A failed write only warns: the original error is the outcome.
     fn write_run_json(&self, err: &anyhow::Error) {
         let cfg = self.cfg;
@@ -1344,8 +1305,8 @@ impl FailureRecord<'_> {
                 "id": self.id,
                 "url": cfg.url,
             },
-            "provider": cfg.provider.as_str(),
-            "asr_model": cfg.asr_model.clone().unwrap_or_else(|| "backend-default".into()),
+            "asr_mode": cfg.asr.mode,
+            "asr_model": cfg.asr.model,
             "error": format!("{err:#}"),
             "elapsed_secs": (self.started.elapsed().as_secs_f64() * 100.0).round() / 100.0,
         });
@@ -1470,7 +1431,7 @@ mod tests {
     #[test]
     fn failure_writes_diagnostic_run_json() {
         // 缺任何一个工具都会在 out_dir 确定之前的预检失败（不写 run.json），跳过
-        for tool in ["ffmpeg", "ffprobe", "llama-server"] {
+        for tool in ["ffmpeg", "ffprobe"] {
             if crate::runtime::which(tool).is_none() {
                 eprintln!("skip: {tool} not found");
                 return;
@@ -1480,16 +1441,6 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let video = dir.join("broken.mp4");
         std::fs::write(&video, b"not a real mp4").unwrap();
-        // This test fails while opening media, before ASR loads any weights. Supply
-        // cache-header fixtures so the earlier model preflight never makes a request.
-        let models = crate::models::llama_paths(&dir);
-        std::fs::create_dir_all(models.model.parent().unwrap()).unwrap();
-        for path in [&models.model, &models.mmproj] {
-            use std::io::Write as _;
-            let mut file = std::fs::File::create(path).unwrap();
-            file.set_len(1_100_000).unwrap();
-            file.write_all(b"GGUF\x03\0\0\0").unwrap();
-        }
         use crate::config as c;
         let cfg = c::PipelineConfig {
             url: video.display().to_string(),
@@ -1504,19 +1455,15 @@ mod tests {
             stable_secs: 0.0,
             max_height: 1080,
             roi: None,
-            threads: 2,
-            provider: c::AsrProvider::Cpu,
-            max_speech: 20.0,
             formats: vec![c::OutputFormat::Md],
-            model_dir: dir.clone(),
             keep_video: true,
             no_download: true,
             resume: false,
             llm: Default::default(),
-            asr_api: Default::default(),
-            asr_model: None,
-            gpu_layers: c::DEFAULT_GPU_LAYERS,
-            mmproj_offload: true,
+            asr: crate::settings::Asr {
+                base_url: "http://127.0.0.1:9/v1".into(),
+                ..Default::default()
+            },
             transcript_source: c::TranscriptSource::Asr,
         };
         let r = tokio::runtime::Runtime::new().unwrap().block_on(run(&cfg));
@@ -1540,11 +1487,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
         assert!(!v["error"].as_str().unwrap_or_default().is_empty());
-        assert_eq!(v["provider"], "cpu");
+        assert_eq!(v["asr_mode"], "transcriptions");
+        assert_eq!(v["asr_model"], "");
         assert!(v["notepipe_version"].as_str().is_some());
         assert!(v["elapsed_secs"].is_number());
-        // 失败发生在 llama-server spawn 之前 → 无 llama_server_args 字段
-        assert!(v.get("llama_server_args").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

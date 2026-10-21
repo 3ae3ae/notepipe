@@ -87,17 +87,11 @@ jobs:
           fi
           codesign --verify --verbose=2 "${{ matrix.asset }}"
 
-      # MLX Metal kernels for Apple speech recognition, installed beside the CLI.
-      - name: Collect mlx.metallib
-        if: matrix.target == 'aarch64-apple-darwin'
-        run: cp target/aarch64-apple-darwin/release/mlx.metallib mlx-macos-arm64.metallib
-
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
           path: |
             ${{ matrix.asset }}
-            mlx-macos-arm64.metallib
 
       - name: Remove signing material
         if: always() && runner.os == 'macOS'

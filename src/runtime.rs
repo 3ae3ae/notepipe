@@ -1,4 +1,4 @@
-//! 子进程与本地服务的共用原语（llama-server / NPU worker / ffmpeg）：
+//! Process guards, bounded commands and interruptible HTTP readiness polling.
 //! - `ManagedChild`：Drop 保证 kill+wait，任何错误路径（含 `?` 早退）不泄漏进程
 //! - `run_bounded`：短命令的超时与输出捕获
 //! - `wait_ready`：健康轮询期间监视子进程，秒退立即报错而不是等满超时
@@ -43,9 +43,13 @@ impl ManagedChild {
         self.child.id()
     }
 
-    /// 取出 piped 的 stderr 句柄（配合 [`drain_stderr`] 使用）。
+    /// Take the stderr pipe for background draining.
     pub fn take_stderr(&mut self) -> Option<std::process::ChildStderr> {
         self.child.stderr.take()
+    }
+
+    pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.child.stdout.take()
     }
 
     pub fn name(&self) -> &'static str {
@@ -109,7 +113,7 @@ impl StderrTail {
     }
 
     /// 给错误附上 stderr 尾部作为 context（尾部为空则原样返回）。
-    /// 收拢 asr.rs / npu.rs 同构的「失败时附加子进程 stderr 尾部」骨架。
+    /// 收拢 adapter.rs 同构的「失败时附加子进程 stderr 尾部」骨架。
     pub fn attach(&self, e: anyhow::Error, label: &str) -> anyhow::Error {
         let tail = self.tail();
         if tail.is_empty() {
@@ -120,29 +124,31 @@ impl StderrTail {
     }
 }
 
-/// 为一个已 spawn 的 stderr pipe 启动 drain 线程。
-/// `target` 是 tracing target（如 "llama_server" / "npu_worker"），用于区分日志来源。
-pub fn drain_stderr(stderr: std::process::ChildStderr, target: &'static str) -> StderrTail {
-    use std::io::BufRead;
-    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let shared = lines.clone();
-    std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(stderr);
-        for line in reader.lines().map_while(Result::ok) {
-            // tracing 的 target: 只接受常量，来源名放消息前缀
-            tracing::debug!("[{target}] {line}");
-            if let Ok(mut v) = shared.lock()
-                && !line.trim().is_empty()
-            {
-                v.push(line);
-                let overflow = v.len().saturating_sub(STDERR_TAIL_MAX);
-                if overflow > 0 {
-                    v.drain(..overflow);
+impl StderrTail {
+    pub fn drain(
+        &self,
+        reader: impl std::io::Read + Send + 'static,
+        target: &'static str,
+    ) -> std::thread::JoinHandle<()> {
+        use std::io::BufRead;
+        let shared = self.lines.clone();
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(reader);
+            for line in reader.lines().map_while(Result::ok) {
+                // tracing 的 target: 只接受常量，来源名放消息前缀
+                tracing::debug!("[{target}] {line}");
+                if let Ok(mut v) = shared.lock()
+                    && !line.trim().is_empty()
+                {
+                    v.push(line);
+                    let overflow = v.len().saturating_sub(STDERR_TAIL_MAX);
+                    if overflow > 0 {
+                        v.drain(..overflow);
+                    }
                 }
             }
-        }
-    });
-    StderrTail { lines }
+        })
+    }
 }
 
 /// 有界命令输出（stdout/stderr 经临时文件捕获，不受 pipe 缓冲与 GUI stdin 影响）。
@@ -186,15 +192,12 @@ pub fn run_bounded(
 }
 
 /// 轮询 `{base}/health` 直到成功；子进程中途退出立即失败（不等满超时）。
-/// `expect_body` 非空时还要求响应体包含该子串——防止端口被无关服务
-/// 抢占（free_port 存在 TOCTOU 窗口）而误判就绪。
 /// `control` 非空时每轮轮询前调用：返回 Err 表示外部要求中止（暂停/取消），
 /// 立即报错返回而不等满超时；子进程由 ManagedChild 的 Drop 兜底 kill。
 pub fn wait_ready(
     base: &str,
     timeout: Duration,
     child: &mut ManagedChild,
-    expect_body: Option<&str>,
     control: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<()> {
     let t0 = Instant::now();
@@ -220,18 +223,10 @@ pub fn wait_ready(
                 timeout.as_secs_f64()
             );
         }
-        if let Ok(resp) = ureq::get(&url).timeout(Duration::from_secs(2)).call() {
-            match expect_body {
-                None => return Ok(()),
-                Some(needle) => {
-                    if let Ok(body) = resp.into_string()
-                        && body.contains(needle)
-                    {
-                        return Ok(());
-                    }
-                    // 端口上跑着别的服务：继续等（真正要起的服务可能还在绑端口）
-                }
-            }
+        if let Ok(resp) = http_agent(Duration::from_secs(2)).get(&url).call()
+            && resp.status() == 200
+        {
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(300));
     }
@@ -270,7 +265,7 @@ pub fn interruptible_sleep(wait: Duration) -> Result<()> {
 /// 安全纪律（与 dispatch.rs 请求账本注释一致）：请求经 3xx 重定向后失败，
 /// 无法证明服务端「未提交」——可能已产生费用/副作用，因此凡走账本的调用
 /// 必须禁止跟随重定向。这里在构造处统一内置，不靠每个调用点自觉。
-/// 需要 connect/read 细分超时的场景（fetch.rs 元数据、models.rs 大文件下载）
+/// Metadata probes use their own connect/read timeouts.
 /// 形态不合，保留各自 AgentBuilder，不套用本 helper。
 pub fn http_agent(timeout: Duration) -> ureq::Agent {
     ureq::AgentBuilder::new()
@@ -317,7 +312,7 @@ pub fn lock_file(path: &Path) -> Result<FileLock> {
 
 /// 让 OS 分配一个空闲端口。
 /// 注意 TOCTOU：返回后到真正 bind 之间端口可能被抢占，
-/// 调用方需用 `wait_ready` 的响应体校验兜底。
+/// Readiness polling detects a failed child bind.
 pub fn free_port() -> Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
@@ -450,7 +445,6 @@ mod tests {
             "http://127.0.0.1:9",
             Duration::from_secs(60),
             &mut child,
-            None,
             Some(&|| {
                 if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 1 {
                     anyhow::bail!("测试取消 / test cancellation")
@@ -476,7 +470,7 @@ mod tests {
         }
     }
 
-    /// 错误路径/panic unwind 也必须 kill+wait 子进程（孤儿 llama-server 会占住 GPU 设备）。
+    /// 错误路径/panic unwind 也必须 kill+wait 子进程。
     #[cfg(unix)]
     #[test]
     fn managed_child_drop_kills_and_reaps() {

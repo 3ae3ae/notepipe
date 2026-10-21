@@ -4,34 +4,20 @@ zh	zh_hans	en	zh_hant	ja
 \n{SUMMARY_BEGIN}\n\n## 📝 视频摘要\n\n	\n{SUMMARY_BEGIN}\n\n## 📝 视频摘要\n\n	{SUMMARY_BEGIN}\n\n## 📝 Video Summary	\n{SUMMARY_BEGIN}\n\n## 📝 影片摘要\n\n	\n{SUMMARY_BEGIN}\n\n## 📝 動画の概要\n\n
 \n✓ 可用 / available · - 可选或未设置 / optional or unset · ! 需要检查 / needs attention · ✗ 必须修复 / must fix	✓ 可用 / available · - 可选或未设置 / optional or unset · ! 需要检查 / needs attention · ✗ 必须修复	must fix	✓ 可用 / available · - 可選或未設定 / optional or unset · ! 需要檢查 / needs attention · ✗ 必須修復	✓ 利用可能 · オプションまたは未設定 · !注意が必要 · ✗ 修正する必要があります
 \n✓ 可用 · - 可选或未设置 · ! 需要检查 · ✗ 必须修复	\n✓ 可用 · - 可选或未设置 · ! 需要检查 · ✗ 必须修复	\n✓ available · - optional or unset · ! needs attention · ✗ must fix	\n✓ 可用 · - 可選或未設定 · ! 需要檢查 · ✗ 必須修復	\n✓ 利用可能 · - 任意または未設定 · ! 要確認 · ✗ 要修正
-\n当前识别方式	\n当前识别方式	\nConfigured speech backend	\n目前語音辨識方式	\n現在の音声認識方式
 \n必需工具	\n必需工具	\nRequired tools	\n必需工具	\n必須ツール
 \n必需工具 / Required tools	必需工具	Required tools	必需工具	必要なツール
 \n按用途选装	\n按用途选装	\nOptional tools by use	\n依用途選裝	\n用途別のオプション
 \n按用途选装 / Optional tools by use	按用途选装	Optional tools by use	按用途選裝	用途に合わせて選ぶ
 \n源文件：{}\n	\n源文件：{}\n	Source file: {}	\n原始檔：{}\n	\nソース ファイル: {}\n
-\n配置与模型	\n配置与模型	\nConfiguration and models	\n設定與模型	\n設定とモデル
-\n配置与模型 / Configuration and models	配置与模型	Configuration and models	配置與模型	構成とモデル
     缺失：{}	    缺失：{}	    Missing: {}	    缺失：{}	    欠落：{}
-  Apple 原生后端可用 / Apple native backend available	Apple 原生后端可用	Apple native backend available	Apple 原生後端可用	Apple ネイティブ バックエンドが利用可能
-  仅 gpu/cpu 需要；下载约 2.4GB：notepipe models download --dir "{}"	  仅 gpu/cpu 需要；下载约 2.4GB：notepipe models download --dir "{}"	  Only needed for gpu/cpu (~2.4GB): notepipe models download --dir "{}"	  僅 gpu/cpu 需要；下載約 2.4GB：notepipe models download --dir "{}"	  gpu/cpu のみ必要です（約 2.4GB）：notepipe models download --dir "{}"
   可选配置 / Optional setup: notepipe config init	可选配置	Optional setup: notepipe config init	可選配置	オプションの構成
   可选配置：notepipe config init	  可选配置：notepipe config init	  Optional setup: notepipe config init	  可選設定：notepipe config init	  任意の設定：notepipe config init
   找到但无法运行：{}	  找到但无法运行：{}	  found but failed to run: {}	  找到但無法執行：{}	  見つかったが実行できません：{}
   缺失：{}	  缺失：{}	  Missing: {}	  缺失：{}	  欠落：{}
  消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。	 消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。	 The message is accompanied by a screenshot of the courseware corresponding to the paragraph. It is only used to correct the spelling of terms and proper nouns. Do not describe or comment on the picture itself.	 訊息附帶該段對應的課件截圖，僅用於校正術語拼寫與專有名詞，不要描述或評論圖片本身。	 メッセージには、その段落に対応するコースウェアのスクリーンショットが添付されています。用語や固有名詞のスペルを修正するためにのみ使用されます。画像自体について説明したりコメントしたりしないでください。
-! GPU  无法检查设备：{}	! GPU  无法检查设备：{}	! GPU failed to check device: {}	! GPU  無法檢查裝置：{}	！ GPU がデバイスをチェックできませんでした: {}
-! coreml  缺少 Metal 着色器资源，请重新安装 / Metal shader resources missing; reinstall notepipe	! coreml  缺少 Metal 着色器资源，请重新安装	Metal shader resources missing; reinstall notepipe	! coreml  缺少 Metal 著色器資源，請重新安裝	！ coreml にメタル シェーダ リソースがありません。再インストールしてください。
 ![视频 {} 的截图]({})\n\n	![视频 {} 的截图]({})\n\n	![Screenshot of video {}]({})	![影片 {} 的截圖]({})\n\n	![動画 {} のスクリーンショット]({})\n\n
 (已设置，隐藏 / set, hidden)	(已设置，隐藏	set, hidden)	(已設定，隱藏	(設定、非表示
-- GPU  未检测到 GPU。{}	- GPU  未检测到 GPU。{}	- GPU  No GPU detected. {}	- GPU  未偵測到 GPU。{}	- GPU  GPU が検出されません。{}
-- api  未设置密钥；仅云端识别需要 / API key not set; only required for cloud transcription: NOTEPIPE_ASR_API_KEY	- api  未设置密钥；仅云端识别需要	API key not set; only required for cloud transcription: NOTEPIPE_ASR_API_KEY	- api  未設定金鑰；僅雲端識別需要	- API はキーを設定しません。クラウドの識別にのみ必要
 - config  使用内置默认值：{}	- config  使用内置默认值：{}	- config  Using built-in defaults: {}	- config  使用內建預設值：{}	- config  組み込みのデフォルトを使用：{}
-- coreml  本构建不包含 Apple 原生后端 / Apple native backend is not included in this build	- coreml  本构建不包含 Apple 原生后端	Apple native backend is not included in this build	- coreml  本構建不包含 Apple 原生後端	- coreml このビルドには Apple ネイティブ バックエンドが含まれていません
-- gpu/cpu  显卡/CPU 识别需要 llama.cpp：{}	- gpu/cpu  显卡/CPU 识别需要 llama.cpp：{}	- gpu/cpu  GPU and CPU transcription require llama.cpp: {}	- gpu/cpu  顯示卡/CPU 辨識需要 llama.cpp：{}	- gpu/cpu  グラフィックス/CPU 認識には llama.cpp が必要です：{}
-- gpu/cpu models  未下载或不完整：{}	- gpu/cpu models  未下载或不完整：{}	- gpu/cpu models  Missing or incomplete: {}	- gpu/cpu models  未下載或不完整：{}	- gpu/cpu models  未ダウンロードまたは不完全：{}
-- npu  未检测到 Intel NPU 设备 / No Intel NPU device detected	- npu  未检测到 Intel NPU 设备	No Intel NPU device detected	- npu  未檢測到 Intel NPU 裝置	- npu Intel NPU デバイスが検出されない
-- npu  缺少 Python/uv / Python or uv is required for NPU transcription	- npu  缺少 Python/uv	Python or uv is required for NPU transcription	- npu  缺少 Python/uv	- npu に Python/uv がありません
 - 作者：{}\n	- 作者：{}\n	- Author: {}	- 作者：{}\n	- 作成者: {}\n
 - 时长：{}	- 时长：{}	- Duration: {}	- 時長：{}	- 期間: {}
 - 来源：[{}]({})	- 来源：[{}]({})	- Source: [{}]({})	- 來源：[{}]({})	- 出典: [{}]({})
@@ -54,29 +40,16 @@ AI 校对工作进程中断 / Proofreading worker interrupted	AI 校对工作进
 AI 模型	AI 模型	AI model	AI 模型	AIモデル
 AI 请求失败，稍后重试 / AI request failed; retrying shortly	AI 请求失败，稍后重试	AI request failed; retrying shortly	AI 請求失敗，稍後重試	AI リクエストが失敗しました。後でもう一度試してください
 API Key	API Key	API key	API 金鑰	APIキー
-API 密钥（输入不显示）/ API key (hidden)	API 密钥（输入不显示）/ API key (hidden)	API key (hidden)	API 金鑰（輸入不顯示）/ API key (hidden)	APIキー（非表示）
-Apple 原生后端可用 / Apple native backend available	Apple 原生后端可用	Apple native backend available	Apple 原生後端可用	Apple ネイティブバックエンドが利用可能
-Apple 和 NPU 模型由各自后端管理 / Apple and NPU models are managed by their backends.	Apple 和 NPU 模型由各自后端管理	Apple and NPU models are managed by their backends.	Apple 和 NPU 模型由各自後端管理	Apple モデルと NPU モデルはそれぞれのバックエンドによって管理されます
-Apple 芯片	Apple 芯片	Apple chip	Apple 晶片	アップルチップ
-Apple 芯片本机识别	Apple 芯片本机识别	Apple chip native identification	Apple 晶片本機識別	Apple チップのネイティブ識別
-Apple 识别结果过长，部分文字被截断 / Apple transcript exceeded the size limit; some text was truncated	Apple 识别结果过长，部分文字被截断	Apple transcript exceeded the size limit; some text was truncated	Apple 識別結果過長，部分文字被截斷	Apple の認識結果が長すぎてテキストの一部が切り詰められます
-CPU（较慢）	CPU（较慢）	CPU (slower)	CPU（較慢）	CPU (低速)
 Codex 模型目录无法解析 / Cannot parse the Codex model catalog	Codex 模型目录无法解析	Cannot parse the Codex model catalog	Codex 模型目錄無法解析	Codex モデル ディレクトリを解析できません
 Codex 模型目录缺少 models / Codex model catalog is missing models	Codex 模型目录缺少 models	Codex model catalog is missing models	Codex 模型目錄缺少 models	Codex モデル ディレクトリにモデルがありません
 Codex 登录成功，可以关闭此页。/ Login successful; you may close this page.	Codex 登录成功，可以关闭此页。/ Login successful; you may close this page.	Codex login is successful and you can close this page. / Login successful; you may close this page.	Codex 登入成功，可以關閉此頁。/ Login successful; you may close this page.	Codex へのログインが成功したので、このページを閉じても問題ありません。 / ログイン成功;このページを閉じても構いません。
 Codex 登录状态损坏，请重新登录 / Codex login state is damaged; log in again	Codex 登录状态损坏，请重新登录	Codex login state is damaged; log in again	Codex 登入狀態損壞，請重新登入	Codex のログイン ステータスが破損しています。再度ログインしてください。
 Codex 登录缺失或已失效，请重新登录 / Codex login is missing or has expired; log in again	Codex 登录缺失或已失效，请重新登录	Codex login is missing or has expired; log in again	Codex 登入缺失或已失效，請重新登入	Codex ログインが見つからないか無効です。もう一度ログインしてください。
-CoreML 模型加载失败 / CoreML model loading failed	CoreML 模型加载失败	CoreML model loading failed	CoreML 模型載入失敗	CoreML モデルの読み込みに失敗しました
 Debian/Ubuntu: sudo apt install {}；Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {}；Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {}; Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {}；Arch: sudo pacman -S {}	Debian/Ubuntu: sudo apt install {};アーチ: sudo pacman -S {}
-Intel NPU 加速	Intel NPU 加速	Intel NPU acceleration	Intel NPU 加速	インテル NPU アクセラレーション
-NPU 模型准备未完成 / NPU model preparation did not complete	NPU 模型准备未完成	NPU model preparation did not complete	NPU 模型準備未完成	NPUモデルの準備が完了していません
-NPU 缓存版本记录无效 / Invalid NPU cache version record	NPU 缓存版本记录无效	Invalid NPU cache version record	NPU 快取版本記錄無效	NPU キャッシュ バージョン レコードが無効です
-NPU 识别错误详情 / NPU transcription error details	NPU 识别错误详情	NPU transcription error details	NPU 識別錯誤詳情	NPU認識エラーの詳細
 Ollama 中没有已下载的模型，请先运行 ollama pull <模型名> / No downloaded models found; run ollama pull <model> first	Ollama 中没有已下载的模型，请先运行 ollama pull <模型名>	No downloaded models found; run ollama pull <model> first	Ollama 中沒有已下載的模型，請先執行 ollama pull <模型名>	Ollama にダウンロードされたモデルがありません。最初に ollama pull <モデル名> を実行してください。
 Ollama 响应无法解析 / Cannot parse the Ollama response	Ollama 响应无法解析	Cannot parse the Ollama response	Ollama 響應無法解析	Ollama の応答を解析できません
 Ollama 响应缺少模型列表 / Ollama response is missing the model list	Ollama 响应缺少模型列表	Ollama response is missing the model list	Ollama 響應缺少模型列表	オラマ応答欠落モデルリスト
 Ollama 有多个模型可用，请在终端中运行 notepipe --login ollama 以选择 / Multiple Ollama models available; run notepipe --login ollama in a terminal to choose	Ollama 有多个模型可用，请在终端中运行 notepipe --login ollama 以选择	Multiple Ollama models available; run notepipe --login ollama in a terminal to choose	Ollama 有多個模型可用，請在終端中執行 notepipe --login ollama 以選擇	Ollama には複数のモデルが用意されており、ターミナルで notepipe --login ollama を実行して選択します。
-OpenVINO 模型 XML 和权重 / OpenVINO model XML and weights	OpenVINO 模型 XML 和权重	OpenVINO model XML and weights	OpenVINO 模型 XML 和權重	OpenVINO モデルの XML と重み
 ROI 坐标必须为非负有限数值 / ROI coordinates must be finite, non-negative numbers	ROI 坐标必须为非负有限数值	ROI coordinates must be finite, non-negative numbers	ROI 座標必須為非負有限數值	ROI 座標は負でない有限値でなければなりません
 ROI 百分比必须在 0–100 / ROI percentages must be between 0 and 100	ROI 百分比必须在 0–100	ROI percentages must be between 0 and 100	ROI 百分比必須在 0–100	ROI パーセンテージは 0 ～ 100 の範囲にする必要があります
 UP主/作者：{}\n	UP主/作者：{}\n	UP owner/author: {}	UP主/作者：{}\n	UP 所有者/作成者: {}\n
@@ -89,23 +62,16 @@ codex CLI 登录态缺少令牌，请在 codex 中重新登录 / The codex CLI l
 codex CLI 的登录已失效。改用浏览器授权登录（ChatGPT 账号）？/ The codex CLI login expired. Authorize in the browser instead?	codex CLI 的登录已失效。改用浏览器授权登录（ChatGPT 账号）？/ The codex CLI login expired. Authorize in the browser instead?	The login for the codex CLI has expired. Use browser authorization to log in instead (ChatGPT account)? / The codex CLI login expired. Authorize in the browser instead?	codex CLI 的登入已失效。改用瀏覽器授權登入（ChatGPT 賬號）？/ The codex CLI login expired. Authorize in the browser instead?	codex CLI のログインの有効期限が切れました。代わりにブラウザ認証を使用してログインしますか (ChatGPT アカウント)? / codex CLI ログインの有効期限が切れました。代わりにブラウザで認証しますか?
 notepipe — 将视频转换为图文笔记	notepipe — 将视频转换为图文笔记	notepipe — Turn videos into illustrated notes	notepipe — 將影片轉換為圖文筆記	notepipe — 動画をグラフィックノートに変換する
 notepipe — 将视频转换为图文笔记 / Turn videos into illustrated notes\n	notepipe — 将视频转换为图文笔记	Turn videos into illustrated notes	notepipe — 將影片轉換為圖文筆記	notepipe — 動画をグラフィックノートに変換する
-llama-server --help 探测失败，按旧版处理（仅 -ngl）	llama-server --help 探测失败，按旧版处理（仅 -ngl）	llama-server --help detection failed, processed according to the old version (only -ngl)	llama-server --help 探測失敗，按舊版處理（僅 -ngl）	llama-server --help 検出に失敗しました。古いバージョンに従って処理されました (-ngl のみ)
-llama-server flag 探测	llama-server flag 探测	llama-server flag detection	llama-server flag 探測	ラマサーバーフラグ検出
 stderr 管道已配置	stderr 管道已配置	The stderr pipe is configured	stderr 管道已配置	stderr パイプが構成されています
 stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdout 管道已配置	標準出力パイプが構成されています
 {} / {} 段	{} / {} 段	{} / {} segment	{} / {} 段	{} / {} セグメント
 {} 张	{} 张	{} Zhang	{} 張	{} チャン
 {} 张截图 / {} 段文字	{} 张截图 / {} 段文字	{} screenshots / {} paragraphs of text	{} 張截圖 / {} 段文字	{} スクリーンショット / {} 段落のテキスト
 {} 的截图	{} 的截图	Screenshot of {}	{} 的截圖	{} のスクリーンショット
-{} 的模型内容 / model content of {}	{} 的模型内容	model content of {}	{} 的模型內容	{}のモデル内容
 {} 输出为 JSON 对象 {{"segments":[{{"id":序号,"text":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{}	{} 输出为 JSON 对象 {{"segments":[{{"id":序号,"text":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{}	The output of {} is a JSON object {{"segments":[{{"id": serial number, "text": proofread text }}]}}, id must correspond to the input one-to-one; the text of the pure modal particle entry is an empty string. {}	{} 輸出為 JSON 物件 {{"segments":[{{"id":序號,"text":校對後的文字}}]}}，id 必須與輸入一一對應；純語氣詞條目的 text 為空字串。{}	{} の出力は、JSON オブジェクト {{"segments":[{{"id": シリアル番号、"text": 校正テキスト }}]}} です。id は入力と 1 対 1 で対応する必要があります。純粋なモーダル粒子エントリのテキストは空の文字列です。 {}
 {}<section class="summary"><h2>📝 视频摘要</h2>	{}<section class="summary"><h2>📝 视频摘要</h2>	{}<section class="summary"><h2>📝 Video summary</h2>	{}<section class="summary"><h2>📝 影片摘要</h2>	{}<section class="summary"><h2>📝 動画の概要</h2>
-{}（自动选择）	{}（自动选择）	{} (automatic)	{}（自動選擇）	{}（自動）
 {}：{}	{}：{}	{}: {}	{}：{}	{}:{}
 {}；首个错误：{}	{}；首个错误：{}	{}; first error: {}	{}；首個錯誤：{}	{};最初のエラー: {}
-↑↓ 选择，Enter 确认，Esc 取消。 / Use ↑↓ to select, Enter to confirm, Esc to cancel.	↑↓ 选择，Enter 确认，Esc 取消。	Use ↑↓ to select, Enter to confirm, Esc to cancel.	↑↓ 選擇，Enter 確認，Esc 取消。	↑↓ 選択し、Enter で確認し、Esc でキャンセルします。
-✓ api  已设置密钥（隐藏）/ API key set (hidden)	✓ api  已设置密钥（隐藏）/ API key set (hidden)	✓ API key set (hidden)	✓ api  已設定金鑰（隱藏）/ API key set (hidden)	✓ APIキーセット（非表示）
-✓ npu  检测到 Intel NPU（首次使用会自动安装运行组件）/ Intel NPU detected (runtime components install on first use)	✓ npu  检测到 Intel NPU（首次使用会自动安装运行组件）/ Intel NPU detected (runtime components install on first use)	✓ npu detected Intel NPU (runtime components will be installed automatically on first use)/ Intel NPU detected (runtime components install on first use)	✓ npu  檢測到 Intel NPU（首次使用會自動安裝執行元件）/ Intel NPU detected (runtime components install on first use)	✓ npu がインテル NPU を検出しました (ランタイム コンポーネントは初回使用時に自動的にインストールされます)/インテル NPU が検出されました (ランタイム コンポーネントは初回使用時にインストールされます)
 、	、	, 	、	、
 このメッセージまたはサブコマンドのヘルプを表示	このメッセージまたはサブコマンドのヘルプを表示	このメッセージまたはサブコマンドのヘルプを represents	このメッセージまたはサブコマンドのヘルプを表示	このメッセージまたはサブコマンドのヘルプを表します
 オプション：	オプション：	オプション：	オプション：	オプション：
@@ -114,7 +80,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 ヘルプを表示	ヘルプを表示	ヘルプを said	ヘルプを表示	助けてと言った
 下一步	下一步	Next	下一步	次へ
 下一步 / Next step	下一步	Next step	下一步	次のステップ
-下载模型	下载模型	Download model	下載模型	モデルをダウンロード
 下载视频	下载视频	Download video	下載影片	動画をダウンロードする
 下载视频 / Downloading video	下载视频	Downloading video	下載影片	動画をダウンロードする
 下载视频最大高度 / Maximum download height (1080 recommended)	下载视频最大高度	Maximum download height (1080 recommended)	下載影片最大高度	ダウンロード動画の最大高さ
@@ -126,12 +91,8 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 不支持 / Unsupported	不支持	Unsupported	不支援	サポートされていません
 不支持此任务格式 / Unsupported task schema	不支持此任务格式	Unsupported task schema	不支援此任務格式	このタスク形式はサポートされていません
 中文	中文	Chinese	中文	中国語
-云端 API（需服务端点和 API Key，可能收费） / Cloud API (endpoint and API key required; charges may apply)	云端 API（需服务端点和 API Key，可能收费）	Cloud API (endpoint and API key required; charges may apply)	雲端 API（需服務端點和 API Key，可能收費）	クラウド API (サービス エンドポイントと API キーが必要、料金が適用される場合があります)
 云端语音识别	云端语音识别	Cloud speech recognition	雲端語音識別	クラウド音声認識
-云端语音识别失败：{}	云端语音识别失败：{}	Cloud speech recognition failed: {}	雲端語音識別失敗：{}	クラウド音声認識が失敗しました: {}
 云端语音识别密钥未清除；如需清除：notepipe remove --asr / Cloud speech key kept; to clear it: notepipe remove --asr	云端语音识别密钥未清除；如需清除：notepipe remove --asr	Cloud speech key kept; to clear it: notepipe remove --asr	雲端語音識別金鑰未清除；如需清除：notepipe remove --asr	クラウド音声認識キーがクリアされていません。それをクリアするには: notepipe 削除 --asr
-云端语音识别需要 API Key，请在服务设置中填写 / Cloud transcription requires an API key; add it in service settings	云端语音识别需要 API Key，请在服务设置中填写	Cloud transcription requires an API key; add it in service settings	雲端語音識別需要 API Key，請在服務設定中填寫	クラウド音声認識には API キーが必要です。サービス設定に入力してください。
-云端语音识别需要 API Key：用 --asr-api-key 或环境变量 NOTEPIPE_ASR_API_KEY 提供 / Cloud transcription requires an API key: pass --asr-api-key or set NOTEPIPE_ASR_API_KEY	云端语音识别需要 API Key：用 --asr-api-key 或环境变量 NOTEPIPE_ASR_API_KEY 提供	Cloud transcription requires an API key: pass --asr-api-key or set NOTEPIPE_ASR_API_KEY	雲端語音識別需要 API Key：用 --asr-api-key 或環境變數 NOTEPIPE_ASR_API_KEY 提供	クラウド音声認識には API キーが必要です: --asr-api-key または環境変数 NOTEPIPE_ASR_API_KEY で提供されます
 仅发送文字 / Send text only	仅发送文字	Send text only	僅傳送文字	テキストのみを送信する
 仅字幕	仅字幕	Subtitles only	僅字幕	字幕のみ
 今天讲编译原理	今天讲编译原理	Let’s talk about compilation principles today	今天講編譯原理	今日はコンパイルの原則について話しましょう
@@ -167,7 +128,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 关闭截图	关闭截图	Turn off screenshots	關閉截圖	スクリーンショットをオフにする
 写 checkpoint {} / Failed to write checkpoint {}	写 checkpoint {}	Failed to write checkpoint {}	寫 checkpoint {}	書き込みチェックポイント {}
 写 {} / Failed to write {}	写 {}	Failed to write {}	寫 {}	{}と書いてください
-准备未完成	准备未完成	Preparation not completed	準備未完成	準備が完了していません
 凭据	凭据	Credentials	憑據	資格情報
 列表	列表	list	列表	リスト
 创建 checkpoint 目录 {} / Failed to create checkpoint directory {}	创建 checkpoint 目录 {}	Failed to create checkpoint directory {}	建立 checkpoint 目錄 {}	チェックポイント ディレクトリ {} を作成します
@@ -179,7 +139,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)	加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)	Loading recognition model (first use may need to download files) / Loading speech model (first use may download files)	載入識別模型（首次可能需要下載）/ Loading speech model (first use may download files)	認識モデルの読み込み (初回使用にはファイルのダウンロードが必要な場合があります) / 音声モデルの読み込み (初回使用にはファイルのダウンロードが必要な場合があります)
 匹配截图 {} / {}	匹配截图 {}	{}	匹配截圖 {}	スクリーンショット {} と一致
 协议	协议	agreement	協議	合意
-占用空间	占用空间	Disk usage	佔用空間	使用容量
 原任务进度位置无效 / Invalid prior work directory	原任务进度位置无效	Invalid prior work directory	原任務進度位置無效	元のタスクの進行位置が無効です
 原文进 raw 溯源	原文进 raw 溯源	Original text into raw traceability	原文進 raw 溯源	元のテキストを生のトレーサビリティに変換
 原笔记版本需要绝对路径 / Base version requires an absolute path	原笔记版本需要绝对路径	Base version requires an absolute path	原筆記版本需要絕對路徑	元のノートのバージョンには絶対パスが必要です
@@ -193,7 +152,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 发送文字和截图 / Send text and slide images	发送文字和截图	Send text and slide images	傳送文字和截圖	テキストとスクリーンショットを送信する
 取消	取消	Cancel	取消	キャンセル
 只回复两个字符：ok	只回复两个字符：ok	Only reply two characters: ok	只回復兩個字元：ok	2 文字だけ返信してください: ok
-只想用视频自带字幕？按 Esc 退出，加 --transcript-source subtitle 重新运行。 / Subtitles only? Press Esc and rerun with --transcript-source subtitle.	只想用视频自带字幕？按 Esc 退出，加 --transcript-source subtitle 重新运行。	Subtitles only? Press Esc and rerun with --transcript-source subtitle.	只想用影片自帶字幕？按 Esc 退出，加 --transcript-source subtitle 重新執行。	独自の字幕付きの動画を使用したいだけですか? Esc キーを押して終了し、--transcript-source 字幕を付けて再実行します。
 可用	可用	Available	可用	利用可能
 可选配置：notepipe config init	可选配置：notepipe config init	Optional setup: notepipe config init	可選設定：notepipe config init	任意の設定：notepipe config init
 同一进程不能同时执行两个任务 / Another task is already active	同一进程不能同时执行两个任务	Another task is already active	同一程序不能同時執行兩個任務	同じプロセスで 2 つのタスクを同時に実行することはできません
@@ -219,7 +177,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 字幕时间区间无效，已跳过 / Skipped subtitle with invalid timestamps	字幕时间区间无效，已跳过	Skipped subtitle with invalid timestamps	字幕時間區間無效，已跳過	Subtitle time interval is invalid and has been skipped
 字幕时间无效 / Invalid subtitle timestamps	字幕时间无效	Invalid subtitle timestamps	字幕時間無效	字幕時間が無効です
 完成	完成	Done	完成	完了
-完整的 safetensors 权重文件 / a complete safetensors weight file	完整的 safetensors 权重文件	a complete safetensors weight file	完整的 safetensors 權重檔案	完全なセーフテンサー重量ファイル
 导入	导入	Import	匯入	インポート
 导入 Codex 登录	导入 Codex 登录	Import Codex login	匯入 Codex 登入	Codexのログインをインポートする
 导出	导出	Export	匯出	書き出し
@@ -230,7 +187,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 将视频和音频转换为 Markdown 笔记 / Turn video and audio into Markdown notes	将视频和音频转换为 Markdown 笔记	Turn video and audio into Markdown notes	將影片與音訊轉換為 Markdown 筆記	動画と音声を Markdown ノートに変換
 尚未检查字幕，请重新读取视频信息 / Subtitles not checked yet; probe the video info again	尚未检查字幕，请重新读取视频信息	Subtitles not checked yet; probe the video info again	尚未檢查字幕，請重新讀取影片資訊	字幕はまだチェックされていません。動画情報をもう一度読んでください。
 尚未登录 Codex。/ No Codex login saved.	尚未登录 Codex。/ No Codex login saved.	Not logged into Codex yet. / No Codex login saved.	尚未登入 Codex。/ No Codex login saved.	まだ Codex にログインしていません。 / Codex ログインは保存されません。
-就绪 / Ready	就绪	Ready	就緒	準備完了
 工作目录不能位于已发布版本内 / Work directory overlaps published versions	工作目录不能位于已发布版本内	Work directory overlaps published versions	工作目錄不能位於已釋出版本內	作業ディレクトリを公開されたビルド内に置くことはできません
 已下载	已下载	Downloaded	已下載	ダウンロード済み
 已保存	已保存	saved	已儲存	保存されました
@@ -243,7 +199,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已关闭 AI 校对并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset.	已关闭 AI 校对并重置 LLM 配置。/ AI proofreading disabled and LLM settings reset.	AI proofreading turned off and LLM configuration reset. / AI proofreading disabled and LLM settings reset.	已關閉 AI 校對並重置 LLM 配置。/ AI proofreading disabled and LLM settings reset.	AI 校正がオフになり、LLM 構成がリセットされました。 / AI 校正が無効になり、LLM 設定がリセットされます。
 已关闭截图辅助校对（本地模型通常不支持图片输入）。/ Image-assisted proofreading disabled (local models usually do not accept images).	已关闭截图辅助校对（本地模型通常不支持图片输入）。/ Image-assisted proofreading disabled (local models usually do not accept images).	Screenshot-assisted proofing has been turned off (local models usually do not support image input). / Image-assisted proofreading disabled (local models usually do not accept images).	已關閉截圖輔助校對（本地模型通常不支援圖片輸入）。/ Image-assisted proofreading disabled (local models usually do not accept images).	スクリーンショットによる校正はオフになっています (ローカル モデルは通常、画像入力をサポートしていません)。 / 画像支援校正は無効です (ローカル モデルは通常、画像を受け入れません)。
 已取消	已取消	Cancelled	已取消	キャンセルしました
-已取消模型选择，未开始下载 / Model selection cancelled; download not started	已取消模型选择，未开始下载	Model selection cancelled; download not started	已取消模型選擇，未開始下載	モデルの選択がキャンセルされ、ダウンロードが開始されません
 已取消登录。/ Login cancelled.	已取消登录。/ Login cancelled.	Login cancelled. /Login cancelled.	已取消登入。/ Login cancelled.	ログインがキャンセルされました。 /ログインがキャンセルされました。
 已取消登录，未保存配置。 / Login cancelled; no configuration saved.	已取消登录，未保存配置。	Login cancelled; no configuration saved.	已取消登入，未儲存配置。	ログインがキャンセルされ、設定は保存されませんでした。
 已取消设置，未保存配置。 / Setup cancelled; no configuration saved.	已取消设置，未保存配置。	Setup cancelled; no configuration saved.	已取消設定，未儲存配置。	設定がキャンセルされ、構成が保存されていません。
@@ -252,8 +207,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已完成	已完成	Completed	已完成	完了
 已完成请求缺少保存结果；没有重新发送 / Saved request result is missing	已完成请求缺少保存结果；没有重新发送	Saved request result is missing	已完成請求缺少儲存結果；沒有重新傳送	完了したリクエストに保存結果がありません。再送信されていない
 已导入 Codex 登录态并启用 AI 校对（模型 {}）。	已导入 Codex 登录态并启用 AI 校对（模型 {}）。	Codex login imported and AI proofreading enabled (model {}).	已匯入 Codex 登入狀態並啟用 AI 校對（模型 {}）。	Codex のログインをインポートし、AI 校正を有効にしました（モデル {}）。
-已就绪	已就绪	Ready	已就緒	準備完了
-已就绪 / Ready	已就绪	Ready	已就緒	準備完了
 已找到	已找到	Found	已找到	見つかりました
 已找到 {} 张候选截图 / Found {} candidate slides	已找到 {} 张候选截图	Found {} candidate slides	已找到 {} 張候選截圖	{} 候補のスクリーンショットが見つかりました
 已暂停	已暂停	Paused	已暫停	一時停止中
@@ -263,20 +216,14 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已清除 Ollama 登录配置并关闭 AI 校对。/ Ollama login removed and AI proofreading disabled.	已清除 Ollama 登录配置并关闭 AI 校对。/ Ollama login removed and AI proofreading disabled.	Cleared Ollama login configuration and turned off AI proofing. / Ollama login removed and AI proofreading disabled.	已清除 Ollama 登入配置並關閉 AI 校對。/ Ollama login removed and AI proofreading disabled.	Ollama のログイン構成をクリアし、AI 校正をオフにしました。 / Ollama ログインが削除され、AI 校正が無効になりました。
 已登录	已登录	Signed in	已登入	ログイン済み
 已登录 Ollama（{}），模型 {}，配置已保存并启用：{}	已登录 Ollama（{}），模型 {}，配置已保存并启用：{}	Logged in to Ollama ({}), model {}, settings saved and enabled: {}	已登入 Ollama（{}），模型 {}，設定已儲存並啟用：{}	Ollama にログインしました（{}）。モデル {}、設定を保存して有効にしました：{}
-已缓存（未验证加载）/ Cached (load not verified)	已缓存（未验证加载）/ Cached (load not verified)	Cached (load not verified) / Cached (load not verified)	已快取（未驗證載入）/ Cached (load not verified)	キャッシュ済み (負荷は検証されていない) / キャッシュ済み (負荷は検証されていない)
 已设置（隐藏） / set (hidden)	已设置（隐藏）	set (hidden)	已設定（隱藏）	設定（非表示）
-已退出首次使用向导 / Exited the first-run wizard	已退出首次使用向导	Exited the first-run wizard	已退出首次使用嚮導	初回ウィザードを終了しました
-已选的 Apple 识别方式未完成；任务参数和进度已保留 / Selected Apple transcription failed; task settings retained	已选的 Apple 识别方式未完成；任务参数和进度已保留	Selected Apple transcription failed; task settings retained	已選的 Apple 識別方式未完成；任務引數和進度已保留	選択した Apple 認識方法は完了していません。タスクパラメータと進行状況が保存される
 带图时系统提示说明截图用途	带图时系统提示说明截图用途	When uploading a picture, the system prompts you to explain the purpose of the screenshot.	帶圖時系統提示說明截圖用途	写真をアップロードすると、システムはスクリーンショットの目的を説明するよう求めます。
 带图时附 image_url 内容块	带图时附 image_url 内容块	Attach image_url content block when adding pictures	帶圖時附 image_url 內容塊	画像を追加するときに image_url コンテンツ ブロックを添付します
 应用	应用	Apply	套用	適用
 开启 / enabled	开启	enabled	開啟	オンにする
 开启校对 / Enable transcript polish: notepipe llm setup	开启校对	Enable transcript polish: notepipe llm setup	開啟校對	校正をオンにする
-开始处理视频… / Processing your video…	开始处理视频…	Processing your video…	開始處理影片…	動画の処理を開始します…
 引数：	引数：	Arguments:	引數：	引数:
 当前 LLM 配置不是 Ollama，未做改动。/ The current LLM configuration is not Ollama; nothing changed.	当前 LLM 配置不是 Ollama，未做改动。/ The current LLM configuration is not Ollama; nothing changed.	The current LLM configuration is not Ollama and has not been changed. / The current LLM configuration is not Ollama; nothing changed.	當前 LLM 配置不是 Ollama，未做改動。/ The current LLM configuration is not Ollama; nothing changed.	現在の LLM 構成は Ollama ではなく、変更されていません。 / 現在の LLM 構成は Ollama ではありません。何も変わりませんでした。
-当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试 / This llama.cpp is too old for this GPU setting; upgrade and retry	当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试	This llama.cpp is too old for this GPU setting; upgrade and retry	當前 llama.cpp 版本過舊，不支援此顯示卡設定，請升級後重試	llama.cpp の現在のバージョンは古すぎるため、このグラフィック カード設定をサポートしていません。アップグレードしてもう一度お試しください。
-当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry	当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试	This llama.cpp is too old to transcribe on CPU only; upgrade and retry	當前 llama.cpp 版本過舊，無法只用 CPU 識別，請升級後重試	llama.cpp の現在のバージョンは古すぎるため、CPU だけでは認識できません。アップグレードしてもう一度お試しください。
 快速开始 / Quick start:\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n转写方式 / Transcripts:\n  默认优先使用平台字幕，无字幕时使用语音识别。\n  Uses platform subtitles first, then speech recognition when needed.\n  --transcript-source subtitle  仅使用字幕 / Subtitles only\n  --transcript-source asr       强制语音识别 / Speech recognition only\n\n下一步 / Next steps:\n  notepipe doctor              检查依赖与配置 / Check dependencies and settings\n  notepipe config init         生成配置模板 / Create a configuration template\n  notepipe llm setup           配置可选的 AI 校对 / Set up optional AI proofreading\n  notepipe summarize ./notes   为已有笔记生成摘要 / Summarize existing notes\n\n交互终端首次转换会引导配置；脚本请显式传入所需参数。\nFirst conversion in a terminal offers setup; scripts should pass options explicitly.\n使用 <command> --help 查看子命令帮助 / Use <command> --help for details.\n	快速开始：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n转写方式：\n  默认优先使用平台字幕，无字幕时使用语音识别。\n  --transcript-source subtitle  仅使用字幕\n  --transcript-source asr       强制语音识别\n\n下一步：\n  notepipe doctor              检查依赖与配置\n  notepipe config init         生成配置模板\n  notepipe llm setup           配置可选的 AI 校对\n  notepipe summarize ./notes   为已有笔记生成摘要\n\n交互终端首次转换会引导配置；脚本请显式传入所需参数。\n使用 <command> --help 查看子命令帮助。\n	Quick start:\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\nTranscripts:\n  Platform subtitles are used first; speech recognition runs when none exist.\n  --transcript-source subtitle  Use subtitles only\n  --transcript-source asr       Force speech recognition\n\nNext steps:\n  notepipe doctor              Check dependencies and settings\n  notepipe config init         Create a configuration template\n  notepipe llm setup           Set up optional AI proofreading\n  notepipe summarize ./notes   Summarize existing notes\n\nThe first conversion in a terminal offers setup; scripts should pass options explicitly.\nUse <command> --help for details.\n	快速開始：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n轉寫方式：\n  預設優先使用平台字幕，無字幕時使用語音辨識。\n  --transcript-source subtitle  僅使用字幕\n  --transcript-source asr       強制語音辨識\n\n下一步：\n  notepipe doctor              檢查依賴與設定\n  notepipe config init         產生設定範本\n  notepipe llm setup           設定可選的 AI 校對\n  notepipe summarize ./notes   為已有筆記產生摘要\n\n互動式終端首次轉換會引導設定；指令碼請明確傳入所需參數。\n使用 <command> --help 查看子命令說明。\n	クイックスタート：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n文字起こし：\n  プラットフォームの字幕を優先し、ない場合は音声認識を使います。\n  --transcript-source subtitle  字幕のみ\n  --transcript-source asr       音声認識を強制\n\n次のステップ：\n  notepipe doctor              依存関係と設定を確認\n  notepipe config init         設定テンプレートを作成\n  notepipe llm setup           任意の AI 校正を設定\n  notepipe summarize ./notes   既存のノートに要約を追加\n\nターミナルでの初回変換では設定を案内します。スクリプトでは必要な引数を明示してください。\n詳細は <command> --help を参照してください。\n
 截图	截图	Screenshots	截圖	スクリーンショット
 截图 / Slides	截图	Slides	截圖	スクリーンショット
@@ -314,7 +261,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 摘要	摘要	Summary	摘要	要約
 摘要合并未完成，已保存各段已确认结果 / Summary merge failed; completed parts retained	摘要合并未完成，已保存各段已确认结果	Summary merge failed; completed parts retained	摘要合併未完成，已儲存各段已確認結果	概要の結合は完了していません。各段落の結果は保存され、確認されています。
 摘要工作进程中断 / Summary worker interrupted	摘要工作进程中断	Summary worker interrupted	摘要工作程序中斷	要約作業プロセスが中断されました
-改用云端 API / Use cloud API	改用云端 API	Use cloud API	改用雲端 API	クラウドAPIに切り替える
 改用浏览器授权登录（ChatGPT 账号）？/ Authorize with a ChatGPT account in the browser instead?	改用浏览器授权登录（ChatGPT 账号）？/ Authorize with a ChatGPT account in the browser instead?	Use browser authorization to log in instead (ChatGPT account)? / Authorize with a ChatGPT account in the browser instead?	改用瀏覽器授權登入（ChatGPT 賬號）？/ Authorize with a ChatGPT account in the browser instead?	代わりにブラウザ認証を使用してログインしますか (ChatGPT アカウント)? / 代わりにブラウザの ChatGPT アカウントを使用して認証しますか?
 文件	文件	File	檔案	ファイル
 文件夹	文件夹	Folder	資料夾	フォルダ
@@ -331,9 +277,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 无法同步笔记文件：{}	无法同步笔记文件：{}	Unable to sync note file: {}	無法同步筆記檔案：{}	ノート ファイルを同期できません: {}
 无法启动 {} / Could not start {}	无法启动 {}	Could not start {}	無法啟動 {}	{} を開始できません
 无法启动本地授权回调服务（端口 1455/1457 均被占用）/ Cannot start the local authorization callback (ports 1455/1457 are both in use)	无法启动本地授权回调服务（端口 1455/1457 均被占用）/ Cannot start the local authorization callback (ports 1455/1457 are both in use)	Cannot start the local authorization callback (ports 1455/1457 are both in use)	無法啟動本地授權回撥服務（埠 1455/1457 均被佔用）/ Cannot start the local authorization callback (ports 1455/1457 are both in use)	ローカル認証コールバックを開始できません (ポート 1455/1457 が両方とも使用中です)
-无法启动识别服务 / Could not start the speech recognition service	无法启动识别服务	Could not start the speech recognition service	無法啟動識別服務	認識サービスを開始できません
 无法探测本地视频时长 / Could not probe the local video duration	无法探测本地视频时长	Could not probe the local video duration	無法探測本地影片時長	ローカル動画の長さを検出できません
-无法检测显卡：{}	无法检测显卡：{}	Unable to detect graphics card: {}	無法檢測顯示卡：{}	グラフィックス カードを検出できません: {}
 无法生成安全随机数 / Cannot generate secure random bytes	无法生成安全随机数	Cannot generate secure random bytes	無法生成安全隨機數	安全な乱数を生成できません
 无法确认字幕对应的视频，请重新读取	无法确认字幕对应的视频，请重新读取	Unable to confirm the video corresponding to the subtitles, please read again	無法確認字幕對應的影片，請重新讀取	字幕に該当する動画が確認できませんでした、もう一度お読みください
 无法确认字幕对应的视频，请重新读取 / Cannot confirm the video for the subtitle; probe again	无法确认字幕对应的视频，请重新读取	Cannot confirm the video for the subtitle; probe again	無法確認字幕對應的影片，請重新讀取	字幕に該当する動画が確認できませんでした、もう一度お読みください
@@ -351,11 +295,9 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 无法读取字幕文件 / Cannot read subtitle file	无法读取字幕文件	Cannot read subtitle file	無法讀取字幕檔案	字幕ファイルを読み取れません
 无法读取字幕文件 {} / Cannot read subtitle file {}	无法读取字幕文件 {}	Cannot read subtitle file {}	無法讀取字幕檔案 {}	字幕ファイル {} を読み取れません
 无法读取已选字幕 / Cannot read selected subtitles	无法读取已选字幕	Cannot read selected subtitles	無法讀取已選字幕	選択した字幕を読むことができません
-无法读取显卡列表，请更新 llama.cpp / Could not read the GPU list; update llama.cpp	无法读取显卡列表，请更新 llama.cpp	Could not read the GPU list; update llama.cpp	無法讀取顯示卡列表，請更新 llama.cpp	グラフィックス カード リストを読み取れません。llama.cpp を更新してください。
 无法读取视频信息，请重新读取 / Cannot read video info; probe again	无法读取视频信息，请重新读取	Cannot read video info; probe again	無法讀取影片資訊，請重新讀取	動画情報を読み取れません。もう一度読んでください。
 无法读取视频尺寸，请检查文件是否可播放 / Could not read video dimensions; check that the file plays correctly	无法读取视频尺寸，请检查文件是否可播放	Could not read video dimensions; check that the file plays correctly	無法讀取影片尺寸，請檢查檔案是否可播放	動画のサイズを読み取れません。ファイルが再生可能かどうかを確認してください。
 无法读取视频画面 / Could not start ffmpeg frame sampling	无法读取视频画面	Could not start ffmpeg frame sampling	無法讀取影片畫面	動画画面を読み取れません
-无法读取音频时长 / Could not read the audio duration	无法读取音频时长	Could not read the audio duration	無法讀取音訊時長	音声の長さを読み取れません
 无法连接 OpenAI 认证服务，稍后重试 / Cannot reach the OpenAI auth service; retry later	无法连接 OpenAI 认证服务，稍后重试	Cannot reach the OpenAI auth service; retry later	無法連線 OpenAI 認證服務，稍後重試	OpenAI 認証サービスに接続できません。後でもう一度試してください。
 无法连接服务，尚未提交内容 / Could not connect; request content was not submitted	无法连接服务，尚未提交内容	Could not connect; request content was not submitted	無法連線服務，尚未提交內容	サービスに接続できません。コンテンツはまだ送信されていません
 无错误时所有槽位均已写入	无错误时所有槽位均已写入	All slots have been written when there are no errors	無錯誤時所有槽位均已寫入	エラーがない場合はすべてのスロットが書き込まれています
@@ -363,7 +305,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 旧进度与此视频来源不符 / Prior work belongs to another source	旧进度与此视频来源不符	Prior work belongs to another source	舊進度與此影片來源不符	古い進行状況はこの動画のソースと一致しません
 时长	时长	Duration	長度	長さ
 时长 {}	时长 {}	Duration {}	時長 {}	期間 {}
-显卡加速	显卡加速	Graphics card acceleration	顯示卡加速	グラフィックカードの加速
 显示	显示	show	顯示	ショー
 显示帮助	显示帮助	show help	顯示幫助	ヘルプを表示
 显示此消息或子命令的帮助	显示此消息或子命令的帮助	Show help for this message or subcommand	顯示此訊息或子命令的幫助	このメッセージまたはサブコマンドのヘルプを表示する
@@ -372,11 +313,8 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 更多	更多	More	更多	その他
 更多信息请运行 --help。	更多信息请运行 --help。	For more information, run --help.	更多資訊請執行 --help。	詳細については、--help を実行してください。
 更多資訊請執行 --help。	更多資訊請執行 --help。	For more information, execute --help.	更多資訊請執行 --help。	詳細については、--help を実行してください。
-更换	更换	Replace	更換	交換する
-更换模型	更换模型	Change model	更換模型	機種変更
 更改	更改	change	更改	変化する
 替换 {} / Failed to replace {}	替换 {}	Failed to replace {}	替換 {}	{} を置き換えます
-有效的模型分片索引 / a valid model shard index	有效的模型分片索引	a valid model shard index	有效的模型分片索引	有効なモデルシャードインデックス
 服务	服务	Services	服務	サービス
 服务响应接收中断 / Service response was interrupted	服务响应接收中断	Service response was interrupted	服務響應接收中斷	サービス応答受信割り込み
 服务响应超过接收上限 / Service response exceeds the receiving limit	服务响应超过接收上限	Service response exceeds the receiving limit	服務響應超過接收上限	サービスレスポンスが受信制限を超えています
@@ -401,26 +339,19 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 服务返回的校对结构无效 / Invalid proofreading structure	服务返回的校对结构无效	Invalid proofreading structure	服務返回的校對結構無效	サービスから返された照合構造が無効です
 服务返回空响应；请确认模型可用 / The service returned an empty response; make sure the model works	服务返回空响应；请确认模型可用	The service returned an empty response; make sure the model works	服務返回空響應；請確認模型可用	サービスは空の応答を返しました。モデルが利用可能であることを確認してください
 服务返回错误，无法确认是否已处理。再次提交可能产生额外费用 / Service processing is uncertain	服务返回错误，无法确认是否已处理。再次提交可能产生额外费用	Service processing is uncertain	服務返回錯誤，無法確認是否已處理。再次提交可能產生額外費用	サービスはエラーを返し、処理されたかどうかを確認できませんでした。再度提出すると追加料金が発生する場合があります
-未下载	未下载	Not downloaded	未下載	未ダウンロード
-未安装	未安装	Not installed	未安裝	インストールされていません
 未完成	未完成	Incomplete	未完成	未完了
 未完成：{}	未完成：{}	Not completed: {}	未完成：{}	未完了: {}
 未完整收到服务响应 / Did not receive a complete service response	未完整收到服务响应	Did not receive a complete service response	未完整收到服務響應	不完全なサービス応答を受信しました
-未找到 Python/uv，无法启动 NPU 识别 / Install Python or uv to use Intel NPU transcription	未找到 Python/uv，无法启动 NPU 识别	Install Python or uv to use Intel NPU transcription	未找到 Python/uv，無法啟動 NPU 識別	Python/uv が見つからないため、NPU 認識を開始できません
-未找到 llama-server / llama-server not found. 安装 llama.cpp 并加入 PATH / Install llama.cpp and add it to PATH.	未找到 llama-server / llama-server not found. 安装 llama.cpp 并加入 PATH	Install llama.cpp and add it to PATH.	未找到 llama-server / llama-server not found. 安裝 llama.cpp 並加入 PATH	ラマサーバーが見つかりません / ラマサーバーが見つかりません。 llama.cppをインストールし、PATHに追加します。
-未找到 llama-server。请安装 llama.cpp 并加入 PATH	未找到 llama-server。请安装 llama.cpp 并加入 PATH	llama-server not found. Install llama.cpp and add it to PATH.	找不到 llama-server。請安裝 llama.cpp 並加入 PATH	ラマサーバーが見つかりません。 llama.cppをインストールしてPATHに追加してください
 未找到下载的视频（期望 {} 或 {}） / Downloaded video missing (expected {} or {})	未找到下载的视频（期望 {} 或 {}）	Downloaded video missing (expected {} or {})	找不到下載的影片（預期 {} 或 {}）	ダウンロードした動画が見つかりません（{} または {} を想定）
 未找到字幕	未找到字幕	Subtitles not found	未找到字幕	字幕が見つかりません
 未找到字幕 / No subtitles found. 请选择已有字幕，或改用语音识别 / Select subtitles or use speech recognition.	未找到字幕 / No subtitles found. 请选择已有字幕，或改用语音识别	Select subtitles or use speech recognition.	未找到字幕 / No subtitles found. 請選擇已有字幕，或改用語音識別	字幕が見つかりませんでした。既存の字幕を選択するか、代わりに音声認識を使用してください。
 未找到字幕。请选择已有字幕，或改用语音识别	未找到字幕。请选择已有字幕，或改用语音识别	No subtitles found. Select existing subtitles, or use speech recognition.	找不到字幕。請選擇現有字幕，或改用語音辨識	字幕が見つかりません。既存の字幕を選択するか、代わりに音声認識を使用してください
-未提供 API 密钥。请在向导中输入，或设置环境变量 NOTEPIPE_ASR_API_KEY 后重试。 / No API key provided. Enter one in setup, or set NOTEPIPE_ASR_API_KEY and retry.	未提供 API 密钥。请在向导中输入，或设置环境变量 NOTEPIPE_ASR_API_KEY 后重试。	No API key provided. Enter one in setup, or set NOTEPIPE_ASR_API_KEY and retry.	未提供 API 金鑰。請在嚮導中輸入，或設定環境變數 NOTEPIPE_ASR_API_KEY 後重試。	API キーが提供されていません。ウィザードに入力するか、環境変数 NOTEPIPE_ASR_API_KEY を設定して再試行してください。
 未提取到截图	未提取到截图	Screenshot not retrieved	未提取到截圖	スクリーンショットが取得できませんでした
 未提取到截图 / No screenshots were captured	未提取到截图	No screenshots were captured	未提取到截圖	スクリーンショットが取得できませんでした
 未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges	未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用	Service result is uncertain; resending may incur additional charges	未收到服務的確定結果。服務可能已處理這部分，再次提交可能產生額外費用	サービスからの確認は受信されませんでした。サービスはこの部分をすでに処理している可能性があり、再送信には追加料金が発生する可能性があります。
 未改动的条目不记 raw	未改动的条目不记 raw	Unmodified entries are not recorded as raw	未改動的條目不記 raw	変更されていないエントリは生として記録されません
 未检查字幕	未检查字幕	Subtitles not checked	未檢查字幕	字幕未チェック
 未检测到	未检测到	not detected	未檢測到	検出されませんでした
-未检测到 Intel NPU	未检测到 Intel NPU	Intel NPU not detected	未檢測到 Intel NPU	インテル NPU が検出されない
 未检测到语音，将仅保留截图 / No speech detected; keeping slides without a transcript	未检测到语音，将仅保留截图	No speech detected; keeping slides without a transcript	未檢測到語音，將僅保留截圖	音声は検出されず、スクリーンショットのみが保存されます
 未登录	未登录	Not signed in	未登入	未ログイン
 未知的语言：{}。可用：auto、en、zh-Hans、zh-Hant、ja	未知的语言：{}。可用：auto、en、zh-Hans、zh-Hant、ja	Unknown language: {}. Available: auto, en, zh-Hans, zh-Hant, ja	未知的語言：{}。可用：auto、en、zh-Hans、zh-Hant、ja	不明な言語: {}。利用可能: auto、en、zh-Hans、zh-Hant、ja
@@ -429,18 +360,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 未设置 AI 模型 / AI model is not set. Run: notepipe llm setup	未设置 AI 模型	AI model is not set. Run: notepipe llm setup	未設定 AI 模型	AIモデルが設定されていません
 未采样到任何帧 / No frames sampled	未采样到任何帧	No frames sampled	未取樣到任何幀	フレームがサンプリングされていません
 本地视频	本地视频	local video	本地影片	ローカル動画
-本地识别方式 / Local transcription engine	本地识别方式	Local transcription engine	本地識別方式	ローカル識別方法
-本地识别（首次下载模型） / Local transcription (requires a model download)	本地识别（首次下载模型）	Local transcription (requires a model download)	本地識別（首次下載模型）	ローカル識別 (初めてモデルをダウンロードする場合)
-本地语音识别请求失败 / Local transcription request failed	本地语音识别请求失败	Local transcription request failed	本地語音識別請求失敗	ローカル音声認識リクエストが失敗しました
 本机	本机	local machine	本機	ローカルマシン
-本机识别	本机识别	On this device	本機辨識	このデバイスで認識
-本机识别所需的组件尚未安装。可退出后运行 notepipe doctor 查看，或改用云端识别。 / Local transcription is unavailable. Exit and run notepipe doctor, or use a cloud service.	本机识别所需的组件尚未安装。可退出后运行 notepipe doctor 查看，或改用云端识别。	Local transcription is unavailable. Exit and run notepipe doctor, or use a cloud service.	本機識別所需的元件尚未安裝。可退出後執行 notepipe doctor 檢視，或改用雲端識別。	ネイティブ認識に必要なコンポーネントがインストールされていません。終了して notepipe Doctor を実行して確認することも、代わりにクラウド ID を使用することもできます。
-本机识别服务返回的内容无法读取 / The local speech service response could not be read	本机识别服务返回的内容无法读取	The local speech service response could not be read	本機識別服務返回的內容無法讀取	ネイティブ認識サービスによって返されたコンテンツを読み取ることができません。
-本机识别请求失败（HTTP {}） / Local transcription request failed (HTTP {})	本机识别请求失败（HTTP {}）	Local transcription request failed (HTTP {})	本機識別請求失敗（HTTP {}）	ネイティブ認識リクエストが失敗しました (HTTP {})
-权重偏移无效 / Invalid weight offsets	权重偏移无效	Invalid weight offsets	權重偏移無效	ウェイトオフセットが無効です
-权重头不完整 / Incomplete weight header	权重头不完整	Incomplete weight header	權重頭不完整	ウェイトヘッダーが不完全です
-权重文件不完整 / Incomplete weight file	权重文件不完整	Incomplete weight file	權重檔案不完整	ウェイト ファイルが不完全です
-权重索引无效 / Invalid weight index	权重索引无效	Invalid weight index	權重索引無效	重量インデックスが無効です
 来源没有返回视频标题，请重新读取 / The source returned no video title; probe again	来源没有返回视频标题，请重新读取	The source returned no video title; probe again	來源沒有返回影片標題，請重新讀取	ソースが動画のタイトルを返しませんでした。もう一度読んでください。
 查找	查找	Find	查詢	探す
 查找字幕 / Looking for subtitles	查找字幕	Looking for subtitles	查詢字幕	字幕を探す
@@ -452,36 +372,19 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 校对未完成，已保留原文：{}	校对未完成，已保留原文：{}	Proofreading has not been completed, the original text has been retained: {}	校對未完成，已保留原文：{}	校正が完了していないため、元のテキストが保持されています: {}
 校对结果与原文段落不对应，已保留原文 / Proofread segments do not match the input	校对结果与原文段落不对应，已保留原文	Proofread segments do not match the input	校對結果與原文段落不對應，已保留原文	校正結果は元の段落と一致せず、原文は保持されています。
 检查服务	检查服务	Test service	測試服務	サービスをテスト
-检查未完成	检查未完成	Check not completed	檢查未完成	チェックが完了していません
-检查结果	检查结果	Check results	檢查結果	チェック結果
 检查识别模型 / Checking speech model	检查识别模型	Checking speech model	檢查識別模型	認識モデルを確認する
 概述：{}\n	概述：{}\n	Overview: {}	概述：{}\n	概要:{}\n
 模型	模型	model	模型	モデル
-模型 ID	模型 ID	Model ID	模型 ID	モデルID
-模型 {}% · {}	模型 {}% · {}	Model {}% · {}	模型 {}% · {}	モデル {}% · {}
-模型下载任务失败 / Model download task failed	模型下载任务失败	Model download task failed	模型下載任務失敗	モデルのダウンロード タスクが失敗しました
-模型准备	模型准备	Model preparation	模型準備	モデルの準備
-模型准备完成 / Model preparation finished.	模型准备完成	Model preparation finished.	模型準備完成	モデルの準備ができました
-模型准备未完成 / Model preparation did not complete	模型准备未完成	Model preparation did not complete	模型準備未完成	モデルの準備が完了していません
 模型名 / Model name	模型名	Model name	模型名	機種名
 模型名 / Model name (e.g. deepseek-chat)	模型名	Model name (e.g. deepseek-chat)	模型名	機種名
-模型已就绪	模型已就绪	Model ready	模型已就緒	モデルの準備が完了
-模型文件下载不完整，请重新运行 notepipe models download / Model download incomplete; run notepipe models download again	模型文件下载不完整，请重新运行 notepipe models download	Model download incomplete; run notepipe models download again	模型檔案下載不完整，請重新執行 notepipe models download	モデル ファイルのダウンロードが不完全です。notepipe モデルのダウンロードを再実行してください。
-模型文件不完整，正在重新下载 / Model file incomplete; downloading again	模型文件不完整，正在重新下载	Model file incomplete; downloading again	模型檔案不完整，正在重新下載	モデル ファイルが不完全なため、再度ダウンロード中です。
 模型目录 / Model directory	模型目录	Model directory	模型目錄	モデルカタログ
-模型缓存包含过多文件，检查未完成 / Model cache contains too many files; check incomplete	模型缓存包含过多文件，检查未完成	Model cache contains too many files; check incomplete	模型快取包含過多檔案，檢查未完成	モデル キャッシュに含まれるファイルが多すぎるため、チェックが完了していません
-模型请求失败 / Model request failed	模型请求失败	Model request failed	模型請求失敗	モデルリクエストが失敗しました
-欢迎使用 notepipe！选择字幕不可用时的语音转写方式。 / Welcome! Choose how to transcribe when subtitles are unavailable.	欢迎使用 notepipe！选择字幕不可用时的语音转写方式。	Welcome! Choose how to transcribe when subtitles are unavailable.	歡迎使用 notepipe！選擇字幕不可用時的語音轉寫方式。	notepipeへようこそ!字幕が利用できない場合に音声を文字に起こす方法を選択します。
-正在下载识别模型（约 2.4GB）/ Downloading speech models (~2.4GB): {}	正在下载识别模型（约 2.4GB）/ Downloading speech models (~2.4GB): {}	Downloading recognition models (~2.4GB)/ Downloading speech models (~2.4GB): {}	正在下載識別模型（約 2.4GB）/ Downloading speech models (~2.4GB): {}	認識モデルのダウンロード (~2.4GB)/音声モデルのダウンロード (~2.4GB): {}
 正在打开浏览器完成 ChatGPT 授权（{} 分钟内有效，Ctrl+C 取消）…	正在打开浏览器完成 ChatGPT 授权（{} 分钟内有效，Ctrl+C 取消）…	Opening the browser for ChatGPT authorization ({} minutes; Ctrl+C to cancel)…	正在開啟瀏覽器完成 ChatGPT 授權（{} 分鐘內有效，Ctrl+C 取消）…	ChatGPT の認証のためブラウザを開きます（{} 分間有効、Ctrl+C でキャンセル）…
 正文	正文	Text	正文	テキスト
 此任务使用的凭据没有访问该服务或模型的权限。 / The credentials used by this task cannot access that service or model.	此任务使用的凭据没有访问该服务或模型的权限。	The credentials used by this task cannot access that service or model.	此任務使用的憑據沒有訪問該服務或模型的許可權。	このタスクで使用される資格情報には、サービスまたはモデルにアクセスする権限がありません。
 此文件夹里有无法确认来源的旧进度，请换一个位置 / This folder contains earlier progress of unknown origin; choose another location	此文件夹里有无法确认来源的旧进度，请换一个位置	This folder contains earlier progress of unknown origin; choose another location	此資料夾裡有無法確認來源的舊進度，請換一個位置	このフォルダにはソースが確認できない古い進捗状況が存在します。場所を変更してください。
 此服务已删除，没有发送新请求 / Service deleted; no new request sent	此服务已删除，没有发送新请求	Service deleted; no new request sent	此服務已刪除，沒有傳送新請求	このサービスは削除されており、新しいリクエストは送信されていません
 此来源暂不支持读取字幕，可以识别视频声音 / This source does not support reading subtitles yet; you can transcribe the video audio instead	此来源暂不支持读取字幕，可以识别视频声音	This source does not support reading subtitles yet; you can transcribe the video audio instead	此來源暫不支援讀取字幕，可以識別影片聲音	このソースは現在、字幕の読み取りをサポートしていませんが、動画音声を認識できます。
-此版本不支持 Apple 识别，请改用 GPU 或 CPU 识别 / This build lacks Apple transcription; use GPU or CPU transcription.	此版本不支持 Apple 识别，请改用 GPU 或 CPU 识别	This build lacks Apple transcription; use GPU or CPU transcription.	此版本不支援 Apple 識別，請改用 GPU 或 CPU 識別	このバージョンは Apple 認識をサポートしていません。代わりに GPU または CPU 認識を使用してください。
 此版本位置已有其他笔记，已保留原文件 / Version identity conflict	此版本位置已有其他笔记，已保留原文件	Version identity conflict	此版本位置已有其他筆記，已保留原檔案	このバージョンの場所には他のノートがあり、元のファイルは保持されています。
-此程序未包含 Apple 原生识别运行时 / This build does not include the Apple native transcription runtime	此程序未包含 Apple 原生识别运行时	This build does not include the Apple native transcription runtime	此程式未包含 Apple 原生識別執行時	このプログラムには Apple ネイティブ認識ランタイムは含まれていません
 此笔记版本需要其他版本的软件 / Unsupported manifest schema	此笔记版本需要其他版本的软件	Unsupported manifest schema	此筆記版本需要其他版本的軟體	このノートのバージョンには別のバージョンのソフトウェアが必要です
 此请求未完成 / Request failed	此请求未完成	Request failed	此請求未完成	このリクエストは完了していません
 每段语音最长秒数 (1–600) / Maximum speech segment length in seconds	每段语音最长秒数 (1–600)	Maximum speech segment length in seconds	每段語音最長秒數 (1–600)	音声セグメントごとの最大秒数 (1 ～ 600)
@@ -492,9 +395,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 浏览器授权超时，请重试 / Browser authorization timed out; please retry	浏览器授权超时，请重试	Browser authorization timed out; please retry	瀏覽器授權超時，請重試	ブラウザの認証がタイムアウトしました。もう一度お試しください。
 添加	添加	Add	新增	追加
 清除 Codex 登录状态失败 / Could not remove Codex login	清除 Codex 登录状态失败	Could not remove Codex login	清除 Codex 登入狀態失敗	Codex ログイン ステータスのクリアに失敗しました
-源码构建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 复制为 {}	源码构建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 复制为 {}	Source code build: Copy mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib under native/apple-asr/.build to {}	原始碼構建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 複製為 {}	ソースコードのビルド:native/apple-asr/.build の下にある mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib を {} にコピーします。
 版本	版本	version	版本	バージョン
-现在下载 / Download now	现在下载	Download now	現在下載	今すぐダウンロード
 生成已暂停，进度已保留 / Generation paused; progress retained	生成已暂停，进度已保留	Generation paused; progress retained	生成已暫停，進度已保留	ビルドは一時停止され、進行状況は維持されます
 生成截图	生成截图	Generate screenshot	生成截圖	スクリーンショットの生成
 生成截图 / Saving screenshots	生成截图	Saving screenshots	生成截圖	スクリーンショットの生成
@@ -514,7 +415,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 登录状态	登录状态	Login status	登入狀態	ログイン状態
 目录	目录	Directory	目錄	ディレクトリ
 目录正被另一任务使用：{}。请等待任务结束	目录正被另一任务使用：{}。请等待任务结束	Directory is in use: {}. Wait for the task to finish.	目錄正被另一項任務使用：{}。請等待任務結束	ディレクトリは別のタスク {} によって使用されています。タスクが終了するまでお待ちください
-稍后下载模型，再重新运行视频命令： / Download the model, then rerun your video command: notepipe models download	稍后下载模型，再重新运行视频命令：	Download the model, then rerun your video command: notepipe models download	稍後下載模型，再重新執行影片命令：	後でモデルをダウンロードし、動画 コマンドを再実行します。
 端点不支持 response_format，降级重试成功	端点不支持 response_format，降级重试成功	The endpoint does not support response_format, and the downgrade retry was successful.	端點不支援 response_format，降級重試成功	エンドポイントはresponse_formatをサポートしていないため、ダウングレードの再試行は成功しました。
 笔记	笔记	Note	筆記	ノート
 笔记包含无效资源路径 / Invalid note asset path	笔记包含无效资源路径	Invalid note asset path	筆記包含無效資源路徑	ノートには無効なリソース パスが含まれています
@@ -535,9 +435,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 终端输出 / Terminal output	终端输出	Terminal output	終端輸出	端子出力
 继续	继续	Continue	繼續	続行
 缺失 / Missing	缺失	Missing	缺失	行方不明
-缺失或不完整 / Missing or incomplete	缺失或不完整	Missing or incomplete	缺失或不完整	欠落または不完全
 缺失：{}	缺失：{}	Missing: {}	缺失：{}	欠落：{}
-缺少 Apple 识别所需的组件，请重新安装 notepipe / Apple speech component missing; reinstall notepipe	缺少 Apple 识别所需的组件，请重新安装 notepipe	Apple speech component missing; reinstall notepipe	缺少 Apple 識別所需的元件，請重新安裝 notepipe	Apple の認識に必要なコンポーネントが不足しています。notepipe を再インストールしてください。
 缺少视频信息，请重新读取 / Missing video info; please probe again	缺少视频信息，请重新读取	Missing video info; please probe again	缺少影片資訊，請重新讀取	動画情報が不足しています。もう一度読んでください。
 缺少视频来源 / Missing video source. 示例 / Example: notepipe ./lecture.mp4	缺少视频来源 / Missing video source. 示例	Example: notepipe ./lecture.mp4	缺少影片來源 / Missing video source. 示例	動画ソースがありません。例
 缺少视频来源。示例：notepipe ./lecture.mp4	缺少视频来源。示例：notepipe ./lecture.mp4	Missing video source. Example: notepipe ./lecture.mp4	缺少影片來源。範例：notepipe ./lecture.mp4	動画ソースがありません。例: notepipe ./lecture.mp4
@@ -562,31 +460,21 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 认证	认证	Certification	認證	認証
 设置	设置	Settings	設定	設定
 设置 AI 服务	设置 AI 服务	Set up AI service	設定 AI 服務	AI サービスを設定
-识别方式	识别方式	Identification method	識別方式	識別方法
-识别方式 / Speech backend	识别方式	Speech backend	識別方式	識別方法
-识别服务	识别服务	identification service	識別服務	本人確認サービス
-识别服务错误详情 / llama-server error details	识别服务错误详情	llama-server error details	識別服務錯誤詳情	サービスエラーの詳細を特定する
 识别模型	识别模型	Identify model	識別模型	モデルの識別
-识别模型（需与后端兼容）/ Speech model (must match the backend) gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b、qwen3-0.6b、whisper；npu: whisper 或 Hugging Face 仓库名 / or a Hugging Face repository	识别模型（需与后端兼容）/ Speech model (must match the backend) gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b、qwen3-0.6b、whisper；npu: whisper 或 Hugging Face 仓库名	or a Hugging Face repository	識別模型（需與後端相容）/ Speech model (must match the backend) gpu/cpu: qwen3-1.7b；coreml: qwen3-1.7b、qwen3-0.6b、whisper；npu: whisper 或 Hugging Face 倉庫名	認識モデル (バックエンドと一致する必要があります) gpu/cpu: qwen3-1.7b; coreml: qwen3-1.7b、qwen3-0.6b、ささやきます。 npu: ささやきまたはハグフェイスの倉庫名
 识别视频 {}–{} 的声音 / Transcribe video audio {}–{}	识别视频 {}–{} 的声音	Transcribe video audio {}–{}	識別影片 {}–{} 的聲音	動画の音声を識別する {}–{}
 识别视频声音	识别视频声音	Identify video sounds	識別影片聲音	動画サウンドを識別する
 识别语音 / Transcribing speech	识别语音	Transcribing speech	識別語音	音声を認識する
 识别进度记录已损坏 / The transcription progress record is damaged	识别进度记录已损坏	The transcription progress record is damaged	識別進度記錄已損壞	認識進行状況記録が破損しています
-该后端支持的模型：{}	该后端支持的模型：{}	Models supported by this backend: {}	此後端支援的模型：{}	このバックエンドが対応するモデル：{}
 语音	语音	Voice	語音	声
 语音服务	语音服务	Speech service	語音服務	音声サービス
 语音服务没有返回文字 / The speech service returned no text	语音服务没有返回文字	The speech service returned no text	語音服務沒有返回文字	音声サービスがテキストを返さない
 语音服务返回了错误 / The speech service returned an error	语音服务返回了错误	The speech service returned an error	語音服務返回了錯誤	音声サービスがエラーを返しました
-语音检测返回了空结果指针 / Speech detection returned null result pointers	语音检测返回了空结果指针	Speech detection returned null result pointers	語音檢測返回了空結果指標	音声検出により null 結果ポインタが返されました
 语音识别	语音识别	Speech recognition	語音辨識	音声認識
 语音识别 / Speech recognition	语音识别	Speech recognition	語音識別	音声認識
 语音识别任务未能完成 / Speech recognition task did not complete	语音识别任务未能完成	Speech recognition task did not complete	語音識別任務未能完成	音声認識タスクを完了できませんでした
-语音转写	语音转写	Speech transcription	語音轉寫	音声文字起こし
 语音转写方式 / Transcription	语音转写方式	Transcription	語音轉寫方式	音声転写方式
 诶	诶	Hey	誒	ねえ
-请安装支持显卡的 llama.cpp 和驱动，或改用 CPU 识别。 / Install a GPU-capable llama.cpp and driver, or use CPU transcription.	请安装支持显卡的 llama.cpp 和驱动，或改用 CPU 识别。	Install a GPU-capable llama.cpp and driver, or use CPU transcription.	請安裝支援顯示卡的 llama.cpp 和驅動，或改用 CPU 識別。	llama.cpp とグラフィックス カードをサポートするドライバーをインストールするか、代わりに CPU ID を使用してください。
 请检查路径；含空格的路径需加引号	请检查路径；含空格的路径需加引号	Check the path and quote paths containing spaces.	請檢查路徑；包含空格的路徑需加上引號	パスを確認してください。スペースを含むパスは引用符で囲む必要があります。
-请输入语音服务提供的模型 ID / Speech model ID is required	请输入语音服务提供的模型 ID	Speech model ID is required	請輸入語音服務提供的模型 ID	音声サービスから提供されたモデルIDを入力してください
 请选择需要导出的文件格式 / Select an export format	请选择需要导出的文件格式	Select an export format	請選擇需要匯出的檔案格式	エクスポートするファイル形式を選択してください
 读取 {}	读取 {}	Read {}	讀取 {}	{} を読む
 读取 {} / Failed to read {}	读取 {}	Failed to read {}	讀取 {}	{} を読む
@@ -609,13 +497,10 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 连接失败。请确认服务地址、密钥及模型，并检查图片输入支持。 / Connection failed. Check the URL, API key, model, and image input support.	连接失败。请确认服务地址、密钥及模型，并检查图片输入支持。	Connection failed. Check the URL, API key, model, and image input support.	連線失敗。請確認服務地址、金鑰及模型，並檢查圖片輸入支援。	接続に失敗しました。サービスアドレス、キー、機種を確認し、画像入力対応を確認してください。
 连接测试通过 / Connection test passed.	连接测试通过	Connection test passed.	連線測試透過	接続テストに合格しました
 退出 / Exit	退出	Exit	退出	終了
-退出，稍后下载 / Exit and download later	退出，稍后下载	Exit and download later	退出，稍後下載	終了して後でダウンロードする
 选择 Codex 模型 / Choose a Codex model	选择 Codex 模型	Choose a Codex model	選擇 Codex 模型	Codexモデルの選択
 选择用于校对的模型 / Choose a model for proofreading	选择用于校对的模型	Choose a model for proofreading	選擇用於校對的模型	校正用のモデルを選択してください
-选择识别模型 / Choose a speech model	选择识别模型	Choose a speech model	選擇識別模型	認識モデルの選択
 选项：	选项：	Options:	選項：	オプション:
 選項：	選項：	Options:	選項：	オプション:
-配置云端 API / Configure cloud API	配置云端 API	Configure cloud API	配置雲端 API	クラウドAPIの構成
 配置值	配置值	Settings values	設定值	設定値
 配置值 / settings values	配置值	settings values	配置值	設定値
 配置可选的 AI 校对 / Configure optional AI proofreading	配置可选的 AI 校对 / Configure optional AI proofreading	Configure optional AI proofreading	設定可選的 AI 校對	任意の AI 校正を設定
@@ -634,34 +519,19 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 隐藏	隐藏	hide	隱藏	隠す
 需要填写服务地址和模型名。在终端运行 notepipe llm setup，或传入 --base-url 和 --model / A base URL and model are required. Run notepipe llm setup in a terminal, or pass --base-url and --model.	需要填写服务地址和模型名。在终端运行 notepipe llm setup，或传入 --base-url 和 --model	A base URL and model are required. Run notepipe llm setup in a terminal, or pass --base-url and --model.	需要填寫服務地址和模型名。在終端執行 notepipe llm setup，或傳入 --base-url 和 --model	サービスアドレスとモデル名を入力する必要があります。ターミナルで notepipe llm setup を実行するか、--base-url と --model を渡します
 静态进度条模板	静态进度条模板	Static progress bar template	靜態進度條模板	静的なプログレスバーテンプレート
-音频切分线程异常终止 / Audio split thread terminated unexpectedly	音频切分线程异常终止	Audio split thread terminated unexpectedly	音訊切分執行緒異常終止	オーディオ分割スレッドが異常終了する
 顯示此訊息或子命令的說明	顯示此訊息或子命令的說明	Display this message or a description of the subcommand	顯示此訊息或子命令的說明	このメッセージまたはサブコマンドの説明を表示します
 顯示版本	顯示版本	show version	顯示版本	バージョンを表示
 顯示說明	顯示說明	show description	顯示說明	説明を表示
-预切游标与当前 chunk 对齐	预切游标与当前 chunk 对齐	The precut cursor is aligned with the current chunk	預切遊標與當前 chunk 對齊	プレカット カーソルは現在のチャンクと位置合わせされます
 额	额	Um	額	えーっと
-首次识别时选择并下载 Apple 模型（约 1–2.3 GB）。 / Choose and download an Apple model at first transcription (about 1–2.3 GB).	首次识别时选择并下载 Apple 模型（约 1–2.3 GB）。	Choose and download an Apple model at first transcription (about 1–2.3 GB).	首次識別時選擇並下載 Apple 模型（約 1–2.3 GB）。	初回認識時に Apple モデル (約 1 ～ 2.3 GB) を選択してダウンロードします。
-（低功耗，约 1GB / Low power, ~1GB）	（低功耗，约 1GB	Low power, ~1GB）	（低功耗，約 1GB	(低消費電力、約1GB
-（多语种 / Multilingual）	（多语种	Multilingual）	（多語種	(多言語対応
 （推荐 / recommended）	（推荐	recommended）	（推薦	(推奨
-（推荐，下载约 2.3GB / Recommended, ~2.3GB）	（推荐，下载约 2.3GB	Recommended, ~2.3GB）	（推薦，下載約 2.3GB	(推奨、ダウンロード約2.3GB
 （输入隐藏；回车保留已保存的密钥） / API key (hidden; Enter keeps the saved key)	（输入隐藏；回车保留已保存的密钥）	API key (hidden; Enter keeps the saved key)	（輸入隱藏；回車保留已儲存的金鑰）	(非表示にするには Enter を押します。保存したキーを保持するには Enter を押します)
 （输入隐藏；无密钥的本地服务可留空） / API key (hidden; leave blank for a local service without authentication)	（输入隐藏；无密钥的本地服务可留空）	API key (hidden; leave blank for a local service without authentication)	（輸入隱藏；無金鑰的本地服務可留空）	(入力は非表示になります。キーのないローカル サービスは空白のままにすることができます)
 （输出 json）	（输出 json）	(output json)	（輸出 json）	(出力json)
-，或 Hugging Face 仓库名（如 org/model）	，或 Hugging Face 仓库名（如 org/model）	, or Hugging Face repository name (such as org/model)	，或 Hugging Face 倉庫名（如 org/model）	、または Hugging Face リポジトリ名 (組織/モデルなど)
 ；	；	; 	；	;
 导出为	导出为	Export as	匯出為	エクスポート形式
 测试通过	测试通过	Test passed	測試通過	テスト合格
 默认	默认	Default	預設	既定
 ChatGPT 账号	ChatGPT 账号	ChatGPT account	ChatGPT 帳號	ChatGPT アカウント
-检测到中国大陆网络，从国内镜像下载模型 / Mainland China network detected; downloading models from a domestic mirror	检测到中国大陆网络，从国内镜像下载模型	Mainland China network detected; downloading models from a domestic mirror	偵測到中國大陸網路，從國內鏡像下載模型	中国本土のネットワークを検出しました。国内ミラーからモデルをダウンロードします
-所有下载地址均失败 / Every download host failed	所有下载地址均失败	Every download host failed	所有下載位址均失敗	すべてのダウンロード元で失敗しました
-文件校验不符 / Checksum mismatch	文件校验不符	Checksum mismatch	檔案校驗不符	チェックサムが一致しません
-一分钟没有收到数据 / No data for a minute	一分钟没有收到数据	No data for a minute	一分鐘沒有收到資料	1 分間データを受信していません
-模型下载失败；可设置 HF_ENDPOINT 指定下载地址 / Model download failed; set HF_ENDPOINT to choose a download host	模型下载失败；可设置 HF_ENDPOINT 指定下载地址	Model download failed; set HF_ENDPOINT to choose a download host	模型下載失敗；可設定 HF_ENDPOINT 指定下載位址	モデルのダウンロードに失敗しました。HF_ENDPOINT でダウンロード元を指定できます
-连接 {} · {}	连接 {} · {}	Connecting to {} · {}	連線 {} · {}	{} に接続中 · {}
-重新连接 {} · {}	重新连接 {} · {}	Reconnecting to {} · {}	重新連線 {} · {}	{} に再接続中 · {}
-校验 {}	校验 {}	Verifying {}	校驗 {}	{} を検証中
 支持的语言：{}	支持的语言：{}	Supported languages: {}	支援的語言：{}	対応言語: {}
 翻译 {}–{} 的文字 / Translate transcript {}–{}	翻译 {}–{} 的文字	Translate transcript {}–{}	翻譯 {}–{} 的文字	{}–{} のテキストを翻訳
 服务返回的翻译结构无效 / Invalid translation structure	服务返回的翻译结构无效	Invalid translation structure	服務返回的翻譯結構無效	サービスから返された翻訳の構造が無効です

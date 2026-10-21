@@ -1,42 +1,21 @@
-//! 语音识别：earshot 语音检测分段 + llama.cpp（Qwen3-ASR）。
-//!
-//! 通过 `llama-server` 常驻进程走 GPU（macOS Metal / NVIDIA CUDA / CPU），
-//! 跨平台只依赖 PATH 上的 llama.cpp。
+//! HTTP transcription with earshot segmentation and resumable chunks.
 
 use crate::config::PipelineConfig;
 use crate::timeline::TranscriptEvent;
 use anyhow::{Context, Result};
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 // ---------- 超参数（VAD 切分参数见 normalize_segments 附近） ----------
 
-const VAD_THRESHOLD: f32 = 0.5;
-const MIN_SILENCE_SAMPLES: u64 = 6_400; // 0.4s @16k
-/// llama-server 上下文长度（token）：chunk 已被 VAD 限长在 max_speech 内，4096 足够
-const LLAMA_CTX: &str = "4096";
-/// 单 chunk 生成上限（token），server 的 -n 与请求的 max_tokens 共用。
-/// apple CoreML shim 用 448（speech-swift 侧 Qwen3 的既有默认），两条后端各自调优。
-const LLAMA_MAX_TOKENS: u32 = 256;
-/// 采样参数：转写要确定性输出
-const LLAMA_TEMPERATURE: f64 = 0.0;
 /// HTTP 请求最多尝试次数（1 次首发 + 2 次重试）
 const MAX_ATTEMPTS: u32 = 3;
-/// `llama-server --help` / `--list-devices` 探测超时
-const HELP_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-const GPU_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
-/// llama-server /health 就绪等待上限（首次加载模型较慢）
-const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(300);
 /// 云端 STT 单次请求超时
 const API_HTTP_TIMEOUT: Duration = Duration::from_secs(120);
-/// llama-server 单 chunk 转写超时
-const LLAMA_HTTP_TIMEOUT: Duration = Duration::from_secs(180);
 /// ffmpeg 单段切音频上限（chunk 最长 max_speech 秒，处理应远快于此）
 const CUT_TIMEOUT: Duration = Duration::from_secs(120);
-/// 云端 STT 并发 worker 数：网络往返是主要瓶颈
-const WORKERS: usize = 4;
 /// 空结果熔断：VAD 已判定这些分片含语音，端点却在没有任何成功的情况下
 /// 连续返回空文本——端点实际上无法处理音频输入（配置错误/网关丢音频体），
 /// 继续只会空烧请求。单片为空仍是合法静音（见 record 处注释）。
@@ -71,7 +50,7 @@ impl EmptyTripwire {
     }
 }
 
-/// 空结果熔断 + 缓冲落账（run_chunks 串行路径与 run_api 并行路径共用一套语义）：
+/// Empty results are buffered until the endpoint is known to work.
 /// 每个 chunk 结果先经 tripwire 计数，连续空结果熔断时**不落任何 checkpoint**
 /// （空记录会把分片标成「已完成静音」，掩盖真实的识别失败）；空结果先缓冲，
 /// 出现非空结果（或正常收尾）才批量落账。并行路径结果乱序到达也安全：
@@ -140,18 +119,33 @@ pub fn sanitize_qwen_text(s: &str) -> String {
     t.to_string()
 }
 
-/// 打开 checkpoint → spawn_blocking 执行 → 成功才 finish → join（各 provider 共用）。
+struct CancelOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Open the checkpoint and mark it complete only after successful transcription.
 async fn run_with_cp<F>(
     cfg: &PipelineConfig,
     identity: &crate::checkpoint::AsrIdentity,
     f: F,
 ) -> Result<Vec<TranscriptEvent>>
 where
-    F: FnOnce(&mut crate::checkpoint::Checkpoint) -> Result<Vec<TranscriptEvent>> + Send + 'static,
+    F: FnOnce(
+            &mut crate::checkpoint::Checkpoint,
+            &std::sync::atomic::AtomicBool,
+        ) -> Result<Vec<TranscriptEvent>>
+        + Send
+        + 'static,
 {
     let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir, cfg.resume, identity)?;
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _cancel_on_drop = CancelOnDrop(cancelled.clone());
     tokio::task::spawn_blocking(move || {
-        let r = f(&mut cp);
+        let r = f(&mut cp, &cancelled);
         if r.is_ok() {
             cp.finish()?;
         }
@@ -163,202 +157,15 @@ where
     ))?
 }
 
-pub async fn run(cfg: &PipelineConfig, wav: &std::path::Path) -> Result<Vec<TranscriptEvent>> {
-    use crate::checkpoint::AsrIdentity;
-    use crate::config::AsrProvider;
-
-    if cfg.provider == AsrProvider::Api {
-        // 同一模型在 transcriptions / chat 两种端点下的输出可能不同，身份须含模式
-        let model_id = format!(
-            "{}:{}:{}",
-            cfg.asr_api.base_url.trim().trim_end_matches('/'),
-            cfg.asr_api.mode,
-            cfg.asr_api.model
-        );
-        let id = AsrIdentity::new("api", &model_id, cfg.max_speech);
-        let api = cfg.asr_api.clone();
-        let max_speech = cfg.max_speech as f64;
-        let wav = wav.to_path_buf();
-        return run_with_cp(cfg, &id, move |cp| run_api(&api, &wav, max_speech, cp)).await;
-    }
-    if cfg.provider == AsrProvider::Npu {
-        let model = crate::npu::resolve_npu_model(cfg.asr_model.as_deref());
-        let id = AsrIdentity::new("npu", &model, cfg.max_speech);
-        let max_speech = cfg.max_speech as f64;
-        let wav = wav.to_path_buf();
-        return run_with_cp(cfg, &id, move |cp| {
-            crate::npu::run_npu(&model, &wav, max_speech, cp)
-        })
-        .await;
-    }
-    if cfg.provider == AsrProvider::Coreml {
-        #[cfg(apple_native)]
-        {
-            let wav = wav.to_path_buf();
-            let max_speech = cfg.max_speech as f64;
-            let model = crate::apple::resolve_model(
-                cfg.asr_model.as_deref().filter(|s| !s.trim().is_empty()),
-            )?;
-            let id = AsrIdentity::new("coreml", &model, cfg.max_speech);
-            let joined = run_with_cp(cfg, &id, move |cp| {
-                let tmp = crate::runtime::TempWorkDir::new("asr")?;
-                crate::apple::run_coreml(&wav, max_speech, &model, tmp.path(), cp)
-            })
-            .await;
-            return joined.context(crate::tr!("已选的 Apple 识别方式未完成；任务参数和进度已保留 / Selected Apple transcription failed; task settings retained"));
-        }
-        #[cfg(not(apple_native))]
-        {
-            anyhow::bail!(crate::tr!(
-                "此版本不支持 Apple 识别，请改用 GPU 或 CPU 识别 / This build lacks Apple transcription; use GPU or CPU transcription."
-            ));
-        }
-    }
-    // 剩余 Gpu/Cpu 走 llama-server（Metal/CUDA/Vulkan/CPU）
-    let offload = OffloadOpts {
-        provider: cfg.provider,
-        gpu_layers: cfg.gpu_layers,
-        mmproj_offload: cfg.mmproj_offload,
-    };
-    let threads = cfg.threads;
-    let max_speech = cfg.max_speech;
-    let llama = crate::models::ensure_llama_or_download(&cfg.model_dir).await?;
-    // CPU/GPU paths share the same concrete GGUF model identity.
-    let id = AsrIdentity::new(
-        "llama",
-        &crate::models::llama_gguf_identity(),
-        cfg.max_speech,
-    );
-    let model = llama.model;
-    let mmproj = llama.mmproj;
+pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent>> {
+    cfg.validate_asr()?;
+    let identity = crate::checkpoint::AsrIdentity::new(&cfg.asr);
+    let api = cfg.asr.clone();
     let wav = wav.to_path_buf();
-    run_with_cp(cfg, &id, move |cp| {
-        run_blocking(&wav, &model, &mmproj, offload, threads, max_speech, cp)
+    run_with_cp(cfg, &identity, move |cp, cancelled| {
+        run_api(&api, &wav, cp, cancelled)
     })
     .await
-}
-
-fn run_blocking(
-    wav: &Path,
-    model: &Path,
-    mmproj: &Path,
-    offload: OffloadOpts,
-    threads: i32,
-    max_speech: f32,
-    cp: &mut crate::checkpoint::Checkpoint,
-) -> Result<Vec<TranscriptEvent>> {
-    let t0 = Instant::now();
-    let segs = earshot_vad(wav, max_speech)?;
-    tracing::info!(segs = segs.len(), "vad");
-    if segs.is_empty() {
-        return Ok(no_speech_events());
-    }
-
-    let bin = find_llama_server()?;
-    if offload.provider != crate::config::AsrProvider::Cpu {
-        let devices = gpu_devices(&bin)?;
-        anyhow::ensure!(
-            !devices.is_empty(),
-            "选择了 GPU 识别，但没有找到可用的显卡 / GPU transcription is selected, but no usable GPU was found. {}",
-            GPU_SETUP_HINT
-        );
-        tracing::info!(devices = %devices.join(", "), "GPU backend detected");
-    }
-    let port = crate::runtime::free_port()?;
-    let caps = llama_server_caps(&bin);
-    let cpu_only = offload.provider == crate::config::AsrProvider::Cpu;
-    if cpu_only && !(caps.device && caps.no_op_offload && caps.no_mmproj_offload) {
-        let devices = gpu_devices(&bin).context(
-            crate::tr!("当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry"),
-        )?;
-        anyhow::ensure!(
-            devices.is_empty(),
-            crate::tr!(
-                "当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry"
-            )
-        );
-    } else if !cpu_only && !offload.mmproj_offload {
-        anyhow::ensure!(
-            caps.no_mmproj_offload,
-            crate::tr!(
-                "当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试 / This llama.cpp is too old for this GPU setting; upgrade and retry"
-            )
-        );
-    }
-    let args = build_server_args(model, mmproj, offload, caps, threads, port);
-    tracing::info!(
-        bin = %bin.display(),
-        port,
-        gpu_layers = if cpu_only { 0 } else { offload.gpu_layers },
-        mmproj_offload = !cpu_only && offload.mmproj_offload,
-        "llama-server"
-    );
-    tracing::debug!(args = %args.join(" "), "llama-server spawn");
-    crate::progress::stage("model/load", "start");
-    let mut child = spawn_server(&bin, &args)?;
-    let stderr_tail = child
-        .take_stderr()
-        .map(|s| crate::runtime::drain_stderr(s, "llama_server"))
-        .unwrap_or_default();
-    let base = format!("http://127.0.0.1:{port}");
-    // 子进程秒退（端口冲突/模型损坏）会立即报错，而不是等满 300s；
-    // 失败时附上 llama-server 自己的 stderr 尾部，诊断信息不因 piped 而丢失
-    if let Err(e) = crate::runtime::wait_ready(
-        &base,
-        SERVER_READY_TIMEOUT,
-        &mut child,
-        Some("\"status\":\"ok\""),
-        Some(&crate::dispatch::check_control),
-    ) {
-        if e.downcast_ref::<crate::dispatch::Failure>().is_some() {
-            return Err(e); // 暂停/取消不是启动故障
-        }
-        return Err(stderr_tail.attach(
-            e,
-            crate::tr!("无法启动识别服务 / Could not start the speech recognition service"),
-        ));
-    }
-    tracing::info!(
-        secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
-        "server ready"
-    );
-
-    crate::progress::stage("model/load", "done");
-
-    // 共享 agent：各 chunk 复用连接
-    let client = ureq::AgentBuilder::new()
-        .timeout(LLAMA_HTTP_TIMEOUT)
-        .build();
-    let tmp = crate::runtime::TempWorkDir::new("asr")?;
-    let r = run_chunks(wav, &segs, cp, tmp.path(), "asr", |chunk| {
-        transcribe_file(&client, &base, chunk).map(|t| {
-            let t = sanitize_qwen_text(&t);
-            (!t.is_empty()).then_some(t)
-        })
-    });
-    // llama-server 退出清理双保险（孤儿进程会占住 GPU 设备）：
-    // 成功路径在这里主动 kill+wait；错误路径（? 早退 / panic unwind 经过的 drop）
-    // 由 ManagedChild 的 Drop 兜底 kill+wait，任何离开 run_blocking 的路径都不孤儿。
-    child.kill();
-    let _ = child.wait();
-    let events = r.map_err(|e| {
-        // 转写中途失败大概率是 server 侧问题，附上 stderr 与启动参数便于定位
-        stderr_tail
-            .attach(
-                e,
-                crate::tr!("识别服务错误详情 / llama-server error details"),
-            )
-            .context(format!(
-                "llama-server 启动参数 / arguments: {}",
-                args.join(" ")
-            ))
-    })?;
-    tracing::info!(
-        n = events.len(),
-        secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
-        "asr done"
-    );
-    Ok(events)
 }
 
 /// 所有后端共用的「VAD 后没有语音」收尾：只保留截图，并记录空结果。
@@ -369,128 +176,56 @@ pub(crate) fn no_speech_events() -> Vec<TranscriptEvent> {
     Vec::new()
 }
 
-/// 顺序 chunk 执行器：统一切音频、断点跳过、进度条、记录（含空结果）、
-/// chunk 清理与收尾排序。backend 只需提供「chunk 文件 → 文本」函数。
-/// Ok(None) = 后端确认无语音内容（同样记录完成，避免静音段反复重跑）。
-///
-/// 双缓冲流水线：转写当前 chunk 期间由后台线程预切下一个未完成 chunk
-///（ffmpeg 切音频约 30-80ms，不占用串行路径）；失败语义与 checkpoint
-/// record 顺序与纯串行版完全一致。
-pub(crate) fn run_chunks(
-    wav: &Path,
-    segs: &[Seg],
-    cp: &mut crate::checkpoint::Checkpoint,
-    tmp_dir: &Path,
-    label: &str,
-    mut transcribe: impl FnMut(&Path) -> Result<Option<String>>,
-) -> Result<Vec<TranscriptEvent>> {
-    let pb = crate::progress::Bar::new("transcribe", segs.len() as u64).with_template(&format!(
-        "{{spinner:.green}} {label} {{pos}}/{{len}} [{{bar:32.cyan/blue}}] {{elapsed}} {{eta}} {{msg}}"
-    ));
-
-    let mut err: Option<anyhow::Error> = None;
-    let mut tracker = EmptyResultTracker::default();
-    std::thread::scope(|scope| {
-        let mut prefetch: Option<(usize, std::thread::ScopedJoinHandle<'_, Result<()>>)> = None;
-        for (i, seg) in segs.iter().copied().enumerate() {
-            crate::dispatch::check_control()?;
-            let (start, end) = (seg.start, seg.end);
-            if cp.is_done(start, end) {
-                pb.inc(1);
-                continue; // 断点续跑：该 chunk 上次已完成
-            }
-            let chunk = tmp_dir.join(format!("c{i:04}.wav"));
-            // 取本 chunk 的预切结果；未预切（首个待处理 chunk）则现切
-            let cut = match prefetch.take() {
-                Some((j, handle)) => {
-                    debug_assert_eq!(j, i, "预切游标与当前 chunk 对齐");
-                    handle.join().unwrap_or_else(|_| {
-                        Err(anyhow::anyhow!(crate::tr!(
-                            "音频切分线程异常终止 / Audio split thread terminated unexpectedly"
-                        )))
-                    })
-                }
-                None => cut_wav(wav, seg.cut_start, seg.cut_end, &chunk),
-            };
-            if let Err(e) = cut {
-                err = Some(e);
-                break;
-            }
-            // 预切下一个未完成 chunk（与本 chunk 的转写并行）
-            if let Some(j) = (i + 1..segs.len()).find(|&j| !cp.is_done(segs[j].start, segs[j].end))
-            {
-                let next_seg = segs[j];
-                let next_chunk = tmp_dir.join(format!("c{j:04}.wav"));
-                prefetch = Some((
-                    j,
-                    scope.spawn(move || {
-                        cut_wav(wav, next_seg.cut_start, next_seg.cut_end, &next_chunk)
-                    }),
-                ));
-            }
-            match transcribe(&chunk) {
-                Ok(text) => {
-                    let text = text.as_deref().unwrap_or("");
-                    if let Err(e) = tracker.record_outcome(cp, start, end, text) {
-                        err = Some(e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    let _ = std::fs::remove_file(&chunk);
-                    err = Some(e);
-                    break;
-                }
-            }
-            let _ = std::fs::remove_file(&chunk);
-            pb.inc(1);
-        }
-        Ok::<(), anyhow::Error>(())
-    })?;
-    pb.finish();
-    // 正常收尾：缓冲的空结果（真实静音）落 checkpoint
-    if err.is_none()
-        && let Err(e) = tracker.finish(cp)
-    {
-        err = Some(e);
-    }
-    if let Some(e) = err {
-        return Err(e);
-    }
-    // 事件统一来自 checkpoint（历史 + 本次），按时间排序
-    Ok(cp.sorted_events())
-}
-
-/// 云端 STT：earshot VAD 分段 + 逐段 POST /audio/transcriptions（OpenAI 兼容 / OpenRouter）。
+/// The same bounded HTTP chunk pipeline serves remote and managed endpoints.
 fn run_api(
-    api: &crate::settings::AsrApi,
+    api: &crate::settings::Asr,
     wav: &Path,
-    max_speech: f64,
     cp: &mut crate::checkpoint::Checkpoint,
+    cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<TranscriptEvent>> {
+    let check_control = || {
+        anyhow::ensure!(
+            !cancelled.load(std::sync::atomic::Ordering::Relaxed),
+            crate::tr!("Transcription cancelled.")
+        );
+        crate::dispatch::check_control()
+    };
+    check_control()?;
     let t0 = Instant::now();
     // 凭据已在任务预检时解析（含环境变量）；空 key = 明确选择的无鉴权服务
     let api_key = api.api_key.trim().to_string();
-    let segs = earshot_vad(wav, max_speech as f32)?;
+    let segs = earshot_vad(wav, api)?;
     tracing::info!(segs = segs.len(), endpoint = %api.base_url, model = %api.model, "api vad");
     if segs.is_empty() {
         return Ok(no_speech_events());
     }
 
+    // 断点续跑：预先过滤出未完成的 chunk（worker 只拿真正需要执行的任务）
+    let pending: Vec<usize> = (0..segs.len())
+        .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))
+        .collect();
+    if pending.is_empty() {
+        return Ok(cp.sorted_events());
+    }
+
     let tmp = crate::runtime::TempWorkDir::new("asr")?;
-    let url = crate::config::asr_endpoint(api)?;
+    let mut api = api.clone();
+    let mut adapter = if api.command.is_empty() {
+        None
+    } else {
+        let adapter = crate::adapter::Adapter::start_with_control(&api.command, &check_control)?;
+        api.base_url = format!("{}/v1", adapter.base);
+        Some(adapter)
+    };
+    let url = crate::config::asr_endpoint(&api)?;
     let pb = crate::progress::Bar::new("transcribe", segs.len() as u64).with_template(
         "{spinner:.green} asr {pos}/{len} [{bar:32.cyan/blue}] {elapsed} {eta} {msg}",
     );
 
     let client = crate::runtime::http_agent(API_HTTP_TIMEOUT);
-    // 断点续跑：预先过滤出未完成的 chunk（worker 只拿真正需要执行的任务）
-    let pending: Vec<usize> = (0..segs.len())
-        .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))
-        .collect();
     pb.set_position((segs.len() - pending.len()) as u64);
     crate::progress::emit(
-        serde_json::json!({"type":"workers", "stage":"transcribe", "workers": WORKERS.min(pending.len())}),
+        serde_json::json!({"type":"workers", "stage":"transcribe", "workers": api.concurrency.clamp(1, 16).min(pending.len())}),
     );
 
     // 有界并发（std::thread::scope + 借用，无需 Arc）：网络往返是主要瓶颈；
@@ -500,7 +235,7 @@ fn run_api(
     let abort = std::sync::atomic::AtomicBool::new(false);
     let mut err: Option<anyhow::Error> = None;
     std::thread::scope(|s| {
-        for _ in 0..WORKERS {
+        for _ in 0..api.concurrency.clamp(1, 16).min(pending.len()) {
             let tx = tx.clone();
             let target = ApiTarget {
                 client: &client,
@@ -508,6 +243,8 @@ fn run_api(
                 model: &api.model,
                 key: &api_key,
                 mode: api.mode,
+                language: &api.language,
+                managed: adapter.is_some(),
             };
             let (tmp_dir, wav) = (tmp.path(), wav);
             let (segs, pending, next, abort) = (&segs, &pending, &next, &abort);
@@ -532,7 +269,23 @@ fn run_api(
         drop(tx);
 
         let mut tracker = EmptyResultTracker::default();
-        for (i, r) in rx {
+        loop {
+            let (i, r) = match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(result) => result,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if err.is_none()
+                        && let Err(error) = check_control()
+                    {
+                        err = Some(error);
+                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
+                        if let Some(adapter) = &mut adapter {
+                            adapter.stop();
+                        }
+                    }
+                    continue;
+                }
+            };
             match r {
                 _ if err.is_some() => {} // 已熔断/已出错：丢弃迟到结果
                 Ok(text) => {
@@ -543,9 +296,16 @@ fn run_api(
                     }
                 }
                 Err(e) => {
-                    err = Some(e.context(crate::tr!("云端语音识别失败：{}", i)));
+                    err = Some(
+                        e.context(crate::tr!("Speech transcription failed for segment {}.", i)),
+                    );
                     abort.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
+            }
+            if err.is_some()
+                && let Some(adapter) = &mut adapter
+            {
+                adapter.stop();
             }
             // 每个回收的结果（含空结果）恰好推进一次，与串行路径一致
             pb.inc(1);
@@ -559,8 +319,13 @@ fn run_api(
     });
     pb.finish();
     if let Some(e) = err {
-        return Err(e);
+        return Err(if let Some(adapter) = &adapter {
+            adapter.stderr.attach(e, crate::tr!("ASR adapter output"))
+        } else {
+            e
+        });
     }
+    check_control()?;
     // 事件统一来自 checkpoint（收集循环里已 record），按时间排序
     let events: Vec<TranscriptEvent> = cp.sorted_events();
     tracing::info!(
@@ -588,37 +353,6 @@ fn with_retry<T>(
             Err(error) => return Err(error.into()),
         }
     }
-}
-
-/// 本机 llama-server：私有本地服务，不计费，不走请求账本。
-fn post_local_json(
-    agent: &ureq::Agent,
-    url: &str,
-    body: &serde_json::Value,
-) -> Result<serde_json::Value> {
-    use crate::dispatch::Failure;
-    let bytes = serde_json::to_vec(body)?;
-    with_retry(|| {
-        let request = agent.post(url).set("Content-Type", "application/json");
-        match crate::dispatch::receive(request.send_bytes(&bytes)) {
-            Ok(response) if (200..300).contains(&response.status) => {
-                serde_json::from_slice(&response.body).map_err(Failure::local)
-            }
-            Ok(response) => Err(Failure {
-                status: Some(response.status),
-                retryable: response.status == 429 || response.status >= 500,
-                ..Failure::local(crate::tr!(
-                    "本机识别请求失败（HTTP {}） / Local transcription request failed (HTTP {})",
-                    response.status,
-                    response.status
-                ))
-            }),
-            Err(error) => Err(Failure {
-                retryable: true,
-                ..Failure::local(error.message)
-            }),
-        }
-    })
 }
 
 /// 云端识别：每次发送前先落请求账本（结果不确定时绝不自动重发）。
@@ -653,7 +387,11 @@ fn post_cloud(
             &description,
             t.url,
             identity,
-            crate::dispatch::Resend::AskUser,
+            if t.managed {
+                crate::dispatch::Resend::Free
+            } else {
+                crate::dispatch::Resend::AskUser
+            },
             send,
             |value| {
                 anyhow::ensure!(
@@ -661,8 +399,11 @@ fn post_cloud(
                     crate::tr!("语音服务返回了错误 / The speech service returned an error")
                 );
                 let has_text = match t.mode {
-                    crate::settings::AsrApiMode::Transcriptions => value["text"].is_string(),
-                    crate::settings::AsrApiMode::Chat => chat_content_has_text(value),
+                    crate::settings::AsrMode::Transcriptions | crate::settings::AsrMode::Xai => {
+                        value["text"].is_string()
+                    }
+                    crate::settings::AsrMode::Meta => value["transcript"].is_string(),
+                    crate::settings::AsrMode::Chat => chat_content_has_text(value),
                 };
                 anyhow::ensure!(
                     has_text,
@@ -675,8 +416,7 @@ fn post_cloud(
 }
 
 /// chat 模式下让多模态 LLM 转录的指令（保持与本地 ASR 输出风格一致：忠实、带自然标点）。
-const CHAT_TRANSCRIBE_PROMPT: &str = "请将这段音频转录为文字。只输出转录内容本身（保留自然标点），\
-不要添加任何解释、概括或格式标记。若没有语音内容，输出空字符串。";
+const CHAT_TRANSCRIBE_PROMPT: &str = "Transcribe this audio. Output only the transcript itself with natural punctuation, and no explanation, summary or formatting. If there is no speech, output an empty string.";
 
 /// 云端转录端点：地址、凭据与请求模式（worker 间共享借用）。
 struct ApiTarget<'a> {
@@ -684,65 +424,84 @@ struct ApiTarget<'a> {
     url: &'a str,
     model: &'a str,
     key: &'a str,
-    mode: crate::settings::AsrApiMode,
+    mode: crate::settings::AsrMode,
+    language: &'a str,
+    managed: bool,
 }
 
 /// 转写单个 chunk；Ok(None) = 无语音内容。
 fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<Option<String>> {
-    use base64::Engine as _;
     cut_wav(wav, seg.cut_start, seg.cut_end, chunk)
         .context(crate::tr!("无法切分音频 / Could not split audio"))?;
     let bytes = std::fs::read(chunk)
-        .with_context(|| format!("读取音频片段 / Reading audio segment: {}", chunk.display()))?;
-    let identity = serde_json::json!({"model":t.model,"mode":t.mode,"audio_sha256":crate::execution::digest(&bytes),"segment_start":seg.start,"segment_end":seg.end,"cut_start":seg.cut_start,"cut_end":seg.cut_end});
-    let v = match t.mode {
-        crate::settings::AsrApiMode::Transcriptions => {
-            let (content_type, body) = transcription_form(t.model, &bytes);
-            post_cloud(t, seg, &content_type, &body, &identity)?
-        }
-        crate::settings::AsrApiMode::Chat => {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            let body = serde_json::json!({
-                "model": t.model,
-                "temperature": 0.0,
-                "messages": [{"role": "user", "content": [
-                    {"type": "text", "text": CHAT_TRANSCRIBE_PROMPT},
-                    {"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}}
-                ]}]
-            });
-            post_cloud(
-                t,
-                seg,
-                "application/json",
-                &serde_json::to_vec(&body)?,
-                &identity,
-            )?
-        }
-    };
-    let text = match t.mode {
-        crate::settings::AsrApiMode::Transcriptions => {
-            v["text"].as_str().unwrap_or_default().trim().to_string()
-        }
-        crate::settings::AsrApiMode::Chat => parse_chat_content(&v).trim().to_string(),
-    };
+        .with_context(|| crate::tr!("Reading audio segment: {}", chunk.display()))?;
+    let identity = serde_json::json!({"model":t.model,"mode":t.mode,"language":t.language,"audio_sha256":crate::execution::digest(&bytes),"segment_start":seg.start,"segment_end":seg.end,"cut_start":seg.cut_start,"cut_end":seg.cut_end});
+    let (content_type, body) = transcription_request(t, &bytes)?;
+    let result = post_cloud(t, seg, &content_type, &body, &identity);
     let _ = std::fs::remove_file(chunk);
-    Ok(if text.is_empty() { None } else { Some(text) })
+    let value = result?;
+    let text = match t.mode {
+        crate::settings::AsrMode::Transcriptions | crate::settings::AsrMode::Xai => {
+            value["text"].as_str().unwrap_or_default().to_owned()
+        }
+        crate::settings::AsrMode::Meta => {
+            value["transcript"].as_str().unwrap_or_default().to_owned()
+        }
+        crate::settings::AsrMode::Chat => parse_chat_content(&value),
+    };
+    let text = sanitize_qwen_text(&text);
+    Ok((!text.is_empty()).then_some(text))
 }
 
-/// Standard OpenAI-compatible file upload, also accepted by OpenRouter.
-fn transcription_form(model: &str, audio: &[u8]) -> (String, Vec<u8>) {
-    let boundary = format!(
-        "notepipe-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    );
-    let mut body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n").into_bytes();
+/// Options precede the binary audio part in every multipart dialect.
+fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>)> {
+    use crate::settings::AsrMode;
+    use base64::Engine as _;
+    if t.mode == AsrMode::Chat {
+        let mut prompt = CHAT_TRANSCRIBE_PROMPT.to_owned();
+        if !t.language.is_empty() {
+            prompt.push_str(&format!(
+                " The speech is in {}.",
+                crate::language::english_name(t.language)
+            ));
+        }
+        let mut body = serde_json::json!({
+            "temperature": 0,
+            "messages": [{"role":"user", "content":[
+                {"type":"text", "text":prompt},
+                {"type":"input_audio", "input_audio":{"data":base64::engine::general_purpose::STANDARD.encode(audio), "format":"wav"}}
+            ]}]
+        });
+        if !t.model.is_empty() {
+            body["model"] = t.model.into();
+        }
+        return Ok(("application/json".into(), serde_json::to_vec(&body)?));
+    }
+    let boundary = format!("notepipe-{}", crate::random_b64url(24)?);
+    let mut options = String::new();
+    let audio_part = if t.mode == AsrMode::Meta {
+        let mut request = serde_json::json!({"audioEncoding":"WAV"});
+        if !t.model.is_empty() {
+            request["model"] = t.model.into();
+        }
+        if !t.language.is_empty() {
+            request["languageBias"] =
+                serde_json::json!([crate::language::english_name(t.language)]);
+        }
+        options.push_str(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"request\"\r\nContent-Type: application/json\r\n\r\n{request}\r\n"));
+        "audio"
+    } else {
+        for (name, value) in [("model", t.model), ("language", t.language)] {
+            if !value.is_empty() {
+                options.push_str(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"));
+            }
+        }
+        "file"
+    };
+    let mut body = format!("{options}--{boundary}\r\nContent-Disposition: form-data; name=\"{audio_part}\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n").into_bytes();
     body.extend_from_slice(audio);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-    (format!("multipart/form-data; boundary={boundary}"), body)
+    Ok((format!("multipart/form-data; boundary={boundary}"), body))
 }
 
 /// chat/completions 响应的 message.content 是否携带文本：字符串形式，或
@@ -774,218 +533,14 @@ fn parse_chat_content(v: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-pub const GPU_SETUP_HINT: &str = "请安装支持显卡的 llama.cpp 和驱动，或改用 CPU 识别。 / Install a GPU-capable llama.cpp and driver, or use CPU transcription.";
-
-/// A positive -ngl is only a request: CPU-only llama.cpp builds ignore it.
-/// Probe with a deadline so a failing driver cannot hang the task or doctor.
-pub fn gpu_devices(bin: &Path) -> Result<Vec<String>> {
-    let mut cmd = Command::new(bin);
-    cmd.arg("--list-devices");
-    let out = crate::runtime::run_bounded("llama-server", &mut cmd, GPU_PROBE_TIMEOUT)
-        .with_context(|| crate::tr!("无法检测显卡：{}", GPU_SETUP_HINT))?;
-    anyhow::ensure!(
-        out.status.success(),
-        "无法检测显卡，请更新 llama.cpp 和显卡驱动 / Could not detect the GPU; update llama.cpp and the GPU driver. {GPU_SETUP_HINT}"
-    );
-    parse_gpu_devices(&out.stdout)
-}
-
-/// `--list-devices` 也会报告 BLAS/Accelerate 这类 CPU 后端行；只有这些前缀才是 GPU。
-pub fn is_gpu_device_id(id: &str) -> bool {
-    ["MTL", "CUDA", "Vulkan", "SYCL", "ROCm"]
-        .iter()
-        .any(|prefix| id.starts_with(prefix))
-}
-
-fn parse_gpu_devices(output: &str) -> Result<Vec<String>> {
-    let (_, rows) = output.split_once("Available devices:").context(crate::tr!(
-        "无法读取显卡列表，请更新 llama.cpp / Could not read the GPU list; update llama.cpp"
-    ))?;
-    Ok(rows
-        .lines()
-        .map(str::trim)
-        .filter(|line| {
-            line.split_once(':').is_some_and(|(name, description)| {
-                is_gpu_device_id(name) && !description.trim().is_empty()
-            })
-        })
-        .map(str::to_owned)
-        .collect())
-}
-
-fn find_llama_server() -> Result<PathBuf> {
-    crate::runtime::which("llama-server").context(crate::tr!(
-        "未找到 llama-server。请安装 llama.cpp 并加入 PATH"
-    ))
-}
-
-/// llama-server 对 offload 相关新 flag 的支持情况。
-/// --no-mmproj-offload / --no-op-offload / --device 都是新版 llama.cpp 才有的；
-/// 盲目附加会让发行版仓库的旧 llama-server 直接启动失败，故逐条按 --help 探测。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct LlamaServerCaps {
-    /// `--device`（cpu 后端用于 `--device none` 禁用 GPU 设备）
-    pub device: bool,
-    /// `--no-op-offload`（禁止把 host 算子卸载到 GPU）
-    pub no_op_offload: bool,
-    /// `--no-mmproj-offload`（多模态 projector 留在 CPU）
-    pub no_mmproj_offload: bool,
-}
-
-/// 从 `--help` 文本解析支持情况（纯函数，便于单测）。
-fn caps_from_help(help: &str) -> LlamaServerCaps {
-    LlamaServerCaps {
-        device: help.contains("--device"),
-        no_op_offload: help.contains("--no-op-offload"),
-        no_mmproj_offload: help.contains("--no-mmproj-offload"),
-    }
-}
-
-/// 探测一次并缓存（OnceLock：llama-server 在进程生命周期内不会换版本）。
-/// 探测失败（旧版无 --help 文本、超时、启动失败）→ 全 false，只保留 `-ngl`，
-/// 不阻断主流程。
-fn llama_server_caps(bin: &Path) -> LlamaServerCaps {
-    static CAPS: std::sync::OnceLock<LlamaServerCaps> = std::sync::OnceLock::new();
-    *CAPS.get_or_init(|| match probe_help_text(bin) {
-        Some(text) => {
-            let caps = caps_from_help(&text);
-            tracing::debug!(
-                device = caps.device,
-                no_op_offload = caps.no_op_offload,
-                no_mmproj_offload = caps.no_mmproj_offload,
-                "llama-server flag 探测"
-            );
-            caps
-        }
-        None => {
-            tracing::debug!("llama-server --help 探测失败，按旧版处理（仅 -ngl）");
-            LlamaServerCaps::default()
-        }
-    })
-}
-
-/// 超时或非零退出返回 None（按旧版处理）。
-fn probe_help_text(bin: &Path) -> Option<String> {
-    let mut cmd = Command::new(bin);
-    cmd.arg("--help");
-    let out = crate::runtime::run_bounded("llama-server", &mut cmd, HELP_PROBE_TIMEOUT).ok()?;
-    out.status
-        .success()
-        .then(|| format!("{}\n{}", out.stdout, out.stderr))
-}
-
-/// llama-server GPU 卸载控制（由 PipelineConfig 解析而来）。
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct OffloadOpts {
-    pub provider: crate::config::AsrProvider,
-    pub gpu_layers: u32,
-    pub mmproj_offload: bool,
-}
-
-/// 最近一次 llama-server spawn 的完整参数（诊断用：失败 run.json 附带）。
-/// 组装 llama-server 启动参数（纯函数，便于单测）：
-/// - gpu 后端：`-ngl <gpu_layers>`；mmproj_offload=false 且 llama.cpp 支持时
-///   追加 `--no-mmproj-offload`
-/// - cpu 后端：`-ngl 0`，并按探测结果追加 `--device none --no-op-offload
-///   --no-mmproj-offload`——新版 llama.cpp 下仅 -ngl 0 仍可能把 mmproj/部分
-///   算子卸载到 GPU
-/// - 不支持的 flag（caps=false）一律不加，兼容发行版仓库的旧 llama-server
-fn build_server_args(
-    model: &Path,
-    mmproj: &Path,
-    offload: OffloadOpts,
-    caps: LlamaServerCaps,
-    threads: i32,
-    port: u16,
-) -> Vec<String> {
-    let cpu_only = offload.provider == crate::config::AsrProvider::Cpu;
-    let ngl = if cpu_only { 0 } else { offload.gpu_layers };
-    let mut args: Vec<String> = vec![
-        "-m".into(),
-        model.display().to_string(),
-        "--mmproj".into(),
-        mmproj.display().to_string(),
-        "-ngl".into(),
-        ngl.to_string(),
-        "-c".into(),
-        LLAMA_CTX.into(),
-        "-n".into(),
-        LLAMA_MAX_TOKENS.to_string(),
-        "-t".into(),
-        threads.to_string(),
-        "--port".into(),
-        port.to_string(),
-        "--host".into(),
-        "127.0.0.1".into(),
-    ];
-    if cpu_only {
-        if caps.device {
-            args.extend(["--device".into(), "none".into()]);
-        }
-        if caps.no_op_offload {
-            args.push("--no-op-offload".into());
-        }
-        if caps.no_mmproj_offload {
-            args.push("--no-mmproj-offload".into());
-        }
-    } else if !offload.mmproj_offload && caps.no_mmproj_offload {
-        args.push("--no-mmproj-offload".into());
-    }
-    args
-}
-
-fn spawn_server(bin: &Path, args: &[String]) -> Result<crate::runtime::ManagedChild> {
-    let mut cmd = Command::new(bin);
-    cmd.args(args)
-        .stdout(Stdio::null())
-        // stderr 不能 inherit：llama-server 每个 chunk 都打 slot timing 日志，
-        // 会插在进度条重绘中间，破坏 indicatif 的原地更新。
-        // 改为 piped + 后台 drain，尾部缓存用于失败诊断，debug 日志可转发。
-        .stderr(Stdio::piped());
-    crate::runtime::ManagedChild::spawn("llama-server", &mut cmd)
-}
-
-fn transcribe_file(client: &ureq::Agent, base: &str, wav: &Path) -> Result<String> {
-    let bytes = std::fs::read(wav)?;
-    use base64::Engine as _;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let body = serde_json::json!({
-        "temperature": LLAMA_TEMPERATURE,
-        "max_tokens": LLAMA_MAX_TOKENS,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Transcribe the audio."},
-                {"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}}
-            ]
-        }]
-    });
-    let v = post_local_json(client, &format!("{base}/v1/chat/completions"), &body).context(
-        crate::tr!("本地语音识别请求失败 / Local transcription request failed"),
-    )?;
-    let choice = &v["choices"][0];
-    anyhow::ensure!(
-        !choice.is_null(),
-        crate::tr!(
-            "本机识别服务返回的内容无法读取 / The local speech service response could not be read"
-        )
-    );
-    // 空文本按无语音处理（与云端 transcribe_api 的 Ok(None) 同语义）：
-    // VAD 切出的近静音段在 llama-server 上常返回空，不该把整次 ASR 判死
-    Ok(choice["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string())
-}
-
 /// Stream 16 kHz mono s16le PCM in 256-sample frames; pad only the final frame.
-pub(crate) fn earshot_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
+fn earshot_vad(wav: &Path, asr: &crate::settings::Asr) -> Result<Vec<Seg>> {
     let mut detector = earshot::Detector::default();
     let mut speech: Vec<(u64, u64)> = Vec::new();
     let mut detect = |frame: &[i16], start: u64, end: u64| {
-        if detector.predict_i16(frame) >= VAD_THRESHOLD {
+        if detector.predict_i16(frame) >= asr.vad_threshold {
             if let Some(last) = speech.last_mut()
-                && start - last.1 < MIN_SILENCE_SAMPLES
+                && (start == last.1 || start - last.1 < (asr.min_silence as f64 * 16_000.0) as u64)
             {
                 last.1 = end;
             } else {
@@ -1013,7 +568,12 @@ pub(crate) fn earshot_vad(wav: &Path, max_speech: f32) -> Result<Vec<Seg>> {
         .into_iter()
         .map(|(start, end)| (start as f64 / 16_000.0, end as f64 / 16_000.0))
         .collect();
-    normalize_segments(speech, max_speech as f64, wav, samples as f64 / 16_000.0)
+    normalize_segments(
+        speech,
+        asr.max_speech as f64,
+        wav,
+        samples as f64 / 16_000.0,
+    )
 }
 
 /// 最终送入 ASR 的分段：`start/end` 是事件时间（用于时间线），`cut_*` 是切音频范围（含静音填充）。
@@ -1275,30 +835,6 @@ pub fn cut_wav(src: &Path, start: f64, end: f64, dest: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn gpu_probe_distinguishes_devices_from_cpu_only_and_unknown_output() {
-        assert!(
-            super::parse_gpu_devices("Available devices:\n  (none)\n")
-                .unwrap()
-                .is_empty()
-        );
-        let devices = super::parse_gpu_devices("Available devices:\n  Vulkan0: Intel Arc B390 (23719 MiB)\n  CUDA0: NVIDIA GPU (8192 MiB)\n").unwrap();
-        assert_eq!(devices.len(), 2);
-        assert!(devices[0].contains("Intel Arc B390"));
-        // BLAS/Accelerate 是 CPU 后端行，不得当作 GPU 报告（macOS 上 `--list-devices` 会列出它）。
-        let devices = super::parse_gpu_devices("Available devices:\n  BLAS: Accelerate (0 MiB, 0 MiB free)\n  MTL0: Apple M3 Max (110100 MiB, 110100 MiB free)\n").unwrap();
-        assert_eq!(devices.len(), 1);
-        assert!(devices[0].contains("Apple M3 Max"));
-        assert!(
-            super::parse_gpu_devices(
-                "Available devices:\n  BLAS: Accelerate (0 MiB, 0 MiB free)\n"
-            )
-            .unwrap()
-            .is_empty()
-        );
-        assert!(super::parse_gpu_devices("unknown option --list-devices").is_err());
-    }
-
     use super::*;
 
     #[test]
@@ -1322,7 +858,19 @@ mod tests {
     #[test]
     fn transcription_upload_preserves_audio_bytes() {
         let audio = b"RIFF\0\xff\r\nWAVE";
-        let (content_type, body) = transcription_form("whisper-1", audio);
+        let (content_type, body) = transcription_request(
+            &ApiTarget {
+                client: &ureq::agent(),
+                url: "http://localhost",
+                model: "whisper-1",
+                key: "",
+                mode: crate::settings::AsrMode::Transcriptions,
+                language: "",
+                managed: false,
+            },
+            audio,
+        )
+        .unwrap();
         let boundary = content_type
             .strip_prefix("multipart/form-data; boundary=")
             .unwrap();
@@ -1377,7 +925,7 @@ mod tests {
         samples.extend(speech_fixture_samples());
         samples.extend([0; 16_000]);
         let wav = test_wav(&samples);
-        let segments = earshot_vad(wav.path(), 20.0).unwrap();
+        let segments = earshot_vad(wav.path(), &Default::default()).unwrap();
         assert_eq!(segments.len(), 1, "{segments:?}");
         assert!((segments[0].start - 1.0).abs() <= 0.35, "{segments:?}");
         assert!((segments[0].end - 3.4).abs() <= 0.35, "{segments:?}");
@@ -1388,7 +936,11 @@ mod tests {
     #[test]
     fn earshot_silence_has_no_segments_including_a_partial_final_frame() {
         let wav = test_wav(&vec![0; 16_000]);
-        assert!(earshot_vad(wav.path(), 20.0).unwrap().is_empty());
+        assert!(
+            earshot_vad(wav.path(), &Default::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1401,7 +953,7 @@ mod tests {
             samples.extend_from_slice(&speech);
             samples.extend([0; 16_000]);
             let wav = test_wav(&samples);
-            let segments = earshot_vad(wav.path(), 20.0).unwrap();
+            let segments = earshot_vad(wav.path(), &Default::default()).unwrap();
             assert_eq!(
                 segments.len(),
                 expected,
@@ -1421,6 +973,34 @@ mod tests {
         );
         assert_eq!(decoded, samples);
         assert_eq!(Energy::load(wav.path()).unwrap().rms, vec![0.5; 11]);
+    }
+
+    #[test]
+    fn vad_settings_control_scores_merging_and_maximum_length() {
+        let wav = test_wav(&vec![0; 32_000]);
+        let asr = crate::settings::Asr {
+            vad_threshold: 0.0,
+            min_silence: 0.0,
+            max_speech: 1.0,
+            ..Default::default()
+        };
+        let uncut = crate::settings::Asr {
+            max_speech: 20.0,
+            ..asr.clone()
+        };
+        assert_eq!(earshot_vad(wav.path(), &uncut).unwrap().len(), 1);
+        let segments = earshot_vad(wav.path(), &asr).unwrap();
+        assert!(segments.len() >= 2);
+        assert!(segments.iter().all(|seg| seg.end - seg.start <= 1.0));
+        let mut samples = speech_fixture_samples();
+        samples.extend([0; 16_000]);
+        samples.extend(speech_fixture_samples());
+        let wav = test_wav(&samples);
+        let asr = crate::settings::Asr {
+            min_silence: 2.0,
+            ..Default::default()
+        };
+        assert_eq!(earshot_vad(wav.path(), &asr).unwrap().len(), 1);
     }
 
     #[test]
@@ -1449,136 +1029,224 @@ mod tests {
         let v = serde_json::json!({"choices":[]});
         assert_eq!(parse_chat_content(&v), "");
     }
+}
 
-    // ---------- GPU 卸载控制 ----------
-
-    fn args_of(
-        provider: crate::config::AsrProvider,
-        gpu_layers: u32,
-        mmproj_offload: bool,
-        caps: LlamaServerCaps,
-    ) -> Vec<String> {
-        let offload = OffloadOpts {
-            provider,
-            gpu_layers,
-            mmproj_offload,
-        };
-        build_server_args(
-            Path::new("/m.gguf"),
-            Path::new("/mm.gguf"),
-            offload,
-            caps,
-            4,
-            8081,
-        )
-    }
-
-    /// 取出 `-ngl` 后面的值
-    fn ngl_of(args: &[String]) -> String {
-        args[args.iter().position(|a| a == "-ngl").unwrap() + 1].clone()
-    }
+#[cfg(test)]
+mod http_tests {
+    use super::*;
+    use crate::settings::{Asr, AsrMode};
+    use std::io::{Read, Write};
 
     #[test]
-    fn args_gpu_backend() {
-        use crate::config::AsrProvider::Gpu;
-        let full = LlamaServerCaps {
-            device: true,
-            no_op_offload: true,
-            no_mmproj_offload: true,
-        };
-        // 默认：全量卸载，mmproj 也卸载 → 无额外 flag
-        let a = args_of(Gpu, 99, true, full);
-        assert_eq!(ngl_of(&a), "99");
-        assert!(!a.contains(&"--no-mmproj-offload".to_string()));
-        // 限制层数 + mmproj 留 CPU
-        let a = args_of(Gpu, 8, false, full);
-        assert_eq!(ngl_of(&a), "8");
-        assert!(a.contains(&"--no-mmproj-offload".to_string()));
-        // 旧版 llama.cpp（无 caps）：mmproj_offload=false 也不加 flag，避免启动失败
-        let a = args_of(Gpu, 8, false, LlamaServerCaps::default());
-        assert_eq!(ngl_of(&a), "8");
-        assert!(!a.contains(&"--no-mmproj-offload".to_string()));
-        // gpu 后端即使探测到新 flag 也不加 --device/--no-op-offload
-        assert!(!a.contains(&"--device".to_string()));
-        assert!(!a.contains(&"--no-op-offload".to_string()));
-    }
-
-    #[test]
-    fn args_cpu_backend() {
-        use crate::config::AsrProvider::Cpu;
-        let full = LlamaServerCaps {
-            device: true,
-            no_op_offload: true,
-            no_mmproj_offload: true,
-        };
-        // 新版 llama.cpp：彻底禁用 GPU 的三件套全部附加（mmproj_offload=true 也一样，
-        // cpu 后端的语义就是任何部分都不上 GPU）
-        for mmproj_offload in [true, false] {
-            let a = args_of(Cpu, 99, mmproj_offload, full);
-            assert_eq!(ngl_of(&a), "0");
-            let i = a.iter().position(|x| x == "--device").unwrap();
-            assert_eq!(a[i + 1], "none");
-            assert!(a.contains(&"--no-op-offload".to_string()));
-            assert!(a.contains(&"--no-mmproj-offload".to_string()));
+    fn dialects_send_optional_fields_before_audio_and_sanitize_responses() {
+        if crate::runtime::which("ffmpeg").is_none() {
+            return;
         }
-        // 旧版 llama.cpp（--help 无新 flag）：只保留 -ngl 0
-        let a = args_of(Cpu, 99, false, LlamaServerCaps::default());
-        assert_eq!(ngl_of(&a), "0");
-        assert!(!a.contains(&"--device".to_string()));
-        assert!(!a.contains(&"--no-op-offload".to_string()));
-        assert!(!a.contains(&"--no-mmproj-offload".to_string()));
-        // 部分支持：只附加探测到的
-        let a = args_of(
-            Cpu,
-            99,
-            false,
-            LlamaServerCaps {
-                device: false,
-                no_op_offload: true,
-                no_mmproj_offload: false,
-            },
-        );
-        assert!(!a.contains(&"--device".to_string()));
-        assert!(a.contains(&"--no-op-offload".to_string()));
-        assert!(!a.contains(&"--no-mmproj-offload".to_string()));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn help_probe_handles_output_larger_than_a_pipe_buffer() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let script = dir.path().join("llama-server");
-        std::fs::write(&script, "#!/bin/sh\nhead -c 262144 /dev/zero | tr '\\000' x\nprintf '\\n--device --no-op-offload --no-mmproj-offload\\n'\n").unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let help = probe_help_text(&script).expect("long help must not time out");
-        assert!(help.len() > 262144);
-        let caps = caps_from_help(&help);
-        assert!(caps.device && caps.no_op_offload && caps.no_mmproj_offload);
-    }
-
-    #[test]
-    fn caps_parsing() {
-        // 新版 llama.cpp（含全部 offload 控制 flag）
-        let new_help = "\
-            -dev,  --device <dev1,dev2,..>   comma-separated list of devices to use for offloading\n\
-            --op-offload, --no-op-offload    whether to offload host tensor operations to device\n\
-            --mmproj-offload, --no-mmproj-offload   whether to enable GPU offloading for multimodal projector\n";
-        let caps = caps_from_help(new_help);
-        assert_eq!(
-            caps,
-            LlamaServerCaps {
-                device: true,
-                no_op_offload: true,
-                no_mmproj_offload: true,
+        for (mode, suffix, field) in [
+            (AsrMode::Transcriptions, "/audio/transcriptions", "text"),
+            (AsrMode::Xai, "/stt", "text"),
+            (AsrMode::Meta, "/asr/transcribe", "transcript"),
+            (AsrMode::Chat, "/chat/completions", "content"),
+        ] {
+            for with_options in [false, true] {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let base = format!("http://{}/v1", listener.local_addr().unwrap());
+                let server = std::thread::spawn(move || {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(10)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 4096];
+                    let offset = loop {
+                        let read = stream.read(&mut buffer).unwrap();
+                        assert_ne!(read, 0);
+                        request.extend_from_slice(&buffer[..read]);
+                        if let Some(offset) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break offset + 4;
+                        }
+                    };
+                    let head = String::from_utf8_lossy(&request[..offset]).to_ascii_lowercase();
+                    let length: usize = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .unwrap()
+                        .trim()
+                        .parse()
+                        .unwrap();
+                    while request.len() < offset + length {
+                        let read = stream.read(&mut buffer).unwrap();
+                        assert_ne!(read, 0);
+                        request.extend_from_slice(&buffer[..read]);
+                    }
+                    let text = "language English<asr_text>Recognized.</asr_text>";
+                    let response = if mode == AsrMode::Chat {
+                        serde_json::json!({"choices":[{"message":{field:text}}]})
+                    } else {
+                        serde_json::json!({field:text})
+                    }
+                    .to_string();
+                    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+                    (head, request[offset..].to_vec())
+                });
+                let api = Asr {
+                    mode,
+                    base_url: base,
+                    ..Default::default()
+                };
+                let url = crate::config::asr_endpoint(&api).unwrap();
+                let target = ApiTarget {
+                    client: &crate::runtime::http_agent(API_HTTP_TIMEOUT),
+                    url: &url,
+                    model: if with_options { "test-model" } else { "" },
+                    key: if with_options { "test-key" } else { "" },
+                    mode,
+                    language: if with_options { "ko" } else { "" },
+                    managed: false,
+                };
+                let dir = tempfile::tempdir().unwrap();
+                let text = transcribe_api(
+                    &target,
+                    &dir.path().join("chunk.wav"),
+                    Seg {
+                        start: 0.0,
+                        end: 2.4,
+                        cut_start: 0.0,
+                        cut_end: 2.4,
+                    },
+                    Path::new(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/tests/fixtures/speech.wav"
+                    )),
+                )
+                .unwrap();
+                assert_eq!(text.as_deref(), Some("Recognized."));
+                let (head, body) = server.join().unwrap();
+                assert!(head.starts_with(&format!("post /v1{suffix} ")), "{head}");
+                assert_eq!(head.contains("authorization:"), with_options);
+                if with_options {
+                    assert!(head.contains("authorization: bearer test-key"));
+                }
+                if mode == AsrMode::Chat {
+                    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(json.get("model").is_some(), with_options);
+                    assert_eq!(json["temperature"], 0);
+                    let prompt = json["messages"][0]["content"][0]["text"].as_str().unwrap();
+                    assert_eq!(
+                        prompt,
+                        if with_options {
+                            format!("{CHAT_TRANSCRIBE_PROMPT} The speech is in Korean.")
+                        } else {
+                            CHAT_TRANSCRIBE_PROMPT.into()
+                        }
+                    );
+                    assert_eq!(
+                        json["messages"][0]["content"][1]["input_audio"]["format"],
+                        "wav"
+                    );
+                } else {
+                    let text = String::from_utf8_lossy(&body);
+                    let audio = text.find("filename=\"audio.wav\"").unwrap();
+                    if mode == AsrMode::Meta {
+                        let option = text.find("name=\"request\"").unwrap();
+                        assert!(option < audio);
+                        assert!(text.contains("Content-Type: application/json\r\n"));
+                        let json_start = text[option..].find("\r\n\r\n").unwrap() + option + 4;
+                        let json_end = text[json_start..].find("\r\n").unwrap() + json_start;
+                        let json: serde_json::Value =
+                            serde_json::from_str(&text[json_start..json_end]).unwrap();
+                        assert_eq!(json["audioEncoding"], "WAV");
+                        assert_eq!(json.get("model").is_some(), with_options);
+                        assert_eq!(json.get("languageBias").is_some(), with_options);
+                        if with_options {
+                            assert_eq!(json["languageBias"], serde_json::json!(["Korean"]));
+                        }
+                        assert!(text.contains("name=\"audio\";"));
+                    } else {
+                        for name in ["model", "language"] {
+                            let position = text.find(&format!("name=\"{name}\""));
+                            assert_eq!(position.is_some(), with_options);
+                            if let Some(position) = position {
+                                assert!(position < audio);
+                            }
+                        }
+                        assert!(text.contains("name=\"file\";"));
+                    }
+                    assert!(body.windows(4).any(|part| part == b"RIFF"));
+                }
             }
+        }
+    }
+
+    #[test]
+    fn language_names_fall_back_to_the_given_code() {
+        let client = ureq::agent();
+        let target = ApiTarget {
+            client: &client,
+            url: "",
+            model: "",
+            key: "",
+            mode: AsrMode::Chat,
+            language: "xx-custom",
+            managed: false,
+        };
+        let (_, body) = transcription_request(&target, b"audio").unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            body["messages"][0]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .ends_with(" The speech is in xx-custom.")
         );
-        // 旧版 llama.cpp：只有 -ngl，没有新 flag
-        let old_help = "\
-            -ngl,  --gpu-layers N   number of layers to store in VRAM\n\
-            -m MODEL  model path\n";
-        assert_eq!(caps_from_help(old_help), LlamaServerCaps::default());
-        // 空输出 / 探测失败文本
-        assert_eq!(caps_from_help(""), LlamaServerCaps::default());
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropping_the_async_transcription_stops_its_blocking_adapter() {
+        if crate::runtime::which("ffmpeg").is_none() {
+            return;
+        }
+        let Some(python) = crate::runtime::which("python3") else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join("adapter");
+        let mut cfg =
+            crate::options::resolve("video".into(), &Default::default(), &Default::default())
+                .unwrap();
+        cfg.out_dir = dir.path().join("work");
+        cfg.asr.command = vec![
+            python.display().to_string(),
+            "-u".into(),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/asr_adapter.py").into(),
+            "--record".into(),
+            record.display().to_string(),
+            "--behavior".into(),
+            "hang".into(),
+        ];
+        let task = tokio::spawn(async move {
+            run(
+                &cfg,
+                Path::new(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/speech.wav"
+                )),
+            )
+            .await
+        });
+        let gate = record.join("transcribing");
+        let start = Instant::now();
+        while !gate.is_file() && start.elapsed() < Duration::from_secs(10) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let reached_request = gate.is_file();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(reached_request);
+        let start = Instant::now();
+        while !record.join("terminated").is_file() && start.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(record.join("terminated").is_file());
+        assert!(!dir.path().join("work/.asr_done").exists());
     }
 }

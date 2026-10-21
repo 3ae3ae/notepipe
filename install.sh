@@ -15,9 +15,8 @@ warn() { printf '%s\n' "$@" >&2; }
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
-apple=0
 case "$os-$arch" in
-  darwin-arm64|darwin-aarch64) ASSET="notepipe-macos-arm64"; YTDLP="yt-dlp_macos"; apple=1 ;;
+  darwin-arm64|darwin-aarch64) ASSET="notepipe-macos-arm64"; YTDLP="yt-dlp_macos" ;;
   darwin-x86_64) ASSET="notepipe-macos-x86_64"; YTDLP="yt-dlp_macos" ;;
   linux-x86_64|linux-amd64) ASSET="notepipe-linux-x86_64"; YTDLP="yt-dlp_linux" ;;
   linux-aarch64|linux-arm64) ASSET="notepipe-linux-aarch64"; YTDLP="yt-dlp_linux_aarch64" ;;
@@ -60,17 +59,6 @@ verify "$tmp/notepipe" "$ASSET"
 install -m 755 "$tmp/notepipe" "$BIN_DIR/notepipe"
 say "已安装 / Installed: $BIN_DIR/notepipe"
 
-# Apple 本机语音识别需要与程序放在同一目录的 mlx.metallib。
-if [ "$apple" = 1 ]; then
-  if curl -fsSL "$RELEASE/mlx-macos-arm64.metallib" -o "$tmp/mlx.metallib"; then
-    verify "$tmp/mlx.metallib" "mlx-macos-arm64.metallib"
-    install -m 644 "$tmp/mlx.metallib" "$BIN_DIR/mlx.metallib"
-  else
-    warn "警告：Apple 本机语音识别组件下载失败，将无法在本机识别语音。重新运行安装命令即可重试。"
-    warn "Warning: the Apple speech component failed to download; local recognition is unavailable. Re-run the installer to retry."
-  fi
-fi
-
 # 在线视频需要 yt-dlp：PATH 中已有就沿用，否则在程序旁安装官方独立版本。
 if command -v yt-dlp >/dev/null 2>&1; then
   say "使用已安装的 yt-dlp / Using installed yt-dlp: $(command -v yt-dlp)"
@@ -82,12 +70,6 @@ elif curl -fsSL --max-time 300 "$YTDLP_RELEASE/$YTDLP" -o "$tmp/yt-dlp" &&
 else
   warn "警告：yt-dlp 安装失败，在线视频需要它（本地文件不受影响）。/ Warning: yt-dlp could not be installed; online videos need it (local files still work)."
   warn "  macOS: brew install yt-dlp    其他 / other: pipx install yt-dlp"
-fi
-
-if [ "$apple" != 1 ] && ! command -v llama-server >/dev/null 2>&1; then
-  warn "提示：本机 GPU/CPU 语音识别需要 llama-server；只用字幕、云端或 NPU 识别时无需安装。"
-  warn "Note: local GPU/CPU recognition needs llama-server; subtitles, cloud and NPU recognition work without it."
-  warn "  https://github.com/ggml-org/llama.cpp#quick-start"
 fi
 
 case ":$PATH:" in

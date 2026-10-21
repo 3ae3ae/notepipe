@@ -2,7 +2,7 @@
 use notepipe::execution::Component;
 use notepipe::{
     artifact,
-    config::{AsrProvider, SlideMode, TranscriptSource},
+    config::{SlideMode, TranscriptSource},
     execution::Request,
     settings::ConfigFile,
     timeline::TranscriptEvent,
@@ -16,7 +16,6 @@ use std::{
 fn request(root: &Path, source: &Path) -> Request {
     let mut config = ConfigFile::default();
     config.defaults.formats = Some(vec![]);
-    config.defaults.provider = Some(AsrProvider::Api);
     config.defaults.transcript_source = Some(TranscriptSource::Subtitle);
     config.defaults.slide_mode = Some(SlideMode::First);
     Request {
@@ -42,7 +41,6 @@ fn request(root: &Path, source: &Path) -> Request {
             translation: None,
         }]),
         config,
-        allow_unauthenticated_asr: false,
         work_dir: root.join("work"),
         note_dir: root.join("note"),
         control_path: None,
@@ -344,7 +342,7 @@ fn broken_video_preserves_readable_subtitles_as_partial_note_without_phantom_ima
 }
 
 #[test]
-fn missing_frozen_cloud_credentials_fail_before_download_and_ignore_environment() {
+fn missing_frozen_asr_destination_fails_before_download_and_ignores_environment() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("local.mp4");
     std::fs::write(&source, b"input").unwrap();
@@ -362,7 +360,7 @@ fn missing_frozen_cloud_credentials_fail_before_download_and_ignore_environment(
             && event["message"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("API Key")
+                .contains("[asr]")
     }));
     assert!(!request.work_dir.join("media.mp4").exists());
     assert!(!request.note_dir.join("current.json").exists());
@@ -901,4 +899,210 @@ fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gon
         pointer
     );
     assert!(!original.note_dir.join("versions/unused-new-body").exists());
+}
+
+fn speech_video(root: &Path) -> Option<std::path::PathBuf> {
+    let ffmpeg = notepipe::runtime::which("ffmpeg")?;
+    notepipe::runtime::which("ffprobe")?;
+    let video = root.join("speech.mp4");
+    let generated = Command::new(ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=64x32:r=10",
+            "-i",
+        ])
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/speech.wav"
+        ))
+        .args(["-t", "2.4", "-pix_fmt", "yuv420p", "-c:a", "aac"])
+        .arg(&video)
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    Some(video)
+}
+
+fn adapter_command(record: &Path, behavior: &str) -> Option<Vec<String>> {
+    let python =
+        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))?;
+    Some(vec![
+        python.display().to_string(),
+        "-u".into(),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/asr_adapter.py").into(),
+        "--record".into(),
+        record.display().to_string(),
+        "--behavior".into(),
+        behavior.into(),
+    ])
+}
+
+#[test]
+fn keyless_task_transcribes_over_http_without_reading_ambient_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let record = root.path().join("adapter");
+    let Some(command) = adapter_command(&record, "healthy") else {
+        return;
+    };
+    let adapter = notepipe::adapter::Adapter::start(&command).unwrap();
+    let mut request = request(root.path(), &video);
+    request.subtitle_events = None;
+    request.duration = 2.4;
+    request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
+    request.config.asr.base_url = format!("{}/v1", adapter.base);
+    let output = run(root.path(), &request);
+    let observed = events(&output);
+    assert!(output.status.success(), "{observed:#?}");
+    assert_eq!(
+        std::fs::read_to_string(record.join("authorization")).unwrap(),
+        ""
+    );
+    assert_eq!(
+        std::fs::read_to_string(record.join("endpoint")).unwrap(),
+        "/v1/audio/transcriptions"
+    );
+    let doc: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(request.note_dir.join("versions/version-one/document.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(doc.to_string().contains("Fixture transcript."));
+    assert!(!doc.to_string().contains("<asr_text>"));
+}
+
+#[test]
+fn managed_adapter_uses_http_and_stops_after_success_or_error() {
+    for behavior in ["healthy", "error"] {
+        let root = tempfile::tempdir().unwrap();
+        let Some(video) = speech_video(root.path()) else {
+            return;
+        };
+        let record = root.path().join("adapter");
+        let Some(command) = adapter_command(&record, behavior) else {
+            return;
+        };
+        let mut request = request(root.path(), &video);
+        request.subtitle_events = None;
+        request.duration = 2.4;
+        request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
+        request.config.asr.command = command;
+        request.config.asr.base_url = "ignored invalid remote URL".into();
+        request.config.asr.language = "ko".into();
+        let output = run(root.path(), &request);
+        let observed = events(&output);
+        assert_eq!(
+            output.status.success(),
+            behavior == "healthy",
+            "{observed:#?}"
+        );
+        if behavior == "healthy" {
+            let manifest = artifact::read_manifest(
+                &request.note_dir.join("versions/version-one/manifest.json"),
+            )
+            .unwrap();
+            assert_eq!(
+                manifest.outcomes.transcript.status,
+                artifact::Status::Succeeded
+            );
+        } else {
+            assert!(observed.iter().any(|event| {
+                event["type"] == "error"
+                    && event["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("adapter stderr")
+            }));
+            assert!(!request.work_dir.join(".asr_done").exists());
+        }
+        let body = std::fs::read(record.join("request")).unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("name=\"language\"\r\n\r\nko"));
+        #[cfg(unix)]
+        assert!(record.join("terminated").exists());
+    }
+}
+
+#[test]
+fn managed_adapter_stops_when_a_running_task_is_paused_or_cancelled() {
+    use std::time::{Duration, Instant};
+    for intent in ["pause", "cancel"] {
+        let root = tempfile::tempdir().unwrap();
+        let Some(video) = speech_video(root.path()) else {
+            return;
+        };
+        let record = root.path().join("adapter");
+        let Some(command) = adapter_command(&record, "hang") else {
+            return;
+        };
+        let mut request = request(root.path(), &video);
+        request.subtitle_events = None;
+        request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
+        request.config.asr.command = command;
+        let control = request.work_dir.join("control.json");
+        request.control_path = Some(control.clone());
+        let gate = record.join("transcribing");
+        let controller = std::thread::spawn(move || {
+            let start = Instant::now();
+            while !gate.is_file() && start.elapsed() < Duration::from_secs(15) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(gate.is_file(), "adapter never received audio");
+            notepipe::checkpoint::atomic_write(
+                &control,
+                &serde_json::to_vec(&serde_json::json!({"intent":intent})).unwrap(),
+            )
+            .unwrap();
+            Instant::now()
+        });
+        let output = run(root.path(), &request);
+        let stopped_at = controller.join().unwrap();
+        assert!(stopped_at.elapsed() < Duration::from_secs(10));
+        assert!(!output.status.success(), "{:#?}", events(&output));
+        #[cfg(unix)]
+        assert!(record.join("terminated").exists());
+        assert!(!request.work_dir.join(".asr_done").exists());
+    }
+}
+
+#[test]
+fn asr_concurrency_bounds_the_number_of_http_requests_in_flight() {
+    for concurrency in [1, 3] {
+        let root = tempfile::tempdir().unwrap();
+        let Some(video) = speech_video(root.path()) else {
+            return;
+        };
+        let record = root.path().join("adapter");
+        let Some(command) = adapter_command(&record, "parallel") else {
+            return;
+        };
+        let adapter = notepipe::adapter::Adapter::start(&command).unwrap();
+        let mut request = request(root.path(), &video);
+        request.subtitle_events = None;
+        request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
+        request.config.asr.base_url = format!("{}/v1", adapter.base);
+        request.config.asr.concurrency = concurrency;
+        request.config.asr.max_speech = 1.0;
+        let output = run(root.path(), &request);
+        assert!(output.status.success(), "{:#?}", events(&output));
+        let maximum: usize = std::fs::read_to_string(record.join("max-active"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(maximum <= concurrency);
+        if concurrency == 1 {
+            assert_eq!(maximum, 1);
+        } else {
+            assert!(maximum > 1);
+        }
+    }
 }

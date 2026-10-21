@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
-use notepipe::cli::{Cli, Command, ConfigCmd, LlmCmd, ModelsCmd};
-use notepipe::{config, doctor, llm, models, pipeline, progress, settings, wizard};
+use notepipe::cli::{Cli, Command, ConfigCmd, LlmCmd};
+use notepipe::{config, doctor, llm, pipeline, progress, settings};
 use tracing_subscriber::EnvFilter;
 
 fn init_logging(verbose: u8, quiet: bool, json: bool) {
@@ -110,16 +110,7 @@ fn main() -> std::process::ExitCode {
             }
         }
     }
-    let json = cli.opts.json
-        || matches!(&cli.command, Some(Command::RunTask))
-        || matches!(
-            &cli.command,
-            Some(Command::Models {
-                cmd: ModelsCmd::Download { json: true, .. }
-                    | ModelsCmd::Prepare { json: true, .. }
-                    | ModelsCmd::Inspect { json: true, .. }
-            })
-        );
+    let json = cli.opts.json || matches!(&cli.command, Some(Command::RunTask));
     let quiet =
         cli.opts.quiet || matches!(&cli.command, Some(Command::Summarize(args)) if args.quiet);
     if json || matches!(cli.command, Some(Command::RunTask)) {
@@ -134,13 +125,6 @@ fn main() -> std::process::ExitCode {
     match run(cli, args.len() == 1) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            // 向导的「退出，稍后下载」是正常结束，不是失败
-            if error
-                .downcast_ref::<notepipe::wizard::ExitWizard>()
-                .is_some()
-            {
-                return std::process::ExitCode::SUCCESS;
-            }
             let message = format!("{error:#}");
             if json {
                 progress::emit(serde_json::json!({"type": "error", "message": message}));
@@ -176,57 +160,6 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 request,
             ))??)
         }
-        Some(Command::Models { cmd }) => match cmd {
-            ModelsCmd::Inspect { target, json } => {
-                let root = configured_model_dir(target.dir.as_deref())?;
-                let status = models::status::inspect(target.provider, &target.model, &root)?;
-                if json {
-                    println!("{}", serde_json::to_string(&status)?);
-                } else {
-                    print_model_status(&status);
-                }
-                Ok(())
-            }
-            ModelsCmd::Prepare { target, json } => {
-                let root = configured_model_dir(target.dir.as_deref())?;
-                let status = notepipe::runtime::block_on(models::prepare(
-                    target.provider,
-                    &target.model,
-                    &root,
-                ))??;
-                progress::emit(serde_json::json!({
-                    "type": "model_ready",
-                    "operation": "prepare",
-                    "dir": root,
-                    "provider": target.provider,
-                    "model": status.model,
-                    "status": status,
-                }));
-                if !json {
-                    notepipe::println_tr!("模型准备完成 / Model preparation finished.");
-                    print_model_status(&status);
-                }
-                Ok(())
-            }
-            ModelsCmd::Download { dir, json } => {
-                let root = configured_model_dir(dir.as_deref())?;
-                notepipe::runtime::block_on(models::download_models(&root))??;
-                progress::emit(serde_json::json!({
-                    "type": "model_ready",
-                    "operation": "download",
-                    "dir": root,
-                }));
-                if !json {
-                    println!("模型已就绪 / Models ready: {}", root.display());
-                }
-                Ok(())
-            }
-            ModelsCmd::List { dir } => {
-                let root = configured_model_dir(dir.as_deref())?;
-                models::list_models(&root);
-                Ok(())
-            }
-        },
         Some(Command::Llm { cmd }) => {
             match cmd {
                 LlmCmd::Setup {
@@ -328,10 +261,10 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             }
             cfg.llm = notepipe::llm::LlmSettings::default();
             if args.asr {
-                if !cfg.asr_api.api_key.is_empty() {
-                    cleared.push("asr_api.api_key".to_string());
+                if !cfg.asr.api_key.is_empty() {
+                    cleared.push("asr.api_key".to_string());
                 }
-                cfg.asr_api.api_key.clear();
+                cfg.asr.api_key.clear();
             }
             let path = settings::save(&cfg)?;
             if cleared.is_empty() {
@@ -369,8 +302,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             };
             let file = settings::load()?;
             let initial = notepipe::options::resolve(source.clone(), &cli.opts, &file)?;
-            // 仅为 wizard 前快速失败；pipeline::run 开头的全量 validate 才是入口契约
-            // （桌面端走 run_task 不经这里，两处各自服务自己的调用方）。
+            // Fail before probing tools; run-task validates its supplied config independently.
             initial.validate()?;
             if initial.llm.enabled {
                 llm::validate(&initial.llm)?;
@@ -378,35 +310,10 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             if !std::path::Path::new(&source).is_file() {
                 notepipe::error::require_ytdlp()?;
             }
-            // 首次使用向导：未配置转写方式 + 交互终端时引导配置并写盘（非交互原样返回）；
-            // json 模式显式跳过——stdout 必须保持纯 NDJSON，不能混进交互提示
-            let file = if cli.opts.json || cli.opts.quiet {
-                file
-            } else {
-                wizard::maybe_run(&cli.opts, &file)?
-            };
-            #[cfg_attr(not(apple_native), allow(unused_mut))]
-            let mut cfg = notepipe::options::resolve(source, &cli.opts, &file)?;
-            // coreml 首次使用时先确定模型（可能交互询问），模型缓存准备与转写才会是同一个模型
-            #[cfg(apple_native)]
-            if cfg.provider == config::AsrProvider::Coreml
-                && cfg.transcript_source != config::TranscriptSource::Subtitle
-            {
-                cfg.asr_model = Some(notepipe::apple::resolve_model(cfg.asr_model.as_deref())?);
-            }
-            tracing::info!(out = %cfg.out_dir.display(), provider = %cfg.provider, "start");
-            Ok(notepipe::runtime::block_on(pipeline::run(&cfg))??)
+            tracing::info!(out = %initial.out_dir.display(), mode = %initial.asr.mode, "start");
+            Ok(notepipe::runtime::block_on(pipeline::run(&initial))??)
         }
     }
-}
-
-/// `--dir` > 配置文件 defaults.model_dir > 系统缓存。所有 models 子命令共用。
-fn configured_model_dir(dir: Option<&std::path::Path>) -> anyhow::Result<std::path::PathBuf> {
-    if let Some(dir) = dir {
-        return Ok(config::model_dir_from(Some(dir)));
-    }
-    let file = settings::load()?;
-    Ok(config::model_dir_from(file.defaults.model_dir.as_deref()))
 }
 
 /// 笔记版本目录：课程目录取 current.json 指向的版本，版本目录直接使用。
@@ -556,55 +463,6 @@ fn summarize_note(
         );
     }
     Ok(())
-}
-
-/// `models inspect/prepare` 的人类可读摘要；--json 时仍输出完整状态 JSON。
-fn print_model_status(status: &models::status::LocalModelStatus) {
-    use models::status::CacheState;
-    let state = match status.state {
-        CacheState::Missing => notepipe::tr!("缺失 / Missing"),
-        CacheState::Partial => notepipe::tr!("不完整 / Incomplete"),
-        CacheState::Cached => notepipe::tr!("已缓存（未验证加载）/ Cached (load not verified)"),
-        CacheState::Loaded => notepipe::tr!("已就绪 / Ready"),
-        CacheState::Unsupported => notepipe::tr!("不支持 / Unsupported"),
-    };
-    println!(
-        "模型 / Model: {} · {} · {}",
-        status.model, status.provider, state
-    );
-    println!("占用空间 / Disk usage: {}", format_size(status.bytes));
-    for part in &status.parts {
-        println!("  {}: {}", part.name, part.path.display());
-        for file in &part.missing {
-            notepipe::println_tr!("    缺失：{}", file);
-        }
-    }
-    match status.state {
-        CacheState::Cached | CacheState::Loaded => {}
-        CacheState::Unsupported => {
-            let available = config::local_models(status.provider)
-                .iter()
-                .map(|m| m.id)
-                .collect::<Vec<_>>()
-                .join(", ");
-            notepipe::println_tr!("该后端支持的模型：{}", available)
-        }
-        _ if status.can_prepare => println!(
-            "下载或修复 / Download or repair: notepipe models prepare --provider {} --model {}",
-            status.provider, status.model
-        ),
-        _ => {}
-    }
-}
-
-fn format_size(bytes: u64) -> String {
-    const GB: u64 = 1 << 30;
-    const MB: u64 = 1 << 20;
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else {
-        format!("{:.0} MB", bytes as f64 / MB as f64)
-    }
 }
 
 /// Accept existing files and normalize URLs pasted without a scheme.

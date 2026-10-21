@@ -79,8 +79,6 @@ pub struct Request {
     #[serde(default)]
     pub subtitle_events: Option<Vec<TranscriptEvent>>,
     pub config: ConfigFile,
-    #[serde(default)]
-    pub allow_unauthenticated_asr: bool,
     pub work_dir: PathBuf,
     pub note_dir: PathBuf,
     /// Reserved for the cooperative pause/cancel protocol; never sent as argv.
@@ -207,20 +205,6 @@ impl Request {
         cfg.out_root = self.note_dir.clone();
         // Recovery is a task invariant, not a configurable preference.
         cfg.resume = true;
-        // Never enter Apple's model-choice prompt.
-        if cfg
-            .asr_model
-            .as_deref()
-            .is_none_or(|model| model.trim().is_empty())
-        {
-            cfg.asr_model = match cfg.provider {
-                crate::config::AsrProvider::Coreml
-                | crate::config::AsrProvider::Cpu
-                | crate::config::AsrProvider::Gpu => Some(crate::config::DEFAULT_ASR_MODEL.into()),
-                crate::config::AsrProvider::Npu => Some(crate::npu::resolve_npu_model(None)),
-                crate::config::AsrProvider::Api => None,
-            };
-        }
         cfg.validate()?;
         Ok(cfg)
     }
@@ -283,7 +267,7 @@ impl Request {
             "author": self.author, "duration": self.duration, "config": config,
             "subtitle_digest": subtitle_digest,
             "subtitle_events": self.subtitle_events, "local_digest": local_digest,
-            "service_versions": self.service_versions, "allow_unauthenticated_asr":self.allow_unauthenticated_asr,
+            "service_versions": self.service_versions,
         }))
     }
 }
