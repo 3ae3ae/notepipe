@@ -122,14 +122,10 @@ pub fn validate(s: &LlmSettings) -> Result<()> {
         crate::language::target(target).map_err(anyhow::Error::msg)?;
     }
     if s.base_url.trim().is_empty() {
-        bail!(crate::tr!(
-            "AI service URL is not set. Set [llm].base_url or pass --llm-base-url."
-        ));
+        bail!("AI service URL is not set. Set [llm].base_url or pass --llm-base-url.");
     }
     if s.model.trim().is_empty() {
-        bail!(crate::tr!(
-            "AI model is not set. Set [llm].model or pass --llm-model."
-        ));
+        bail!("AI model is not set. Set [llm].model or pass --llm-model.");
     }
     crate::config::ensure_http_url(&s.base_url)?;
     Ok(())
@@ -366,7 +362,7 @@ fn translate_chunk(
     let (Some(first), Some(last)) = (chunk.first(), chunk.last()) else {
         return 0;
     };
-    let description = crate::tr!(
+    let description = format!(
         "Translate transcript {}–{}",
         crate::render::fmt_ts(first.start),
         crate::render::fmt_ts(last.end)
@@ -381,16 +377,15 @@ fn translate_chunk(
             Purpose::Translation,
             &description,
             &|content| {
-                let parsed =
-                    parse_segments(content).context(crate::tr!("Invalid translation structure"))?;
+                let parsed = parse_segments(content).context("Invalid translation structure")?;
                 anyhow::ensure!(
                     segment_ids_match(&parsed, expected),
-                    crate::tr!("Translated segments do not match the input")
+                    "Translated segments do not match the input"
                 );
                 Ok(())
             },
         )?;
-        parse_segments(&content).context(crate::tr!("Invalid translation structure"))
+        parse_segments(&content).context("Invalid translation structure")
     });
     match result {
         Ok(translated) => {
@@ -403,10 +398,7 @@ fn translate_chunk(
             chunk.len()
         }
         Err(error) => {
-            warn_once(
-                warned,
-                &crate::tr!("Translation incomplete: {}", format!("{error:#}")),
-            );
+            warn_once(warned, &format!("Translation incomplete: {error:#}"));
             record_first_error(first_error, format!("{error:#}"));
             0
         }
@@ -513,7 +505,7 @@ fn polish_chunk(
     let (Some(first), Some(last)) = (chunk.first(), chunk.last()) else {
         return 0;
     };
-    let description = crate::tr!(
+    let description = format!(
         "Proofread transcript {}–{}",
         crate::render::fmt_ts(first.start),
         crate::render::fmt_ts(last.end)
@@ -527,9 +519,8 @@ fn polish_chunk(
         Err(error) => {
             warn_once(
                 warned,
-                &crate::tr!(
-                    "Proofreading has not been completed, the original text has been retained: {}",
-                    format!("{error:#}")
+                &format!(
+                    "Proofreading has not been completed, the original text has been retained: {error:#}"
                 ),
             );
             record_first_error(first_error, format!("{error:#}"));
@@ -603,16 +594,15 @@ fn chat(
         Purpose::Proofreading,
         description,
         &|content| {
-            let parsed =
-                parse_segments(content).context(crate::tr!("Invalid proofreading structure"))?;
+            let parsed = parse_segments(content).context("Invalid proofreading structure")?;
             anyhow::ensure!(
                 segment_ids_match(&parsed, expected),
-                crate::tr!("Proofread segments do not match the input")
+                "Proofread segments do not match the input"
             );
             Ok(())
         },
     )?;
-    parse_segments(&content).context(crate::tr!("Invalid proofreading structure"))
+    parse_segments(&content).context("Invalid proofreading structure")
 }
 
 /// 构造 /chat/completions 请求体（独立出来便于单测覆盖视觉路径）。
@@ -627,19 +617,14 @@ fn build_chat_body(
         .map(|(i, t)| serde_json::json!({"id": i, "text": t}))
         .collect();
     let vision_note = if image_b64.is_some() {
-        crate::tr!(
-            " 消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。"
-        )
+        " 消息附带该段对应的课件截图，仅用于校正术语拼写与专有名词，不要描述或评论图片本身。"
     } else {
         ""
     };
     let system = format!(
-        "{} {MATH_RULE}",
-        crate::tr!(
-            "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{}",
-            effective_prompt(s),
-            vision_note
-        )
+        "{} 输出为 JSON 对象 {{\"segments\":[{{\"id\":序号,\"text\":校对后的文本}}]}}，id 必须与输入一一对应；纯语气词条目的 text 为空字符串。{} {MATH_RULE}",
+        effective_prompt(s),
+        vision_note
     );
     let mut content = vec![serde_json::json!({
         "type": "text",
@@ -876,7 +861,7 @@ pub(crate) fn send_chat_described(
             }
             // 降级请求只试一次：原请求已按 MAX_ATTEMPTS 重试过，这里只验证兼容性
             let response = request_chat_once(agent, s, &relaxed, purpose, description, validate)?;
-            tracing::debug!("{}", crate::tr!("Retry succeeded without response_format"));
+            tracing::debug!("{}", "Retry succeeded without response_format");
             response
         }
     };
@@ -925,12 +910,12 @@ fn request_chat_once(
             // protocol failure, never an empty success.
             anyhow::ensure!(
                 value.get("error").is_none_or(serde_json::Value::is_null),
-                crate::tr!("The AI service returned an error")
+                "The AI service returned an error"
             );
             let content = value["choices"][0]["message"]["content"]
                 .as_str()
                 .filter(|s| !s.trim().is_empty())
-                .context(crate::tr!("The AI service returned no content"))?;
+                .context("The AI service returned no content")?;
             validate(content)
         },
     )

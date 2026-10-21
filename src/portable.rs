@@ -99,9 +99,8 @@ fn images(root: &Path, document: &Document) -> Result<BTreeMap<String, ImageAsse
         let bytes = std::fs::read(artifact::safe_asset_path(root, &section.image)?)?;
         let sha256 = execution::digest(&bytes);
         let id = format!("image-{}", &sha256[..24]);
-        let (mime, ext) = image_mime(&bytes).context(crate::tr!(
-            "Screenshot is not a recognized image; original file kept"
-        ))?;
+        let (mime, ext) = image_mime(&bytes)
+            .context("Screenshot is not a recognized image; original file kept")?;
         images.insert(
             section.image.clone(),
             ImageAsset {
@@ -169,7 +168,7 @@ pub(crate) fn write_document(
             if let Some(name) = &local_file {
                 text.push_str(&format!(
                     "\n{}\n",
-                    crate::tr!("Source file: {}", name.replace(['\r', '\n'], " ")).trim()
+                    format!("Source file: {}", name.replace(['\r', '\n'], " ")).trim()
                 ));
             }
             let mut zip = zip::ZipWriter::new(file.as_file_mut());

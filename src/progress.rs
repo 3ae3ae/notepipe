@@ -60,24 +60,20 @@ pub fn stage(name: &str, status: &str) {
     if !is_json() && !is_quiet() && status == "start" {
         let label = match name {
             "model/load" | "model/apple" => {
-                crate::tr!(
-                    "Loading recognition model (first use may need to download files) / Loading speech model (first use may download files)"
-                )
+                "Loading recognition model (first use may need to download files) / Loading speech model (first use may download files)"
             }
-            "fetch" => crate::tr!("Reading video information"),
-            "subtitle" => crate::tr!("Looking for subtitles"),
-            "download" => crate::tr!("Downloading video"),
-            "scenes/scan" => crate::tr!("Scanning video frames"),
-            "scenes/extract" => crate::tr!("Saving screenshots"),
-            "audio" => crate::tr!("Extracting audio"),
-            "transcribe" => crate::tr!("Transcribing speech"),
-            "llm" => crate::tr!("Proofreading transcript"),
-            "summary" => crate::tr!("Generating summary"),
-            "render" => crate::tr!("Writing notes"),
-            "model/prepare" => crate::tr!("Checking speech model"),
-            name if name.starts_with("model/") => {
-                crate::tr!("Downloading speech model")
-            }
+            "fetch" => "Reading video information",
+            "subtitle" => "Looking for subtitles",
+            "download" => "Downloading video",
+            "scenes/scan" => "Scanning video frames",
+            "scenes/extract" => "Saving screenshots",
+            "audio" => "Extracting audio",
+            "transcribe" => "Transcribing speech",
+            "llm" => "Proofreading transcript",
+            "summary" => "Generating summary",
+            "render" => "Writing notes",
+            "model/prepare" => "Checking speech model",
+            name if name.starts_with("model/") => "Downloading speech model",
             _ => return,
         };
         eprintln!("{label}…");
@@ -153,7 +149,7 @@ pub fn download_progress(current: u64, total: u64) {
 /// 共享进度条样式：模板均为静态字符串，解析失败是编程错误。
 fn progress_style(template: &str) -> ProgressStyle {
     ProgressStyle::with_template(template)
-        .expect(crate::tr!("Static progress bar template"))
+        .expect("Static progress bar template")
         .progress_chars("##-")
 }
 

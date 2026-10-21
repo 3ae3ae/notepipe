@@ -37,7 +37,7 @@ fn resolve_from(program: &str, directory: &Path) -> Result<PathBuf> {
     which::which_in(program, Some(directory.as_os_str()), directory)
         .ok()
         .or_else(|| crate::runtime::which(program))
-        .with_context(|| crate::tr!("ASR adapter executable not found: {}", program))
+        .with_context(|| format!("ASR adapter executable not found: {}", program))
 }
 
 impl Adapter {
@@ -49,9 +49,9 @@ impl Adapter {
         argv: &[String],
         control: &dyn Fn() -> Result<()>,
     ) -> Result<Self> {
-        let program = argv.first().context(crate::tr!(
-            "The ASR adapter command must name an executable."
-        ))?;
+        let program = argv
+            .first()
+            .context("The ASR adapter command must name an executable.")?;
         let port = crate::runtime::free_port()?;
         let mut command = Command::new(resolve_executable(program)?);
         command
@@ -106,7 +106,7 @@ impl Adapter {
             }
             return Err(adapter
                 .stderr
-                .attach(error, crate::tr!("Could not start the ASR adapter")));
+                .attach(error, "Could not start the ASR adapter"));
         }
         tracing::info!(secs = started.elapsed().as_secs_f64(), "ASR adapter ready");
         crate::progress::stage("model/load", "done");

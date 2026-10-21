@@ -23,7 +23,7 @@ pub(crate) async fn run_cmd(cmd: &mut Command, what: &str) -> Result<std::proces
         .kill_on_drop(true)
         .output()
         .await
-        .with_context(|| crate::tr!("Could not start {}", what, what))?;
+        .with_context(|| format!("Could not start {}", what))?;
     if !out.status.success() {
         return Err(crate::error::cmd_error(
             what,

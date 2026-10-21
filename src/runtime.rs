@@ -42,7 +42,7 @@ impl ManagedChild {
     pub fn spawn(name: &'static str, cmd: &mut Command) -> Result<Self> {
         let child = cmd
             .spawn()
-            .with_context(|| crate::tr!("Could not start {}", name, name))?;
+            .with_context(|| format!("Could not start {}", name))?;
         Ok(Self { child, name })
     }
 
@@ -306,7 +306,7 @@ pub fn lock_file(path: &Path) -> Result<FileLock> {
         .truncate(false)
         .open(path)?;
     file.try_lock().with_context(|| {
-        crate::tr!(
+        format!(
             "Directory is in use: {}. Wait for the task to finish.",
             path.display()
         )
@@ -333,7 +333,7 @@ impl TempWorkDir {
         let dir = tempfile::Builder::new()
             .prefix(&format!("notepipe-{tag}-"))
             .tempdir()
-            .context(crate::tr!("Could not create a temporary working directory"))?;
+            .context("Could not create a temporary working directory")?;
         Ok(Self { dir })
     }
 

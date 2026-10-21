@@ -217,9 +217,9 @@ fn parallel_map<T: Sync, R: Send>(
     Ok(slots
         .into_iter()
         .map(|slot| {
-            slot.into_inner().unwrap_or_default().expect(crate::tr!(
-                "All slots have been written when there are no errors"
-            ))
+            slot.into_inner()
+                .unwrap_or_default()
+                .expect("All slots have been written when there are no errors")
         })
         .collect())
 }
@@ -248,9 +248,9 @@ impl Target {
 }
 
 pub fn read_manifest(path: &Path) -> Result<Manifest> {
-    let value: Manifest = serde_json::from_slice(&std::fs::read(path)?)
-        .context(crate::tr!("Invalid note manifest"))?;
-    anyhow::ensure!(value.schema == 1, crate::tr!("Unsupported manifest schema"));
+    let value: Manifest =
+        serde_json::from_slice(&std::fs::read(path)?).context("Invalid note manifest")?;
+    anyhow::ensure!(value.schema == 1, "Unsupported manifest schema");
     Ok(value)
 }
 
@@ -265,7 +265,7 @@ pub fn published(target: &Target) -> Result<Option<Manifest>> {
             && manifest.note_id == target.note_id
             && manifest.source_id == target.source_id
             && manifest.version_id == target.version_id,
-        crate::tr!("Version identity conflict")
+        "Version identity conflict"
     );
     validate_version(&dir, &manifest)?;
     Ok(Some(manifest))
@@ -275,13 +275,13 @@ pub fn safe_asset_path(root: &Path, relative: &str) -> Result<PathBuf> {
     let path = Path::new(relative);
     anyhow::ensure!(
         !relative.is_empty() && path.components().all(|c| matches!(c, Component::Normal(_))),
-        crate::tr!("Invalid note asset path")
+        "Invalid note asset path"
     );
     let full = root.join(path);
     let canonical = full.canonicalize()?;
     anyhow::ensure!(
         canonical.starts_with(root.canonicalize()?),
-        crate::tr!("Asset escapes note directory")
+        "Asset escapes note directory"
     );
     Ok(full)
 }
@@ -339,7 +339,7 @@ pub fn validate_version(dir: &Path, manifest: &Manifest) -> Result<()> {
         serde_json::from_slice(&std::fs::read(safe_asset_path(dir, &manifest.document)?)?)?;
     anyhow::ensure!(
         has_readable_body(&body.sections),
-        crate::tr!("Note has no readable body")
+        "Note has no readable body"
     );
     for frame in &manifest.frames {
         safe_asset_path(dir, &frame.image)?;
@@ -387,7 +387,7 @@ pub async fn publish(
     };
     tokio::task::spawn_blocking(publish)
         .await
-        .context(crate::tr!("Publish worker interrupted"))?
+        .context("Publish worker interrupted")?
 }
 
 /// publish 的同步实现（见 publish 的 spawn_blocking 纪律说明）。
@@ -402,7 +402,7 @@ pub fn publish_blocking(
 ) -> Result<Manifest> {
     anyhow::ensure!(
         has_readable_body(sections),
-        crate::tr!("No readable text; available materials are retained in the task")
+        "No readable text; available materials are retained in the task"
     );
     std::fs::create_dir_all(&target.note_dir)?;
     let _lock = crate::runtime::lock_file(&target.note_dir.join(".publish.lock"))?;
@@ -499,7 +499,7 @@ pub fn publish_blocking(
             .write(cfg!(windows))
             .open(&full)?
             .sync_all()
-            .with_context(|| crate::tr!("Unable to sync note file: {}", path))?;
+            .with_context(|| format!("Unable to sync note file: {}", path))?;
         Ok(Asset {
             bytes: std::fs::metadata(&full)?.len(),
             sha256: execution::file_digest(&full)?,
@@ -541,7 +541,7 @@ pub fn publish_blocking(
     )?;
     sync_dir(staging.path())?;
     std::fs::rename(staging.path(), target.version_dir())
-        .context(crate::tr!("Could not publish note version"))?;
+        .context("Could not publish note version")?;
     sync_dir(&versions)?;
     commit_current(target, &manifest)?;
     Ok(manifest)
@@ -551,10 +551,7 @@ fn commit_current(target: &Target, manifest: &Manifest) -> Result<()> {
     let path = target.note_dir.join("current.json");
     if path.is_file() {
         let current: CurrentVersion = serde_json::from_slice(&std::fs::read(&path)?)?;
-        anyhow::ensure!(
-            current.note_id == target.note_id,
-            crate::tr!("Note identity conflict")
-        );
+        anyhow::ensure!(current.note_id == target.note_id, "Note identity conflict");
         // Recovery of an older completed task must never roll back a later version.
         if current.version_id != target.version_id {
             let current_manifest =

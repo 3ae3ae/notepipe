@@ -11,15 +11,11 @@ impl CliTest {
         }
     }
     fn run(&self, args: &[&str]) -> Output {
-        self.run_with_lang(args, "en")
-    }
-    fn run_with_lang(&self, args: &[&str], lang: &str) -> Output {
         Command::new(env!("CARGO_BIN_EXE_notepipe"))
             .args(args)
             .current_dir(self.dir.path())
             .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
             .env("XDG_CACHE_HOME", self.dir.path().join("cache"))
-            .env("NOTEPIPE_LANG", lang)
             .env_remove("RUST_LOG")
             .env_remove("NOTEPIPE_ASR_API_KEY")
             .env_remove("NOTEPIPE_LLM_API_KEY")
@@ -54,32 +50,25 @@ fn json_error(output: &Output) -> serde_json::Value {
 }
 
 #[test]
-fn no_arguments_or_help_succeed_with_localized_guidance() {
+fn no_arguments_or_help_succeed_with_guidance() {
     let cli = CliTest::new();
     for args in [vec![], vec!["--help"]] {
         let result = cli.run(&args);
         assert!(result.status.success());
         let text = stdout(&result);
-        assert!(
-            text.contains("快速开始") || text.contains("Quick start"),
-            "{text}"
-        );
+        assert!(text.contains("Quick start"), "{text}");
         assert!(
             text.to_ascii_lowercase().contains("speech recognition"),
             "{text}"
         );
     }
-    let english = cli.run_with_lang(&["--help"], "en");
-    assert!(english.status.success());
-    let text = stdout(&english);
+    let help = cli.run(&["--help"]);
+    assert!(help.status.success());
+    let text = stdout(&help);
     assert!(text.contains("Quick start"), "{text}");
     assert!(text.contains("Netscape format;"), "{text}");
     assert!(text.contains("Browser cookies"), "{text}");
-    assert!(!text.contains("Cookie 文件"), "{text}");
     assert!(text.contains("Speech recognition"), "{text}");
-    let traditional = cli.run_with_lang(&["--help"], "zh-Hant");
-    assert!(traditional.status.success());
-    assert!(stdout(&traditional).contains("Cookie 檔案"));
     for cmd in ["config", "summarize", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
     }
@@ -115,45 +104,6 @@ fn json_covers_missing_source_parse_and_config_errors() {
     cli.config("[defaults\n");
     let error = json_error(&cli.run(&["./lecture.mp4", "--json"]));
     assert!(error["message"].as_str().unwrap().contains("configuration"));
-}
-
-#[test]
-fn protocol_language_defaults_to_english_and_honors_explicit_overrides() {
-    let cli = CliTest::new();
-    for args in [
-        vec!["--json"],
-        vec!["run-task"],
-        vec!["--json", "--asr-mode", "invalid"],
-    ] {
-        for (environment, flag, english) in [
-            (None, None, true),
-            (Some("zh-Hans"), None, false),
-            (None, Some("zh-Hans"), false),
-            (Some("zh-Hans"), Some("en"), true),
-        ] {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
-            command
-                .args(&args)
-                .current_dir(cli.dir.path())
-                .env_remove("NOTEPIPE_LANG")
-                .env("LC_ALL", "zh_CN.UTF-8")
-                .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
-                .stdin(std::process::Stdio::null());
-            if let Some(value) = environment {
-                command.env("NOTEPIPE_LANG", value);
-            }
-            if let Some(value) = flag {
-                command.args(["--lang", value]);
-            }
-            let output = command.output().unwrap();
-            let error = json_error(&output);
-            let message = error["message"].as_str().unwrap();
-            let has_chinese = message
-                .chars()
-                .any(|c| ('\u{3400}'..='\u{9fff}').contains(&c));
-            assert_eq!(has_chinese, !english, "{args:?}: {message}");
-        }
-    }
 }
 
 #[test]
@@ -277,7 +227,6 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
 fn doctor_reports_required_failures_with_nonzero_exit() {
     let cli = CliTest::new();
     let result = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-        .env("NOTEPIPE_LANG", "en")
         .arg("doctor")
         .env("PATH", "")
         .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
@@ -376,7 +325,6 @@ printf 'raw downloader stderr\n' >&2
     for flag in ["--json", "--quiet"] {
         let output_dir = cli.dir.path().join(flag.trim_start_matches('-'));
         let result = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-            .env("NOTEPIPE_LANG", "en")
             .args([
                 "https://example.test/video?episode=2",
                 "--transcript-source",

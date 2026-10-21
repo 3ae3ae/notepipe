@@ -20,12 +20,11 @@ pub const DEFAULT_MAX_SPEECH: f32 = 20.0;
 pub const DEFAULT_OUT_DIR: &str = "out";
 /// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr 共用同一判定）。
 pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
-    let url = url::Url::parse(raw.trim()).context(crate::tr!(
-        "Invalid service URL; use a complete HTTP(S) URL."
-    ))?;
+    let url =
+        url::Url::parse(raw.trim()).context("Invalid service URL; use a complete HTTP(S) URL.")?;
     anyhow::ensure!(
         matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-        crate::tr!("Invalid service URL; use a complete HTTP(S) URL.")
+        "Invalid service URL; use a complete HTTP(S) URL."
     );
     Ok(url)
 }
@@ -61,7 +60,7 @@ pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
             suffix,
             &["/audio/transcriptions", "/chat/completions"]
         ),
-        crate::tr!("Service endpoint and protocol do not match")
+        "Service endpoint and protocol do not match"
     );
     Ok(append_endpoint_suffix(base, suffix))
 }
@@ -228,12 +227,12 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
     let percent: f64 = p.trim().parse()?;
     anyhow::ensure!(
         (0.0..=100.0).contains(&percent),
-        crate::tr!("ROI percentages must be between 0 and 100")
+        "ROI percentages must be between 0 and 100"
     );
     let v = percent / 100.0;
     anyhow::ensure!(
         v.is_finite() && v >= 0.0,
-        crate::tr!("ROI coordinates must be finite, non-negative numbers")
+        "ROI coordinates must be finite, non-negative numbers"
     );
     Ok(v)
 }
@@ -294,11 +293,11 @@ impl PipelineConfig {
         );
         anyhow::ensure!(
             (0.0..=1.0).contains(&self.asr.vad_threshold),
-            crate::tr!("asr.vad_threshold must be between 0 and 1.")
+            "asr.vad_threshold must be between 0 and 1."
         );
         anyhow::ensure!(
             self.asr.min_silence >= 0.0,
-            crate::tr!("asr.min_silence must be non-negative.")
+            "asr.min_silence must be non-negative."
         );
         // 上限防御 split_smart 的 clamp panic（0 会让 clamp(min>max) abort）
         anyhow::ensure!(
@@ -318,16 +317,14 @@ impl PipelineConfig {
     pub fn validate_asr(&self) -> AnyhowResult<()> {
         anyhow::ensure!(
             self.asr.is_configured(),
-            crate::tr!(
-                "Configure [asr] with a base_url or command; run `notepipe config init` to create the template."
-            )
+            "Configure [asr] with a base_url or command; run `notepipe config init` to create the template."
         );
         if self.asr.command.is_empty() {
             ensure_http_url(&asr_endpoint(&self.asr)?)?;
         } else {
             anyhow::ensure!(
                 !self.asr.command[0].trim().is_empty(),
-                crate::tr!("The ASR adapter command must name an executable.")
+                "The ASR adapter command must name an executable."
             );
         }
         Ok(())

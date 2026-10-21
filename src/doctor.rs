@@ -43,7 +43,7 @@ pub fn run() -> Result<()> {
         std::env::consts::ARCH
     )];
     let mut failures = 0;
-    out.push(crate::tr!("\nRequired tools").into());
+    out.push("\nRequired tools".into());
     for tool in ["ffmpeg", "ffprobe"] {
         match tool_version(tool, &["-version", "-hide_banner"]) {
             Some(version) => check(&mut out, true, tool, &format!("  {version}")),
@@ -53,15 +53,12 @@ pub fn run() -> Result<()> {
                     &mut out,
                     false,
                     tool,
-                    &format!(
-                        "  {}",
-                        crate::tr!("Missing: {}", crate::error::install_hint(tool))
-                    ),
+                    &format!("  Missing: {}", crate::error::install_hint(tool)),
                 );
             }
         }
     }
-    out.push(crate::tr!("\nOptional tools by use").into());
+    out.push("\nOptional tools by use".into());
     match crate::ytdlp::resolve() {
         Some(path) => match tool_version(&path, &["--version"]) {
             Some(version) => check(
@@ -74,19 +71,16 @@ pub fn run() -> Result<()> {
                 &mut out,
                 false,
                 "yt-dlp",
-                &format!(
-                    "  {}",
-                    crate::tr!("found but failed to run: {}", path.display())
-                ),
+                &format!("  found but failed to run: {}", path.display()),
             ),
         },
         None => out.push(format!(
             "- yt-dlp  {}；{}",
             crate::error::install_hint("yt-dlp"),
-            crate::tr!("Rerun install.sh for the bundled build")
+            "Rerun install.sh for the bundled build"
         )),
     }
-    out.push(crate::tr!("\nConfiguration").into());
+    out.push("\nConfiguration".into());
     let path = crate::settings::config_path();
     let loaded = crate::settings::load();
     match &loaded {
@@ -94,14 +88,11 @@ pub fn run() -> Result<()> {
             if path.is_file() {
                 check(&mut out, true, "config", &format!("  {}", path.display()));
             } else {
-                out.push(crate::tr!(
+                out.push(format!(
                     "- config  Using built-in defaults: {}",
                     path.display()
                 ));
-                out.push(format!(
-                    "  {}",
-                    crate::tr!("Optional setup: notepipe config init")
-                ));
+                out.push("  Optional setup: notepipe config init".into());
             }
             // Validate the same merged defaults as conversion, without requiring a source or network.
             match crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)
@@ -110,12 +101,7 @@ pub fn run() -> Result<()> {
                 Ok(()) => {}
                 Err(error) => {
                     failures += 1;
-                    check(
-                        &mut out,
-                        false,
-                        crate::tr!("Settings values"),
-                        &format!("  {error:#}"),
-                    );
+                    check(&mut out, false, "Settings values", &format!("  {error:#}"));
                 }
             }
             if cfg.asr.is_configured() {
@@ -151,7 +137,7 @@ pub fn run() -> Result<()> {
                     }
                 }
             } else {
-                out.push(crate::tr!("ASR is not configured; set [asr] in `notepipe config init` when transcription is needed.").into());
+                out.push("ASR is not configured; set [asr] in `notepipe config init` when transcription is needed.".into());
             }
         }
         Err(error) => {
@@ -159,19 +145,17 @@ pub fn run() -> Result<()> {
             check(&mut out, false, "config", &format!("  {error:#}"));
         }
     }
-    out.push(
-        crate::tr!("\n✓ available · - optional or unset · ! needs attention · ✗ must fix").into(),
-    );
+    out.push("\n✓ available · - optional or unset · ! needs attention · ✗ must fix".into());
     for line in out {
         println!("{line}");
     }
     anyhow::ensure!(
         failures == 0,
-        crate::tr!(
+        format!(
             "Fix the {} required-tool or configuration issues listed above",
             failures
         )
     );
-    crate::println_tr!("Basic checks passed; optional services were not tested online.");
+    println!("Basic checks passed; optional services were not tested online.");
     Ok(())
 }

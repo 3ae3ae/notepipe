@@ -94,7 +94,7 @@ impl Request {
         reader.take(MAX_REQUEST_BYTES + 1).read_to_end(&mut data)?;
         anyhow::ensure!(
             data.len() as u64 <= MAX_REQUEST_BYTES,
-            crate::tr!(
+            format!(
                 "Task input exceeds {} MiB",
                 MAX_REQUEST_BYTES / (1024 * 1024)
             )
@@ -103,12 +103,9 @@ impl Request {
         // values or accidentally repeat a secret from a malformed JSON document.
         let request: Self = serde_json::from_slice(&data).map_err(|e| {
             anyhow::anyhow!(
-                "{}",
-                crate::tr!(
-                    "Unable to read task parameters (line {}, column {}) / Invalid task JSON",
-                    e.line(),
-                    e.column()
-                )
+                "Unable to read task parameters (line {}, column {}) / Invalid task JSON",
+                e.line(),
+                e.column()
             )
         })?;
         request.validate()?;
@@ -116,10 +113,7 @@ impl Request {
     }
 
     pub fn validate(&self) -> Result<()> {
-        anyhow::ensure!(
-            self.schema == REQUEST_SCHEMA,
-            crate::tr!("Unsupported task schema")
-        );
+        anyhow::ensure!(self.schema == REQUEST_SCHEMA, "Unsupported task schema");
         for (name, value) in [
             ("task_id", &self.task_id),
             ("note_id", &self.note_id),
@@ -129,34 +123,28 @@ impl Request {
         }
         anyhow::ensure!(
             !self.source.trim().is_empty() && !self.source_id.trim().is_empty(),
-            crate::tr!("Task source is missing")
+            "Task source is missing"
         );
-        anyhow::ensure!(
-            !self.title.trim().is_empty(),
-            crate::tr!("Confirmed title is missing")
-        );
+        anyhow::ensure!(!self.title.trim().is_empty(), "Confirmed title is missing");
         anyhow::ensure!(
             self.duration.is_finite() && self.duration >= 0.0,
-            crate::tr!("Invalid duration")
+            "Invalid duration"
         );
         anyhow::ensure!(
             self.work_dir.is_absolute() && self.note_dir.is_absolute(),
-            crate::tr!("Task paths must be absolute")
+            "Task paths must be absolute"
         );
         anyhow::ensure!(
             self.work_dir != self.note_dir
                 && !self.work_dir.starts_with(self.note_dir.join("versions")),
-            crate::tr!("Work directory overlaps published versions")
+            "Work directory overlaps published versions"
         );
         anyhow::ensure!(
             self.subtitle.is_none() || self.subtitle_events.is_none(),
-            crate::tr!("Specify subtitle file or parsed events, not both")
+            "Specify subtitle file or parsed events, not both"
         );
         if let Some(path) = &self.subtitle {
-            anyhow::ensure!(
-                path.is_absolute(),
-                crate::tr!("Subtitle path must be absolute")
-            );
+            anyhow::ensure!(path.is_absolute(), "Subtitle path must be absolute");
         }
         if let Some(events) = &self.subtitle_events {
             validate_events(events)?;
@@ -169,23 +157,20 @@ impl Request {
         {
             anyhow::ensure!(
                 base_version_dir.is_absolute(),
-                crate::tr!("Base version requires an absolute path")
+                "Base version requires an absolute path"
             );
-            anyhow::ensure!(
-                !components.is_empty(),
-                crate::tr!("Invalid requested components")
-            );
+            anyhow::ensure!(!components.is_empty(), "Invalid requested components");
             anyhow::ensure!(
                 prior_work_dir
                     .as_ref()
                     .is_none_or(|p| p.is_absolute() && p != &self.work_dir),
-                crate::tr!("Invalid prior work directory")
+                "Invalid prior work directory"
             );
         }
         if let Some(path) = &self.control_path {
             anyhow::ensure!(
                 path.is_absolute() && path.starts_with(&self.work_dir),
-                crate::tr!("Invalid control file location")
+                "Invalid control file location"
             );
         }
         Ok(())
@@ -237,7 +222,7 @@ impl Request {
         ) {
             anyhow::ensure!(
                 expected == actual,
-                crate::tr!("Source content changed after confirmation; reread the source")
+                "Source content changed after confirmation; reread the source"
             );
         }
         let operation = match &self.operation {
@@ -280,11 +265,11 @@ pub fn validate_events(events: &[TranscriptEvent]) -> Result<()> {
             && e.end.is_finite()
             && e.start >= 0.0
             && e.end >= e.start),
-        crate::tr!("Invalid subtitle timestamps")
+        "Invalid subtitle timestamps"
     );
     anyhow::ensure!(
         events.iter().any(|e| !e.text.trim().is_empty()),
-        crate::tr!("Selected subtitles contain no readable text")
+        "Selected subtitles contain no readable text"
     );
     Ok(())
 }
@@ -296,8 +281,8 @@ pub fn digest(bytes: &[u8]) -> String {
 
 pub fn file_digest(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(path)
-        .with_context(|| crate::tr!("Cannot read {}", path.display(), path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("Cannot read {}", path.display()))?;
     let mut hash = Sha256::new();
     let mut buffer = vec![0u8; 1024 * 1024];
     loop {
@@ -315,20 +300,16 @@ pub fn bind_work_dir(work_dir: &Path, binding: &serde_json::Value) -> Result<()>
     std::fs::create_dir_all(work_dir)?;
     let path = work_dir.join("task-identity.json");
     if path.exists() {
-        let old: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)
-            .context(crate::tr!("Task identity is damaged"))?;
+        let old: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path)?).context("Task identity is damaged")?;
         anyhow::ensure!(
             old == *binding,
-            crate::tr!(
-                "Task inputs changed; create a new task instead of reusing this work directory"
-            )
+            "Task inputs changed; create a new task instead of reusing this work directory"
         );
     } else {
         anyhow::ensure!(
             !work_dir.join("asr.jsonl").exists() && !work_dir.join("media.mp4").exists(),
-            crate::tr!(
-                "This folder contains earlier progress of unknown origin; choose another location"
-            )
+            "This folder contains earlier progress of unknown origin; choose another location"
         );
         crate::checkpoint::atomic_write(&path, &serde_json::to_vec_pretty(binding)?)?;
     }

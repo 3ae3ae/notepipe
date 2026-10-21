@@ -144,14 +144,14 @@ fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
 
 fn rejection_message(status: u16) -> String {
     match status {
-        401 => crate::tr!("The service rejected the saved credentials; check the API key for that service.").into(),
-        403 => crate::tr!("The credentials used by this task cannot access that service or model.").into(),
-        404 => crate::tr!("The service does not have the endpoint or model this task names; check the base URL and model.").into(),
-        429 => crate::tr!("The service rate limit was reached; try again later.").into(),
+        401 => "The service rejected the saved credentials; check the API key for that service.".into(),
+        403 => "The credentials used by this task cannot access that service or model.".into(),
+        404 => "The service does not have the endpoint or model this task names; check the base URL and model.".into(),
+        429 => "The service rate limit was reached; try again later.".into(),
         400 | 422 => {
-            crate::tr!("The service rejected the request parameters (HTTP {}); check the model and service settings for this task.", status, status)
+            format!("The service rejected the request parameters (HTTP {}); check the model and service settings for this task.", status)
         }
-        _ => crate::tr!("The service did not complete this request (HTTP {}).", status, status),
+        _ => format!("The service did not complete this request (HTTP {}).", status),
     }
 }
 
@@ -282,11 +282,8 @@ pub fn install(
     let mut current = ACTIVE
         .get_or_init(|| Mutex::new(None))
         .lock()
-        .map_err(|_| anyhow::anyhow!(crate::tr!("Task state is unavailable; restart the app")))?;
-    anyhow::ensure!(
-        current.is_none(),
-        crate::tr!("Another task is already active")
-    );
+        .map_err(|_| anyhow::anyhow!("Task state is unavailable; restart the app"))?;
+    anyhow::ensure!(current.is_none(), "Another task is already active");
     *current = Some(ledger.clone());
     Ok(Guard(ledger))
 }
@@ -326,7 +323,7 @@ fn read_receipts(dir: &Path) -> Result<Vec<Receipt>> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         if path.extension().is_some_and(|e| e == "json") {
-            result.push(serde_json::from_slice(&std::fs::read(path)?).context(crate::tr!("A saved service request record is damaged; nothing was resent to avoid duplicate charges"))?);
+            result.push(serde_json::from_slice(&std::fs::read(path)?).context("A saved service request record is damaged; nothing was resent to avoid duplicate charges")?);
         }
     }
     Ok(result)
@@ -352,7 +349,7 @@ impl Ledger {
     fn control(&self) -> Result<Control> {
         match &self.control_path {
             Some(path) if path.exists() => serde_json::from_slice(&std::fs::read(path)?)
-                .context(crate::tr!("Task state is unreadable; paused")),
+                .context("Task state is unreadable; paused"),
             _ => Ok(Control::default()),
         }
     }
@@ -360,7 +357,7 @@ impl Ledger {
         let request_id = request.map(|r| r.request_id.clone());
         let message = request.filter(|r| !r.description.is_empty()).map_or_else(
             || message.to_string(),
-            |r| crate::tr!("{}: {}", r.description, message),
+            |r| format!("{}: {}", r.description, message),
         );
         let signature = format!("{reason}:{request_id:?}:{message}");
         if self
@@ -392,12 +389,9 @@ impl Ledger {
         };
         let reason = match intent {
             Intent::Run => None,
-            Intent::Pause => Some(("paused", crate::tr!("Generation paused; progress retained"))),
-            Intent::Cancel => Some((
-                "cancelled",
-                crate::tr!("Task cancelled; saved results retained"),
-            )),
-            Intent::Quit => Some(("quit", crate::tr!("Progress saved; waiting to continue"))),
+            Intent::Pause => Some(("paused", "Generation paused; progress retained")),
+            Intent::Cancel => Some(("cancelled", "Task cancelled; saved results retained")),
+            Intent::Quit => Some(("quit", "Progress saved; waiting to continue")),
         };
         if let Some((reason, message)) = reason {
             return Err(self.block(reason, None, message));
@@ -408,7 +402,7 @@ impl Ledger {
             return Err(self.block(
                 "service_stopped",
                 None,
-                crate::tr!("Service deleted; no new request sent"),
+                "Service deleted; no new request sent",
             ));
         }
         Ok(control)
@@ -506,7 +500,7 @@ impl Ledger {
             let response = old
                 .response
                 .clone()
-                .ok_or_else(|| Failure::local(crate::tr!("Saved request result is missing")))?;
+                .ok_or_else(|| Failure::local("Saved request result is missing"))?;
             validate(&response).map_err(Failure::local)?;
             // A replayed result was received in an earlier run; callers that
             // report live usage skip it.
@@ -531,15 +525,13 @@ impl Ledger {
                 return Err(self.block(
                     REASON_UNCERTAIN,
                     Some(old),
-                    crate::tr!(
-                        "Service result is uncertain; resending may incur additional charges"
-                    ),
+                    "Service result is uncertain; resending may incur additional charges",
                 ));
             }
             let settled = match old.state {
-                State::Failed => Some(crate::tr!("Request failed")),
+                State::Failed => Some("Request failed"),
                 State::Rejected if old.http_status != Some(429) => {
-                    Some(crate::tr!("Service rejected this request"))
+                    Some("Service rejected this request")
                 }
                 _ => None,
             };
@@ -579,7 +571,7 @@ impl Ledger {
                     return Err(self.block(
                         REASON_UNCERTAIN,
                         Some(&unresolved),
-                        crate::tr!("A previous request is unresolved; progress retained"),
+                        "A previous request is unresolved; progress retained",
                     ));
                 }
             }
@@ -617,9 +609,7 @@ impl Ledger {
                 return Err(self.block(
                     REASON_UNCERTAIN,
                     Some(&receipt),
-                    crate::tr!(
-                        "Service result is uncertain; resending may incur additional charges"
-                    ),
+                    "Service result is uncertain; resending may incur additional charges",
                 ));
             }
         };
@@ -650,14 +640,14 @@ impl Ledger {
             return Err(self.block(
                 REASON_UNCERTAIN,
                 Some(&receipt),
-                crate::tr!("Service processing is uncertain"),
+                "Service processing is uncertain",
             ));
         }
         let value = match value {
             Ok(value) => value,
             Err(_) => {
                 receipt.state = State::Failed;
-                receipt.message = Some(crate::tr!("The service response could not be read").into());
+                receipt.message = Some("The service response could not be read".into());
                 self.save(&receipt)?;
                 return Err(Failure::local(receipt.message.unwrap()));
             }
@@ -742,9 +732,9 @@ pub fn receive(
             );
             return Err(NetworkFailure {
                 message: if definitely_unsent {
-                    crate::tr!("Could not connect; request content was not submitted")
+                    "Could not connect; request content was not submitted"
                 } else {
-                    crate::tr!("Did not receive a complete service response")
+                    "Did not receive a complete service response"
                 }
                 .into(),
                 definitely_unsent,
@@ -759,12 +749,12 @@ pub fn receive(
         .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut body)
         .map_err(|_| NetworkFailure {
-            message: crate::tr!("Service response was interrupted").into(),
+            message: "Service response was interrupted".into(),
             definitely_unsent: false,
         })?;
     if body.len() as u64 > MAX_RESPONSE_BYTES {
         return Err(NetworkFailure {
-            message: crate::tr!("Service response exceeds the receiving limit").into(),
+            message: "Service response exceeds the receiving limit".into(),
             definitely_unsent: false,
         });
     }

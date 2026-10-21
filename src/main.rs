@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::{CommandFactory, FromArgMatches};
+use clap::Parser;
 use notepipe::cli::{Cli, Command, ConfigCmd};
 use notepipe::{config, doctor, llm, pipeline, progress, settings};
 use tracing_subscriber::EnvFilter;
@@ -46,8 +46,7 @@ fn init_logging(verbose: u8, quiet: bool, json: bool) {
 }
 
 fn main() -> std::process::ExitCode {
-    let mut args: Vec<_> = std::env::args_os().collect();
-    let lang_arg = notepipe::cli::take_lang_arg(&mut args);
+    let args: Vec<_> = std::env::args_os().collect();
     // 近似扫描（先于 clap 解析，解析失败也要走对输出模式）：把值恰为 "--json"/
     // "run-task" 的其他参数值（如 --llm-prompt "--json"）误判为 NDJSON 是可接受的
     // 代价——它只影响解析失败时的错误格式，不影响成功路径的行为。
@@ -56,67 +55,20 @@ fn main() -> std::process::ExitCode {
         .skip(1)
         .take_while(|a| *a != "--")
         .any(|a| a == "--json" || a == "run-task");
-    let env_lang = std::env::var("NOTEPIPE_LANG").ok();
-    let requested = match lang_arg.as_deref().or(env_lang.as_deref()) {
-        Some("auto") => notepipe::i18n::Lang::detect(),
-        Some(value) => notepipe::i18n::Lang::from_code(value).unwrap_or_else(|| {
-            if json_requested {
-                notepipe::i18n::Lang::source()
-            } else {
-                notepipe::i18n::Lang::detect()
-            }
-        }),
-        None if json_requested => notepipe::i18n::Lang::source(),
-        None => notepipe::i18n::Lang::detect(),
-    };
-    notepipe::i18n::set_lang(requested);
-    let command = notepipe::cli::localize_command(Cli::command());
-    let cli = match command.try_get_matches_from(&args) {
-        Ok(matches) => match Cli::from_arg_matches(&matches) {
-            Ok(mut cli) => {
-                cli.lang = lang_arg.clone();
-                cli
-            }
-            Err(error) => {
-                let rendered = notepipe::cli::localize_rendered(&error.render().to_string());
-                eprint!("{rendered}");
-                return std::process::ExitCode::from(error.exit_code() as u8);
-            }
-        },
+    let cli = match Cli::try_parse_from(&args) {
+        Ok(cli) => cli,
         Err(error) => {
             if error.use_stderr() && json_requested {
                 progress::set_json_mode();
                 progress::emit(
-                    serde_json::json!({"type": "error", "message": notepipe::tr!("Invalid arguments: {}", error)}),
+                    serde_json::json!({"type": "error", "message": format!("Invalid arguments: {}", error)}),
                 );
-            } else if notepipe::i18n::lang() == notepipe::i18n::Lang::source() {
-                let _ = error.print();
             } else {
-                let rendered = notepipe::cli::localize_rendered(&error.render().to_string());
-                print!("{rendered}");
+                let _ = error.print();
             }
             return std::process::ExitCode::from(error.exit_code() as u8);
         }
     };
-    if let Some(value) = &cli.lang {
-        match notepipe::i18n::Lang::from_code(value) {
-            Some(lang) => notepipe::i18n::set_lang(lang),
-            None if value == "auto" => {
-                notepipe::i18n::init_from_env();
-            }
-            None => {
-                eprintln!(
-                    "{}",
-                    notepipe::tr!(
-                        "Unknown language: {}. Available: {}",
-                        value,
-                        notepipe::cli::language_choices()
-                    )
-                );
-                return std::process::ExitCode::FAILURE;
-            }
-        }
-    }
     let json = cli.opts.json || matches!(&cli.command, Some(Command::RunTask));
     let quiet =
         cli.opts.quiet || matches!(&cli.command, Some(Command::Summarize(args)) if args.quiet);
@@ -132,7 +84,7 @@ fn main() -> std::process::ExitCode {
             if json {
                 progress::emit(serde_json::json!({"type": "error", "message": message}));
             } else {
-                notepipe::eprintln_tr!("Error: {}", message);
+                eprintln!("Error: {}", message);
             }
             std::process::ExitCode::FAILURE
         }
@@ -155,11 +107,8 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     let path = settings::config_path();
                     if path.is_file() && !force {
                         anyhow::bail!(
-                            "{}",
-                            notepipe::tr!(
-                                "Configuration already exists: {}. Use --force instead",
-                                path.display()
-                            )
+                            "Configuration already exists: {}. Use --force instead",
+                            path.display()
                         );
                     }
                     if let Some(dir) = path.parent() {
@@ -205,14 +154,11 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 None => {
                     anyhow::ensure!(
                         no_args,
-                        notepipe::tr!("Missing video source. Example: notepipe ./lecture.mp4")
+                        "Missing video source. Example: notepipe ./lecture.mp4"
                     );
-                    println!(
-                        "{}\n",
-                        notepipe::tr!("notepipe — Turn videos into illustrated notes")
-                    );
-                    println!("{}", notepipe::tr!(notepipe::cli::QUICK_START));
-                    notepipe::println_tr!("All options: notepipe --help");
+                    println!("notepipe — Turn videos into illustrated notes\n");
+                    println!("{}", notepipe::cli::QUICK_START);
+                    println!("All options: notepipe --help");
                     return Ok(());
                 }
             };
@@ -240,7 +186,7 @@ fn note_version_dir(dir: &std::path::Path) -> anyhow::Result<Option<std::path::P
         let manifest = notepipe::artifact::safe_asset_path(dir, &current.manifest)?;
         let version = manifest
             .parent()
-            .context(notepipe::tr!("Invalid note manifest location"))?;
+            .context("Invalid note manifest location")?;
         return Ok(Some(version.to_path_buf()));
     }
     Ok(dir
@@ -310,7 +256,7 @@ fn summarize_note(
     let note_dir = dir
         .parent()
         .and_then(|p| p.parent())
-        .context(notepipe::tr!("Invalid note version location"))?
+        .context("Invalid note version location")?
         .to_path_buf();
     let work = note_dir.join(".work").join(&task_id);
     execution::bind_work_dir(
@@ -377,21 +323,16 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
     }
     let source = source.trim();
     if source.starts_with("http://") || source.starts_with("https://") {
-        let url = url::Url::parse(source).map_err(|_| {
-            anyhow::anyhow!(notepipe::tr!("Invalid URL; provide a complete video URL"))
-        })?;
-        anyhow::ensure!(
-            url.host_str().is_some(),
-            notepipe::tr!("URL is missing a host")
-        );
+        let url = url::Url::parse(source)
+            .map_err(|_| anyhow::anyhow!("Invalid URL; provide a complete video URL"))?;
+        anyhow::ensure!(url.host_str().is_some(), "URL is missing a host");
         return Ok(source.to_owned());
     }
     if config::known_video_site(source).is_some() {
         return Ok(format!("https://{source}"));
     }
     anyhow::bail!(
-        "{}\n{}",
-        notepipe::tr!("Video file not found or URL not recognized: {}", source),
-        notepipe::tr!("Check the path and quote paths containing spaces.")
+        "Video file not found or URL not recognized: {}\nCheck the path and quote paths containing spaces.",
+        source
     )
 }

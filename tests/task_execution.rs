@@ -52,7 +52,6 @@ fn run(root: &Path, request: &Request) -> Output {
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("config.toml"), "[broken").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-        .env("NOTEPIPE_LANG", "en")
         .arg("run-task")
         .current_dir(root)
         .env("XDG_CONFIG_HOME", root.join("config"))
@@ -143,7 +142,6 @@ fn scanning_finishes_before_a_slow_screenshot_reports_progress_with_estimated_to
     request.duration = 18.;
     request.config.defaults.sample_interval = Some(1.);
     let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-        .env("NOTEPIPE_LANG", "en")
         .arg("run-task")
         .env("PATH", std::env::join_paths(paths).unwrap())
         .env("XDG_CONFIG_HOME", root.path().join("config"))
@@ -613,7 +611,6 @@ fn cli_llm_keys_prefer_flags_then_config_then_environment_without_affecting_save
             .arg(case.join("notes"))
             .env("XDG_CONFIG_HOME", case.join("config"))
             .env("XDG_CACHE_HOME", case.join("cache"))
-            .env("NOTEPIPE_LANG", "en")
             .env_remove("RUST_LOG")
             .env_remove("NOTEPIPE_LLM_API_KEY")
             .stdin(Stdio::null());
@@ -649,7 +646,6 @@ fn cli_llm_keys_prefer_flags_then_config_then_environment_without_affecting_save
                 .args(["summarize", done["out_dir"].as_str().unwrap()])
                 .env("XDG_CONFIG_HOME", case.join("config"))
                 .env("XDG_CACHE_HOME", case.join("cache"))
-                .env("NOTEPIPE_LANG", "en")
                 .env("NOTEPIPE_LLM_API_KEY", "environment-test-key")
                 .stdin(Stdio::null())
                 .output()
@@ -1359,7 +1355,7 @@ exec "$REAL_FFMPEG" "$@"
             assert!(failure.is_file(), "task did not stop during the cut");
         });
         let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-            .args(["--lang", "en", "run-task"])
+            .arg("run-task")
             .env(
                 "PATH",
                 format!(

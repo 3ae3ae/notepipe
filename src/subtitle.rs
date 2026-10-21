@@ -181,18 +181,13 @@ pub fn sort_tracks(
 pub fn read_subtitle_text(path: &Path) -> Result<String> {
     use std::io::Read;
     const MAX_BYTES: usize = 32 * 1024 * 1024;
-    let file = std::fs::File::open(path).with_context(|| {
-        crate::tr!(
-            "Cannot read subtitle file {}",
-            path.display(),
-            path.display()
-        )
-    })?;
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("Cannot read subtitle file {}", path.display()))?;
     let mut bytes = Vec::new();
     file.take((MAX_BYTES + 1) as u64).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() <= MAX_BYTES,
-        crate::tr!("Subtitle file exceeds 32 MB; choose a smaller SRT or VTT file")
+        "Subtitle file exceeds 32 MB; choose a smaller SRT or VTT file"
     );
     decode_text_with_bom(&bytes)
 }
@@ -203,7 +198,7 @@ pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         ensure!(
             (bytes.len() - 2).is_multiple_of(2),
-            crate::tr!("The file's UTF-16 encoding is incomplete; re-export as UTF-8")
+            "The file's UTF-16 encoding is incomplete; re-export as UTF-8"
         );
         let little = bytes[0] == 0xff;
         let words: Vec<u16> = bytes[2..]
@@ -218,14 +213,12 @@ pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
                 }
             })
             .collect();
-        return String::from_utf16(&words).context(crate::tr!(
-            "The file's character encoding is unreadable; re-export as UTF-8"
-        ));
+        return String::from_utf16(&words)
+            .context("The file's character encoding is unreadable; re-export as UTF-8");
     }
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
-    String::from_utf8(bytes.to_vec()).context(crate::tr!(
-        "The file's character encoding is unreadable; re-export as UTF-8"
-    ))
+    String::from_utf8(bytes.to_vec())
+        .context("The file's character encoding is unreadable; re-export as UTF-8")
 }
 
 pub fn to_srt(events: &[TranscriptEvent]) -> String {

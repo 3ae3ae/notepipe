@@ -168,10 +168,9 @@ pub fn template() -> String {
         ("{LLM_CONCURRENCY}", llm.concurrency.to_string()),
     ]
     .into_iter()
-    .fold(
-        crate::i18n::t(TEMPLATE).to_string(),
-        |text, (key, value)| text.replace(key, &value),
-    )
+    .fold(TEMPLATE.to_owned(), |text, (key, value)| {
+        text.replace(key, &value)
+    })
 }
 
 const TEMPLATE: &str = r#"# Configuration
@@ -251,7 +250,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     let d = &cfg.defaults;
     let r = crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)?;
     println!("Configuration: {}", config_path().display());
-    crate::println_tr!("File settings and built-in defaults, before CLI and environment overrides");
+    println!("File settings and built-in defaults, before CLI and environment overrides");
     let rows: Vec<(&str, String)> = vec![
         ("out", r.out_root.display().to_string()),
         (
@@ -289,11 +288,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         println!("  {key:<17}: {value}");
     }
     let hidden = |key: &str| {
-        if key.is_empty() {
-            "-"
-        } else {
-            crate::tr!("set, hidden)")
-        }
+        if key.is_empty() { "-" } else { "set, hidden)" }
     };
     println!("[asr]");
     println!("  {:<17}: {}", "base_url", cfg.asr.base_url);
@@ -354,7 +349,6 @@ mod tests {
 
     #[test]
     fn template_parses_to_built_in_defaults_when_uncommented() {
-        assert!(crate::i18n::has_translation(super::TEMPLATE));
         let text: String = super::template()
             .lines()
             .map(|line| {

@@ -30,7 +30,7 @@ pub const NO_SCREENSHOTS: &str = "Screenshot not retrieved";
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let started = Instant::now();
     let mut cfg = cfg.clone();
-    cfg.validate().context(crate::tr!("Invalid settings"))?;
+    cfg.validate().context("Invalid settings")?;
     let local = Path::new(&cfg.url);
     let is_local = local.is_file();
     if !is_local {
@@ -48,7 +48,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         Some(
             media::probe_duration(local)
                 .await
-                .context(crate::tr!("Could not probe the local video duration")),
+                .context("Could not probe the local video duration"),
         )
     } else {
         None
@@ -222,8 +222,7 @@ async fn run_task_inner(
     let subtitle = if let Some(events) = &request.subtitle_events {
         Some(events.clone())
     } else if let Some(path) = &request.subtitle {
-        let content =
-            std::fs::read_to_string(path).context(crate::tr!("Cannot read selected subtitles"))?;
+        let content = std::fs::read_to_string(path).context("Cannot read selected subtitles")?;
         Some(crate::subtitle::parse_subtitle(&content))
     } else {
         None
@@ -285,7 +284,7 @@ async fn reprocess(
     }
     anyhow::ensure!(
         base.source_id == request.source_id && base.note_id == request.note_id,
-        crate::tr!("Reprocessing source does not match the base note")
+        "Reprocessing source does not match the base note"
     );
     use execution::Component;
     let has = |component: Component| components.contains(&component);
@@ -309,13 +308,13 @@ async fn reprocess(
             serde_json::from_slice(&std::fs::read(prior.join("task-identity.json"))?)?;
         anyhow::ensure!(
             identity["source_id"].as_str() == Some(request.source_id.as_str()),
-            crate::tr!("Prior work belongs to another source")
+            "Prior work belongs to another source"
         );
         anyhow::ensure!(
             identity["task_id"]
                 .as_str()
                 .is_none_or(|id| id == base.task_id),
-            crate::tr!("Prior work belongs to another task")
+            "Prior work belongs to another task"
         );
         let ledger_dir = cfg.out_dir.join("requests");
         std::fs::create_dir_all(&ledger_dir)?;
@@ -394,11 +393,11 @@ async fn reprocess(
                 anyhow::ensure!(
                     !Path::new(&request.source).is_absolute()
                         && !request.source_id.starts_with("local:"),
-                    crate::tr!("Original video is unavailable; the saved note remains readable")
+                    "Original video is unavailable; the saved note remains readable"
                 );
                 anyhow::ensure!(
                     !cfg.no_download,
-                    crate::tr!("Video required for screenshots is unavailable")
+                    "Video required for screenshots is unavailable"
                 );
                 // 与主路径同一纪律：无法校验的现存文件已由 prepare_cached_media 归档，
                 // 此处只会真正下载新内容，不会把未校验文件标记为已校验
@@ -419,12 +418,10 @@ async fn reprocess(
             result => {
                 outcomes.screenshots = Outcome::failed(match result {
                     Err(error) => format!("{error:#}"),
-                    _ => crate::tr!(NO_SCREENSHOTS).into(),
+                    _ => NO_SCREENSHOTS.into(),
                 });
                 if components.len() == 1 {
-                    anyhow::bail!(crate::tr!(
-                        "Screenshot extraction failed; the original note is unaffected"
-                    ));
+                    anyhow::bail!("Screenshot extraction failed; the original note is unaffected");
                 }
             }
         }
@@ -517,10 +514,7 @@ fn export_only(
     document: &artifact::Document,
     started: Instant,
 ) -> Result<()> {
-    anyhow::ensure!(
-        !cfg.formats.is_empty(),
-        crate::tr!("Select an export format")
-    );
+    anyhow::ensure!(!cfg.formats.is_empty(), "Select an export format");
     let export_root = target
         .note_dir
         .join("exports")
@@ -568,7 +562,7 @@ fn export_for_task(
             let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&marker)?)?;
             anyhow::ensure!(
                 saved["sha256"].as_str() == Some(execution::file_digest(destination)?.as_str()),
-                crate::tr!("Export file changed; original retained")
+                "Export file changed; original retained"
             );
         } else {
             // Publication can finish just before a crash loses its receipt. Compare a
@@ -578,7 +572,7 @@ fn export_for_task(
             crate::portable::export(base, format, &comparison)?;
             anyhow::ensure!(
                 execution::file_digest(&comparison)? == execution::file_digest(destination)?,
-                crate::tr!("Existing export differs; not overwritten")
+                "Existing export differs; not overwritten"
             );
         }
     } else {
@@ -623,7 +617,7 @@ async fn subtitles(
             }
             anyhow::ensure!(
                 cfg.transcript_source != config::TranscriptSource::Subtitle,
-                crate::tr!("Selected subtitles are missing from this task")
+                "Selected subtitles are missing from this task"
             );
             return Ok(None);
         }
@@ -635,15 +629,15 @@ async fn subtitles(
     let found = if local {
         fetch::sidecar_subtitle(Path::new(&cfg.url), &cfg.asr.language)
     } else {
-        let video = probed.context(crate::tr!("Missing video info; please probe again"))?;
+        let video = probed.context("Missing video info; please probe again")?;
         fetch::fetch_subtitle(&video, cfg)
             .await
-            .context(crate::tr!("Could not read video subtitles"))?
+            .context("Could not read video subtitles")?
     };
     match found {
         Some(file) => {
-            let content = std::fs::read_to_string(&file.path)
-                .context(crate::tr!("Cannot read subtitle file"))?;
+            let content =
+                std::fs::read_to_string(&file.path).context("Cannot read subtitle file")?;
             let events = crate::subtitle::parse_subtitle(&content);
             execution::validate_events(&events)?;
             Ok(Some((
@@ -657,9 +651,9 @@ async fn subtitles(
             )))
         }
         None if cfg.transcript_source == config::TranscriptSource::Subtitle => {
-            anyhow::bail!(crate::tr!(
+            anyhow::bail!(
                 "No subtitles found. Select existing subtitles, or use speech recognition."
-            ))
+            )
         }
         None => Ok(None),
     }
@@ -725,7 +719,7 @@ async fn run_prepared(
     if !is_local && !media_existed {
         anyhow::ensure!(
             !cfg.no_download,
-            crate::tr!("The downloaded video is missing; allow downloading it again")
+            "The downloaded video is missing; allow downloading it again"
         );
         progress::stage("download", "start");
         fetch::download(cfg, &media_path, tracing::enabled!(tracing::Level::DEBUG)).await?;
@@ -795,7 +789,7 @@ async fn run_prepared(
             frames
         }
         Ok(_) => {
-            outcomes.screenshots = Outcome::failed(crate::tr!(NO_SCREENSHOTS));
+            outcomes.screenshots = Outcome::failed(NO_SCREENSHOTS);
             Vec::new()
         }
         Err(error) => {
@@ -809,11 +803,9 @@ async fn run_prepared(
             cache
         }
         Ok(_) => {
-            outcomes.transcript = Outcome::failed(crate::tr!("No readable transcript"));
+            outcomes.transcript = Outcome::failed("No readable transcript");
             save_materials(cfg, &frames, &[], &outcomes)?;
-            anyhow::bail!(crate::tr!(
-                "No readable transcript; available screenshots were retained"
-            ));
+            anyhow::bail!("No readable transcript; available screenshots were retained");
         }
         Err(error) => {
             let completed = match crate::checkpoint::Checkpoint::saved_events(&cfg.out_dir) {
@@ -901,12 +893,12 @@ async fn run_prepared(
     }
     emit_done(target, &manifest, &sections, started);
     if !progress::is_json() && !progress::is_quiet() {
-        crate::eprintln_tr!(
+        eprintln!(
             "{}: {}",
             if manifest.partial {
-                crate::tr!("Notes saved with unfinished work")
+                "Notes saved with unfinished work"
             } else {
-                crate::tr!("Notes ready")
+                "Notes ready"
             },
             target.version_dir().display()
         );
@@ -938,7 +930,7 @@ async fn cached_frames(cfg: &PipelineConfig, media: &Path) -> Result<Vec<timelin
     let cache_path = cfg.out_dir.join("screenshots.json");
     if cache_path.is_file() {
         let cache: FramesCache = serde_json::from_slice(&std::fs::read(&cache_path)?)
-            .context(crate::tr!("Screenshot checkpoint is damaged"))?;
+            .context("Screenshot checkpoint is damaged")?;
         if !cache.frames.is_empty() {
             let out_dir = cfg.out_dir.clone();
             if blocking(move || Ok(verified_cache_files(&out_dir, &cache.files))).await? {
@@ -979,7 +971,7 @@ async fn cached_frames(cfg: &PipelineConfig, media: &Path) -> Result<Vec<timelin
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     tokio::task::spawn_blocking(f)
         .await
-        .context(crate::tr!("Background file check interrupted"))?
+        .context("Background file check interrupted")?
 }
 async fn save_file_digest_async(path: PathBuf, marker: PathBuf) -> Result<()> {
     blocking(move || save_file_digest(&path, &marker)).await
@@ -1011,7 +1003,7 @@ fn prepare_cached_media(cfg: &PipelineConfig) -> Result<bool> {
     }
     anyhow::ensure!(
         !cfg.no_download,
-        crate::tr!("Cached video cannot be verified; downloading is required")
+        "Cached video cannot be verified; downloading is required"
     );
     let archives = cfg.out_dir.join(".previous-media");
     std::fs::create_dir_all(&archives)?;
@@ -1083,7 +1075,7 @@ fn cached_transcript(cache_path: &Path) -> Result<Option<TranscriptCache>> {
         return Ok(None);
     }
     let cache: TranscriptCache = serde_json::from_slice(&std::fs::read(cache_path)?)
-        .context(crate::tr!("Saved transcript is damaged"))?;
+        .context("Saved transcript is damaged")?;
     if crate::timeline::has_readable_events(&cache.events) {
         execution::validate_events(&cache.events)?;
         return Ok(Some(cache));
@@ -1107,7 +1099,7 @@ async fn polish_with_rollback(
             .map(|report| (sections, report))
     })
     .await
-    .context(crate::tr!("Proofreading worker interrupted"))??;
+    .context("Proofreading worker interrupted")??;
     if !artifact::has_readable_body(&sections) {
         sections = original;
         report.succeeded = 0;
@@ -1130,13 +1122,12 @@ impl Outcome {
                 Status::Failed
             },
             message: (report.failed > 0).then(|| {
-                let base = crate::tr!(
+                let base = format!(
                     "Proofreading incomplete ({}/{} failed); original text retained",
-                    report.failed,
-                    report.attempted
+                    report.failed, report.attempted
                 );
                 match &report.note {
-                    Some(note) => crate::tr!("{}; first error: {}", base, note),
+                    Some(note) => format!("{}; first error: {}", base, note),
                     None => base,
                 }
             }),
@@ -1182,16 +1173,15 @@ async fn translate_step(
             .map(|report| (sections, report))
     })
     .await
-    .context(crate::tr!("Translation worker interrupted"))??;
+    .context("Translation worker interrupted")??;
     outcomes.translation = Outcome {
         message: (report.failed > 0).then(|| {
-            let base = crate::tr!(
+            let base = format!(
                 "Translation incomplete ({}/{} failed)",
-                report.failed,
-                report.attempted
+                report.failed, report.attempted
             );
             match &report.note {
-                Some(note) => crate::tr!("{}; first error: {}", base, note),
+                Some(note) => format!("{}; first error: {}", base, note),
                 None => base,
             }
         }),

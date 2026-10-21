@@ -158,13 +158,7 @@ impl Checkpoint {
                     // 保留既有内容（partial resume），显式不 truncate
                     .truncate(false)
                     .open(&path)
-                    .with_context(|| {
-                        crate::tr!(
-                            "Failed to open checkpoint {}",
-                            path.display(),
-                            path.display()
-                        )
-                    })?;
+                    .with_context(|| format!("Failed to open checkpoint {}", path.display()))?;
                 let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
                 if loaded.valid_len < file_len {
                     // 打开写入句柄前把文件截断到最后一个完整行：
@@ -173,9 +167,8 @@ impl Checkpoint {
                     // 注意：不能用 append-only 句柄做 set_len——Windows 上
                     // FILE_APPEND_DATA 不含写长度权限，会 Access denied。
                     f.set_len(loaded.valid_len).with_context(|| {
-                        crate::tr!(
+                        format!(
                             "Failed to truncate checkpoint partial line {}",
-                            path.display(),
                             path.display()
                         )
                     })?;
@@ -184,11 +177,7 @@ impl Checkpoint {
                     use std::io::Seek as _;
                     f.seek(std::io::SeekFrom::End(0))?;
                     f.write_all(b"\n").with_context(|| {
-                        crate::tr!(
-                            "Failed to append newline to {}",
-                            path.display(),
-                            path.display()
-                        )
+                        format!("Failed to append newline to {}", path.display())
                     })?;
                 }
                 // 非 append 句柄：后续 record 前定位到文件尾（单写者进程，一次即可）
@@ -210,18 +199,18 @@ impl Checkpoint {
             return Ok(None);
         }
         let s = std::fs::read_to_string(path)
-            .with_context(|| crate::tr!("Failed to read {}", path.display(), path.display()))?;
-        let header: serde_json::Value = serde_json::from_str(&s)
-            .context(crate::tr!("The transcription progress record is damaged"))?;
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let header: serde_json::Value =
+            serde_json::from_str(&s).context("The transcription progress record is damaged")?;
         if header["schema_version"]
             .as_u64()
             .is_some_and(|version| version != u64::from(CHECKPOINT_SCHEMA_VERSION))
         {
             return Ok(None);
         }
-        Ok(Some(serde_json::from_str(&s).context(crate::tr!(
-            "The transcription progress record is damaged"
-        ))?))
+        Ok(Some(
+            serde_json::from_str(&s).context("The transcription progress record is damaged")?,
+        ))
     }
 
     fn clear(path: &Path, done_path: &Path, identity_path: &Path) -> Result<()> {
@@ -243,9 +232,8 @@ impl Checkpoint {
             .keep();
         for file in old {
             std::fs::rename(file, archive.join(file.file_name().unwrap())).with_context(|| {
-                crate::tr!(
+                format!(
                     "Cannot preserve previous transcription progress {}",
-                    file.display(),
                     file.display()
                 )
             })?;
@@ -264,7 +252,7 @@ impl Checkpoint {
             });
         }
         let content = std::fs::read_to_string(path)
-            .with_context(|| crate::tr!("Failed to read {}", path.display(), path.display()))?;
+            .with_context(|| format!("Failed to read {}", path.display()))?;
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         let last_idx = lines.len().saturating_sub(1);
         let mut out: Vec<TranscriptEvent> = vec![];
@@ -284,7 +272,7 @@ impl Checkpoint {
                         // 崩溃时最后一行可能只写了一半：容忍
                         tracing::debug!(
                             "{}",
-                            crate::tr!("Ignored an incomplete checkpoint tail: {}", e)
+                            format!("Ignored an incomplete checkpoint tail: {}", e)
                         );
                     } else {
                         anyhow::bail!(
@@ -345,11 +333,7 @@ impl Checkpoint {
         if self.file.is_none() {
             if let Some(dir) = self.path.parent() {
                 std::fs::create_dir_all(dir).with_context(|| {
-                    crate::tr!(
-                        "Failed to create checkpoint directory {}",
-                        dir.display(),
-                        dir.display()
-                    )
+                    format!("Failed to create checkpoint directory {}", dir.display())
                 })?;
             }
             self.file = Some(
@@ -358,23 +342,14 @@ impl Checkpoint {
                     .append(true)
                     .open(&self.path)
                     .with_context(|| {
-                        crate::tr!(
-                            "Failed to open checkpoint {}",
-                            self.path.display(),
-                            self.path.display()
-                        )
+                        format!("Failed to open checkpoint {}", self.path.display())
                     })?,
             );
         }
         let line = serde_json::to_string(&ev)?;
         if let Some(f) = &mut self.file {
-            writeln!(f, "{line}").with_context(|| {
-                crate::tr!(
-                    "Failed to write checkpoint {}",
-                    self.path.display(),
-                    self.path.display()
-                )
-            })?;
+            writeln!(f, "{line}")
+                .with_context(|| format!("Failed to write checkpoint {}", self.path.display()))?;
             f.flush()
                 .with_context(|| format!("flush checkpoint {}", self.path.display()))?;
         }
@@ -424,22 +399,17 @@ fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).with_context(|| {
-        crate::tr!(
-            "Failed to create directory {}",
-            dir.display(),
-            dir.display()
-        )
-    })?;
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("Failed to create directory {}", dir.display()))?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(bytes)
-        .with_context(|| crate::tr!("Failed to write {}", path.display(), path.display()))?;
+        .with_context(|| format!("Failed to write {}", path.display()))?;
     if shared {
         make_shared(tmp.as_file())?;
     }
     tmp.as_file().sync_all()?;
     tmp.persist(path)
-        .with_context(|| crate::tr!("Failed to replace {}", path.display(), path.display()))?;
+        .with_context(|| format!("Failed to replace {}", path.display()))?;
     Ok(())
 }
 

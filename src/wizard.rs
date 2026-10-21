@@ -90,9 +90,9 @@ pub fn is_first_run(asr: &Asr) -> bool {
 
 fn selected_or_cancelled(choice: Option<usize>) -> Result<usize> {
     choice.ok_or_else(|| {
-        anyhow::anyhow!(crate::tr!(
+        anyhow::anyhow!(
             "Setup cancelled; no configuration saved. Run your video command again to restart."
-        ))
+        )
     })
 }
 
@@ -113,13 +113,10 @@ fn apply_preset(asr: &Asr, preset: &Preset) -> Asr {
 
 /// Called only after subtitle discovery finds no usable transcript.
 pub fn run(asr: &Asr) -> Result<Asr> {
-    let labels: Vec<_> = PRESETS
-        .iter()
-        .map(|preset| crate::i18n::t(preset.label))
-        .collect();
+    let labels: Vec<_> = PRESETS.iter().map(|preset| preset.label).collect();
     let index = selected_or_cancelled(
         dialoguer::Select::new()
-            .with_prompt(crate::tr!("Choose a transcription service"))
+            .with_prompt("Choose a transcription service")
             .items(&labels)
             .interact_opt()?,
     )?;
@@ -127,9 +124,7 @@ pub fn run(asr: &Asr) -> Result<Asr> {
     let mut asr = apply_preset(asr, preset);
     if asr.command.is_empty() && asr.base_url.is_empty() {
         asr.base_url = dialoguer::Input::<String>::new()
-            .with_prompt(crate::tr!(
-                "Service address (compatible with OpenAI interface) / Service URL (OpenAI-compatible)"
-            ))
+            .with_prompt("Service address (compatible with OpenAI interface) / Service URL (OpenAI-compatible)")
             .interact_text()?
             .trim()
             .to_owned();
@@ -140,13 +135,13 @@ pub fn run(asr: &Asr) -> Result<Asr> {
         && crate::config::asr_api_key_from_env().is_none()
     {
         asr.api_key = dialoguer::Password::new()
-            .with_prompt(crate::tr!("API key (optional; hidden)"))
+            .with_prompt("API key (optional; hidden)")
             .allow_empty_password(true)
             .interact()?;
     }
     if asr.command.is_empty() && asr.model.is_empty() {
         asr.model = dialoguer::Input::<String>::new()
-            .with_prompt(crate::tr!("Model name"))
+            .with_prompt("Model name")
             .allow_empty(true)
             .interact_text()?
             .trim()
@@ -155,7 +150,7 @@ pub fn run(asr: &Asr) -> Result<Asr> {
     let mut file = crate::settings::load()?;
     file.asr = asr.clone();
     let path = crate::settings::save(&file)?;
-    eprintln!("{}", crate::tr!("Configuration saved: {}", path.display()));
+    eprintln!("Configuration saved: {}", path.display());
     Ok(asr)
 }
 

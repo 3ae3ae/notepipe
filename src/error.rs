@@ -51,10 +51,9 @@ pub fn install_hint(cmd: &str) -> String {
     } else if cfg!(target_os = "windows") {
         format!("Windows: winget install {pkg}")
     } else {
-        crate::tr!(
+        format!(
             "Debian/Ubuntu: sudo apt install {}; Arch: sudo pacman -S {}",
-            pkg,
-            pkg
+            pkg, pkg
         )
     }
 }

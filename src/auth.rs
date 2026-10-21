@@ -7,13 +7,13 @@ fn validate(cookies: Option<&Path>, cookies_from_browser: Option<&str>) -> Resul
     if let Some(path) = cookies {
         ensure!(
             path.is_file(),
-            crate::tr!("Cookie file must exist and be a regular file")
+            "Cookie file must exist and be a regular file"
         );
     }
     if let Some(browser) = cookies_from_browser {
         ensure!(
             !browser.is_empty() && !browser.chars().any(char::is_control),
-            crate::tr!("Browser cookie spec must be non-empty and contain no control characters")
+            "Browser cookie spec must be non-empty and contain no control characters"
         );
     }
     Ok(())
@@ -28,7 +28,7 @@ pub fn configure_ytdlp(
 ) -> Result<Option<tempfile::NamedTempFile>> {
     validate(cookies, cookies_from_browser)?;
     let snapshot = if let Some(path) = cookies {
-        let bytes = std::fs::read(path).context(crate::tr!("Cannot read cookie file"))?;
+        let bytes = std::fs::read(path).context("Cannot read cookie file")?;
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(&bytes)?;
         file.flush()?;

@@ -144,7 +144,7 @@ where
         r
     })
     .await
-    .context(crate::tr!("Speech recognition task did not complete"))?
+    .context("Speech recognition task did not complete")?
 }
 
 pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent>> {
@@ -174,7 +174,7 @@ fn run_api(
     let check_control = || {
         anyhow::ensure!(
             !cancelled.load(std::sync::atomic::Ordering::Relaxed),
-            crate::tr!("Transcription cancelled.")
+            "Transcription cancelled."
         );
         crate::dispatch::check_control()
     };
@@ -296,9 +296,8 @@ fn run_api(
                     }
                 }
                 Err(e) => {
-                    err = Some(
-                        e.context(crate::tr!("Speech transcription failed for segment {}.", i)),
-                    );
+                    err =
+                        Some(e.context(format!("Speech transcription failed for segment {}.", i)));
                     abort.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
@@ -320,7 +319,7 @@ fn run_api(
     pb.finish();
     if let Some(e) = err {
         return Err(if let Some(adapter) = &adapter {
-            adapter.stderr.attach(e, crate::tr!("ASR adapter output"))
+            adapter.stderr.attach(e, "ASR adapter output")
         } else {
             e
         });
@@ -366,7 +365,7 @@ fn post_cloud(
     body: &[u8],
     identity: &serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let description = crate::tr!(
+    let description = format!(
         "Transcribe video audio {}–{}",
         crate::render::fmt_ts(seg.start),
         crate::render::fmt_ts(seg.end)
@@ -400,13 +399,13 @@ fn post_cloud(
             |value| {
                 anyhow::ensure!(
                     value.get("error").is_none_or(serde_json::Value::is_null),
-                    crate::tr!("The speech service returned an error")
+                    "The speech service returned an error"
                 );
                 let has_text = match t.mode {
                     crate::settings::AsrMode::Transcriptions => value["text"].is_string(),
                     crate::settings::AsrMode::Chat => chat_content_has_text(value),
                 };
-                anyhow::ensure!(has_text, crate::tr!("The speech service returned no text"));
+                anyhow::ensure!(has_text, "The speech service returned no text");
                 Ok(())
             },
         )
@@ -430,10 +429,10 @@ struct ApiTarget<'a> {
 
 /// 转写单个 chunk；Ok(None) = 无语音内容。
 fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<Option<String>> {
-    cut_wav(wav, seg.cut_start, seg.cut_end, chunk).context(crate::tr!("Could not split audio"))?;
+    cut_wav(wav, seg.cut_start, seg.cut_end, chunk).context("Could not split audio")?;
     (t.check_control)()?;
     let bytes = std::fs::read(chunk)
-        .with_context(|| crate::tr!("Reading audio segment: {}", chunk.display()))?;
+        .with_context(|| format!("Reading audio segment: {}", chunk.display()))?;
     let identity = serde_json::json!({"model":t.model,"mode":t.mode,"language":t.language,"audio_sha256":crate::execution::digest(&bytes),"segment_start":seg.start,"segment_end":seg.end,"cut_start":seg.cut_start,"cut_end":seg.cut_end});
     let (content_type, body) = transcription_request(t, &bytes)?;
     let result = post_cloud(t, seg, &content_type, &body, &identity);
@@ -594,11 +593,11 @@ fn read_pcm_samples(
         .read_exact(&mut header)
         .ok()
         .filter(|_| &header[0..4] == b"RIFF" && &header[8..12] == b"WAVE")
-        .ok_or_else(|| anyhow::anyhow!(crate::tr!("Cannot parse wav PCM data")))?;
+        .ok_or_else(|| anyhow::anyhow!("Cannot parse wav PCM data"))?;
     let data_size = loop {
         let mut ch = [0u8; 8];
         if reader.read_exact(&mut ch).is_err() {
-            anyhow::bail!(crate::tr!("Cannot parse wav PCM data"));
+            anyhow::bail!("Cannot parse wav PCM data");
         }
         let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as u64;
         if &ch[0..4] == b"data" {
@@ -832,7 +831,7 @@ pub fn cut_wav(src: &Path, start: f64, end: f64, dest: &Path) -> Result<()> {
     .arg(dest);
     let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, CUT_TIMEOUT)?;
     if !out.status.success() {
-        anyhow::bail!(crate::tr!("ffmpeg could not split audio"));
+        anyhow::bail!("ffmpeg could not split audio");
     }
     Ok(())
 }

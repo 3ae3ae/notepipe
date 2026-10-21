@@ -1,4 +1,3 @@
-use crate::i18n::t;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -33,15 +32,11 @@ fn version() -> &'static str {
 #[command(
     name = "notepipe",
     version = version(),
-    about = crate::tr!("Turn video and audio into Markdown notes"),
+    about = "Turn video and audio into Markdown notes",
     args_conflicts_with_subcommands = true,
     after_help = QUICK_START
 )]
 pub struct Cli {
-    /// Interface language.
-    #[arg(long, global = true, value_name = "LANG", help = crate::tr!("Interface language: {}", language_choices()))]
-    pub lang: Option<String>,
-
     /// Video URL or local file
     pub source: Option<String>,
 
@@ -283,164 +278,6 @@ pub enum ConfigCmd {
     },
     /// Show the config path and file settings
     Show,
-}
-
-pub fn language_choices() -> String {
-    std::iter::once("auto")
-        .chain(crate::i18n::languages().map(|lang| lang.code()))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Removes `--lang` from the argument list before clap parses it.
-///
-/// `--lang` is a global option, but clap's `args_conflicts_with_subcommands`
-/// would otherwise reject `notepipe --lang en doctor`. Keeping the flag in the
-/// command definition documents it in `--help`; taking it out here lets it
-/// appear before or after a subcommand.
-pub fn take_lang_arg(args: &mut Vec<std::ffi::OsString>) -> Option<String> {
-    let mut value = None;
-    let mut index = 0;
-    let mut literal = false;
-    while index < args.len() {
-        let arg = args[index].to_string_lossy().into_owned();
-        if literal {
-            index += 1;
-            continue;
-        }
-        if arg == "--" {
-            literal = true;
-            index += 1;
-            continue;
-        }
-        if arg == "--lang" {
-            if index + 1 < args.len() {
-                value = Some(args[index + 1].to_string_lossy().into_owned());
-                args.drain(index..index + 2);
-                continue;
-            }
-            // Leave a value-less flag for clap to report the missing value.
-            index += 1;
-            continue;
-        }
-        if let Some(rest) = arg.strip_prefix("--lang=") {
-            value = Some(rest.to_owned());
-            args.remove(index);
-            continue;
-        }
-        index += 1;
-    }
-    value
-}
-
-/// Replaces clap's compile-time help and about texts with catalog translations.
-///
-/// The catalog is keyed by the original text, so the compiled doc comments stay
-/// the single source of truth and a missing entry falls back to the source.
-pub fn localize_command(command: clap::Command) -> clap::Command {
-    use clap::Command;
-
-    fn localized(value: Option<&clap::builder::StyledStr>) -> Option<String> {
-        value.map(|value| t(&value.to_string()).to_owned())
-    }
-
-    fn about(command: Command) -> Command {
-        let about = localized(command.get_about());
-        let long_about = localized(command.get_long_about());
-        let before = localized(command.get_before_help());
-        let after = localized(command.get_after_help());
-        let mut command = command;
-        if let Some(value) = about {
-            command = command.about(value);
-        }
-        if let Some(value) = long_about {
-            command = command.long_about(value);
-        }
-        if let Some(value) = before {
-            command = command.before_help(value);
-        }
-        if let Some(value) = after {
-            command = command.after_help(value);
-        }
-        command
-    }
-
-    fn args(command: Command) -> Command {
-        command.mut_args(|arg| {
-            let help = localized(arg.get_help());
-            let long_help = localized(arg.get_long_help());
-            let heading = arg.get_help_heading().map(|heading| {
-                // clap's heading type only accepts static strings; this runs once per process.
-                Box::leak(t(heading).to_owned().into_boxed_str()) as &'static str
-            });
-            let mut arg = arg;
-            if let Some(value) = help {
-                arg = arg.help(value);
-            }
-            if let Some(value) = long_help {
-                arg = arg.long_help(value);
-            }
-            if let Some(value) = heading {
-                arg = arg.help_heading(value);
-            }
-            arg
-        })
-    }
-
-    let command = about(command);
-    let command = args(command);
-    command.mut_subcommands(localize_command)
-}
-
-/// Localizes clap's own section headings in rendered help and error text.
-///
-/// Clap has no runtime translations for these strings; replacing whole lines
-/// keeps the argument help itself (already localized) untouched.
-pub fn localize_rendered(text: &str) -> String {
-    let lang = crate::i18n::lang();
-    if lang == crate::i18n::Lang::source() {
-        return text.to_owned();
-    }
-    let (usage, options, commands, arguments, more) = (
-        crate::tr!("Usage:"),
-        crate::tr!("Options:"),
-        crate::tr!("Command:"),
-        crate::tr!("Parameters:"),
-        crate::tr!("For more information, run --help."),
-    );
-    let mut out = String::with_capacity(text.len());
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        let localized = if trimmed.starts_with("Usage:") {
-            Some(line.replacen("Usage:", usage, 1))
-        } else if trimmed.starts_with("Options:") {
-            Some(line.replacen("Options:", options, 1))
-        } else if trimmed.starts_with("Commands:") {
-            Some(line.replacen("Commands:", commands, 1))
-        } else if trimmed.starts_with("Arguments:") {
-            Some(line.replacen("Arguments:", arguments, 1))
-        } else if trimmed.starts_with("For more information, try '--help'.") {
-            Some(line.replacen("For more information, try '--help'.", more, 1))
-        } else if line.contains("Print help") {
-            Some(line.replacen("Print help", crate::tr!("show help"), 1))
-        } else if line.contains("Print version") {
-            Some(line.replacen("Print version", crate::tr!("show version"), 1))
-        } else if line.contains("Print this message or the help of the given subcommand(s)") {
-            Some(line.replacen(
-                "Print this message or the help of the given subcommand(s)",
-                crate::tr!("Show help for this message or subcommand"),
-                1,
-            ))
-        } else {
-            None
-        };
-        out.push_str(localized.as_deref().unwrap_or(line));
-        out.push('\n');
-    }
-    if !text.ends_with('\n') {
-        out.pop();
-    }
-    out
 }
 
 fn parse_translation_target(value: &str) -> Result<String, String> {
