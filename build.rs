@@ -1,5 +1,5 @@
 //! macOS arm64：编译并静态链接 Apple 原生 ASR/VAD 模块（speech-swift）。
-//! 其他平台或设置 COURSE2MD_NO_APPLE=1 时跳过（course2md 回落 llama.cpp 路径）。
+//! 其他平台或设置 NOTEPIPE_NO_APPLE=1 时跳过（notepipe 回落 llama.cpp 路径）。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -8,8 +8,8 @@ fn main() {
     emit_commit_hash();
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    let skip = std::env::var_os("COURSE2MD_NO_APPLE").is_some();
-    println!("cargo:rerun-if-env-changed=COURSE2MD_NO_APPLE");
+    let skip = std::env::var_os("NOTEPIPE_NO_APPLE").is_some();
+    println!("cargo:rerun-if-env-changed=NOTEPIPE_NO_APPLE");
     println!("cargo:rerun-if-changed=native/apple-asr/Package.swift");
     // swift package update 只改 resolved 文件；漏掉它会让本地构建静默链接旧静态库
     println!("cargo:rerun-if-changed=native/apple-asr/Package.resolved");
@@ -291,7 +291,7 @@ fn emit_commit_hash() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let commit = git_commit(&root);
     println!(
-        "cargo:rustc-env=COURSE2MD_COMMIT_HASH={}",
+        "cargo:rustc-env=NOTEPIPE_COMMIT_HASH={}",
         commit.as_deref().unwrap_or("unknown")
     );
 }

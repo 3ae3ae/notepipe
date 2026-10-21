@@ -1,6 +1,6 @@
 //! LLM 字幕校对（可选，默认关闭）。
 //!
-//! 配置文件：`~/.config/course2md/config.toml`（XDG；Windows 为 `%APPDATA%\course2md\config.toml`）。
+//! 配置文件：`~/.config/notepipe/config.toml`（XDG；Windows 为 `%APPDATA%\notepipe\config.toml`）。
 //! 支持 OpenAI 兼容 /chat/completions 端点；所有配置项均可被命令行覆盖。
 //! 关闭时每次任务结束打印开启提示（可用配置项或 `--no-llm-hint` 关闭）。
 //!
@@ -137,12 +137,12 @@ pub fn endpoint(base_url: &str) -> String {
 pub fn validate(s: &LlmSettings) -> Result<()> {
     if s.provider != LlmProvider::Codex && s.base_url.trim().is_empty() {
         bail!(crate::tr!(
-            "未设置 AI 服务地址 / AI service URL is not set. Run: course2md llm setup"
+            "未设置 AI 服务地址 / AI service URL is not set. Run: notepipe llm setup"
         ));
     }
     if s.model.trim().is_empty() {
         bail!(crate::tr!(
-            "未设置 AI 模型 / AI model is not set. Run: course2md llm setup"
+            "未设置 AI 模型 / AI model is not set. Run: notepipe llm setup"
         ));
     }
     if !s.base_url.trim().is_empty() {
@@ -1176,7 +1176,7 @@ pub fn setup_interactive(
     anyhow::ensure!(
         !cfg.llm.base_url.trim().is_empty() && !cfg.llm.model.trim().is_empty(),
         crate::tr!(
-            "需要填写服务地址和模型名。在终端运行 course2md llm setup，或传入 --base-url 和 --model / A base URL and model are required. Run course2md llm setup in a terminal, or pass --base-url and --model."
+            "需要填写服务地址和模型名。在终端运行 notepipe llm setup，或传入 --base-url 和 --model / A base URL and model are required. Run notepipe llm setup in a terminal, or pass --base-url and --model."
         )
     );
     // 容错：没写 scheme 时补 https://
@@ -1246,7 +1246,7 @@ pub fn print_status(cfg: &crate::settings::ConfigFile) {
     println!("  并发请求 / Concurrent requests: {}", s.concurrency);
     println!("  使用提示 / Usage hint: {}", state(!s.disable_hint));
     if !s.enabled {
-        crate::println_tr!("开启校对 / Enable transcript polish: course2md llm setup");
+        crate::println_tr!("开启校对 / Enable transcript polish: notepipe llm setup");
     }
 }
 

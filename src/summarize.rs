@@ -38,8 +38,8 @@ pub struct Summary {
 
 /// 摘要区块哨兵注释（md/html 通用；HTML 注释在两种渲染产物中都原样保留）。
 /// 幂等判断与原地替换均以哨兵为准。
-const SUMMARY_BEGIN: &str = "<!-- course2md:summary -->";
-const SUMMARY_END: &str = "<!-- /course2md:summary -->";
+const SUMMARY_BEGIN: &str = "<!-- notepipe:summary -->";
+const SUMMARY_END: &str = "<!-- /notepipe:summary -->";
 
 const SYSTEM_PROMPT: &str = "你是视频内容摘要助手。根据提供的带时间戳字幕为视频生成结构化摘要。\
 严格要求：1) 只依据字幕内容，严禁编造字幕中不存在的事实、数字、人名或观点；\
@@ -353,7 +353,7 @@ pub async fn summarize(
     ))
 }
 
-/// 生成插入 course.md 的摘要区块（markdown，哨兵注释包裹）。
+/// 生成插入 note.md 的摘要区块（markdown，哨兵注释包裹）。
 /// 有意信任 LLM 输出（markdown 语义直通），不做转义。
 pub fn render_md_block(sm: &Summary) -> String {
     let mut out = format!("\n{SUMMARY_BEGIN}\n\n## 📝 视频摘要\n\n");
@@ -379,7 +379,7 @@ pub fn render_md_block(sm: &Summary) -> String {
     out
 }
 
-/// 生成插入 course.html 的摘要区块（HTML，哨兵注释包裹）。
+/// 生成插入 note.html 的摘要区块（HTML，哨兵注释包裹）。
 pub fn render_html_block(sm: &Summary) -> String {
     let mut out = crate::tr!(
         "{}<section class=\"summary\"><h2>📝 视频摘要</h2>",
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn unclosed_sentinel_is_left_unchanged() {
-        let md = "# 标题\n\n<!-- course2md:summary -->\n\n## 残缺块\n\n正文\n";
+        let md = "# 标题\n\n<!-- notepipe:summary -->\n\n## 残缺块\n\n正文\n";
         let sm = Summary {
             tldr: "新".into(),
             key_points: vec![],

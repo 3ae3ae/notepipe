@@ -67,9 +67,9 @@ impl Lang {
         None
     }
 
-    /// `COURSE2MD_LANG`, then the POSIX locale variables, then the platform locale.
+    /// `NOTEPIPE_LANG`, then the POSIX locale variables, then the platform locale.
     pub fn detect() -> Self {
-        for name in ["COURSE2MD_LANG", "LC_ALL", "LC_MESSAGES", "LANG"] {
+        for name in ["NOTEPIPE_LANG", "LC_ALL", "LC_MESSAGES", "LANG"] {
             if let Ok(value) = std::env::var(name)
                 && let Some(lang) = Self::from_code(&value)
             {
@@ -114,7 +114,7 @@ pub fn lang() -> Lang {
     Lang::from_index(CURRENT.load(Ordering::Relaxed))
 }
 
-/// Selects the language from `COURSE2MD_LANG` or the operating system locale.
+/// Selects the language from `NOTEPIPE_LANG` or the operating system locale.
 pub fn init_from_env() -> Lang {
     let lang = Lang::detect();
     set_lang(lang);

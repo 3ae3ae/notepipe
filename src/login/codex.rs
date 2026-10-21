@@ -1,6 +1,6 @@
 //! Codex 登录：导入 codex CLI 的 ChatGPT OAuth 登录态（~/.codex/auth.json）。
 //!
-//! 凭据存 course2md 自有副本 `{config_dir}/auth/codex.json`（0600 原子写），
+//! 凭据存 notepipe 自有副本 `{config_dir}/auth/codex.json`（0600 原子写），
 //! 绝不改写 ~/.codex/auth.json。access token 过期前自动刷新（refresh token
 //! 会轮换，刷新后立即写回）。
 //!
@@ -109,7 +109,7 @@ fn model_catalog(tokens: &CodexTokens) -> ModelCatalog {
     }
 }
 
-/// course2md 自有的 codex 凭据副本。
+/// notepipe 自有的 codex 凭据副本。
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CodexTokens {
     pub access_token: String,
@@ -516,7 +516,7 @@ fn browser_authorization() -> Result<CodexTokens> {
     exchange_code(&code, &verifier, port)
 }
 
-/// 只删除 course2md 自有的 Codex 凭据副本，不改写配置。返回是否确有凭据被删除。
+/// 只删除 notepipe 自有的 Codex 凭据副本，不改写配置。返回是否确有凭据被删除。
 pub fn remove_credentials() -> Result<bool> {
     match std::fs::remove_file(credential_path()) {
         Ok(()) => Ok(true),
@@ -543,7 +543,7 @@ fn confirm_browser(prompt: &str) -> Result<CodexTokens> {
     browser_authorization()
 }
 
-/// `course2md --login codex`：导入 codex CLI 登录态（失败时可改用浏览器授权），选模型并启用 AI 校对。
+/// `notepipe --login codex`：导入 codex CLI 登录态（失败时可改用浏览器授权），选模型并启用 AI 校对。
 pub(super) fn login() -> Result<()> {
     let interactive = interactive();
     let mut tokens = match import_from_codex_cli() {
@@ -622,13 +622,13 @@ pub(super) fn login() -> Result<()> {
     match crate::llm::test_connection(&cfg.llm) {
         Ok(()) => crate::println_tr!("连接测试通过 / Connection test passed."),
         Err(e) => bail!(
-            "登录态已保存，但连接测试失败；可用 course2md llm setup 调整模型 / Login saved, but the connection test failed; adjust the model with course2md llm setup: {e:#}"
+            "登录态已保存，但连接测试失败；可用 notepipe llm setup 调整模型 / Login saved, but the connection test failed; adjust the model with notepipe llm setup: {e:#}"
         ),
     }
     Ok(())
 }
 
-/// `course2md --logout codex`：删除凭据；当前 AI 校对使用 Codex 时一并重置。
+/// `notepipe --logout codex`：删除凭据；当前 AI 校对使用 Codex 时一并重置。
 pub(super) fn logout() -> Result<()> {
     if remove_credentials()? {
         crate::println_tr!("已清除 Codex 登录状态。/ Codex login removed.");

@@ -734,7 +734,7 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
 /// Standard OpenAI-compatible file upload, also accepted by OpenRouter.
 fn transcription_form(model: &str, audio: &[u8]) -> (String, Vec<u8>) {
     let boundary = format!(
-        "course2md-{}-{}",
+        "notepipe-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

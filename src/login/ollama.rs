@@ -55,7 +55,7 @@ pub(super) fn models(host: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-/// `course2md --login ollama`：探测本机服务、选模型并启用 AI 校对。
+/// `notepipe --login ollama`：探测本机服务、选模型并启用 AI 校对。
 pub(super) fn login() -> Result<()> {
     let host = host();
     let names = models(&host)?;
@@ -84,7 +84,7 @@ pub(super) fn login() -> Result<()> {
         names.into_iter().nth(pick).unwrap_or_default()
     } else {
         bail!(crate::tr!(
-            "Ollama 有多个模型可用，请在终端中运行 course2md --login ollama 以选择 / Multiple Ollama models available; run course2md --login ollama in a terminal to choose"
+            "Ollama 有多个模型可用，请在终端中运行 notepipe --login ollama 以选择 / Multiple Ollama models available; run notepipe --login ollama in a terminal to choose"
         ));
     };
 
@@ -119,7 +119,7 @@ pub(super) fn login() -> Result<()> {
     Ok(())
 }
 
-/// `course2md --logout ollama`：当前 AI 校对使用 Ollama 时重置配置。
+/// `notepipe --logout ollama`：当前 AI 校对使用 Ollama 时重置配置。
 pub(super) fn logout() -> Result<()> {
     let mut cfg = crate::settings::load()?;
     if cfg.llm.provider != LlmProvider::Ollama {

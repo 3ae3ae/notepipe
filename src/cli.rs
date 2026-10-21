@@ -3,9 +3,9 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 pub const QUICK_START: &str = "快速开始 / Quick start:
-  course2md ./lecture.mp4
-  course2md https://www.youtube.com/watch?v=VIDEO_ID
-  course2md ./lecture.mp4 -o ./notes
+  notepipe ./lecture.mp4
+  notepipe https://www.youtube.com/watch?v=VIDEO_ID
+  notepipe ./lecture.mp4 -o ./notes
 
 转写方式 / Transcripts:
   默认优先使用平台字幕，无字幕时使用语音识别。
@@ -14,12 +14,12 @@ pub const QUICK_START: &str = "快速开始 / Quick start:
   --transcript-source asr       强制语音识别 / Speech recognition only
 
 下一步 / Next steps:
-  course2md --login bilibili    扫码登录 / Log in with a QR code
-  course2md --logout bilibili   清除登录 / Remove saved login
-  course2md doctor              检查依赖与配置 / Check dependencies and settings
-  course2md config init         生成配置模板 / Create a configuration template
-  course2md llm setup           配置可选的 AI 校对 / Set up optional AI proofreading
-  course2md summarize ./notes   为已有笔记生成摘要 / Summarize existing notes
+  notepipe --login bilibili    扫码登录 / Log in with a QR code
+  notepipe --logout bilibili   清除登录 / Remove saved login
+  notepipe doctor              检查依赖与配置 / Check dependencies and settings
+  notepipe config init         生成配置模板 / Create a configuration template
+  notepipe llm setup           配置可选的 AI 校对 / Set up optional AI proofreading
+  notepipe summarize ./notes   为已有笔记生成摘要 / Summarize existing notes
 
 交互终端首次转换会引导配置；脚本请显式传入所需参数。
 First conversion in a terminal offers setup; scripts should pass options explicitly.
@@ -28,9 +28,9 @@ First conversion in a terminal offers setup; scripts should pass options explici
 
 #[derive(Parser)]
 #[command(
-    name = "course2md",
-    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("COURSE2MD_COMMIT_HASH"), ")"),
-    about = crate::tr!("将课程视频转换为图文笔记 / Turn course videos into illustrated notes"),
+    name = "notepipe",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("NOTEPIPE_COMMIT_HASH"), ")"),
+    about = crate::tr!("将视频和音频转换为 Markdown 笔记 / Turn video and audio into Markdown notes"),
     args_conflicts_with_subcommands = true,
     after_help = QUICK_START
 )]
@@ -127,7 +127,7 @@ pub struct RunOpts {
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub asr_api_base_url: Option<String>,
 
-    /// 云端识别密钥；建议改用 COURSE2MD_ASR_API_KEY 环境变量，避免留在命令历史 / Cloud API key; prefer COURSE2MD_ASR_API_KEY to keep it out of shell history
+    /// 云端识别密钥；建议改用 NOTEPIPE_ASR_API_KEY 环境变量，避免留在命令历史 / Cloud API key; prefer NOTEPIPE_ASR_API_KEY to keep it out of shell history
     #[arg(long)]
     #[arg(help_heading = "语音识别 / Speech recognition")]
     pub asr_api_key: Option<String>,
@@ -416,7 +416,7 @@ pub enum ConfigCmd {
 /// Removes `--lang` from the argument list before clap parses it.
 ///
 /// `--lang` is a global option, but clap's `args_conflicts_with_subcommands`
-/// would otherwise reject `course2md --lang en doctor`. Keeping the flag in the
+/// would otherwise reject `notepipe --lang en doctor`. Keeping the flag in the
 /// command definition documents it in `--help`; taking it out here lets it
 /// appear before or after a subcommand.
 pub fn take_lang_arg(args: &mut Vec<std::ffi::OsString>) -> Option<String> {
@@ -628,7 +628,7 @@ mod i18n_tests {
     #[test]
     fn rendered_headings_follow_the_language() {
         crate::i18n::set_lang(Lang::ZhHans);
-        let rendered = "Usage: course2md [OPTIONS]\n\nOptions:\n  -h, --help  Print help\n";
+        let rendered = "Usage: notepipe [OPTIONS]\n\nOptions:\n  -h, --help  Print help\n";
         let localized = localize_rendered(rendered);
         assert!(localized.contains("用法："));
         assert!(localized.contains("选项："));

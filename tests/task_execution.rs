@@ -1,6 +1,6 @@
 //! End-to-end stdin task protocol, using real ffmpeg and isolated local files only.
-use course2md::execution::Component;
-use course2md::{
+use notepipe::execution::Component;
+use notepipe::{
     artifact,
     config::{AsrProvider, SlideMode, TranscriptSource},
     execution::Request,
@@ -23,12 +23,12 @@ fn request(root: &Path, source: &Path) -> Request {
         schema: 1,
         operation: Default::default(),
         task_id: "task-one".into(),
-        course_id: "course-one".into(),
+        note_id: "note-one".into(),
         version_id: "version-one".into(),
         source: source.display().to_string(),
         source_id: format!(
             "local:sha256:{}",
-            course2md::execution::file_digest(source).unwrap()
+            notepipe::execution::file_digest(source).unwrap()
         ),
         title: "我确认的笔记名称".into(),
         author: String::new(),
@@ -44,22 +44,22 @@ fn request(root: &Path, source: &Path) -> Request {
         config,
         allow_unauthenticated_asr: false,
         work_dir: root.join("work"),
-        course_dir: root.join("course"),
+        note_dir: root.join("note"),
         control_path: None,
         service_versions: Default::default(),
     }
 }
 fn run(root: &Path, request: &Request) -> Output {
-    let config = root.join("config/course2md");
+    let config = root.join("config/notepipe");
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("config.toml"), "[broken").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_course2md"))
-        .env("COURSE2MD_LANG", "zh-Hans")
+    let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+        .env("NOTEPIPE_LANG", "zh-Hans")
         .arg("run-task")
         .current_dir(root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
-        .env("COURSE2MD_ASR_API_KEY", "environment-key-must-not-be-used")
+        .env("NOTEPIPE_ASR_API_KEY", "environment-key-must-not-be-used")
         .env_remove("RUST_LOG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -96,12 +96,12 @@ fn scanning_finishes_before_a_slow_screenshot_reports_progress_with_estimated_to
         time::{Duration, Instant},
     };
     let (Some(ffmpeg), Some(python)) = (
-        course2md::runtime::which("ffmpeg"),
-        course2md::runtime::which("python3"),
+        notepipe::runtime::which("ffmpeg"),
+        notepipe::runtime::which("python3"),
     ) else {
         return;
     };
-    if course2md::runtime::which("ffprobe").is_none() {
+    if notepipe::runtime::which("ffprobe").is_none() {
         return;
     }
     let root = tempfile::tempdir().unwrap();
@@ -143,8 +143,8 @@ fn scanning_finishes_before_a_slow_screenshot_reports_progress_with_estimated_to
     let mut request = request(root.path(), &video);
     request.duration = 18.;
     request.config.defaults.sample_interval = Some(1.);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_course2md"))
-        .env("COURSE2MD_LANG", "zh-Hans")
+    let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+        .env("NOTEPIPE_LANG", "zh-Hans")
         .arg("run-task")
         .env("PATH", std::env::join_paths(paths).unwrap())
         .env("XDG_CONFIG_HOME", root.path().join("config"))
@@ -242,8 +242,7 @@ fn scanning_finishes_before_a_slow_screenshot_reports_progress_with_estimated_to
 
 #[test]
 fn explicit_subtitles_zero_exports_and_confirmed_title_survive_real_conversion_and_resume() {
-    if course2md::runtime::which("ffmpeg").is_none()
-        || course2md::runtime::which("ffprobe").is_none()
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
     {
         return;
     }
@@ -280,14 +279,20 @@ fn explicit_subtitles_zero_exports_and_confirmed_title_survive_real_conversion_a
         .find(|event| event["type"] == "done")
         .unwrap();
     assert_eq!(done["title"], request.title);
+    assert_eq!(done["note_id"], request.note_id);
     assert_eq!(done["outputs"], serde_json::json!([]));
     assert!(
         !first_events
             .iter()
             .any(|event| event["stage"] == "transcribe" || event["stage"] == "audio")
     );
-    let version = request.course_dir.join("versions/version-one");
+    let version = request.note_dir.join("versions/version-one");
     let manifest = artifact::read_manifest(&version.join("manifest.json")).unwrap();
+    assert_eq!(manifest.note_id, request.note_id);
+    let current: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(request.note_dir.join("current.json")).unwrap())
+            .unwrap();
+    assert_eq!(current["note_id"], request.note_id);
     assert!(!manifest.frames.is_empty());
     artifact::validate_version(&version, &manifest).unwrap();
     let original = std::fs::read(version.join("document.json")).unwrap();
@@ -310,8 +315,7 @@ fn explicit_subtitles_zero_exports_and_confirmed_title_survive_real_conversion_a
 
 #[test]
 fn broken_video_preserves_readable_subtitles_as_partial_note_without_phantom_images() {
-    if course2md::runtime::which("ffmpeg").is_none()
-        || course2md::runtime::which("ffprobe").is_none()
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
     {
         return;
     }
@@ -322,12 +326,9 @@ fn broken_video_preserves_readable_subtitles_as_partial_note_without_phantom_ima
     let output = run(root.path(), &request);
     let observed = events(&output);
     assert!(output.status.success(), "{observed:#?}");
-    let manifest = artifact::read_manifest(
-        &request
-            .course_dir
-            .join("versions/version-one/manifest.json"),
-    )
-    .unwrap();
+    let manifest =
+        artifact::read_manifest(&request.note_dir.join("versions/version-one/manifest.json"))
+            .unwrap();
     assert!(manifest.partial);
     assert!(manifest.frames.is_empty());
     assert_eq!(
@@ -335,7 +336,7 @@ fn broken_video_preserves_readable_subtitles_as_partial_note_without_phantom_ima
         artifact::Status::Failed
     );
     let body =
-        std::fs::read_to_string(request.course_dir.join("versions/version-one/course.md")).unwrap();
+        std::fs::read_to_string(request.note_dir.join("versions/version-one/note.md")).unwrap();
     assert!(body.contains("这里是已选字幕"));
     assert!(!body.contains("![]"));
     assert!(!body.contains("本段无语音"));
@@ -363,7 +364,7 @@ fn missing_frozen_cloud_credentials_fail_before_download_and_ignore_environment(
                 .contains("API Key")
     }));
     assert!(!request.work_dir.join("media.mp4").exists());
-    assert!(!request.course_dir.join("current.json").exists());
+    assert!(!request.note_dir.join("current.json").exists());
 }
 
 #[test]
@@ -381,7 +382,7 @@ fn changed_local_source_is_rejected_before_using_the_confirmed_subtitles() {
             .as_str()
             .is_some_and(|s| s.contains("视频文件已在读取后发生变化"))
     }));
-    assert!(!request.course_dir.join("current.json").exists());
+    assert!(!request.note_dir.join("current.json").exists());
 }
 
 struct MockAi {
@@ -510,8 +511,7 @@ fn summary_response() -> serde_json::Value {
 
 #[test]
 fn proofreading_images_and_custom_rules_match_the_requested_outputs() {
-    if course2md::runtime::which("ffmpeg").is_none()
-        || course2md::runtime::which("ffprobe").is_none()
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
     {
         return;
     }
@@ -562,18 +562,15 @@ fn proofreading_images_and_custom_rules_match_the_requested_outputs() {
     initial.config.llm.base_url = mock.url.clone();
     initial.config.llm.model = "proofread-vision".into();
     initial.config.llm.api_key = "private-task-key".into();
-    initial.config.defaults.formats = Some(vec![course2md::config::OutputFormat::Json]);
+    initial.config.defaults.formats = Some(vec![notepipe::config::OutputFormat::Json]);
     initial
         .service_versions
         .insert("llm".into(), "service-v1".into());
     let output = run(root.path(), &initial);
     assert!(output.status.success(), "{:?}", events(&output));
-    let manifest = artifact::read_manifest(
-        &initial
-            .course_dir
-            .join("versions/version-one/manifest.json"),
-    )
-    .unwrap();
+    let manifest =
+        artifact::read_manifest(&initial.note_dir.join("versions/version-one/manifest.json"))
+            .unwrap();
     assert!(!manifest.partial, "{manifest:?}");
     assert_eq!(
         manifest.outcomes.proofreading.status,
@@ -598,8 +595,7 @@ fn proofreading_images_and_custom_rules_match_the_requested_outputs() {
 #[test]
 fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source_work() {
     use std::sync::atomic::Ordering;
-    if course2md::runtime::which("ffmpeg").is_none()
-        || course2md::runtime::which("ffprobe").is_none()
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
     {
         return;
     }
@@ -623,7 +619,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     let source = root.path().join("video.mp4");
     std::fs::write(&source, b"broken video, readable selected subtitles").unwrap();
     let mut initial = request(root.path(), &source);
-    initial.config.defaults.formats = Some(vec![course2md::config::OutputFormat::Html]);
+    initial.config.defaults.formats = Some(vec![notepipe::config::OutputFormat::Html]);
     initial.config.llm.enabled = false;
     initial.config.llm.summarize = true;
     initial.config.llm.base_url = mock.url.clone();
@@ -639,7 +635,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
         2,
         "an explicit response_format rejection allows one resend without it; the following arbitrary HTTP 400 must not change and resend the payload"
     );
-    let base = initial.course_dir.join("versions/version-one");
+    let base = initial.note_dir.join("versions/version-one");
     let first_manifest = artifact::read_manifest(&base.join("manifest.json")).unwrap();
     assert_eq!(
         first_manifest.outcomes.summary.status,
@@ -653,7 +649,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     assert!(reason.contains("HTTP 400"));
     assert!(!reason.contains(" / ") && !reason.contains("private-task-key"));
     std::fs::write(
-        base.join("course.md"),
+        base.join("note.md"),
         "# 我的人工补充\n\n旧版本不能被补摘要覆盖。\n",
     )
     .unwrap();
@@ -671,7 +667,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     retry.task_id = "summary-retry".into();
     retry.version_id = "summary-retry".into();
     retry.work_dir = root.path().join("retry-work");
-    retry.operation = course2md::execution::Operation::Reprocess {
+    retry.operation = notepipe::execution::Operation::Reprocess {
         base_version_dir: base.clone(),
         components: vec![Component::Summary],
         prior_work_dir: Some(initial.work_dir.clone()),
@@ -699,7 +695,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     }));
     // 首轮降级重发留下过两张 receipt（原负载与去 response_format 的负载各一张）；
     // 重新尝试只针对与当前负载匹配的那张。
-    let receipts = course2md::dispatch::receipts(&retry.work_dir).unwrap();
+    let receipts = notepipe::dispatch::receipts(&retry.work_dir).unwrap();
     let receipt = receipts.iter().find(|r| r.attempt == 2).unwrap();
     assert!(
         receipt.retry_authorized.is_none(),
@@ -716,15 +712,15 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     final_retry.task_id = "summary-final".into();
     final_retry.version_id = "summary-final".into();
     final_retry.work_dir = root.path().join("final-work");
-    final_retry.operation = course2md::execution::Operation::Reprocess {
-        base_version_dir: initial.course_dir.join("versions/summary-retry"),
+    final_retry.operation = notepipe::execution::Operation::Reprocess {
+        base_version_dir: initial.note_dir.join("versions/summary-retry"),
         components: vec![Component::Summary],
         prior_work_dir: Some(retry.work_dir.clone()),
     };
     let third = run(root.path(), &final_retry);
     assert!(third.status.success(), "{:?}", events(&third));
     assert_eq!(mock.calls.load(Ordering::SeqCst), 4);
-    let final_dir = initial.course_dir.join("versions/summary-final");
+    let final_dir = initial.note_dir.join("versions/summary-final");
     let manifest = artifact::read_manifest(&final_dir.join("manifest.json")).unwrap();
     assert_eq!(
         manifest.outcomes.summary.status,
@@ -751,8 +747,7 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
 #[test]
 fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() {
     use std::sync::atomic::Ordering;
-    if course2md::runtime::which("ffmpeg").is_none()
-        || course2md::runtime::which("ffprobe").is_none()
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
     {
         return;
     }
@@ -795,18 +790,18 @@ fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() 
             .any(|event| event["type"] == "blocked" && event["reason"] == "uncertain")
     );
     assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
-    let mut receipts = course2md::dispatch::receipts(&original.work_dir).unwrap();
+    let mut receipts = notepipe::dispatch::receipts(&original.work_dir).unwrap();
     assert_eq!(
         receipts.len(),
         1,
         "blocked summary must not create an attempt"
     );
     let receipt = receipts.remove(0);
-    assert_eq!(receipt.state, course2md::dispatch::State::Uncertain);
+    assert_eq!(receipt.state, notepipe::dispatch::State::Uncertain);
     assert_eq!(receipt.purpose, "proofreading");
     assert!(receipt.description.contains("00:00–00:07"));
     assert!(!String::from_utf8_lossy(&first.stdout).contains("private-task-key"));
-    let base = original.course_dir.join("versions/version-one");
+    let base = original.note_dir.join("versions/version-one");
     let manifest = artifact::read_manifest(&base.join("manifest.json")).unwrap();
     assert_eq!(manifest.outcomes.summary.status, artifact::Status::Failed);
     let untouched = std::fs::read(base.join("document.json")).unwrap();
@@ -816,7 +811,7 @@ fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() 
     retry.version_id = "retry-polish".into();
     retry.work_dir = root.path().join("retry-work");
     retry.control_path = Some(retry.work_dir.join("control.json"));
-    retry.operation = course2md::execution::Operation::Reprocess {
+    retry.operation = notepipe::execution::Operation::Reprocess {
         base_version_dir: base.clone(),
         components: vec![Component::Proofreading, Component::Summary],
         prior_work_dir: Some(original.work_dir.clone()),
@@ -838,18 +833,18 @@ fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() 
             .any(|event| event["stage"] == "transcribe" || event["stage"] == "download")
     );
     let updated =
-        artifact::read_manifest(&retry.course_dir.join("versions/retry-polish/manifest.json"))
+        artifact::read_manifest(&retry.note_dir.join("versions/retry-polish/manifest.json"))
             .unwrap();
     assert_eq!(
         updated.outcomes.proofreading.status,
         artifact::Status::Succeeded
     );
     assert_eq!(updated.outcomes.summary.status, artifact::Status::Succeeded);
-    let receipts = course2md::dispatch::receipts(&retry.work_dir).unwrap();
+    let receipts = notepipe::dispatch::receipts(&retry.work_dir).unwrap();
     assert_eq!(receipts.len(), 2);
     for (purpose, attempt) in [("proofreading", 2), ("summary", 1)] {
         let receipt = receipts.iter().find(|r| r.purpose == purpose).unwrap();
-        assert_eq!(receipt.state, course2md::dispatch::State::Completed);
+        assert_eq!(receipt.state, notepipe::dispatch::State::Completed);
         assert_eq!(receipt.attempt, attempt);
     }
     assert_eq!(
@@ -860,9 +855,8 @@ fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() 
 
 #[test]
 fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gone() {
-    use course2md::config::OutputFormat;
-    if course2md::runtime::which("ffmpeg").is_none()
-        || course2md::runtime::which("ffprobe").is_none()
+    use notepipe::config::OutputFormat;
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
     {
         return;
     }
@@ -871,15 +865,15 @@ fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gon
     std::fs::write(&source, b"broken").unwrap();
     let original = request(root.path(), &source);
     assert!(run(root.path(), &original).status.success());
-    let base = original.course_dir.join("versions/version-one");
-    let pointer = std::fs::read(original.course_dir.join("current.json")).unwrap();
+    let base = original.note_dir.join("versions/version-one");
+    let pointer = std::fs::read(original.note_dir.join("current.json")).unwrap();
     let mut export = original.clone();
     export.task_id = "exports".into();
     export.version_id = "unused-new-body".into();
     export.work_dir = root.path().join("export-work");
     export.subtitle_events = None;
     export.subtitle = Some(root.path().join("deleted-subtitles.srt"));
-    export.operation = course2md::execution::Operation::Reprocess {
+    export.operation = notepipe::execution::Operation::Reprocess {
         base_version_dir: base,
         components: vec![Component::Exports],
         prior_work_dir: None,
@@ -901,13 +895,8 @@ fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gon
         assert_eq!(done["outputs"].as_array().unwrap().len(), 3);
     }
     assert_eq!(
-        std::fs::read(original.course_dir.join("current.json")).unwrap(),
+        std::fs::read(original.note_dir.join("current.json")).unwrap(),
         pointer
     );
-    assert!(
-        !original
-            .course_dir
-            .join("versions/unused-new-body")
-            .exists()
-    );
+    assert!(!original.note_dir.join("versions/unused-new-body").exists());
 }

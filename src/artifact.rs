@@ -150,7 +150,7 @@ pub struct Asset {
 pub struct Manifest {
     pub schema: u32,
     pub task_id: String,
-    pub course_id: String,
+    pub note_id: String,
     pub source_id: String,
     pub version_id: String,
     pub title: String,
@@ -168,7 +168,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurrentVersion {
     pub schema: u32,
-    pub course_id: String,
+    pub note_id: String,
     pub version_id: String,
     pub manifest: String,
 }
@@ -227,23 +227,23 @@ fn parallel_map<T: Sync, R: Send>(
 #[derive(Debug, Clone)]
 pub struct Target {
     pub task_id: String,
-    pub course_id: String,
+    pub note_id: String,
     pub source_id: String,
     pub version_id: String,
-    pub course_dir: PathBuf,
+    pub note_dir: PathBuf,
 }
 impl Target {
     pub fn from_request(request: &execution::Request) -> Self {
         Self {
             task_id: request.task_id.clone(),
-            course_id: request.course_id.clone(),
+            note_id: request.note_id.clone(),
             source_id: request.source_id.clone(),
             version_id: request.version_id.clone(),
-            course_dir: request.course_dir.clone(),
+            note_dir: request.note_dir.clone(),
         }
     }
     pub fn version_dir(&self) -> PathBuf {
-        self.course_dir.join("versions").join(&self.version_id)
+        self.note_dir.join("versions").join(&self.version_id)
     }
 }
 
@@ -265,7 +265,7 @@ pub fn published(target: &Target) -> Result<Option<Manifest>> {
     let manifest = read_manifest(&dir.join("manifest.json"))?;
     anyhow::ensure!(
         manifest.task_id == target.task_id
-            && manifest.course_id == target.course_id
+            && manifest.note_id == target.note_id
             && manifest.source_id == target.source_id
             && manifest.version_id == target.version_id,
         crate::tr!("此版本位置已有其他笔记，已保留原文件 / Version identity conflict")
@@ -409,13 +409,13 @@ pub fn publish_blocking(
             "文字未生成，已保留可用素材 / No readable text; available materials are retained in the task"
         )
     );
-    std::fs::create_dir_all(&target.course_dir)?;
-    let _lock = crate::runtime::lock_file(&target.course_dir.join(".publish.lock"))?;
+    std::fs::create_dir_all(&target.note_dir)?;
+    let _lock = crate::runtime::lock_file(&target.note_dir.join(".publish.lock"))?;
     if let Some(manifest) = published(target)? {
         commit_current(target, &manifest)?;
         return Ok(manifest);
     }
-    let versions = target.course_dir.join("versions");
+    let versions = target.note_dir.join("versions");
     std::fs::create_dir_all(&versions)?;
     let staging = tempfile::Builder::new()
         .prefix(".publishing-")
@@ -455,7 +455,7 @@ pub fn publish_blocking(
     if let Some(summary) = summary {
         markdown = crate::summarize::insert_into_md(&markdown, summary);
     }
-    atomic_write_shared(&staging.path().join("course.md"), markdown.as_bytes())?;
+    atomic_write_shared(&staging.path().join("note.md"), markdown.as_bytes())?;
     meta.save(&staging.path().join("meta.json"))?;
     // Preserve original fine-grained transcript for later independent local/AI work.
     if work_dir.join("timeline.jsonl").is_file() {
@@ -484,7 +484,7 @@ pub fn publish_blocking(
     }
     let mut paths = vec![
         "document.json".to_string(),
-        "course.md".to_string(),
+        "note.md".to_string(),
         "meta.json".to_string(),
     ];
     if staging.path().join("timeline.jsonl").is_file() {
@@ -511,10 +511,10 @@ pub fn publish_blocking(
             path: path.clone(),
         })
     })?;
-    let revision = if target.course_dir.join("current.json").exists() {
+    let revision = if target.note_dir.join("current.json").exists() {
         let current: CurrentVersion =
-            serde_json::from_slice(&std::fs::read(target.course_dir.join("current.json"))?)?;
-        read_manifest(&safe_asset_path(&target.course_dir, &current.manifest)?)?
+            serde_json::from_slice(&std::fs::read(target.note_dir.join("current.json"))?)?;
+        read_manifest(&safe_asset_path(&target.note_dir, &current.manifest)?)?
             .revision
             .saturating_add(1)
     } else {
@@ -524,7 +524,7 @@ pub fn publish_blocking(
         revision,
         schema: 1,
         task_id: target.task_id.clone(),
-        course_id: target.course_id.clone(),
+        note_id: target.note_id.clone(),
         source_id: target.source_id.clone(),
         version_id: target.version_id.clone(),
         title: meta.title.clone(),
@@ -533,7 +533,7 @@ pub fn publish_blocking(
             .as_millis()
             .try_into()?,
         document: "document.json".into(),
-        markdown: "course.md".into(),
+        markdown: "note.md".into(),
         frames,
         assets,
         outputs,
@@ -554,17 +554,17 @@ pub fn publish_blocking(
 }
 
 fn commit_current(target: &Target, manifest: &Manifest) -> Result<()> {
-    let path = target.course_dir.join("current.json");
+    let path = target.note_dir.join("current.json");
     if path.is_file() {
         let current: CurrentVersion = serde_json::from_slice(&std::fs::read(&path)?)?;
         anyhow::ensure!(
-            current.course_id == target.course_id,
-            crate::tr!("课程位置已被其他课程使用 / Course identity conflict")
+            current.note_id == target.note_id,
+            crate::tr!("笔记位置已被其他笔记使用 / Note identity conflict")
         );
         // Recovery of an older completed task must never roll back a later version.
         if current.version_id != target.version_id {
             let current_manifest =
-                read_manifest(&safe_asset_path(&target.course_dir, &current.manifest)?)?;
+                read_manifest(&safe_asset_path(&target.note_dir, &current.manifest)?)?;
             if current_manifest.revision > manifest.revision
                 || (current_manifest.revision == manifest.revision
                     && current_manifest.created_at_ms >= manifest.created_at_ms)
@@ -577,12 +577,12 @@ fn commit_current(target: &Target, manifest: &Manifest) -> Result<()> {
         &path,
         &serde_json::to_vec_pretty(&CurrentVersion {
             schema: 1,
-            course_id: target.course_id.clone(),
+            note_id: target.note_id.clone(),
             version_id: target.version_id.clone(),
             manifest: format!("versions/{}/manifest.json", target.version_id),
         })?,
     )?;
-    sync_dir(&target.course_dir)
+    sync_dir(&target.note_dir)
 }
 
 pub fn sync_dir(path: &Path) -> Result<()> {
@@ -606,10 +606,10 @@ mod tests {
         std::fs::create_dir(&work).unwrap();
         let mut target = Target {
             task_id: "task-1".into(),
-            course_id: "course".into(),
+            note_id: "note".into(),
             source_id: "source".into(),
             version_id: "v1".into(),
-            course_dir: dir.path().join("course"),
+            note_dir: dir.path().join("note"),
         };
         let meta = VideoMeta {
             title: "Existing note".into(),
@@ -642,16 +642,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let old_export = target.version_dir().join("exports/course.html");
+        let old_export = target.version_dir().join("exports/note.html");
         let edited = b"<p>My manual corrections must survive.</p>";
         std::fs::write(&old_export, edited).unwrap();
-        let pointer = target.course_dir.join("current.json");
+        let pointer = target.note_dir.join("current.json");
         let original_pointer = std::fs::read(&pointer).unwrap();
         target.task_id = "task-2".into();
         target.version_id = "v2".into();
         // Version storage stays writable; only publishing the current pointer fails.
-        std::fs::set_permissions(&target.course_dir, std::fs::Permissions::from_mode(0o555))
-            .unwrap();
+        std::fs::set_permissions(&target.note_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
         let interrupted = publish(
             &target,
             &work,
@@ -662,8 +661,7 @@ mod tests {
             Outcomes::default(),
         )
         .await;
-        std::fs::set_permissions(&target.course_dir, std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(&target.note_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(interrupted.is_err());
         assert!(target.version_dir().join("manifest.json").is_file());
         assert_eq!(std::fs::read(&pointer).unwrap(), original_pointer);
@@ -716,10 +714,10 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         let mut target = Target {
             task_id: "task-1".into(),
-            course_id: "course".into(),
+            note_id: "note".into(),
             source_id: "video:part1".into(),
             version_id: "v1".into(),
-            course_dir: dir.path().join("course"),
+            note_dir: dir.path().join("note"),
         };
         let meta = VideoMeta {
             title: "Confirmed title".into(),
@@ -753,8 +751,8 @@ mod tests {
         .await
         .unwrap();
         assert!(first.outputs.is_empty());
-        assert!(target.version_dir().join("course.md").is_file());
-        let old_pointer = std::fs::read(target.course_dir.join("current.json")).unwrap();
+        assert!(target.version_dir().join("note.md").is_file());
+        let old_pointer = std::fs::read(target.note_dir.join("current.json")).unwrap();
         target.task_id = "task-2".into();
         target.version_id = "v2".into();
         let mut broken = sections.clone();
@@ -773,15 +771,10 @@ mod tests {
             .is_err()
         );
         assert_eq!(
-            std::fs::read(target.course_dir.join("current.json")).unwrap(),
+            std::fs::read(target.note_dir.join("current.json")).unwrap(),
             old_pointer
         );
-        assert!(
-            target
-                .course_dir
-                .join("versions/v1/document.json")
-                .is_file()
-        );
+        assert!(target.note_dir.join("versions/v1/document.json").is_file());
         assert!(!target.version_dir().exists());
         assert!(
             publish(&target, &work, &meta, &[], None, &[], Outcomes::default())

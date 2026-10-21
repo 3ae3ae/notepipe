@@ -22,7 +22,7 @@ const COOKIE_NAMES: &[&str] = &[
 ];
 type Cookies = BTreeMap<String, String>;
 
-pub const BILIBILI_SETUP_TIP: &str = "使用 Bilibili 视频时，推荐先运行 course2md --login bilibili 扫码登录，可下载账号权限范围内更高清晰度的视频。 / For Bilibili videos, run course2md --login bilibili first to scan a QR code; downloads can then use higher resolutions available to your account.";
+pub const BILIBILI_SETUP_TIP: &str = "使用 Bilibili 视频时，推荐先运行 notepipe --login bilibili 扫码登录，可下载账号权限范围内更高清晰度的视频。 / For Bilibili videos, run notepipe --login bilibili first to scan a QR code; downloads can then use higher resolutions available to your account.";
 
 #[derive(Debug)]
 struct LoginTip {
@@ -49,7 +49,7 @@ pub fn with_bilibili_login_tip(url: &str, error: anyhow::Error) -> anyhow::Error
     let hint = if crate::progress::is_json() {
         "提示：请在设置的账号中重新登录 B 站后重试。 / Hint: sign in to Bilibili again in Settings and retry."
     } else {
-        "提示：可运行 course2md --login bilibili 扫码登录后重试；已登录时可重新登录。 / Hint: run course2md --login bilibili and scan the QR code to retry; if already logged in, log in again."
+        "提示：可运行 notepipe --login bilibili 扫码登录后重试；已登录时可重新登录。 / Hint: run notepipe --login bilibili and scan the QR code to retry; if already logged in, log in again."
     };
     anyhow::Error::new(LoginTip { error, hint })
 }
@@ -85,7 +85,7 @@ fn configure_with_path(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => {
             return Err(e)
-                .context(crate::tr!("无法读取 Bilibili 登录状态，请重新运行 course2md --login bilibili / Cannot read Bilibili login state; run course2md --login bilibili again"));
+                .context(crate::tr!("无法读取 Bilibili 登录状态，请重新运行 notepipe --login bilibili / Cannot read Bilibili login state; run notepipe --login bilibili again"));
         }
     };
     let mut file = tempfile::NamedTempFile::new()?;
@@ -158,7 +158,7 @@ fn netscape(cookies: &Cookies) -> Result<String> {
         )
     );
     let mut text = String::from(
-        "# Netscape HTTP Cookie File\n# course2md Bilibili login; do not share this file.\n",
+        "# Netscape HTTP Cookie File\n# notepipe Bilibili login; do not share this file.\n",
     );
     for (name, value) in cookies {
         // Session cookies (expiry 0) remain valid until the server expires them.
@@ -272,7 +272,7 @@ fn finish_with(
     ensure!(
         complete(cookies),
         crate::tr!(
-            "登录响应缺少凭据，请重新运行 course2md --login bilibili / Login response is missing credentials; run course2md --login bilibili again"
+            "登录响应缺少凭据，请重新运行 notepipe --login bilibili / Login response is missing credentials; run notepipe --login bilibili again"
         )
     );
     let value: Value = fetch(NAV, cookies)?.into_json().context(crate::tr!(
@@ -453,7 +453,7 @@ pub fn login_bilibili() -> Result<()> {
                 }
             }
             QrPoll::Expired => bail!(crate::tr!(
-                "二维码已过期，请重新运行 course2md --login bilibili / QR code expired; run course2md --login bilibili again"
+                "二维码已过期，请重新运行 notepipe --login bilibili / QR code expired; run notepipe --login bilibili again"
             )),
             QrPoll::Authenticated(login) => {
                 login.save()?;

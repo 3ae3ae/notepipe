@@ -331,7 +331,7 @@ pub struct TempWorkDir {
 impl TempWorkDir {
     pub fn new(tag: &str) -> Result<Self> {
         let dir = tempfile::Builder::new()
-            .prefix(&format!("course2md-{tag}-"))
+            .prefix(&format!("notepipe-{tag}-"))
             .tempdir()
             .context(crate::tr!(
                 "无法创建临时工作目录 / Could not create a temporary working directory"

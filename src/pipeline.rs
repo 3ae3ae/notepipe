@@ -85,8 +85,8 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             }
         )
     };
-    let course_id = execution::digest(source_id.as_bytes());
-    let course_dir = cfg.out_root.join(&platform).join(&course_id);
+    let note_id = execution::digest(source_id.as_bytes());
+    let note_dir = cfg.out_root.join(&platform).join(&note_id);
     let identity_config = cfg.redacted_for_identity();
     let binding =
         serde_json::json!({"source_id": source_id, "config": identity_config, "title": meta.title});
@@ -102,13 +102,13 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     }
     let target = Target {
         task_id: task_id.clone(),
-        course_id,
+        note_id,
         source_id,
         version_id: task_id.clone(),
-        course_dir,
+        note_dir,
     };
     let mut cfg = cfg.clone();
-    cfg.out_dir = target.course_dir.join(".work").join(&task_id);
+    cfg.out_dir = target.note_dir.join(".work").join(&task_id);
     if cfg.provider == config::AsrProvider::Api
         && cfg.asr_api.api_key.is_empty()
         && let Some(key) = config::asr_api_key_from_env()
@@ -287,7 +287,7 @@ async fn reprocess(
         }
     }
     anyhow::ensure!(
-        base.source_id == request.source_id && base.course_id == request.course_id,
+        base.source_id == request.source_id && base.note_id == request.note_id,
         crate::tr!("补做任务与原笔记来源不一致 / Reprocessing source does not match the base note")
     );
     use execution::Component;
@@ -529,7 +529,7 @@ fn export_only(
         crate::tr!("请选择需要导出的文件格式 / Select an export format")
     );
     let export_root = target
-        .course_dir
+        .note_dir
         .join("exports")
         .join(&base.version_id)
         .join(&target.task_id);
@@ -558,7 +558,7 @@ fn export_only(
     )?;
     let (segments, chars) = done_stats(&document.sections);
     progress::emit(
-        serde_json::json!({"type":"done","operation":"exports","task_id":request.task_id,"course_id":base.course_id,"version_id":base.version_id,"out_dir":base_dir,"manifest":base_dir.join("manifest.json"),"title":document.meta.title,"slides":base.frames.len(),"segments":segments,"chars":chars,"outputs":outputs,"partial":partial,"outcomes":{"exports":exports},"elapsed_secs":started.elapsed().as_secs_f64()}),
+        serde_json::json!({"type":"done","operation":"exports","task_id":request.task_id,"note_id":base.note_id,"version_id":base.version_id,"out_dir":base_dir,"manifest":base_dir.join("manifest.json"),"title":document.meta.title,"slides":base.frames.len(),"segments":segments,"chars":chars,"outputs":outputs,"partial":partial,"outcomes":{"exports":exports},"elapsed_secs":started.elapsed().as_secs_f64()}),
     );
     Ok(())
 }
@@ -965,7 +965,7 @@ async fn run_prepared(
         );
         if !cfg.llm.enabled && !cfg.llm.disable_hint {
             crate::eprintln_tr!(
-                "提示：运行 course2md llm setup 可开启 AI 校对与摘要 / Tip: run course2md llm setup to enable AI proofreading and summaries"
+                "提示：运行 notepipe llm setup 可开启 AI 校对与摘要 / Tip: run notepipe llm setup to enable AI proofreading and summaries"
             );
         }
     }
@@ -1094,7 +1094,7 @@ fn emit_done(
 ) {
     let (segments, chars) = done_stats(sections);
     progress::emit(
-        serde_json::json!({"type":"done","task_id":target.task_id,"course_id":target.course_id,"version_id":target.version_id,"out_dir":target.version_dir(),"manifest":target.version_dir().join("manifest.json"),"title":manifest.title,"slides":manifest.frames.len(),"segments":segments,"chars":chars,"outputs":manifest.outputs,"partial":manifest.partial,"outcomes":manifest.outcomes,"elapsed_secs":started.elapsed().as_secs_f64()}),
+        serde_json::json!({"type":"done","task_id":target.task_id,"note_id":target.note_id,"version_id":target.version_id,"out_dir":target.version_dir(),"manifest":target.version_dir().join("manifest.json"),"title":manifest.title,"slides":manifest.frames.len(),"segments":segments,"chars":chars,"outputs":manifest.outputs,"partial":manifest.partial,"outcomes":manifest.outcomes,"elapsed_secs":started.elapsed().as_secs_f64()}),
     );
 }
 
@@ -1343,7 +1343,7 @@ impl FailureRecord<'_> {
         let cfg = self.cfg;
         let info = serde_json::json!({
             "success": false,
-            "course2md_version": env!("CARGO_PKG_VERSION"),
+            "notepipe_version": env!("CARGO_PKG_VERSION"),
             "source": {
                 "kind": if self.is_local { "local" } else { "remote" },
                 "platform": self.platform,
@@ -1482,7 +1482,7 @@ mod tests {
                 return;
             }
         }
-        let dir = std::env::temp_dir().join(format!("c2md-failrun-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("notepiped-failrun-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let video = dir.join("broken.mp4");
         std::fs::write(&video, b"not a real mp4").unwrap();
@@ -1530,22 +1530,22 @@ mod tests {
             "local:sha256:{}",
             crate::execution::file_digest(&video).unwrap()
         );
-        let course = dir
+        let note = dir
             .join("local")
             .join(crate::execution::digest(source_id.as_bytes()));
-        let work = std::fs::read_dir(course.join(".work"))
+        let work = std::fs::read_dir(note.join(".work"))
             .unwrap()
             .next()
             .unwrap()
             .unwrap()
             .path();
         let text = std::fs::read_to_string(work.join("run.json")).expect("失败也应写 run.json");
-        assert!(!course.join("current.json").exists());
+        assert!(!note.join("current.json").exists());
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
         assert!(!v["error"].as_str().unwrap_or_default().is_empty());
         assert_eq!(v["provider"], "cpu");
-        assert!(v["course2md_version"].as_str().is_some());
+        assert!(v["notepipe_version"].as_str().is_some());
         assert!(v["elapsed_secs"].is_number());
         // 失败发生在 llama-server spawn 之前 → 无 llama_server_args 字段
         assert!(v.get("llama_server_args").is_none());

@@ -65,7 +65,7 @@ fn run_wizard(
     model_dir_override: Option<&std::path::Path>,
 ) -> Result<crate::settings::ConfigFile> {
     crate::println_tr!(
-        "欢迎使用 course2md！选择字幕不可用时的语音转写方式。 / Welcome! Choose how to transcribe when subtitles are unavailable."
+        "欢迎使用 notepipe！选择字幕不可用时的语音转写方式。 / Welcome! Choose how to transcribe when subtitles are unavailable."
     );
     crate::println_tr!(
         "↑↓ 选择，Enter 确认，Esc 取消。 / Use ↑↓ to select, Enter to confirm, Esc to cancel."
@@ -126,7 +126,7 @@ fn run_wizard(
                         1 => use_cloud = true,
                         _ => {
                             crate::println_tr!(
-                                "稍后下载模型，再重新运行视频命令： / Download the model, then rerun your video command: course2md models download"
+                                "稍后下载模型，再重新运行视频命令： / Download the model, then rerun your video command: notepipe models download"
                             );
                             return Err(ExitWizard.into());
                         }
@@ -175,7 +175,7 @@ fn pick_local_provider() -> Result<LocalPick> {
     }
     if cands.is_empty() {
         crate::println_tr!(
-            "本机识别所需的组件尚未安装。可退出后运行 course2md doctor 查看，或改用云端识别。 / Local transcription is unavailable. Exit and run course2md doctor, or use a cloud service."
+            "本机识别所需的组件尚未安装。可退出后运行 notepipe doctor 查看，或改用云端识别。 / Local transcription is unavailable. Exit and run notepipe doctor, or use a cloud service."
         );
         return select(
             crate::tr!("下一步 / Next step"),
@@ -253,7 +253,7 @@ fn configure_cloud(cfg: &mut crate::settings::ConfigFile) -> Result<()> {
     anyhow::ensure!(
         !cfg.asr_api.api_key.trim().is_empty() || crate::config::asr_api_key_from_env().is_some(),
         crate::tr!(
-            "未提供 API 密钥。请在向导中输入，或设置环境变量 COURSE2MD_ASR_API_KEY 后重试。 / No API key provided. Enter one in setup, or set COURSE2MD_ASR_API_KEY and retry."
+            "未提供 API 密钥。请在向导中输入，或设置环境变量 NOTEPIPE_ASR_API_KEY 后重试。 / No API key provided. Enter one in setup, or set NOTEPIPE_ASR_API_KEY and retry."
         )
     );
     Ok(())

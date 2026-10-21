@@ -44,16 +44,16 @@ private func setErr(_ message: String) {
 }
 
 /// 最近一次错误的可读描述（指针在下次 setErr 前有效）。
-@_cdecl("c2m_last_error")
-public func c2mLastError() -> UnsafePointer<CChar> {
+@_cdecl("notepipe_last_error")
+public func notepipeLastError() -> UnsafePointer<CChar> {
     if let p = lastErrorCStr { return UnsafePointer(p) }
     return ("unknown error" as NSString).utf8String!
 }
 
 // MARK: - Silero VAD
 
-@_cdecl("c2m_vad_load")
-public func c2mVadLoad() -> Int32 {
+@_cdecl("notepipe_vad_load")
+public func notepipeVadLoad() -> Int32 {
     do {
         _ = try runSync {
             try await SileroVADModel.fromPretrained(
@@ -66,8 +66,8 @@ public func c2mVadLoad() -> Int32 {
     }
 }
 
-@_cdecl("c2m_vad_detect")
-public func c2mVadDetect(
+@_cdecl("notepipe_vad_detect")
+public func notepipeVadDetect(
     wavPath: UnsafePointer<CChar>,
     minSpeech: Double,
     minSilence: Double,
@@ -105,12 +105,12 @@ public func c2mVadDetect(
     }
 }
 
-@_cdecl("c2m_free_doubles")
-public func c2mFreeDoubles(_ p: UnsafeMutablePointer<Double>?) {
+@_cdecl("notepipe_free_doubles")
+public func notepipeFreeDoubles(_ p: UnsafeMutablePointer<Double>?) {
     if let p = p { free(p) }
 }
 
-@_silgen_name("c2m_model_progress")
+@_silgen_name("notepipe_model_progress")
 private func reportModelProgress(
     _ progress: Double, _ phase: UnsafePointer<CChar>, _ message: UnsafePointer<CChar>)
 
@@ -141,8 +141,8 @@ final class AsrBox {
 
 // Cache-only preparation follows the same repositories and required files as the
 // actual loaders. It deliberately avoids constructing a second copy of ASR weights.
-@_cdecl("c2m_asr_prepare_cache")
-public func c2mAsrPrepareCache(
+@_cdecl("notepipe_asr_prepare_cache")
+public func notepipeAsrPrepareCache(
     _ model: UnsafePointer<CChar>,
     _ manifest: UnsafePointer<CChar>
 ) -> Int32 {
@@ -154,14 +154,14 @@ public func c2mAsrPrepareCache(
                 .map { ["1", "true", "yes", "on"].contains($0.lowercased()) } ?? false
             let data = manifestText.data(using: .utf8)!
             guard let items = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                throw NSError(domain: "course2md", code: 1, userInfo: [
+                throw NSError(domain: "notepipe", code: 1, userInfo: [
                     NSLocalizedDescriptionKey: "模型清单无效 / Invalid model manifest",
                 ])
             }
             let downloads: [(String, [String])] = try items.map { item in
                 guard let repo = item["repo"] as? String,
                       let files = item["files"] as? [String] else {
-                    throw NSError(domain: "course2md", code: 1, userInfo: [
+                    throw NSError(domain: "notepipe", code: 1, userInfo: [
                         NSLocalizedDescriptionKey: "模型清单无效 / Invalid model manifest",
                     ])
                 }
@@ -188,8 +188,8 @@ public func c2mAsrPrepareCache(
     }
 }
 
-@_cdecl("c2m_asr_create")
-public func c2mAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRawPointer? {
+@_cdecl("notepipe_asr_create")
+public func notepipeAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRawPointer? {
     let name = String(cString: model)
     do {
         let kind: AsrKind
@@ -215,7 +215,7 @@ public func c2mAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRawPoint
             try m.warmUp()
             kind = .qwen(m)
         } else {
-            throw NSError(domain: "course2md", code: 1, userInfo: [NSLocalizedDescriptionKey: "不支持的 Apple 模型 / Unsupported Apple model: \(name)"])
+            throw NSError(domain: "notepipe", code: 1, userInfo: [NSLocalizedDescriptionKey: "不支持的 Apple 模型 / Unsupported Apple model: \(name)"])
         }
         return Unmanaged.passRetained(AsrBox(kind)).toOpaque()
     } catch {
@@ -224,8 +224,8 @@ public func c2mAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRawPoint
     }
 }
 
-@_cdecl("c2m_asr_transcribe")
-public func c2mAsrTranscribe(
+@_cdecl("notepipe_asr_transcribe")
+public func notepipeAsrTranscribe(
     _ handle: UnsafeMutableRawPointer,
     wavPath: UnsafePointer<CChar>,
     outText: UnsafeMutablePointer<CChar>,
@@ -265,7 +265,7 @@ public func c2mAsrTranscribe(
     }
 }
 
-@_cdecl("c2m_asr_destroy")
-public func c2mAsrDestroy(_ handle: UnsafeMutableRawPointer) {
+@_cdecl("notepipe_asr_destroy")
+public func notepipeAsrDestroy(_ handle: UnsafeMutableRawPointer) {
     Unmanaged<AsrBox>.fromOpaque(handle).release()
 }

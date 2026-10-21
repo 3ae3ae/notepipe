@@ -14,20 +14,20 @@ impl CliTest {
         self.run_with_lang(args, "zh-Hans")
     }
     fn run_with_lang(&self, args: &[&str], lang: &str) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_course2md"))
+        Command::new(env!("CARGO_BIN_EXE_notepipe"))
             .args(args)
             .current_dir(self.dir.path())
             .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
             .env("XDG_CACHE_HOME", self.dir.path().join("cache"))
-            .env("COURSE2MD_LANG", lang)
+            .env("NOTEPIPE_LANG", lang)
             .env_remove("RUST_LOG")
-            .env_remove("COURSE2MD_ASR_API_KEY")
+            .env_remove("NOTEPIPE_ASR_API_KEY")
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap()
     }
     fn config(&self, contents: &str) {
-        let dir = self.dir.path().join("config/course2md");
+        let dir = self.dir.path().join("config/notepipe");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.toml"), contents).unwrap();
     }
@@ -134,7 +134,7 @@ fn noninteractive_setup_explains_missing_values_without_saving() {
     let result = cli.run(&["llm", "setup"]);
     assert!(!result.status.success());
     assert!(stderr(&result).contains("--base-url"));
-    assert!(!cli.dir.path().join("config/course2md/config.toml").exists());
+    assert!(!cli.dir.path().join("config/notepipe/config.toml").exists());
 }
 
 #[test]
@@ -211,16 +211,15 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
     assert!(cli.run(&["config", "show"]).status.success());
     cli.config("[defaults]\nthreads = 7\n");
     assert!(!cli.run(&["config", "init"]).status.success());
-    let file =
-        std::fs::read_to_string(cli.dir.path().join("config/course2md/config.toml")).unwrap();
+    let file = std::fs::read_to_string(cli.dir.path().join("config/notepipe/config.toml")).unwrap();
     assert!(file.contains("threads = 7"));
 }
 
 #[test]
 fn doctor_reports_required_failures_with_nonzero_exit() {
     let cli = CliTest::new();
-    let result = Command::new(env!("CARGO_BIN_EXE_course2md"))
-        .env("COURSE2MD_LANG", "zh-Hans")
+    let result = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+        .env("NOTEPIPE_LANG", "zh-Hans")
         .arg("doctor")
         .env("PATH", "")
         .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
@@ -296,8 +295,8 @@ printf 'raw downloader stderr\n' >&2
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     for flag in ["--json", "--quiet"] {
         let output_dir = cli.dir.path().join(flag.trim_start_matches('-'));
-        let result = Command::new(env!("CARGO_BIN_EXE_course2md"))
-            .env("COURSE2MD_LANG", "zh-Hans")
+        let result = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+            .env("NOTEPIPE_LANG", "zh-Hans")
             .args([
                 "https://example.test/video",
                 "--transcript-source",
@@ -337,7 +336,7 @@ printf 'raw downloader stderr\n' >&2
                 .collect();
             let done = events.last().unwrap();
             assert_eq!(done["type"], "done");
-            let notes = std::path::Path::new(done["out_dir"].as_str().unwrap()).join("course.md");
+            let notes = std::path::Path::new(done["out_dir"].as_str().unwrap()).join("note.md");
             assert!(
                 std::fs::read_to_string(notes)
                     .unwrap()
@@ -352,9 +351,9 @@ printf 'raw downloader stderr\n' >&2
 fn version_flags_include_the_build_commit() {
     let cli = CliTest::new();
     let expected = format!(
-        "course2md {} ({})\n",
+        "notepipe {} ({})\n",
         env!("CARGO_PKG_VERSION"),
-        env!("COURSE2MD_COMMIT_HASH")
+        env!("NOTEPIPE_COMMIT_HASH")
     );
     for flag in ["-V", "--version"] {
         let result = cli.run(&[flag]);

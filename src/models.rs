@@ -1,6 +1,6 @@
 //! 模型缓存管理与下载（llama.cpp Qwen3-ASR GGUF）。
 //!
-//! 默认目录：`~/.cache/course2md/models/`（可用 `--model-dir` / `models download --dir` 覆盖）
+//! 默认目录：`~/.cache/notepipe/models/`（可用 `--model-dir` / `models download --dir` 覆盖）
 //!
 //! ```text
 //! models/
@@ -111,7 +111,7 @@ pub async fn ensure_cache(
     fetch_model(provider, &status.model, root, CoremlMode::Cache).await
 }
 
-/// Prepare the exact selected backend without sending course content or changing settings.
+/// Prepare the exact selected backend without sending source content or changing settings.
 pub async fn prepare(
     provider: crate::config::AsrProvider,
     model: &str,
@@ -281,7 +281,7 @@ pub async fn download_models(root: &Path) -> Result<()> {
     anyhow::ensure!(
         llama_ready(root),
         crate::tr!(
-            "模型文件下载不完整，请重新运行 course2md models download / Model download incomplete; run course2md models download again"
+            "模型文件下载不完整，请重新运行 notepipe models download / Model download incomplete; run notepipe models download again"
         )
     );
     tracing::info!(path = %root.display(), "models ready");
@@ -314,7 +314,7 @@ pub fn list_models(root: &Path) {
     );
     if !llama_ready(root) {
         println!(
-            "下载或修复 / Download or repair: course2md models download --dir \"{}\"",
+            "下载或修复 / Download or repair: notepipe models download --dir \"{}\"",
             root.display()
         );
     }

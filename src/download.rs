@@ -281,7 +281,7 @@ static ARIA2_BROKEN: AtomicBool = AtomicBool::new(false);
 /// aria2c beside the executable or on PATH.
 fn aria2_program() -> Option<PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
-    if ARIA2_BROKEN.load(Ordering::Relaxed) || std::env::var_os("COURSE2MD_NO_ARIA2").is_some() {
+    if ARIA2_BROKEN.load(Ordering::Relaxed) || std::env::var_os("NOTEPIPE_NO_ARIA2").is_some() {
         return None;
     }
     FOUND
@@ -377,7 +377,7 @@ fn aria2(
         let response: serde_json::Value = rpc
             .post(&endpoint)
             .send_json(
-                serde_json::json!({"jsonrpc":"2.0","id":"c2m","method":method,"params":all}),
+                serde_json::json!({"jsonrpc":"2.0","id":"notepipe","method":method,"params":all}),
             )?
             .into_json()?;
         response

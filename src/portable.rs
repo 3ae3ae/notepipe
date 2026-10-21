@@ -1,4 +1,4 @@
-//! Exports that retain their contents when moved away from the course library.
+//! Exports that retain their contents when moved away from the note library.
 
 use crate::{
     artifact::{self, Document},
@@ -15,8 +15,8 @@ use std::{
 
 pub fn file_name(format: OutputFormat) -> &'static str {
     match format {
-        OutputFormat::Md => "course.zip",
-        OutputFormat::Html => "course.html",
+        OutputFormat::Md => "note.zip",
+        OutputFormat::Html => "note.html",
         OutputFormat::Json => "structured.json",
     }
 }
@@ -170,7 +170,7 @@ pub(crate) fn write_document(
             let mut zip = zip::ZipWriter::new(file.as_file_mut());
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Stored);
-            zip.start_file("course.md", options)?;
+            zip.start_file("note.md", options)?;
             zip.write_all(text.as_bytes())?;
             let mut written = std::collections::HashSet::new();
             for image in images.values() {
@@ -287,11 +287,11 @@ mod tests {
         }
         std::fs::remove_dir_all(source).unwrap();
         let mut zip =
-            zip::ZipArchive::new(std::fs::File::open(destination.join("course.zip")).unwrap())
+            zip::ZipArchive::new(std::fs::File::open(destination.join("note.zip")).unwrap())
                 .unwrap();
         assert_eq!(zip.len(), 2);
-        assert!(zip.by_name("course.md").is_ok());
-        let html = std::fs::read_to_string(destination.join("course.html")).unwrap();
+        assert!(zip.by_name("note.md").is_ok());
+        let html = std::fs::read_to_string(destination.join("note.html")).unwrap();
         assert!(html.contains("data:image/png;base64,"));
         assert!(!html.contains("src=\"images/"));
         assert!(!html.contains("时长 00:00"));

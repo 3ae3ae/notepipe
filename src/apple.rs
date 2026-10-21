@@ -15,7 +15,7 @@ mod ffi {
     use std::os::raw::{c_char, c_double, c_int};
 
     unsafe extern "C" {
-        pub fn c2m_vad_detect(
+        pub fn notepipe_vad_detect(
             wav_path: *const c_char,
             min_speech: c_double,
             min_silence: c_double,
@@ -23,24 +23,24 @@ mod ffi {
             out_ends: *mut *mut c_double,
             out_n: *mut c_int,
         ) -> c_int;
-        pub fn c2m_free_doubles(p: *mut c_double);
-        pub fn c2m_asr_create(model: *const c_char) -> *mut std::ffi::c_void;
-        pub fn c2m_asr_prepare_cache(model: *const c_char, manifest: *const c_char) -> c_int;
-        pub fn c2m_vad_load() -> c_int;
-        pub fn c2m_asr_transcribe(
+        pub fn notepipe_free_doubles(p: *mut c_double);
+        pub fn notepipe_asr_create(model: *const c_char) -> *mut std::ffi::c_void;
+        pub fn notepipe_asr_prepare_cache(model: *const c_char, manifest: *const c_char) -> c_int;
+        pub fn notepipe_vad_load() -> c_int;
+        pub fn notepipe_asr_transcribe(
             handle: *mut std::ffi::c_void,
             wav_path: *const c_char,
             out_text: *mut c_char,
             out_len: usize,
         ) -> c_int;
-        pub fn c2m_asr_destroy(handle: *mut std::ffi::c_void);
-        pub fn c2m_last_error() -> *const c_char;
+        pub fn notepipe_asr_destroy(handle: *mut std::ffi::c_void);
+        pub fn notepipe_last_error() -> *const c_char;
     }
 }
 
 // Swift downloads report through the same serialized NDJSON stream as Rust.
 #[unsafe(no_mangle)]
-extern "C" fn c2m_model_progress(
+extern "C" fn notepipe_model_progress(
     fraction: f64,
     phase: *const std::ffi::c_char,
     message: *const std::ffi::c_char,
@@ -71,7 +71,7 @@ extern "C" fn c2m_model_progress(
 
 fn last_error() -> String {
     unsafe {
-        let p = ffi::c2m_last_error();
+        let p = ffi::notepipe_last_error();
         if p.is_null() {
             String::new()
         } else {
@@ -87,7 +87,7 @@ pub fn vad(wav: &Path, min_speech: f64, min_silence: f64) -> Result<Vec<(f64, f6
     let mut ends: *mut f64 = std::ptr::null_mut();
     let mut n: i32 = 0;
     let rc = unsafe {
-        ffi::c2m_vad_detect(
+        ffi::notepipe_vad_detect(
             path.as_ptr(),
             min_speech,
             min_silence,
@@ -110,8 +110,8 @@ pub fn vad(wav: &Path, min_speech: f64, min_silence: f64) -> Result<Vec<(f64, f6
             for i in 0..n as usize {
                 out.push((starts.add(i).read(), ends.add(i).read()));
             }
-            ffi::c2m_free_doubles(starts);
-            ffi::c2m_free_doubles(ends);
+            ffi::notepipe_free_doubles(starts);
+            ffi::notepipe_free_doubles(ends);
         }
     }
     Ok(out)
@@ -137,7 +137,7 @@ fn ensure_metallib() -> Result<()> {
         dir.join("mlx.metallib").display()
     );
     anyhow::bail!(crate::tr!(
-        "缺少 Apple 识别所需的组件，请重新安装 course2md / Apple speech component missing; reinstall course2md"
+        "缺少 Apple 识别所需的组件，请重新安装 notepipe / Apple speech component missing; reinstall notepipe"
     ))
 }
 
@@ -206,7 +206,7 @@ impl CoremlAsr {
     /// 只加载已准备的缓存；缺失文件由模型准备阶段下载。
     pub fn load(model: &str) -> Result<Self> {
         let name = CString::new(model)?;
-        let handle = unsafe { ffi::c2m_asr_create(name.as_ptr()) };
+        let handle = unsafe { ffi::notepipe_asr_create(name.as_ptr()) };
         if handle.is_null() {
             anyhow::bail!("{}", last_error());
         }
@@ -218,7 +218,7 @@ impl CoremlAsr {
         let path = CString::new(wav.to_string_lossy().as_bytes())?;
         let mut out = vec![0u8; 16 * 1024];
         let rc = unsafe {
-            ffi::c2m_asr_transcribe(
+            ffi::notepipe_asr_transcribe(
                 self.handle,
                 path.as_ptr(),
                 out.as_mut_ptr() as *mut _,
@@ -253,7 +253,7 @@ pub fn prepare_model(model: &str) -> Result<()> {
     let _asr = CoremlAsr::load(model)?;
     // VAD is a separate required model; load it directly so readiness never depends
     // on a synthetic WAV or on the ASR files happening to be present.
-    if unsafe { ffi::c2m_vad_load() } != 0 {
+    if unsafe { ffi::notepipe_vad_load() } != 0 {
         anyhow::bail!("{}", last_error());
     }
     Ok(())
@@ -282,7 +282,7 @@ pub fn prepare_cache(model: &str) -> Result<()> {
     let name = CString::new(model)?;
     let manifest = CString::new(cache_manifest(model)?)?;
     let attempt = || {
-        let status = unsafe { ffi::c2m_asr_prepare_cache(name.as_ptr(), manifest.as_ptr()) };
+        let status = unsafe { ffi::notepipe_asr_prepare_cache(name.as_ptr(), manifest.as_ptr()) };
         if status != 0 {
             anyhow::bail!("{}", last_error());
         }
@@ -319,7 +319,7 @@ pub fn prepare_cache(model: &str) -> Result<()> {
 impl Drop for CoremlAsr {
     fn drop(&mut self) {
         if !self.handle.is_null() {
-            unsafe { ffi::c2m_asr_destroy(self.handle) };
+            unsafe { ffi::notepipe_asr_destroy(self.handle) };
         }
     }
 }

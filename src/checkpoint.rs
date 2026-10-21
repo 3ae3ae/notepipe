@@ -21,7 +21,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// checkpoint 身份的 schema 版本：仅当 checkpoint 的格式/语义变化时才 bump。
-/// 与 course2md 发布版本（CARGO_PKG_VERSION）解耦——patch 版本升级不应作废全部 ASR 进度。
+/// 与 notepipe 发布版本（CARGO_PKG_VERSION）解耦——patch 版本升级不应作废全部 ASR 进度。
 /// 注意：bump 会让所有旧 checkpoint 失效一次（身份不匹配 → 整体作废重算）。
 const CHECKPOINT_SCHEMA_VERSION: u32 = 2;
 
@@ -438,7 +438,7 @@ mod tests {
     }
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("c2m-cp-{tag}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("notepipe-cp-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -483,7 +483,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&path), 0o600, "配置与凭据仅本人可读");
-            let note = dir.path().join("course.md");
+            let note = dir.path().join("note.md");
             atomic_write_shared(&note, b"note").unwrap();
             assert_eq!(mode(&note), 0o644, "笔记文件可被其他程序读取");
         }
@@ -667,7 +667,7 @@ mod tests {
     #[test]
     fn unwritable_out_dir_fails_loudly() {
         // out_dir 本身是个普通文件 → checkpoint 完全不可用，open 必须报错
-        let f = std::env::temp_dir().join(format!("c2m-cp-file-{}", std::process::id()));
+        let f = std::env::temp_dir().join(format!("notepipe-cp-file-{}", std::process::id()));
         std::fs::write(&f, b"x").unwrap();
         assert!(Checkpoint::open(&f, false, &identity("qwen3")).is_err());
         let _ = std::fs::remove_file(&f);

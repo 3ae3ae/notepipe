@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 安装 course2md 预编译二进制到 ~/bin（或 COURSE2MD_BIN_DIR）。
-# Install the prebuilt course2md binary into ~/bin (or COURSE2MD_BIN_DIR).
-#   curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh | bash
+# 安装 notepipe 预编译二进制到 ~/bin（或 NOTEPIPE_BIN_DIR）。
+# Install the prebuilt notepipe binary into ~/bin (or NOTEPIPE_BIN_DIR).
+#   curl -fsSL https://raw.githubusercontent.com/3ae3ae/notepipe/main/install.sh | bash
 
-REPO="${COURSE2MD_REPO:-mizorewww/course2md}"
-BIN_DIR="${COURSE2MD_BIN_DIR:-$HOME/bin}"
+REPO="${NOTEPIPE_REPO:-3ae3ae/notepipe}"
+BIN_DIR="${NOTEPIPE_BIN_DIR:-$HOME/bin}"
 RELEASE="https://github.com/${REPO}/releases/latest/download"
 YTDLP_RELEASE="https://github.com/yt-dlp/yt-dlp/releases/latest/download"
 
@@ -17,10 +17,10 @@ os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 apple=0
 case "$os-$arch" in
-  darwin-arm64|darwin-aarch64) ASSET="course2md-macos-arm64"; YTDLP="yt-dlp_macos"; apple=1 ;;
-  darwin-x86_64) ASSET="course2md-macos-x86_64"; YTDLP="yt-dlp_macos" ;;
-  linux-x86_64|linux-amd64) ASSET="course2md-linux-x86_64"; YTDLP="yt-dlp_linux" ;;
-  linux-aarch64|linux-arm64) ASSET="course2md-linux-aarch64"; YTDLP="yt-dlp_linux_aarch64" ;;
+  darwin-arm64|darwin-aarch64) ASSET="notepipe-macos-arm64"; YTDLP="yt-dlp_macos"; apple=1 ;;
+  darwin-x86_64) ASSET="notepipe-macos-x86_64"; YTDLP="yt-dlp_macos" ;;
+  linux-x86_64|linux-amd64) ASSET="notepipe-linux-x86_64"; YTDLP="yt-dlp_linux" ;;
+  linux-aarch64|linux-arm64) ASSET="notepipe-linux-aarch64"; YTDLP="yt-dlp_linux_aarch64" ;;
   *)
     warn "暂无 $os/$arch 的预编译版本，请从源码安装：cargo install --path . / No prebuilt binary for $os/$arch; build from source with cargo install --path ."
     exit 1
@@ -55,10 +55,10 @@ verify() {
 }
 
 mkdir -p "$BIN_DIR"
-curl -fsSL "$RELEASE/$ASSET" -o "$tmp/course2md"
-verify "$tmp/course2md" "$ASSET"
-install -m 755 "$tmp/course2md" "$BIN_DIR/course2md"
-say "已安装 / Installed: $BIN_DIR/course2md"
+curl -fsSL "$RELEASE/$ASSET" -o "$tmp/notepipe"
+verify "$tmp/notepipe" "$ASSET"
+install -m 755 "$tmp/notepipe" "$BIN_DIR/notepipe"
+say "已安装 / Installed: $BIN_DIR/notepipe"
 
 # Apple 本机语音识别需要与程序放在同一目录的 mlx.metallib。
 if [ "$apple" = 1 ]; then
@@ -94,4 +94,4 @@ case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) say "请把 $BIN_DIR 加入 PATH / Add $BIN_DIR to PATH:  export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
-say "运行 course2md doctor 检查环境 / Run course2md doctor to check your setup."
+say "运行 notepipe doctor 检查环境 / Run notepipe doctor to check your setup."

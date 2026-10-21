@@ -343,40 +343,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "course2md"
-version = "2.0.0-rc.16"
-dependencies = [
- "anyhow",
- "base64",
- "clap",
- "dialoguer",
- "getrandom 0.2.17",
- "image",
- "image-compare",
- "indicatif",
- "libc",
- "qrcode",
- "ratex-layout",
- "ratex-parser",
- "ratex-svg",
- "ratex-types",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sys-locale",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "ureq",
- "url",
- "vergen-gix",
- "which",
- "zip",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2154,6 +2120,40 @@ name = "nonempty"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9737e026353e5cd0736f98eddae28665118eb6f6600902a7f50db585621fecb6"
+
+[[package]]
+name = "notepipe"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "dialoguer",
+ "getrandom 0.2.17",
+ "image",
+ "image-compare",
+ "indicatif",
+ "libc",
+ "qrcode",
+ "ratex-layout",
+ "ratex-parser",
+ "ratex-svg",
+ "ratex-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sys-locale",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
+ "url",
+ "vergen-gix",
+ "which",
+ "zip",
+]
 
 [[package]]
 name = "nu-ansi-term"

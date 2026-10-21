@@ -1,4 +1,4 @@
-//! 配置文件（~/.config/course2md/config.toml）。
+//! 配置文件（~/.config/notepipe/config.toml）。
 //! 优先级：命令行参数 > 配置文件 > 内置默认值。
 
 use anyhow::{Context, Result};
@@ -191,10 +191,10 @@ pub fn template() -> String {
     })
 }
 
-const TEMPLATE: &str = r#"# course2md 配置 / Configuration
+const TEMPLATE: &str = r#"# notepipe 配置 / Configuration
 # 优先级：命令行 > 本文件 > 内置默认 / Priority: CLI > this file > built-in defaults
 # 取消注释以设置默认值 / Uncomment values to set defaults
-# 查看当前设置：course2md config show / View settings: course2md config show
+# 查看当前设置：notepipe config show / View settings: notepipe config show
 
 [defaults]
 # 输出根目录，按平台/标题/ID 分类 / Output root, organized by platform/title/ID
@@ -218,7 +218,7 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 # gpu/cpu: 需要 llama-server 和约 2.4GB 模型 / requires llama-server and ~2.4GB model
 # npu: Intel NPU，需要 OpenVINO / Intel NPU, requires OpenVINO
 # api: 云端识别，需要 API 密钥 / cloud transcription, requires an API key
-# 留空自动选择后端；course2md doctor 查看可用性 / Leave unset for automatic selection; check with course2md doctor
+# 留空自动选择后端；notepipe doctor 查看可用性 / Leave unset for automatic selection; check with notepipe doctor
 #provider = "{PROVIDER}"
 # GPU 卸载层数（0–99）；核显不稳定时可降低 / GPU offload layers; lower on unstable integrated GPUs
 #gpu_layers = {GPU_LAYERS}
@@ -247,12 +247,12 @@ const TEMPLATE: &str = r#"# course2md 配置 / Configuration
 # 请求方式和模型需由服务商支持 / The provider must support the selected mode and model
 #mode = "transcriptions"
 #base_url = "{API_BASE_URL}"
-# 推荐通过 COURSE2MD_ASR_API_KEY 环境变量提供密钥 / Prefer the COURSE2MD_ASR_API_KEY environment variable
+# 推荐通过 NOTEPIPE_ASR_API_KEY 环境变量提供密钥 / Prefer the NOTEPIPE_ASR_API_KEY environment variable
 #api_key = ""
 #model = "{API_MODEL}"
 
 [llm]
-# 可选 AI 校对；运行 course2md llm setup 配置 / Optional AI proofreading; configure with course2md llm setup
+# 可选 AI 校对；运行 notepipe llm setup 配置 / Optional AI proofreading; configure with notepipe llm setup
 enabled = {LLM_ENABLED}
 #base_url = "{LLM_BASE_URL}"
 #api_key = ""

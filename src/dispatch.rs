@@ -225,7 +225,7 @@ pub enum Resend {
 }
 
 /// Marks a response replayed from a completed receipt rather than received now.
-pub const REPLAYED: &str = "course2md_replayed";
+pub const REPLAYED: &str = "notepipe_replayed";
 
 /// The process that started this task. If it goes away (the app was killed
 /// rather than quit), the task stops at its next safe boundary as on quit, so

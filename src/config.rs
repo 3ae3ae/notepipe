@@ -76,9 +76,9 @@ pub fn asr_endpoint(api: &crate::settings::AsrApi) -> AnyhowResult<String> {
     Ok(append_endpoint_suffix(base, suffix))
 }
 
-/// 云端 STT API key 环境变量：`COURSE2MD_ASR_API_KEY`。
+/// 云端 STT API key 环境变量：`NOTEPIPE_ASR_API_KEY`。
 pub fn asr_api_key_from_env() -> Option<String> {
-    std::env::var("COURSE2MD_ASR_API_KEY")
+    std::env::var("NOTEPIPE_ASR_API_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
 }
@@ -503,7 +503,7 @@ impl PipelineConfig {
                 // 桌面任务不读环境变量，只有命令行才提示它
                 anyhow::bail!(if allow_environment {
                     crate::tr!(
-                        "云端语音识别需要 API Key：用 --asr-api-key 或环境变量 COURSE2MD_ASR_API_KEY 提供 / Cloud transcription requires an API key: pass --asr-api-key or set COURSE2MD_ASR_API_KEY"
+                        "云端语音识别需要 API Key：用 --asr-api-key 或环境变量 NOTEPIPE_ASR_API_KEY 提供 / Cloud transcription requires an API key: pass --asr-api-key or set NOTEPIPE_ASR_API_KEY"
                     )
                 } else {
                     crate::tr!(
@@ -544,35 +544,35 @@ pub fn home_dir() -> Option<PathBuf> {
 /// 配置目录（XDG_CONFIG_HOME / Windows %APPDATA% / ~/.config）。
 pub fn config_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(d).join("course2md");
+        return PathBuf::from(d).join("notepipe");
     }
     #[cfg(windows)]
     {
         if let Some(d) = std::env::var_os("APPDATA") {
-            return PathBuf::from(d).join("course2md");
+            return PathBuf::from(d).join("notepipe");
         }
     }
     home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
-        .join("course2md")
+        .join("notepipe")
 }
 
 /// 缓存目录（模型等）。
 pub fn cache_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("XDG_CACHE_HOME") {
-        return PathBuf::from(d).join("course2md");
+        return PathBuf::from(d).join("notepipe");
     }
     #[cfg(windows)]
     {
         if let Some(d) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(d).join("course2md");
+            return PathBuf::from(d).join("notepipe");
         }
     }
     home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".cache")
-        .join("course2md")
+        .join("notepipe")
 }
 
 pub fn model_dir_from(opt: Option<&Path>) -> PathBuf {
@@ -774,7 +774,7 @@ mod tests {
 
     #[test]
     fn source_gate() {
-        assert!(!looks_like_source("course2md"));
+        assert!(!looks_like_source("notepipe"));
         assert!(looks_like_source(
             "https://www.bilibili.com/video/BV1pb8o6yE8f"
         ));

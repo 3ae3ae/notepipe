@@ -41,22 +41,22 @@ fn make_test_video(path: &std::path::Path) {
 }
 
 /// 两个场景测试共享的 PipelineConfig 基座；差异字段在调用处用结构体更新语法覆盖。
-fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> course2md::config::PipelineConfig {
-    course2md::config::PipelineConfig {
+fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config::PipelineConfig {
+    notepipe::config::PipelineConfig {
         url: video.display().to_string(),
         out_dir: dir.to_path_buf(),
         out_root: dir.to_path_buf(),
         similarity: 0.9,
         sample_interval: 0.5,
         cooldown: 10.0,
-        slide_mode: course2md::config::SlideMode::First,
+        slide_mode: notepipe::config::SlideMode::First,
         stable_secs: 0.0,
         max_height: 1080,
         roi: None,
         threads: 2,
-        provider: course2md::config::AsrProvider::Cpu,
+        provider: notepipe::config::AsrProvider::Cpu,
         max_speech: 20.0,
-        formats: vec![course2md::config::OutputFormat::Md],
+        formats: vec![notepipe::config::OutputFormat::Md],
         model_dir: dir.to_path_buf(),
         keep_video: true,
         no_download: true,
@@ -64,9 +64,9 @@ fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> course2md::config
         llm: Default::default(),
         asr_api: Default::default(),
         asr_model: None,
-        gpu_layers: course2md::config::DEFAULT_GPU_LAYERS,
+        gpu_layers: notepipe::config::DEFAULT_GPU_LAYERS,
         mmproj_offload: true,
-        transcript_source: course2md::config::TranscriptSource::Asr,
+        transcript_source: notepipe::config::TranscriptSource::Asr,
     }
 }
 
@@ -76,7 +76,7 @@ fn scene_detects_slides_with_true_timestamps() {
         eprintln!("skip: ffmpeg not found");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("c2m-scene-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("notepipe-scene-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let video = dir.join("synthetic.mp4");
     make_test_video(&video);
@@ -85,7 +85,7 @@ fn scene_detects_slides_with_true_timestamps() {
 
     let frames = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(course2md::scene::run(&cfg, &video))
+        .block_on(notepipe::scene::run(&cfg, &video))
         .expect("scene run");
 
     // 期望（cooldown=10s、first 模式）：
@@ -115,7 +115,7 @@ fn stable_mode_waits_for_settled_state() {
         eprintln!("skip: ffmpeg not found");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("c2m-stable-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("notepipe-stable-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let video = dir.join("synthetic.mp4");
     // 0-2s 白（短页，会被 min 发射间隔保留为第一帧）；2-3.5s 黑（transition，0.5s 间隔 ×3）；
@@ -131,16 +131,16 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
         .expect("spawn ffmpeg");
     assert!(st.success());
 
-    let cfg = course2md::config::PipelineConfig {
+    let cfg = notepipe::config::PipelineConfig {
         cooldown: 2.0,
-        slide_mode: course2md::config::SlideMode::Stable,
+        slide_mode: notepipe::config::SlideMode::Stable,
         stable_secs: 1.2,
         ..test_cfg(&video, &dir)
     };
 
     let frames = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(course2md::scene::run(&cfg, &video))
+        .block_on(notepipe::scene::run(&cfg, &video))
         .expect("scene run");
     let ts: Vec<f64> = frames.iter().map(|f| f.t).collect();
     // 黑页（2~3.5s，持续 1.5s > stable_secs=1.2s）是否被单独发射取决于采样相位，

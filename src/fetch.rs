@@ -660,7 +660,7 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
             // 结构化进度（2021.11 起的 yt-dlp 接口）：前缀行由 run_download 解析转发
             "--newline",
             "--progress-template",
-            "download:[C2MD] %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s",
+            "download:[notepipe] %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s",
             "-o",
         ]);
         cmd.arg(&tmp);
@@ -765,7 +765,7 @@ impl std::fmt::Display for Bilibili412 {
 }
 impl std::error::Error for Bilibili412 {}
 
-pub const BILIBILI_412_HINT: &str = "B 站暂时限制了访问。请稍后重试；若持续失败，运行 course2md --login bilibili 重新登录，或导入本地视频。 / Bilibili is temporarily limiting access. Retry later; if it keeps failing, run course2md --login bilibili to log in again, or import a local video.";
+pub const BILIBILI_412_HINT: &str = "B 站暂时限制了访问。请稍后重试；若持续失败，运行 notepipe --login bilibili 重新登录，或导入本地视频。 / Bilibili is temporarily limiting access. Retry later; if it keeps failing, run notepipe --login bilibili to log in again, or import a local video.";
 
 #[cfg(all(test, unix))]
 async fn run(cmd: &mut Command) -> Result<String> {
@@ -810,7 +810,7 @@ async fn run_output(cmd: &mut Command) -> Result<std::process::Output> {
 /// 模板字段：<downloaded> <total> <estimate>，未知值为 NA；
 /// 精确总字节未知时回落到估算值，都没有则 total=0（GUI 显示不确定进度）。
 fn ytdlp_progress(line: &str) -> Option<(u64, u64)> {
-    let rest = line.strip_prefix("[C2MD] ")?;
+    let rest = line.strip_prefix("[notepipe] ")?;
     let mut fields = rest.split_whitespace();
     let number = |value: Option<&str>| {
         value
@@ -1075,15 +1075,15 @@ mod tests {
     #[test]
     fn ytdlp_progress_lines_parse_bytes_with_estimate_fallback() {
         assert_eq!(
-            ytdlp_progress("[C2MD] 120326 10485760 NA"),
+            ytdlp_progress("[notepipe] 120326 10485760 NA"),
             Some((120326, 10485760))
         );
         assert_eq!(
-            ytdlp_progress("[C2MD] 120326 NA 20971520"),
+            ytdlp_progress("[notepipe] 120326 NA 20971520"),
             Some((120326, 20971520))
         );
-        assert_eq!(ytdlp_progress("[C2MD] 120326 NA NA"), Some((120326, 0)));
-        assert_eq!(ytdlp_progress("[C2MD] NA NA NA"), None);
+        assert_eq!(ytdlp_progress("[notepipe] 120326 NA NA"), Some((120326, 0)));
+        assert_eq!(ytdlp_progress("[notepipe] NA NA NA"), None);
         assert_eq!(ytdlp_progress("[download] 45.3% of 10MiB"), None);
         assert_eq!(ytdlp_progress(""), None);
     }

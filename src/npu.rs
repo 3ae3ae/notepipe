@@ -3,7 +3,7 @@
 //! 在具备 Intel Core Ultra (AI Boost) NPU 的设备上，
 //! 通过 OpenVINO GenAI 将 Whisper 模型编译并在 NPU 上高速运行。
 //! 通过轻量 Python 伴随进程常驻 127.0.0.1:{port}，
-//! course2md 逐 chunk 提交并保存 checkpoint。
+//! notepipe 逐 chunk 提交并保存 checkpoint。
 
 use crate::checkpoint::Checkpoint;
 use crate::timeline::TranscriptEvent;
@@ -383,7 +383,7 @@ mod tests {
             eprintln!("skip: python3 not found");
             return;
         };
-        let dir = std::env::temp_dir().join(format!("c2m-npu-py-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("notepipe-npu-py-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("npu_worker.py");
         std::fs::write(&script, NPU_WORKER_SCRIPT).unwrap();

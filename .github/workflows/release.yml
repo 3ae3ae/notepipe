@@ -38,20 +38,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset: course2md-linux-x86_64
+            asset: notepipe-linux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            asset: course2md-linux-aarch64
+            asset: notepipe-linux-aarch64
           - os: macos-26
             target: aarch64-apple-darwin
-            asset: course2md-macos-arm64
+            asset: notepipe-macos-arm64
           # build.rs skips the Apple speech module on x86_64 macOS.
           - os: macos-26
             target: x86_64-apple-darwin
-            asset: course2md-macos-x86_64
+            asset: notepipe-macos-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset: course2md-windows-x86_64.exe
+            asset: notepipe-windows-x86_64.exe
             exe: true
     runs-on: ${{ matrix.os }}
     steps:
@@ -68,7 +68,7 @@ jobs:
 
       - name: Collect binary
         shell: bash
-        run: cp "target/${{ matrix.target }}/release/course2md${{ matrix.exe && '.exe' || '' }}" "${{ matrix.asset }}"
+        run: cp "target/${{ matrix.target }}/release/notepipe${{ matrix.exe && '.exe' || '' }}" "${{ matrix.asset }}"
 
       - uses: ./.github/actions/macos-signing
         if: runner.os == 'macOS'

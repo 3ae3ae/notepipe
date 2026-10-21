@@ -84,7 +84,7 @@ pub fn render_markdown(meta: &VideoMeta, sections: &[Section]) -> String {
     }
     writeln!(
         md,
-        "- 由 course2md 生成（{} 张截图 / {} 段文字）\n",
+        "- 由 notepipe 生成（{} 张截图 / {} 段文字）\n",
         sections.iter().filter(|s| !s.image.is_empty()).count(),
         sections.iter().map(|s| s.speech.len()).sum::<usize>()
     )

@@ -4,12 +4,12 @@
 set -uo pipefail
 
 VIDEO="${1:?usage: bench-mac.sh <video> [outdir]}"
-OUT="$(mktemp -d "${2:-/tmp/c2m-bench}.XXXXXX")"
+OUT="$(mktemp -d "${2:-/tmp/notepipe-bench}.XXXXXX")"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$REPO/target/release/course2md"
-PM_LOG="$(mktemp -t c2m-pm)"
-RUN_LOG="$(mktemp -t c2m-run)"
-TIME_LOG="$(mktemp -t c2m-time)"
+BIN="$REPO/target/release/notepipe"
+PM_LOG="$(mktemp -t notepipe-pm)"
+RUN_LOG="$(mktemp -t notepipe-run)"
+TIME_LOG="$(mktemp -t notepipe-time)"
 trap 'rm -f "$PM_LOG" "$RUN_LOG" "$TIME_LOG"' EXIT
 
 test -x "$BIN" || { echo "missing $BIN (run cargo build --release first)" >&2; exit 1; }

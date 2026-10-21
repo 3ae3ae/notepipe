@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
-use course2md::cli::{Cli, Command, ConfigCmd, LlmCmd, ModelsCmd};
-use course2md::{config, doctor, llm, models, pipeline, progress, settings, wizard};
+use notepipe::cli::{Cli, Command, ConfigCmd, LlmCmd, ModelsCmd};
+use notepipe::{config, doctor, llm, models, pipeline, progress, settings, wizard};
 use tracing_subscriber::EnvFilter;
 
 fn init_logging(verbose: u8, quiet: bool, json: bool) {
@@ -47,7 +47,7 @@ fn init_logging(verbose: u8, quiet: bool, json: bool) {
 
 fn main() -> std::process::ExitCode {
     let mut args: Vec<_> = std::env::args_os().collect();
-    let lang_arg = course2md::cli::take_lang_arg(&mut args);
+    let lang_arg = notepipe::cli::take_lang_arg(&mut args);
     // 近似扫描（先于 clap 解析，解析失败也要走对输出模式）：把值恰为 "--json"/
     // "run-task" 的其他参数值（如 --llm-prompt "--json"）误判为 NDJSON 是可接受的
     // 代价——它只影响解析失败时的错误格式，不影响成功路径的行为。
@@ -58,10 +58,10 @@ fn main() -> std::process::ExitCode {
         .any(|a| a == "--json" || a == "run-task");
     let requested = lang_arg
         .as_deref()
-        .and_then(course2md::i18n::Lang::from_code)
-        .unwrap_or_else(course2md::i18n::Lang::detect);
-    course2md::i18n::set_lang(requested);
-    let command = course2md::cli::localize_command(Cli::command());
+        .and_then(notepipe::i18n::Lang::from_code)
+        .unwrap_or_else(notepipe::i18n::Lang::detect);
+    notepipe::i18n::set_lang(requested);
+    let command = notepipe::cli::localize_command(Cli::command());
     let cli = match command.try_get_matches_from(&args) {
         Ok(matches) => match Cli::from_arg_matches(&matches) {
             Ok(mut cli) => {
@@ -69,7 +69,7 @@ fn main() -> std::process::ExitCode {
                 cli
             }
             Err(error) => {
-                let rendered = course2md::cli::localize_rendered(&error.render().to_string());
+                let rendered = notepipe::cli::localize_rendered(&error.render().to_string());
                 eprint!("{rendered}");
                 return std::process::ExitCode::from(error.exit_code() as u8);
             }
@@ -78,12 +78,12 @@ fn main() -> std::process::ExitCode {
             if error.use_stderr() && json_requested {
                 progress::set_json_mode();
                 progress::emit(
-                    serde_json::json!({"type": "error", "message": course2md::tr!("参数无效：{}", error)}),
+                    serde_json::json!({"type": "error", "message": notepipe::tr!("参数无效：{}", error)}),
                 );
-            } else if course2md::i18n::lang() == course2md::i18n::Lang::En {
+            } else if notepipe::i18n::lang() == notepipe::i18n::Lang::En {
                 let _ = error.print();
             } else {
-                let rendered = course2md::cli::localize_rendered(&error.render().to_string());
+                let rendered = notepipe::cli::localize_rendered(&error.render().to_string());
                 print!("{rendered}");
             }
             return std::process::ExitCode::from(error.exit_code() as u8);
@@ -91,17 +91,17 @@ fn main() -> std::process::ExitCode {
     };
     // Machine protocol messages stay in Simplified Chinese for stable consumers.
     if matches!(cli.command, Some(Command::RunTask)) {
-        course2md::i18n::set_lang(course2md::i18n::Lang::ZhHans);
+        notepipe::i18n::set_lang(notepipe::i18n::Lang::ZhHans);
     } else if let Some(value) = &cli.lang {
-        match course2md::i18n::Lang::from_code(value) {
-            Some(lang) => course2md::i18n::set_lang(lang),
+        match notepipe::i18n::Lang::from_code(value) {
+            Some(lang) => notepipe::i18n::set_lang(lang),
             None if value == "auto" => {
-                course2md::i18n::init_from_env();
+                notepipe::i18n::init_from_env();
             }
             None => {
                 eprintln!(
                     "{}",
-                    course2md::tr!(
+                    notepipe::tr!(
                         "未知的语言：{}。可用：auto、en、zh-Hans、zh-Hant、ja",
                         value
                     )
@@ -124,7 +124,7 @@ fn main() -> std::process::ExitCode {
         cli.opts.quiet || matches!(&cli.command, Some(Command::Summarize(args)) if args.quiet);
     if json || matches!(cli.command, Some(Command::RunTask)) {
         // Machine consumers parse message text; keep the protocol's source language.
-        course2md::i18n::set_lang(course2md::i18n::Lang::ZhHans);
+        notepipe::i18n::set_lang(notepipe::i18n::Lang::ZhHans);
     }
     if json {
         progress::set_json_mode();
@@ -136,7 +136,7 @@ fn main() -> std::process::ExitCode {
         Err(error) => {
             // 向导的「退出，稍后下载」是正常结束，不是失败
             if error
-                .downcast_ref::<course2md::wizard::ExitWizard>()
+                .downcast_ref::<notepipe::wizard::ExitWizard>()
                 .is_some()
             {
                 return std::process::ExitCode::SUCCESS;
@@ -145,7 +145,7 @@ fn main() -> std::process::ExitCode {
             if json {
                 progress::emit(serde_json::json!({"type": "error", "message": message}));
             } else {
-                course2md::eprintln_tr!("错误：{}", message);
+                notepipe::eprintln_tr!("错误：{}", message);
             }
             std::process::ExitCode::FAILURE
         }
@@ -154,25 +154,25 @@ fn main() -> std::process::ExitCode {
 
 fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
     if let Some(platform) = cli.logout {
-        return course2md::login::logout(platform);
+        return notepipe::login::logout(platform);
     }
     if let Some(platform) = cli.login {
         anyhow::ensure!(
             cli.source.as_deref().is_none_or(config::looks_like_source),
-            course2md::tr!(
+            notepipe::tr!(
                 "--login 后只能跟视频链接或本地视频路径 / After --login, provide only a video URL or local file path"
             )
         );
-        course2md::login::login(platform)?;
+        notepipe::login::login(platform)?;
         if cli.source.is_none() {
             return Ok(());
         }
     }
     match cli.command {
         Some(Command::RunTask) => {
-            course2md::dispatch::watch_parent();
-            let request = course2md::execution::Request::read(std::io::stdin().lock())?;
-            Ok(course2md::runtime::block_on(course2md::execution::run(
+            notepipe::dispatch::watch_parent();
+            let request = notepipe::execution::Request::read(std::io::stdin().lock())?;
+            Ok(notepipe::runtime::block_on(notepipe::execution::run(
                 request,
             ))??)
         }
@@ -189,7 +189,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             }
             ModelsCmd::Prepare { target, json } => {
                 let root = configured_model_dir(target.dir.as_deref())?;
-                let status = course2md::runtime::block_on(models::prepare(
+                let status = notepipe::runtime::block_on(models::prepare(
                     target.provider,
                     &target.model,
                     &root,
@@ -203,14 +203,14 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     "status": status,
                 }));
                 if !json {
-                    course2md::println_tr!("模型准备完成 / Model preparation finished.");
+                    notepipe::println_tr!("模型准备完成 / Model preparation finished.");
                     print_model_status(&status);
                 }
                 Ok(())
             }
             ModelsCmd::Download { dir, json } => {
                 let root = configured_model_dir(dir.as_deref())?;
-                course2md::runtime::block_on(models::download_models(&root))??;
+                notepipe::runtime::block_on(models::download_models(&root))??;
                 progress::emit(serde_json::json!({
                     "type": "model_ready",
                     "operation": "download",
@@ -245,7 +245,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     let path = settings::save(&cfg)?;
                     println!("已保存并启用 / Saved and enabled: {}", path.display());
                     match llm::test_connection(&cfg.llm) {
-                        Ok(()) => course2md::println_tr!("连接测试通过 / Connection test passed."),
+                        Ok(()) => notepipe::println_tr!("连接测试通过 / Connection test passed."),
                         Err(e) => anyhow::bail!(
                             "配置已保存，但连接测试失败；请检查服务地址、密钥和模型 / Settings saved, but connection test failed; check endpoint, key and model: {e:#}"
                         ),
@@ -272,7 +272,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     if path.is_file() && !force {
                         anyhow::bail!(
                             "{}",
-                            course2md::tr!("配置已存在：{}。使用 --force 替换", path.display())
+                            notepipe::tr!("配置已存在：{}。使用 --force 替换", path.display())
                         );
                     }
                     if let Some(dir) = path.parent() {
@@ -283,7 +283,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                         "已生成配置模板 / Configuration template created: {}",
                         path.display()
                     );
-                    println!("{}", course2md::auth::BILIBILI_SETUP_TIP);
+                    println!("{}", notepipe::auth::BILIBILI_SETUP_TIP);
                 }
                 ConfigCmd::Show => settings::print_effective(&settings::load()?)?,
             }
@@ -324,10 +324,10 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     cleared.push(name.to_string());
                 }
             }
-            if course2md::login::codex::remove_credentials()? {
+            if notepipe::login::codex::remove_credentials()? {
                 cleared.push("codex".to_string());
             }
-            cfg.llm = course2md::llm::LlmSettings::default();
+            cfg.llm = notepipe::llm::LlmSettings::default();
             if args.asr {
                 if !cfg.asr_api.api_key.is_empty() {
                     cleared.push("asr_api.api_key".to_string());
@@ -348,8 +348,8 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 );
             }
             if !args.asr {
-                course2md::println_tr!(
-                    "云端语音识别密钥未清除；如需清除：course2md remove --asr / Cloud speech key kept; to clear it: course2md remove --asr"
+                notepipe::println_tr!(
+                    "云端语音识别密钥未清除；如需清除：notepipe remove --asr / Cloud speech key kept; to clear it: notepipe remove --asr"
                 );
             }
             Ok(())
@@ -360,16 +360,16 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 None => {
                     anyhow::ensure!(
                         no_args,
-                        course2md::tr!("缺少视频来源。示例：course2md ./lecture.mp4")
+                        notepipe::tr!("缺少视频来源。示例：notepipe ./lecture.mp4")
                     );
-                    println!("{}\n", course2md::tr!("course2md — 将视频转换为图文笔记"));
-                    println!("{}", course2md::tr!(course2md::cli::QUICK_START));
-                    course2md::println_tr!("全部参数 / All options: course2md --help");
+                    println!("{}\n", notepipe::tr!("notepipe — 将视频转换为图文笔记"));
+                    println!("{}", notepipe::tr!(notepipe::cli::QUICK_START));
+                    notepipe::println_tr!("全部参数 / All options: notepipe --help");
                     return Ok(());
                 }
             };
             let file = settings::load()?;
-            let initial = course2md::options::resolve(source.clone(), &cli.opts, &file)?;
+            let initial = notepipe::options::resolve(source.clone(), &cli.opts, &file)?;
             // 仅为 wizard 前快速失败；pipeline::run 开头的全量 validate 才是入口契约
             // （桌面端走 run_task 不经这里，两处各自服务自己的调用方）。
             initial.validate()?;
@@ -377,7 +377,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 llm::validate(&initial.llm)?;
             }
             if !std::path::Path::new(&source).is_file() {
-                course2md::error::require_ytdlp()?;
+                notepipe::error::require_ytdlp()?;
             }
             // 首次使用向导：未配置转写方式 + 交互终端时引导配置并写盘（非交互原样返回）；
             // json 模式显式跳过——stdout 必须保持纯 NDJSON，不能混进交互提示
@@ -387,16 +387,16 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 wizard::maybe_run(&cli.opts, &file)?
             };
             #[cfg_attr(not(apple_native), allow(unused_mut))]
-            let mut cfg = course2md::options::resolve(source, &cli.opts, &file)?;
+            let mut cfg = notepipe::options::resolve(source, &cli.opts, &file)?;
             // coreml 首次使用时先确定模型（可能交互询问），模型缓存准备与转写才会是同一个模型
             #[cfg(apple_native)]
             if cfg.provider == config::AsrProvider::Coreml
                 && cfg.transcript_source != config::TranscriptSource::Subtitle
             {
-                cfg.asr_model = Some(course2md::apple::resolve_model(cfg.asr_model.as_deref())?);
+                cfg.asr_model = Some(notepipe::apple::resolve_model(cfg.asr_model.as_deref())?);
             }
             tracing::info!(out = %cfg.out_dir.display(), provider = %cfg.provider, "start");
-            Ok(course2md::runtime::block_on(pipeline::run(&cfg))??)
+            Ok(notepipe::runtime::block_on(pipeline::run(&cfg))??)
         }
     }
 }
@@ -413,10 +413,10 @@ fn configured_model_dir(dir: Option<&std::path::Path>) -> anyhow::Result<std::pa
 /// 笔记版本目录：课程目录取 current.json 指向的版本，版本目录直接使用。
 fn note_version_dir(dir: &std::path::Path) -> anyhow::Result<Option<std::path::PathBuf>> {
     if dir.join("current.json").is_file() {
-        let current: course2md::artifact::CurrentVersion =
+        let current: notepipe::artifact::CurrentVersion =
             serde_json::from_slice(&std::fs::read(dir.join("current.json"))?)?;
-        let manifest = course2md::artifact::safe_asset_path(dir, &current.manifest)?;
-        let version = manifest.parent().context(course2md::tr!(
+        let manifest = notepipe::artifact::safe_asset_path(dir, &current.manifest)?;
+        let version = manifest.parent().context(notepipe::tr!(
             "笔记清单位置无效 / Invalid note manifest location"
         ))?;
         return Ok(Some(version.to_path_buf()));
@@ -461,7 +461,7 @@ fn summarize_note(
     force: bool,
     out: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    use course2md::{artifact, execution};
+    use notepipe::{artifact, execution};
     let base = artifact::read_manifest(&dir.join("manifest.json"))?;
     artifact::validate_version(dir, &base)?;
     let document: artifact::Document =
@@ -491,26 +491,26 @@ fn summarize_note(
                 .as_nanos()
         ));
     }
-    let course_dir = dir
+    let note_dir = dir
         .parent()
         .and_then(|p| p.parent())
-        .context(course2md::tr!(
+        .context(notepipe::tr!(
             "笔记版本位置无效 / Invalid note version location"
         ))?
         .to_path_buf();
-    let work = course_dir.join(".work").join(&task_id);
+    let work = note_dir.join(".work").join(&task_id);
     execution::bind_work_dir(
         &work,
         &serde_json::json!({"source_id":base.source_id,"task_id":task_id,"settings":settings,"base_version":base.version_id}),
     )?;
-    let _lock = course2md::runtime::lock_file(&work.join(".task.lock"))?;
-    let _dispatch = course2md::dispatch::install(&work, None, &Default::default())?;
+    let _lock = notepipe::runtime::lock_file(&work.join(".task.lock"))?;
+    let _dispatch = notepipe::dispatch::install(&work, None, &Default::default())?;
     let target = artifact::Target {
         task_id: task_id.clone(),
-        course_id: base.course_id.clone(),
+        note_id: base.note_id.clone(),
         source_id: base.source_id.clone(),
         version_id: task_id,
-        course_dir,
+        note_dir,
     };
     if artifact::published(&target)?.is_some() {
         if !progress::is_quiet() {
@@ -522,7 +522,7 @@ fn summarize_note(
         return Ok(());
     }
     let speech = pipeline::all_speech(&document.sections);
-    let summary = course2md::runtime::block_on(course2md::summarize::summarize(
+    let summary = notepipe::runtime::block_on(notepipe::summarize::summarize(
         &file.llm,
         &speech,
         &document.meta,
@@ -530,7 +530,7 @@ fn summarize_note(
     let mut outcomes = base.outcomes;
     outcomes.summary = artifact::Outcome::succeeded();
     outcomes.exports.clear();
-    course2md::runtime::block_on(artifact::publish(
+    notepipe::runtime::block_on(artifact::publish(
         &target,
         dir,
         &document.meta,
@@ -542,10 +542,10 @@ fn summarize_note(
     if let Some(out) = out {
         let file = out.join(format!(
             "{}.summary.md",
-            course2md::summarize::sanitize_filename(&document.meta.title)
+            notepipe::summarize::sanitize_filename(&document.meta.title)
         ));
-        let text = course2md::summarize::render_standalone_md(&document.meta.title, &summary);
-        course2md::checkpoint::atomic_write(&file, text.as_bytes())?;
+        let text = notepipe::summarize::render_standalone_md(&document.meta.title, &summary);
+        notepipe::checkpoint::atomic_write(&file, text.as_bytes())?;
         if !progress::is_quiet() {
             println!("已导出摘要 / Summary exported: {}", file.display());
         }
@@ -563,11 +563,11 @@ fn summarize_note(
 fn print_model_status(status: &models::status::LocalModelStatus) {
     use models::status::CacheState;
     let state = match status.state {
-        CacheState::Missing => course2md::tr!("缺失 / Missing"),
-        CacheState::Partial => course2md::tr!("不完整 / Incomplete"),
-        CacheState::Cached => course2md::tr!("已缓存（未验证加载）/ Cached (load not verified)"),
-        CacheState::Loaded => course2md::tr!("已就绪 / Ready"),
-        CacheState::Unsupported => course2md::tr!("不支持 / Unsupported"),
+        CacheState::Missing => notepipe::tr!("缺失 / Missing"),
+        CacheState::Partial => notepipe::tr!("不完整 / Incomplete"),
+        CacheState::Cached => notepipe::tr!("已缓存（未验证加载）/ Cached (load not verified)"),
+        CacheState::Loaded => notepipe::tr!("已就绪 / Ready"),
+        CacheState::Unsupported => notepipe::tr!("不支持 / Unsupported"),
     };
     println!(
         "模型 / Model: {} · {} · {}",
@@ -577,7 +577,7 @@ fn print_model_status(status: &models::status::LocalModelStatus) {
     for part in &status.parts {
         println!("  {}: {}", part.name, part.path.display());
         for file in &part.missing {
-            course2md::println_tr!("    缺失：{}", file);
+            notepipe::println_tr!("    缺失：{}", file);
         }
     }
     match status.state {
@@ -588,10 +588,10 @@ fn print_model_status(status: &models::status::LocalModelStatus) {
                 .map(|m| m.id)
                 .collect::<Vec<_>>()
                 .join(", ");
-            course2md::println_tr!("该后端支持的模型：{}", available)
+            notepipe::println_tr!("该后端支持的模型：{}", available)
         }
         _ if status.can_prepare => println!(
-            "下载或修复 / Download or repair: course2md models prepare --provider {} --model {}",
+            "下载或修复 / Download or repair: notepipe models prepare --provider {} --model {}",
             status.provider, status.model
         ),
         _ => {}
@@ -616,13 +616,13 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
     let source = source.trim();
     if source.starts_with("http://") || source.starts_with("https://") {
         let url = url::Url::parse(source).map_err(|_| {
-            anyhow::anyhow!(course2md::tr!(
+            anyhow::anyhow!(notepipe::tr!(
                 "链接无效；请提供完整的视频链接 / Invalid URL; provide a complete video URL"
             ))
         })?;
         anyhow::ensure!(
             url.host_str().is_some(),
-            course2md::tr!("链接缺少主机名 / URL is missing a host")
+            notepipe::tr!("链接缺少主机名 / URL is missing a host")
         );
         return Ok(source.to_owned());
     }
@@ -631,7 +631,7 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
     }
     anyhow::bail!(
         "{}\n{}",
-        course2md::tr!("找不到视频文件或无法识别链接：{}", source),
-        course2md::tr!("请检查路径；含空格的路径需加引号")
+        notepipe::tr!("找不到视频文件或无法识别链接：{}", source),
+        notepipe::tr!("请检查路径；含空格的路径需加引号")
     )
 }

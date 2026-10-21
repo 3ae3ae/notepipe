@@ -1,5 +1,5 @@
 //! 环境体检：一次性报告依赖工具、平台后端可用性、配置与模型缓存状态。
-//! 用户报 issue 时附上 `course2md doctor` 输出即可定位大多数环境问题。
+//! 用户报 issue 时附上 `notepipe doctor` 输出即可定位大多数环境问题。
 
 use anyhow::Result;
 use std::path::Path;
@@ -38,7 +38,7 @@ fn check(line: &mut Vec<String>, ok: bool, name: &str, detail: &str) {
 
 pub fn run() -> Result<()> {
     let mut out = vec![format!(
-        "course2md {} ({}/{})",
+        "notepipe {} ({}/{})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH
@@ -98,7 +98,7 @@ pub fn run() -> Result<()> {
                 ),
             );
         } else {
-            out.push(crate::tr!("! coreml  缺少 Metal 着色器资源，请重新安装 / Metal shader resources missing; reinstall course2md").into());
+            out.push(crate::tr!("! coreml  缺少 Metal 着色器资源，请重新安装 / Metal shader resources missing; reinstall notepipe").into());
         }
     }
     #[cfg(not(apple_native))]
@@ -152,7 +152,7 @@ pub fn run() -> Result<()> {
                 out.push(crate::tr!("- config  使用内置默认值：{}", path.display()));
                 out.push(format!(
                     "  {}",
-                    crate::tr!("可选配置：course2md config init")
+                    crate::tr!("可选配置：notepipe config init")
                 ));
             }
             // Validate the same merged defaults as conversion, without requiring a source or network.
@@ -184,13 +184,13 @@ pub fn run() -> Result<()> {
                     root.display()
                 ));
                 out.push(crate::tr!(
-                    "  仅 gpu/cpu 需要；下载约 2.4GB：course2md models download --dir \"{}\"",
+                    "  仅 gpu/cpu 需要；下载约 2.4GB：notepipe models download --dir \"{}\"",
                     root.display()
                 ));
             }
             let key = !cfg.asr_api.api_key.trim().is_empty()
                 || crate::config::asr_api_key_from_env().is_some();
-            out.push(if key { crate::tr!("✓ api  已设置密钥（隐藏）/ API key set (hidden)") } else { crate::tr!("- api  未设置密钥；仅云端识别需要 / API key not set; only required for cloud transcription: COURSE2MD_ASR_API_KEY") }.into());
+            out.push(if key { crate::tr!("✓ api  已设置密钥（隐藏）/ API key set (hidden)") } else { crate::tr!("- api  未设置密钥；仅云端识别需要 / API key not set; only required for cloud transcription: NOTEPIPE_ASR_API_KEY") }.into());
             let provider = cfg
                 .defaults
                 .provider

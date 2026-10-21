@@ -65,7 +65,7 @@ pub struct Request {
     #[serde(default)]
     pub operation: Operation,
     pub task_id: String,
-    pub course_id: String,
+    pub note_id: String,
     pub version_id: String,
     pub source: String,
     pub source_id: String,
@@ -82,7 +82,7 @@ pub struct Request {
     #[serde(default)]
     pub allow_unauthenticated_asr: bool,
     pub work_dir: PathBuf,
-    pub course_dir: PathBuf,
+    pub note_dir: PathBuf,
     /// Reserved for the cooperative pause/cancel protocol; never sent as argv.
     #[serde(default)]
     pub control_path: Option<PathBuf>,
@@ -125,7 +125,7 @@ impl Request {
         );
         for (name, value) in [
             ("task_id", &self.task_id),
-            ("course_id", &self.course_id),
+            ("note_id", &self.note_id),
             ("version_id", &self.version_id),
         ] {
             anyhow::ensure!(
@@ -146,12 +146,12 @@ impl Request {
             crate::tr!("视频时长无效 / Invalid duration")
         );
         anyhow::ensure!(
-            self.work_dir.is_absolute() && self.course_dir.is_absolute(),
+            self.work_dir.is_absolute() && self.note_dir.is_absolute(),
             crate::tr!("任务与笔记位置必须是绝对路径 / Task paths must be absolute")
         );
         anyhow::ensure!(
-            self.work_dir != self.course_dir
-                && !self.work_dir.starts_with(self.course_dir.join("versions")),
+            self.work_dir != self.note_dir
+                && !self.work_dir.starts_with(self.note_dir.join("versions")),
             crate::tr!("工作目录不能位于已发布版本内 / Work directory overlaps published versions")
         );
         anyhow::ensure!(
@@ -204,7 +204,7 @@ impl Request {
         let mut cfg =
             crate::options::resolve(self.source.clone(), &Default::default(), &self.config)?;
         cfg.out_dir = self.work_dir.clone();
-        cfg.out_root = self.course_dir.clone();
+        cfg.out_root = self.note_dir.clone();
         // Recovery is a task invariant, not a configurable preference.
         cfg.resume = true;
         // Never enter Apple's model-choice prompt.
@@ -278,7 +278,7 @@ impl Request {
         };
         Ok(serde_json::json!({
             "operation":operation,
-            "schema": self.schema, "task_id": self.task_id, "course_id": self.course_id,
+            "schema": self.schema, "task_id": self.task_id, "note_id": self.note_id,
             "version_id": self.version_id, "source_id": self.source_id, "title": self.title,
             "author": self.author, "duration": self.duration, "config": config,
             "subtitle_digest": subtitle_digest,

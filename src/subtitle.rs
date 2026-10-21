@@ -670,7 +670,7 @@ second cue
 
     #[test]
     fn pick_prefers_zh_then_en() {
-        let d = std::env::temp_dir().join(format!("c2m-subs-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("notepipe-subs-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         for name in ["sub.en.srt", "sub.zh-Hans.srt", "sub.ja.srt"] {
             std::fs::write(d.join(name), b"1\n00:00:01,000 --> 00:00:02,000\nx\n").unwrap();
@@ -682,7 +682,7 @@ second cue
 
     #[test]
     fn sidecar_lookup() {
-        let d = std::env::temp_dir().join(format!("c2m-side-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("notepipe-side-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         let video = d.join("lecture.mp4");
         std::fs::write(&video, b"v").unwrap();
