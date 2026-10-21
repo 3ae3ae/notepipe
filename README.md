@@ -14,8 +14,8 @@ It is a small, dependable command-line tool, and a component other programs can 
 - **One job, done well.** A recording goes in; a plain note folder comes out.
 - **Standard interfaces, no lock-in.** Speech recognition and language models are reached through OpenAI-compatible APIs,
   so any provider, self-hosted server or local engine can be used.
-- **Light by default.** No models are bundled. Local engines and website support are separate
-  [adapters](docs/adapters.md) that you install only if you want them.
+- **Light by default.** No speech recognition or language models are bundled. Local engines and website support are
+  separate [adapters](docs/adapters.md) that you install only if you want them.
 - **Neutral.** No preferred vendor, website or language. Prompts are defaults you can replace, and notes follow the
   language of the recording.
 - **Your data stays yours.** Plain Markdown, images and JSON; a failed run never replaces a good note; nothing is sent

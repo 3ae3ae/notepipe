@@ -45,7 +45,7 @@ informational; new ones may be added.
 | 0 | the note was written (it may still carry warnings) |
 | 1 | the run failed; the previous note for this source, if any, is unchanged (see below for the rare exception) |
 | 2 | invalid command-line arguments |
-| 130 | cancelled by SIGINT or SIGTERM |
+| 130 | cancelled by Ctrl-C, or by SIGTERM on Unix |
 
 On the first signal notepipe stops its stages and any adapters it started; a second signal exits immediately after
 killing adapter processes.
@@ -59,9 +59,10 @@ killing adapter processes.
 ```
 
 The folder name comes from the title. A run on the same source replaces that folder; a different source with the same
-title gets a `-2`, `-3`, … suffix. The note is built in a staging folder and moved into place, so a reader never sees a
-half-written note. If moving the new note into place fails and the previous note cannot be moved back either, the error
-message gives the path where the previous note was kept; the next run restores it.
+title gets a `-2`, `-3`, … suffix. If the title of a source changes, its next note gets a new folder and the old one
+stays. The note is built in a staging folder and moved into place, so a reader never sees a half-written note. If moving
+the new note into place fails and the previous note cannot be moved back either, the error message gives the path where
+the previous note was kept; the next run restores it.
 
 `note.md` starts with YAML front matter:
 
@@ -109,7 +110,7 @@ as its working directory and a 10-minute limit. A bare program name is looked up
 | `NOTEPIPE_NOTE_DIR` | the note folder |
 | `NOTEPIPE_MARKDOWN` | path of `note.md` |
 | `NOTEPIPE_JSON` | path of `note.json` |
-| `NOTEPIPE_WARNINGS` | number of warnings in `note.json` |
+| `NOTEPIPE_WARNINGS` | number of warnings so far: those in `note.json` and any from replacing the previous note |
 
 A failing hook produces a warning; the note and the exit status are unaffected.
 

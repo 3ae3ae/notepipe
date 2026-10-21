@@ -32,7 +32,7 @@ The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizoreww
   `error`.
 - Subtitles are chosen by the configured language, then the media's original language, instead of preferring Chinese.
 - Korean and other space-separated scripts keep their word spacing when transcript fragments are joined.
-- Ctrl-C and SIGTERM stop the run and any adapters it started.
+- Ctrl-C (and SIGTERM on Unix) stops the run and any adapters it started.
 
 ### Removed
 

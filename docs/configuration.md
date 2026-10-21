@@ -16,7 +16,7 @@ prints the effective values.
 | `transcript_source` | `--transcript-source` | `"auto"` | `auto`: subtitles if available, otherwise speech recognition; `subtitle`: subtitles only; `asr`: speech recognition only |
 | `similarity` | `--similarity` | `0.85` | Screenshot sensitivity, greater than 0 and at most 1; higher takes more screenshots |
 | `sample_interval` | `--sample-interval` | `1.0` | Seconds between sampled frames, at least 0.2 |
-| `cooldown` | `--cooldown` | `10.0` | Minimum seconds between screenshots |
+| `cooldown` | `--cooldown` | `10.0` | Minimum seconds between screenshots; a final screenshot at the end of the recording may come sooner |
 | `screenshot_mode` | `--screenshot-mode` | `"stable"` | `stable` waits for the picture to settle; `first` captures at the first change |
 | `stable_secs` | `--stable-secs` | `0.8` | How long the picture must stay unchanged in `stable` mode |
 | `roi` | `--roi` | none | Only this region is compared, as `left%,top%-right%,bottom%` (for example `"40%,0%-100%,100%"`) |
@@ -43,8 +43,9 @@ prints the effective values.
 | `vad_threshold` | — | `0.5` | Speech detection threshold, 0 to 1; lower keeps quieter speech |
 | `min_silence` | — | `0.4` | Pauses shorter than this many seconds do not split segments |
 
-Speech recognition runs only when no usable subtitles exist (or with `--transcript-source asr`). In an interactive
-terminal, a first run that needs it and finds `[asr]` empty asks for these settings and saves them.
+Speech recognition runs when no subtitles are found, or with `--transcript-source asr`; subtitles that are found but
+cannot be read are an error. When an interactive run finds no subtitles and `[asr]` is empty, it asks for these settings
+and saves them. With `--transcript-source asr`, empty settings are an error instead.
 
 ## `[llm]` — AI stages
 

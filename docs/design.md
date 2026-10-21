@@ -12,8 +12,9 @@ media file to a note folder.
 language models, and two small, documented [adapter contracts](adapters.md) for everything else. Any service, engine or
 website that fits those interfaces works; none is built in.
 
-**Stay light.** The default installation contains no models and no platform SDKs. Speech recognition and AI stages run
-wherever you point them: a cloud API, a server on your network, or a local engine started as an adapter.
+**Stay light.** The default installation contains no speech recognition or language models and no platform SDKs. Speech
+recognition and AI stages run wherever you point them: a cloud API, a server on your network, or a local engine started
+as an adapter.
 
 **Stay neutral.** No vendor, website, language or region is preferred. Prompts are English defaults that you replace;
 notes follow the language of the recording, not of the tool. The CLI speaks English, the common language of developer
@@ -28,23 +29,31 @@ Each change is the smallest one that fully solves its problem.
 ## How a note is made
 
 ```
-URL ──► source adapter ──┐
-                         ├─► media file ──┬─► frame sampling ──► screenshots ──────────────────┐
-local file ──────────────┘                │                                                    │
-                                          └─► audio ─► speech detection ─► segments            │
-                                                                │                              │
-subtitles (sidecar file, source adapter or --subtitle) ─────────┤                              │
-                                                                ▼                              │
-                                         speech endpoint or speech adapter ──► transcript      │
-                                                                                     │         │
-                                                                                     ▼         ▼
-                                                          timeline: sections and paragraphs
-                                                                                     │
-                                                                                     ▼
-                                                          AI stages, in configured order
-                                                                                     │
-                                                                                     ▼
-                                                          note folder ──► completion hook
+local file ─────────────────┐
+URL ──► source adapter ─────┴──► media file
+                                      │
+            ┌─────────────────────────┴─────────────┐
+            ▼                                       ▼
+     frame sampling                               audio                 subtitles
+            │                                       │                (sidecar file,
+            ▼                                       ▼                source adapter
+       screenshots                          speech detection         or --subtitle)
+            │                                       │                       │
+            │                                       ▼                       │
+            │                              speech recognition               │
+            │                                       │                       │
+            │                                       ▼                       │
+            │                                  transcript ◄─────────────────┘
+            │                                       │
+            └─────────────────────────┬─────────────┘
+                                      ▼
+                      timeline: sections and paragraphs
+                                      │
+                                      ▼
+                       AI stages, in configured order
+                                      │
+                                      ▼
+                                 note folder ──► completion hook
 ```
 
 1. **Source.** A local file is used as is. A URL is handed to a source adapter, which returns a media file, metadata and
@@ -77,13 +86,13 @@ live instead:
 
 ## Guarantees
 
-- **Notes are replaced whole.** A new note is built completely before it replaces the previous one. A failed or cancelled
-  run leaves the previous note as it was. If a run is interrupted while swapping folders, the next run finishes or undoes
-  the swap from a transaction record before doing anything else.
-- **Work is not paid for twice.** Downloads, screenshots, transcripts and successful AI responses are cached per source and
+- **Notes are replaced whole.** A new note is built completely before it replaces the previous one. A run that fails or
+  is cancelled before its note is written leaves the previous note as it was. If a run is interrupted while swapping
+  folders, the next run finishes or undoes the swap from a transaction record before doing anything else.
+- **Finished work is reused.** Downloads, screenshots, transcripts and successful AI responses are cached per source and
   keyed by the inputs that affect them, so changing an AI prompt does not repeat speech recognition. Failed responses are
   never cached.
-- **Cancellation is clean.** Ctrl-C or SIGTERM stops the run and every adapter process it started.
+- **Cancellation is clean.** Ctrl-C (and SIGTERM on Unix) stops the run and every adapter process it started.
 - **Data goes only where you send it.** notepipe contacts the endpoints and adapters you configure and nothing else; it has
   no telemetry.
 
