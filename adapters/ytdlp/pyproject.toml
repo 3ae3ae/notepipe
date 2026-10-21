@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notepipe-source-ytdlp"
+version = "0.1.0"
+description = "yt-dlp source adapter for notepipe"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["yt-dlp"]
+
+[project.scripts]
+notepipe-source-ytdlp = "notepipe_source_ytdlp:main"
