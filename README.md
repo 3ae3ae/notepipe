@@ -1,7 +1,7 @@
 <h1 align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/wordmark-dark.svg">
-    <img src="docs/wordmark-light.svg" alt="notepipe" width="360">
+    <img src="docs/wordmark-light.svg" alt="notepipe" width="420">
   </picture>
 </h1>
 
