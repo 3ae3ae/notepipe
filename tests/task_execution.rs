@@ -714,6 +714,79 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
 }
 
 #[test]
+fn run_start_repairs_both_swap_renames_before_a_source_adapter_failure() {
+    for completed_swap in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let notes = root.path().join("notes");
+        let record = root.path().join("source");
+        let Some(command) = source_command(&record, "exit") else {
+            return;
+        };
+        let mut published = Vec::new();
+        for source in ["https://example.test/one", "https://example.test/two"] {
+            let document: notepipe::artifact::Document = serde_json::from_value(json!({
+                "schema":1,
+                "meta":{"title":"Shared title","author":"","duration":1,"source":source},
+                "sections":[{"t":0,"end":1,"image":"","speech":[{"start":0,"end":1,"text":"Previous body"}]}],
+                "top":[],"warnings":["Known warning"]
+            })).unwrap();
+            let (note, _) =
+                notepipe::artifact::publish(&notes, root.path(), document.clone()).unwrap();
+            published.push((note, document));
+        }
+        assert_eq!(published[1].0.file_name().unwrap(), "Shared-title-2");
+        for (note, expected) in &mut published {
+            let name = note.file_name().unwrap().to_string_lossy();
+            let old = notes.join(format!(".{name}.notepipe-old"));
+            let new = notes.join(format!(".{name}.notepipe-new"));
+            std::fs::rename(&*note, &old).unwrap();
+            let mut staged = expected.clone();
+            staged.sections[0].speech[0].text = "New body".into();
+            std::fs::create_dir(&new).unwrap();
+            std::fs::write(
+                new.join("note.md"),
+                notepipe::render::render_markdown(&staged.meta, &staged.sections, &staged.top)
+                    .unwrap(),
+            )
+            .unwrap();
+            std::fs::write(new.join("note.json"), serde_json::to_vec(&staged).unwrap()).unwrap();
+            if completed_swap {
+                std::fs::rename(new, &*note).unwrap();
+                *expected = staged;
+            }
+        }
+        let stray = notes.join(".stray.notepipe-new");
+        std::fs::create_dir(&stray).unwrap();
+        std::fs::write(stray.join("note.json"), "{partial").unwrap();
+        let mut cfg = config();
+        cfg.defaults.out = Some(notes.clone());
+        cfg.source.command = command;
+        let failed = run(root.path(), "https://example.test/unrelated", &cfg, &[]);
+        assert!(!failed.status.success());
+        assert_eq!(events(&failed).last().unwrap()["type"], "error");
+        assert_eq!(calls(&record), 1);
+        assert!(!stray.exists());
+        for (note, expected) in published {
+            let actual: notepipe::artifact::Document =
+                serde_json::from_slice(&std::fs::read(note.join("note.json")).unwrap()).unwrap();
+            assert_eq!(
+                serde_json::to_value(actual).unwrap(),
+                serde_json::to_value(&expected).unwrap()
+            );
+            assert!(
+                std::fs::read_to_string(note.join("note.md"))
+                    .unwrap()
+                    .contains(&expected.sections[0].speech[0].text)
+            );
+            let name = note.file_name().unwrap().to_string_lossy();
+            for suffix in ["new", "old"] {
+                assert!(!notes.join(format!(".{name}.notepipe-{suffix}")).exists());
+            }
+        }
+    }
+}
+
+#[test]
 fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
     let root = tempfile::tempdir().unwrap();
     let Some(video) = speech_video(root.path()) else {
@@ -741,7 +814,7 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
     let old_note = std::fs::read(note).unwrap();
     let old_json = std::fs::read(json).unwrap();
     let note_dir = Path::new(previous["note_dir"].as_str().unwrap());
-    let backup = note_dir.with_file_name(".speech.notepipe-previous");
+    let backup = note_dir.with_file_name(".speech.notepipe-old");
     std::fs::rename(note_dir, &backup).unwrap();
     assert!(!note_dir.exists());
     cfg.asr.command = command;

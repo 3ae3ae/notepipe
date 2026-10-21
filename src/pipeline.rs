@@ -85,6 +85,7 @@ fn selected_transcript(path: &Path) -> Result<(String, Vec<timeline::TranscriptE
 }
 
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
+    artifact::recover(&cfg.out_root)?;
     let mut cfg = cfg.clone();
     cfg.validate().context("Invalid settings")?;
     if let Some(path) = &cfg.subtitle {
@@ -174,7 +175,6 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             }
         }
     };
-    let publication = artifact::Publication::prepare(&cfg.out_root, &meta)?;
     if meta.duration <= 0. && work.join("meta.json").is_file() {
         let saved: MediaMeta = serde_json::from_slice(&std::fs::read(work.join("meta.json"))?)?;
         if saved.source == cfg.url && saved.duration.is_finite() && saved.duration > 0. {
@@ -378,8 +378,9 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         top,
         warnings,
     };
+    let root = cfg.out_root.clone();
     let (note_dir, warnings) =
-        tokio::task::spawn_blocking(move || publication.publish(&frames_root, document))
+        tokio::task::spawn_blocking(move || artifact::publish(&root, &frames_root, document))
             .await
             .context("Note publication interrupted")??;
     progress::stage("render", "done");
