@@ -8,6 +8,7 @@ use crate::timeline::FrameEvent;
 use anyhow::{Context, Result};
 use image::GrayImage;
 use image_compare::Algorithm;
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::Path;
 use tokio::io::AsyncReadExt;
@@ -17,6 +18,13 @@ use tokio::process::Command;
 const SAMPLE_WIDTH: u32 = 640;
 /// 全分辨率抽帧并发度：每帧一个 ffmpeg 进程，4 路即可利用并行度又不至于进程风暴
 const EXTRACT_CONCURRENCY: usize = 4;
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Output {
+    Frames(Vec<FrameEvent>),
+    NoVideo,
+}
 
 fn scaled_wh(ow: u32, oh: u32, target_w: u32) -> (u32, u32) {
     let h = ((oh as u64 * target_w as u64) / ow.max(1) as u64) as u32;
@@ -50,7 +58,7 @@ async fn extract_frame(media: &Path, t: f64, dest: &Path) -> Result<()> {
             .args(["-hide_banner", "-loglevel", "error", "-y", "-ss", &ss])
             .arg("-i")
             .arg(media)
-            .args(["-frames:v", "1", "-q:v", "2"])
+            .args(["-map", "0:V:0", "-frames:v", "1", "-q:v", "2"])
             .arg(dest),
         "ffmpeg",
     )
@@ -69,10 +77,11 @@ fn slide_name(n: usize) -> String {
 }
 
 /// 1fps（或 sample_interval）灰度流 + SSIM，得到新幻灯片时间点。
-async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f64, f64)>> {
-    let info = media::probe_video(media)
-        .await
-        .context("Could not read video dimensions; check that the file plays correctly")?;
+async fn sample_timestamps(
+    cfg: &PipelineConfig,
+    media: &Path,
+    info: &media::VideoInfo,
+) -> Result<Vec<(f64, f64)>> {
     let interval = cfg.sample_interval;
     let (tw, th) = scaled_wh(info.width, info.height, SAMPLE_WIDTH);
     let fps = 1.0 / interval;
@@ -93,7 +102,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
         .args(["-hide_banner", "-loglevel", "error", "-an"])
         .arg("-i")
         .arg(media)
-        .args(["-vf", &vf, "-f", "rawvideo", "pipe:1"])
+        .args(["-map", "0:V:0", "-vf", &vf, "-f", "rawvideo", "pipe:1"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -219,12 +228,15 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
 }
 
 /// 场景阶段入口。
-pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> {
+pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
+    let Some(info) = media::probe_video(media).await? else {
+        return Ok(Output::NoVideo);
+    };
     let frames_dir = cfg.frames_dir();
     tokio::fs::create_dir_all(&frames_dir).await?;
     let t0 = std::time::Instant::now();
     crate::progress::stage("scenes/scan", "start");
-    let times = sample_timestamps(cfg, media).await?;
+    let times = sample_timestamps(cfg, media, &info).await?;
     crate::progress::stage("scenes/scan", "done");
     anyhow::ensure!(!times.is_empty(), "No frames sampled");
 
@@ -293,7 +305,7 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     );
     pb.finish();
     crate::progress::stage("scenes/extract", "done");
-    Ok(frames)
+    Ok(Output::Frames(frames))
 }
 
 #[cfg(test)]

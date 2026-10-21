@@ -335,18 +335,18 @@ pub fn run_bounded(
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
     let mut child = ManagedChild::spawn(name, cmd)?;
-    let status = child.wait_within(timeout).map_err(|_| {
-        anyhow::anyhow!(
-            "{name} did not finish within {0:.0}s and was stopped",
-            timeout.as_secs_f64()
-        )
-    })?;
+    let status = child.wait_within(timeout);
+    if status.is_err() {
+        child.stop();
+    }
     stdout.rewind()?;
     stderr.rewind()?;
     let mut out = String::new();
     let mut err = String::new();
     stdout.take(64 * 1024 * 1024).read_to_string(&mut out)?;
     stderr.take(64 * 1024 * 1024).read_to_string(&mut err)?;
+    let status = status
+        .with_context(|| format!("{name} was stopped:\n{}", crate::error::tail_lines(&err, 5)))?;
     Ok(BoundedOutput {
         status,
         stdout: out,
@@ -575,6 +575,24 @@ pub fn file_digest(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_timeout_stops_the_process_and_keeps_the_stderr_tail() {
+        let error = run_bounded(
+            "fixture",
+            Command::new("sh").args([
+                "-c",
+                "printf 'hook-timeout-diagnostic\\n' >&2; exec sleep 10",
+            ]),
+            Duration::from_millis(300),
+        )
+        .err()
+        .expect("the command must time out");
+        let message = format!("{error:#}");
+        assert!(message.contains("was stopped") && message.contains("time limit"));
+        assert!(message.contains("hook-timeout-diagnostic"));
+    }
 
     #[test]
     fn workspace_lock_rejects_a_second_writer_and_releases_on_drop() {

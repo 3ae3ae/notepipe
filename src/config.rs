@@ -125,6 +125,8 @@ pub struct PipelineConfig {
     /// Configuration selected by the CLI; '-' disables interactive setup.
     #[serde(default)]
     pub config_path: Option<PathBuf>,
+    #[serde(default)]
+    pub on_complete: Vec<String>,
     pub source: crate::settings::Source,
     pub out_dir: PathBuf,
     pub similarity: f64,
@@ -463,6 +465,7 @@ mod tests {
         PipelineConfig {
             url: "https://example.test/media".into(),
             config_path: None,
+            on_complete: Vec::new(),
             out_dir: "out".into(),
             out_root: "out".into(),
             similarity: DEFAULT_SIMILARITY,

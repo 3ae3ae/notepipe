@@ -59,6 +59,7 @@ pub fn resolve(
     Ok(config::PipelineConfig {
         url: source,
         config_path: opts.config.clone(),
+        on_complete: d.on_complete.clone(),
         source: file.source.clone(),
         // The pipeline assigns the per-source work directory before processing.
         out_dir: out_root.clone(),

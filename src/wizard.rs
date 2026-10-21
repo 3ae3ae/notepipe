@@ -22,7 +22,7 @@ pub fn is_first_run(cfg: &PipelineConfig) -> bool {
 fn selected_or_cancelled(choice: Option<usize>) -> Result<usize> {
     choice.ok_or_else(|| {
         anyhow::anyhow!(
-            "Setup cancelled; no configuration saved. Run your video command again to restart."
+            "Setup cancelled; no configuration saved. Run your conversion command again to restart."
         )
     })
 }

@@ -78,7 +78,7 @@ fn missing_or_invalid_sources_fail_with_recovery() {
     let missing = cli.run(&["--asr-mode", "chat"]);
     assert!(!missing.status.success());
     assert!(
-        stderr(&missing).contains("Missing video source"),
+        stderr(&missing).contains("Missing video or audio source"),
         "{}",
         stderr(&missing)
     );

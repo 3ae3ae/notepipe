@@ -63,9 +63,9 @@ pub fn stage(name: &str, status: &str) {
     if !is_json() && !is_quiet() && status == "start" {
         let label = match name {
             "adapter/start" => "Starting adapter",
-            "fetch" => "Reading video information",
+            "fetch" => "Reading media information",
             "subtitle" => "Looking for subtitles",
-            "download" => "Downloading video",
+            "download" => "Downloading media",
             "scenes/scan" => "Scanning video frames",
             "scenes/extract" => "Saving screenshots",
             "audio" => "Extracting audio",

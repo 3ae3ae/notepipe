@@ -42,7 +42,10 @@ if args.behavior == 'oversized':
     sys.exit(0)
 print(json.dumps({'progress': 0.25}), flush=True)
 media = out / 'media.mp4'
-if args.behavior in {'files', 'orphan', 'fragmented', 'instant'}:
+if args.behavior == 'speech-audio':
+    media = out / 'media.wav'
+    media.write_bytes(Path(__file__).with_name('speech.wav').read_bytes())
+elif args.behavior in {'files', 'orphan', 'fragmented', 'instant'}:
     media.write_bytes(b'cached media')
 else:
     command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=64x32:d=3']

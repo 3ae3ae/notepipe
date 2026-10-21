@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub const QUICK_START: &str = r#"Quick start:
   notepipe ./lecture.mp4
+  notepipe ./recording.mp3
   notepipe https://example.com/video
   notepipe ./lecture.mp4 -o ./notes
 
@@ -36,7 +37,7 @@ fn version() -> &'static str {
     after_help = QUICK_START
 )]
 pub struct Cli {
-    /// Video URL or local file
+    /// Video or audio URL, or local file
     pub source: Option<String>,
 
     #[command(flatten)]

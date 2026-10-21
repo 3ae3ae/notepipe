@@ -662,6 +662,175 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
 }
 
 #[test]
+fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
+    let root = tempfile::tempdir().unwrap();
+    if notepipe::runtime::which("ffmpeg").is_none() {
+        return;
+    }
+    let source_record = root.path().join("source");
+    let asr_record = root.path().join("asr");
+    let (Some(source), Some(asr)) = (
+        source_command(&source_record, "speech-audio"),
+        adapter_command(&asr_record, "healthy"),
+    ) else {
+        return;
+    };
+    let mock = MockAi::respond_with(|_, body| {
+        let content = body["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        let items: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+        let segments = items.as_array().unwrap().iter().map(|item| json!({"id":item["id"], "text":format!("Processed {}", item["text"].as_str().unwrap())})).collect::<Vec<_>>();
+        Some((
+            200,
+            json!({"choices":[{"message":{"content":json!({"segments":segments}).to_string()}}]}),
+        ))
+    });
+    let mut cfg = config();
+    cfg.source.command = source;
+    cfg.asr.command = asr;
+    cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
+    let url = "https://example.test/audio";
+    let first = run(root.path(), url, &cfg, &[]);
+    assert!(done(&first)["warnings"].as_array().unwrap().is_empty());
+    let asr_calls = calls(&asr_record);
+    assert!(asr_calls > 0);
+    let cached = files(&root.path().join("cache/notepipe/work"));
+    assert!(!cached.iter().any(|path| {
+        ["media.wav", "audio.wav"]
+            .iter()
+            .any(|name| path.file_name().unwrap() == *name)
+    }));
+    let marker = cached
+        .iter()
+        .find(|path| {
+            path.file_name().unwrap() == "complete.json"
+                && path
+                    .parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("frames-")
+        })
+        .unwrap();
+    assert_eq!(std::fs::read(marker).unwrap(), b"null");
+    let modified = marker.metadata().unwrap().modified().unwrap();
+    let mut stage = notepipe::llm::Stage::builtin("proofread").unwrap();
+    stage.images = true;
+    cfg.llm.stages.push(stage);
+    cfg.llm.base_url = mock.url.clone();
+    cfg.llm.model = "fixture".into();
+    for _ in 0..2 {
+        let output = run(root.path(), url, &cfg, &[]);
+        assert!(done(&output)["warnings"].as_array().unwrap().is_empty());
+        assert!(!events(&output).iter().any(|event| {
+            event["stage"]
+                .as_str()
+                .is_some_and(|stage| stage.starts_with("scenes/"))
+        }));
+        let doc = document(&output);
+        assert_eq!(doc["sections"][0]["image"], "");
+        assert!(
+            doc["sections"][0]["speech"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Processed ")
+        );
+    }
+    assert_eq!(calls(&source_record), 1);
+    assert_eq!(calls(&asr_record), asr_calls);
+    assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(marker.metadata().unwrap().modified().unwrap(), modified);
+}
+
+#[cfg(unix)]
+#[test]
+fn completion_hooks_receive_note_paths_and_warning_counts_once_per_publication() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    if notepipe::runtime::which("ffmpeg").is_none() {
+        return;
+    }
+    let media = root.path().join("broken.mp4");
+    std::fs::write(&media, "broken media").unwrap();
+    let subtitle = media.with_extension("srt");
+    std::fs::write(
+        &subtitle,
+        "1\n00:00:00,000 --> 00:00:02,000\nComplete note.\n",
+    )
+    .unwrap();
+    let hook = root.path().join("completion hook.sh");
+    std::fs::write(&hook, r#"#!/bin/sh
+printf '%s\n' "$PWD" "$NOTEPIPE_NOTE_DIR" "$NOTEPIPE_MARKDOWN" "$NOTEPIPE_JSON" "$NOTEPIPE_WARNINGS" >> "$1"
+printf 'omit-first\none\ntwo\nthree\nfour\nhook failure tail\n' >&2
+exit "$2"
+"#).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let record = root.path().join("hook calls");
+    let mut cfg = config();
+    for code in ["0", "7"] {
+        cfg.defaults.on_complete = vec![
+            "./completion hook.sh".into(),
+            record.to_string_lossy().into_owned(),
+            code.into(),
+        ];
+        let output = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
+        let completed = done(&output);
+        let warnings = completed["warnings"].as_array().unwrap();
+        let hook_warnings = warnings
+            .iter()
+            .filter(|warning| warning.as_str().unwrap().starts_with("on_complete:"))
+            .count();
+        assert_eq!(hook_warnings, usize::from(code != "0"));
+        let log = std::fs::read_to_string(&record).unwrap();
+        let lines = log.lines().collect::<Vec<_>>();
+        let last = &lines[lines.len() - 5..];
+        assert_eq!(last[0], completed["note_dir"].as_str().unwrap());
+        assert_eq!(last[1], completed["note_dir"].as_str().unwrap());
+        assert_eq!(last[2], completed["markdown"].as_str().unwrap());
+        assert_eq!(last[3], completed["json"].as_str().unwrap());
+        assert_eq!(last[4], (warnings.len() - hook_warnings).to_string());
+        assert_eq!(
+            document(&output)["warnings"].as_array().unwrap().len(),
+            warnings.len() - hook_warnings
+        );
+        if code == "7" {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("code=Some(7)") && stderr.contains("hook failure tail"));
+            assert!(!stderr.contains("omit-first"));
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap().lines().count(),
+        10
+    );
+    cfg.defaults.on_complete = vec!["notepipe-completion-fixture-that-does-not-exist".into()];
+    let missing = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
+    assert!(
+        done(&missing)["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("on_complete:"))
+    );
+    cfg.defaults.on_complete = vec![
+        "./completion hook.sh".into(),
+        record.to_string_lossy().into_owned(),
+        "0".into(),
+    ];
+    std::fs::write(subtitle, "").unwrap();
+    assert!(
+        !run(root.path(), media.to_str().unwrap(), &cfg, &[])
+            .status
+            .success()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap().lines().count(),
+        10
+    );
+}
+
+#[test]
 fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallback() {
     let root = tempfile::tempdir().unwrap();
     let Some(video) = speech_video(root.path()) else {

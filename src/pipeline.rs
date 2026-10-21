@@ -42,23 +42,25 @@ fn screenshot_key(cfg: &PipelineConfig) -> Result<String> {
     )?))
 }
 
-fn read_frames(root: &Path) -> Result<Option<Vec<timeline::FrameEvent>>> {
+fn read_frames(root: &Path) -> Result<Option<scene::Output>> {
     let marker = root.join("complete.json");
     if !marker.is_file() {
         return Ok(None);
     }
-    let frames: Vec<timeline::FrameEvent> =
+    let output: scene::Output =
         serde_json::from_slice(&std::fs::read(marker)?).context("Screenshot cache is damaged")?;
-    if frames.is_empty()
-        || frames.iter().any(|frame| {
-            !frame.t.is_finite()
-                || frame.t < 0.
-                || !artifact::safe_asset_path(root, &frame.image).is_ok_and(|path| path.is_file())
-        })
+    if let scene::Output::Frames(frames) = &output
+        && (frames.is_empty()
+            || frames.iter().any(|frame| {
+                !frame.t.is_finite()
+                    || frame.t < 0.
+                    || !artifact::safe_asset_path(root, &frame.image)
+                        .is_ok_and(|path| path.is_file())
+            }))
     {
         return Ok(None);
     }
-    Ok(Some(frames))
+    Ok(Some(output))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -311,11 +313,12 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     );
     runtime::check_cancelled()?;
     let frames = match frames {
-        Ok(frames) if !frames.is_empty() => frames,
-        Ok(_) => {
+        Ok(scene::Output::Frames(frames)) if !frames.is_empty() => frames,
+        Ok(scene::Output::Frames(_)) => {
             warnings.push(NO_SCREENSHOTS.into());
             Vec::new()
         }
+        Ok(scene::Output::NoVideo) => Vec::new(),
         Err(error) => {
             warnings.push(format!("Screenshots: {error:#}"));
             Vec::new()
@@ -379,11 +382,22 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         warnings,
     };
     let root = cfg.out_root.clone();
-    let (note_dir, warnings) =
+    let (note_dir, mut warnings) =
         tokio::task::spawn_blocking(move || artifact::publish(&root, &frames_root, document))
             .await
             .context("Note publication interrupted")??;
     progress::stage("render", "done");
+    if !cfg.on_complete.is_empty() {
+        let (argv, directory, count) = (cfg.on_complete.clone(), note_dir.clone(), warnings.len());
+        if let Err(error) =
+            tokio::task::spawn_blocking(move || on_complete(&argv, &directory, count))
+                .await
+                .context("Completion hook interrupted")
+                .and_then(|result| result)
+        {
+            warnings.push(format!("on_complete: {error:#}"));
+        }
+    }
     for warning in &warnings {
         eprintln!("Warning: {warning}");
     }
@@ -391,6 +405,27 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     if !progress::is_json() && !progress::is_quiet() {
         eprintln!("Notes ready: {}", note_dir.display());
     }
+    Ok(())
+}
+
+fn on_complete(argv: &[String], note_dir: &Path, warnings: usize) -> Result<()> {
+    let program = crate::adapter::resolve_executable(&argv[0])?.canonicalize()?;
+    let output = runtime::run_bounded(
+        "on_complete",
+        std::process::Command::new(program)
+            .args(&argv[1..])
+            .current_dir(note_dir)
+            .env("NOTEPIPE_NOTE_DIR", note_dir)
+            .env("NOTEPIPE_MARKDOWN", note_dir.join("note.md"))
+            .env("NOTEPIPE_JSON", note_dir.join("note.json"))
+            .env("NOTEPIPE_WARNINGS", warnings.to_string()),
+        std::time::Duration::from_secs(10 * 60),
+    )?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        crate::error::cmd_error("on_complete", output.status.code(), &output.stderr)
+    );
     Ok(())
 }
 
@@ -492,5 +527,12 @@ mod tests {
         )
         .unwrap();
         assert!(read_frames(root.path()).unwrap().is_none());
+        checkpoint::atomic_write(&root.path().join("complete.json"), b"[]").unwrap();
+        assert!(read_frames(root.path()).unwrap().is_none());
+        checkpoint::atomic_write(&root.path().join("complete.json"), b"null").unwrap();
+        assert!(matches!(
+            read_frames(root.path()).unwrap(),
+            Some(scene::Output::NoVideo)
+        ));
     }
 }

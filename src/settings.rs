@@ -18,6 +18,7 @@ pub struct Defaults {
     pub roi: Option<String>,
     /// 转写来源：auto（字幕优先）| subtitle | asr
     pub transcript_source: Option<crate::config::TranscriptSource>,
+    pub on_complete: Vec<String>,
 }
 
 /// External program that resolves an online URL into local media and subtitles.
@@ -232,6 +233,8 @@ const TEMPLATE: &str = r#"# Configuration
 # auto: subtitles first, then speech recognition
 # subtitle: subtitles only; asr: speech recognition only
 #transcript_source = "{TRANSCRIPT_SOURCE}"
+# Run after publication, in the note folder (argv; no shell)
+#on_complete = []
 
 [source]
 # Source adapter argv; empty discovers a single notepipe-source-* executable
@@ -292,6 +295,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         ("screenshot_mode", r.screenshot_mode.to_string()),
         ("stable_secs", r.stable_secs.to_string()),
         ("transcript_source", r.transcript_source.to_string()),
+        ("on_complete", format!("{:?}", r.on_complete)),
     ];
     println!("[defaults]");
     for (key, value) in rows {

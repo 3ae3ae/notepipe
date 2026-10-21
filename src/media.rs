@@ -88,14 +88,14 @@ struct ProbeFormat {
 }
 
 /// 视频宽高与时长。用 `-of json` 结构化输出，取代按逗号/空白切分的文本解析。
-pub async fn probe_video(media: &Path) -> Option<VideoInfo> {
+pub async fn probe_video(media: &Path) -> Result<Option<VideoInfo>> {
     let out = probe_output(
         Command::new("ffprobe")
             .args([
                 "-v",
                 "error",
                 "-select_streams",
-                "v:0",
+                "V:0",
                 "-show_entries",
                 "stream=width,height:format=duration",
                 "-of",
@@ -103,21 +103,37 @@ pub async fn probe_video(media: &Path) -> Option<VideoInfo> {
             ])
             .arg(media),
     )
-    .await?;
+    .await
+    .context("Could not run ffprobe for video streams")?;
     if !out.status.success() {
-        return None;
+        return Err(crate::error::cmd_error(
+            "ffprobe",
+            out.status.code(),
+            &String::from_utf8_lossy(&out.stderr),
+        ));
     }
-    let probe: ProbeJson = serde_json::from_slice(&out.stdout).ok()?;
-    let stream = probe.streams.first()?;
+    let probe: ProbeJson =
+        serde_json::from_slice(&out.stdout).context("Invalid ffprobe response")?;
+    // Uppercase V excludes attached pictures such as album covers.
+    let Some(stream) = probe.streams.first() else {
+        return Ok(None);
+    };
     let duration = probe
         .format
         .and_then(|f| f.duration)
-        .and_then(|d| d.parse::<f64>().ok())?;
-    Some(VideoInfo {
-        width: stream.width?,
-        height: stream.height?,
+        .and_then(|d| d.parse::<f64>().ok())
+        .context("Could not read video duration")?;
+    Ok(Some(VideoInfo {
+        width: stream
+            .width
+            .filter(|&width| width > 0)
+            .context("Could not read video width")?,
+        height: stream
+            .height
+            .filter(|&height| height > 0)
+            .context("Could not read video height")?,
         duration,
-    })
+    }))
 }
 
 /// `probe_duration` 两个入口共享的 ffprobe 参数（只输出时长数字）。

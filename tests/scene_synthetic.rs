@@ -45,6 +45,7 @@ fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config:
     notepipe::config::PipelineConfig {
         url: video.display().to_string(),
         config_path: None,
+        on_complete: Vec::new(),
         out_dir: dir.to_path_buf(),
         out_root: dir.to_path_buf(),
         similarity: 0.9,
@@ -75,10 +76,13 @@ fn scene_detects_slides_with_true_timestamps() {
 
     let cfg = test_cfg(&video, &dir);
 
-    let frames = tokio::runtime::Runtime::new()
+    let notepipe::scene::Output::Frames(frames) = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(notepipe::scene::run(&cfg, &video))
-        .expect("scene run");
+        .expect("scene run")
+    else {
+        panic!("Expected a video stream");
+    };
 
     // 期望（cooldown=10s、first 模式）：
     //   0s "A" 被发射；6.5s "B" 成为候选、7.5s 被 "C" 替换（候选持续更新，检测无盲区）；
@@ -130,10 +134,13 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
         ..test_cfg(&video, &dir)
     };
 
-    let frames = tokio::runtime::Runtime::new()
+    let notepipe::scene::Output::Frames(frames) = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(notepipe::scene::run(&cfg, &video))
-        .expect("scene run");
+        .expect("scene run")
+    else {
+        panic!("Expected a video stream");
+    };
     let ts: Vec<f64> = frames.iter().map(|f| f.t).collect();
     // 黑页（2~3.5s，持续 1.5s > stable_secs=1.2s）是否被单独发射取决于采样相位，
     // 非确定行为；这里只断言确定性行为：首页 ~0s 与稳定灰页 onset ~3.5s 都存在。
@@ -142,4 +149,115 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
     let gray = ts.iter().find(|&&t| (t - 3.5).abs() < 1.0);
     assert!(gray.is_some(), "灰页 onset 应为 3.5s 附近，got {ts:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let cover = root.path().join("cover.jpg");
+    image::RgbImage::new(32, 32).save(&cover).unwrap();
+    for attached in [false, true] {
+        let media = root
+            .path()
+            .join(if attached { "covered.m4a" } else { "audio.wav" });
+        let mut generate = Command::new("ffmpeg");
+        generate.args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=2",
+        ]);
+        if attached {
+            generate.arg("-i").arg(&cover).args([
+                "-map",
+                "0:a",
+                "-map",
+                "1:v",
+                "-c:a",
+                "aac",
+                "-c:v",
+                "mjpeg",
+                "-disposition:v:0",
+                "attached_pic",
+            ]);
+        }
+        let output = generate.arg(&media).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if attached {
+            let probe = Command::new("ffprobe")
+                .args([
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream_disposition=attached_pic",
+                    "-of",
+                    "json",
+                ])
+                .arg(&media)
+                .output()
+                .unwrap();
+            assert!(probe.status.success());
+            let stream: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+            assert_eq!(stream["streams"][0]["disposition"]["attached_pic"], 1);
+        }
+        let subtitle = media.with_extension("srt");
+        std::fs::write(
+            &subtitle,
+            "1\n00:00:00,000 --> 00:00:02,000\nAn audio-only note.\n",
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+            .arg(&media)
+            .args(["--transcript-source", "subtitle", "--json", "--config", "-"])
+            .current_dir(root.path())
+            .env("XDG_CACHE_HOME", root.path().join("cache"))
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child.stdin.take().unwrap().write_all(b"{}")?;
+                child.wait_with_output()
+            })
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let events: Vec<serde_json::Value> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(!events.iter().any(|event| {
+            event["stage"]
+                .as_str()
+                .is_some_and(|stage| stage.starts_with("scenes/"))
+        }));
+        let done = events.last().unwrap();
+        assert_eq!(done["type"], "done");
+        assert!(done["warnings"].as_array().unwrap().is_empty());
+        let note = std::fs::read_to_string(done["markdown"].as_str().unwrap()).unwrap();
+        assert!(note.contains("An audio-only note.") && !note.contains("!["));
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(done["json"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert!(document["warnings"].as_array().unwrap().is_empty());
+        assert_eq!(document["sections"][0]["image"], "");
+    }
 }

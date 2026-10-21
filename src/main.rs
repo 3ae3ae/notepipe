@@ -148,9 +148,9 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 None => {
                     anyhow::ensure!(
                         no_args,
-                        "Missing video source. Example: notepipe ./lecture.mp4"
+                        "Missing video or audio source. Example: notepipe ./lecture.mp4"
                     );
-                    println!("notepipe — Turn videos into illustrated notes\n");
+                    println!("notepipe — Turn video and audio into Markdown notes\n");
                     println!("{}", notepipe::cli::QUICK_START);
                     println!("All options: notepipe --help");
                     return Ok(());
@@ -177,12 +177,12 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
     let source = source.trim();
     if source.starts_with("http://") || source.starts_with("https://") {
         let url = url::Url::parse(source)
-            .map_err(|_| anyhow::anyhow!("Invalid URL; provide a complete video URL"))?;
+            .map_err(|_| anyhow::anyhow!("Invalid URL; provide a complete video or audio URL"))?;
         anyhow::ensure!(url.host_str().is_some(), "URL is missing a host");
         return Ok(source.to_owned());
     }
     anyhow::bail!(
-        "Video file not found or URL not recognized: {}\nCheck the path and quote paths containing spaces.",
+        "Video or audio file not found or URL not recognized: {}\nCheck the path and quote paths containing spaces.",
         source
     )
 }
