@@ -3117,7 +3117,6 @@ impl Desktop {
         let wide = column >= 960. * scale;
         let show_options = self.generation_options_open
             && self.preview_cancel.is_none()
-            && self.source_candidates.is_empty()
             && self
                 .current_input_task(cx)
                 .is_none_or(|task| task.state.finished());
