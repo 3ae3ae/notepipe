@@ -62,8 +62,9 @@ uv tool install "notepipe[ytdlp]"         # the same, plus URLs through yt-dlp
 uv tool install "notepipe[ytdlp,llama]"   # the same, plus local speech recognition with llama.cpp
 ```
 
-[Adapters](#adapters) are extras. Running the command again replaces the installation, so list every extra you want each
-time. pip and pipx accept the same names.
+[Adapters](#adapters) are extras. Running the command again replaces the installation, including its extras and `--with`
+packages, so list everything you want each time; `uv tool list --show-extras --show-with` shows the current set. pip and
+pipx accept the same names.
 
 With Cargo: `cargo install notepipe`. Prebuilt binaries are attached to each
 [GitHub release](https://github.com/3ae3ae/notepipe/releases). On Android, install [Termux](https://termux.dev), run
