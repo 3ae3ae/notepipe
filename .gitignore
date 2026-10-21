@@ -14,3 +14,5 @@ out-gpu/
 out-smoke/
 adapters/apple/native/.build/
 /adapters/apple/target/
+/adapters/apple/wheel-data/
+/dist/

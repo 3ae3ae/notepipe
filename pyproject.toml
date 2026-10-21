@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "notepipe"
+dynamic = ["version"]
+description = "Extensible engine and CLI that turns video and audio into Markdown notes"
+requires-python = ">=3.9"
+license = "MIT"
+readme = "README.md"
+
+[project.urls]
+Homepage = "https://github.com/3ae3ae/notepipe"
+Repository = "https://github.com/3ae3ae/notepipe"
+Issues = "https://github.com/3ae3ae/notepipe/issues"
+
+[tool.maturin]
+bindings = "bin"

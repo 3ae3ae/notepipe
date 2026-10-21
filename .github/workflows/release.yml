@@ -27,7 +27,6 @@ jobs:
           import os, pathlib, tomllib
           root = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
           assert os.environ['VERSION'] == 'v' + root, root
-          assert pathlib.Path('docs/releases', 'v' + root + '.md').is_file(), 'missing release notes'
           PYCODE
 
   build:
@@ -45,7 +44,6 @@ jobs:
           - os: macos-26
             target: aarch64-apple-darwin
             asset: notepipe-macos-arm64
-          # build.rs skips the Apple speech module on x86_64 macOS.
           - os: macos-26
             target: x86_64-apple-darwin
             asset: notepipe-macos-x86_64
@@ -90,15 +88,148 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: |
-            ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build core wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ runner.os == 'Linux' && '2_28' || 'auto' }}
+          args: --release --locked --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-core-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
 
       - name: Remove signing material
         if: always() && runner.os == 'macOS'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain" 2>/dev/null || true
 
+  sdist:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-core-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  apple-adapter:
+    needs: validate
+    runs-on: macos-26
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+    defaults:
+      run:
+        working-directory: adapters/apple
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: adapters/apple
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build Apple adapter
+        run: cargo build --release --locked --target aarch64-apple-darwin
+      - uses: ./.github/actions/macos-signing
+        with:
+          certificate: ${{ secrets.MACOS_CERT_P12 }}
+          password: ${{ secrets.MACOS_CERT_PASS }}
+      - name: Sign Apple adapter
+        run: |
+          binary=target/aarch64-apple-darwin/release/notepipe-asr-apple
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            codesign --force --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "$binary"
+          else
+            codesign --force --sign - "$binary"
+          fi
+          codesign --verify --verbose=2 "$binary"
+      - name: Stage MLX runtime asset and release archive
+        run: |
+          mkdir -p wheel-data/scripts dist
+          cp target/aarch64-apple-darwin/release/mlx.metallib wheel-data/scripts/mlx.metallib
+          tar -czf dist/notepipe-asr-apple-macos-arm64.tar.gz \
+            -C target/aarch64-apple-darwin/release notepipe-asr-apple mlx.metallib
+      - name: Build Apple wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: adapters/apple
+          target: aarch64-apple-darwin
+          args: --release --locked --out dist --compatibility pypi
+      - name: Verify wheel runtime files
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          from zipfile import ZipFile
+          wheels = list(Path('dist').glob('*.whl'))
+          assert len(wheels) == 1, wheels
+          with ZipFile(wheels[0]) as wheel:
+              files = wheel.namelist()
+              for name in ('notepipe-asr-apple', 'mlx.metallib'):
+                  assert any(path.endswith('.data/scripts/' + name) for path in files), files
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-apple-wheel
+          path: adapters/apple/dist/*.whl
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notepipe-asr-apple-macos-arm64
+          path: adapters/apple/dist/*.tar.gz
+          if-no-files-found: error
+      - name: Remove signing material
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain" 2>/dev/null || true
+
+  python-adapters:
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [openvino, xai, meta, ytdlp]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find adapter
+        id: adapter
+        shell: bash
+        run: |
+          if [ -f "adapters/${{ matrix.adapter }}/pyproject.toml" ]; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@v6
+        if: steps.adapter.outputs.exists == 'true'
+        with:
+          python-version: '3.12'
+      - name: Build wheel and sdist
+        if: steps.adapter.outputs.exists == 'true'
+        working-directory: adapters/${{ matrix.adapter }}
+        run: uv build
+      - uses: actions/upload-artifact@v4
+        if: steps.adapter.outputs.exists == 'true'
+        with:
+          name: package-${{ matrix.adapter }}
+          path: adapters/${{ matrix.adapter }}/dist/*
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, sdist, apple-adapter, python-adapters]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
@@ -116,8 +247,22 @@ jobs:
           tag_name: ${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
           files: dist/*
-          body_path: docs/releases/${{ env.VERSION }}.md
           fail_on_unmatched_files: true
           generate_release_notes: true
           prerelease: ${{ contains(env.VERSION, '-') }}
           make_latest: ${{ !contains(env.VERSION, '-') }}
+
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - name: Publish Python packages
+        uses: pypa/gh-action-pypi-publish@release/v1
