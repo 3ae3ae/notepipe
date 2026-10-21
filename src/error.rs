@@ -18,18 +18,10 @@ pub fn cmd_error(program: &str, code: Option<i32>, stderr: &str) -> anyhow::Erro
     anyhow::anyhow!("{program} failed (code={code:?}):\n{tail}")
 }
 
-/// 校验 PATH 上的外部工具存在（yt-dlp 请用 [`require_ytdlp`]）。
+/// Check whether an external tool is available on PATH.
 pub fn require_cmd(cmd: &str) -> Result<()> {
     if crate::runtime::which(cmd).is_none() {
         return Err(missing_tool(cmd));
-    }
-    Ok(())
-}
-
-/// 校验 yt-dlp 可用（随包自带 / PATH / 常见安装目录，见 [`crate::ytdlp::resolve`]）。
-pub fn require_ytdlp() -> Result<()> {
-    if crate::ytdlp::resolve().is_none() {
-        return Err(missing_tool("yt-dlp"));
     }
     Ok(())
 }
@@ -41,13 +33,8 @@ fn missing_tool(cmd: &str) -> anyhow::Error {
 /// 按平台给一行安装命令（常见包管理器；ffprobe 随 ffmpeg 包提供）。
 pub fn install_hint(cmd: &str) -> String {
     let pkg = if cmd == "ffprobe" { "ffmpeg" } else { cmd };
-    let media_tool = matches!(cmd, "ffmpeg" | "ffprobe" | "yt-dlp");
     if cfg!(target_os = "macos") {
-        if media_tool {
-            "macOS: brew install ffmpeg yt-dlp".into()
-        } else {
-            format!("macOS: brew install {pkg}")
-        }
+        format!("macOS: brew install {pkg}")
     } else if cfg!(target_os = "windows") {
         format!("Windows: winget install {pkg}")
     } else {

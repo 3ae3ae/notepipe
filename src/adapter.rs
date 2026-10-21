@@ -1,8 +1,6 @@
 //! Managed HTTP adapter lifecycle, generalized from the OpenVINO worker.
 
 use anyhow::{Context, Result};
-#[cfg(windows)]
-mod windows;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -11,8 +9,6 @@ use std::{
 
 /// First runs may download models before serving /health.
 const ADAPTER_READY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-#[cfg(unix)]
-const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 
 pub struct Adapter {
     child: crate::runtime::ManagedChild,
@@ -20,8 +16,6 @@ pub struct Adapter {
     pub base: String,
     drains: Vec<std::thread::JoinHandle<()>>,
     stopped: bool,
-    #[cfg(windows)]
-    job: Option<windows::Job>,
 }
 
 /// Bare names prefer the canonical executable's directory, then PATH.
@@ -37,7 +31,7 @@ fn resolve_from(program: &str, directory: &Path) -> Result<PathBuf> {
     which::which_in(program, Some(directory.as_os_str()), directory)
         .ok()
         .or_else(|| crate::runtime::which(program))
-        .with_context(|| format!("ASR adapter executable not found: {}", program))
+        .with_context(|| format!("Adapter executable not found: {}", program))
 }
 
 impl Adapter {
@@ -57,25 +51,12 @@ impl Adapter {
         command
             .args(&argv[1..])
             .args(["--host", "127.0.0.1", "--port", &port.to_string()]);
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        #[cfg(windows)]
-        let job = {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
-            windows::Job::new()?
-        };
         command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         crate::progress::stage("model/load", "start");
-        let mut child = crate::runtime::ManagedChild::spawn("ASR adapter", &mut command)?;
-        #[cfg(windows)]
-        job.assign_and_resume(&child)?;
+        let mut child = crate::runtime::ManagedChild::spawn_adapter("ASR adapter", &mut command)?;
         let stderr = crate::runtime::StderrTail::default();
         let mut drains = Vec::new();
         if let Some(pipe) = child.take_stderr() {
@@ -90,8 +71,6 @@ impl Adapter {
             base: format!("http://127.0.0.1:{port}"),
             drains,
             stopped: false,
-            #[cfg(windows)]
-            job: Some(job),
         };
         let started = Instant::now();
         if let Err(error) = crate::runtime::wait_ready(
@@ -118,22 +97,7 @@ impl Adapter {
             return;
         }
         self.stopped = true;
-        #[cfg(unix)]
-        {
-            let group = -(self.child.id() as i32);
-            unsafe {
-                libc::kill(group, libc::SIGTERM);
-            }
-            let _ = self.child.wait_within(SHUTDOWN_WAIT);
-            // The leader may exit before its children; terminate the entire group.
-            unsafe {
-                libc::kill(group, libc::SIGKILL);
-            }
-        }
-        #[cfg(windows)]
-        drop(self.job.take());
-        self.child.kill();
-        let _ = self.child.wait();
+        self.child.stop();
         for drain in self.drains.drain(..) {
             let _ = drain.join();
         }

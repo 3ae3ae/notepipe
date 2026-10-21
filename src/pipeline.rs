@@ -4,9 +4,9 @@ use crate::{
     artifact::{self, Outcome, Outcomes, Status, Target},
     asr,
     config::{self, PipelineConfig},
-    execution,
-    fetch::{self, VideoMeta},
-    media, progress, scene, timeline,
+    execution, media, progress, scene,
+    source::{self, VideoMeta},
+    timeline,
 };
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -31,22 +31,29 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let started = Instant::now();
     let mut cfg = cfg.clone();
     cfg.validate().context("Invalid settings")?;
+    if cfg.llm.uses_service() {
+        crate::llm::validate(&cfg.llm)?;
+    }
     let local = Path::new(&cfg.url);
     let is_local = local.is_file();
-    if !is_local {
-        crate::error::require_ytdlp()?;
-    }
     progress::stage("fetch", "start");
     let probed = if is_local {
         None
     } else {
-        Some(Box::new(fetch::probe_video(&cfg).await?))
+        Some(Box::new(resolve_source(&cfg).await?))
     };
     // 本地视频先探时长：成功进 meta；失败不当 0 静默（merge 会失真），
     // 延迟到诊断作用域内返回，失败同样写 run.json
-    let local_duration = if is_local {
+    let media_path = probed
+        .as_ref()
+        .map_or_else(|| local.to_path_buf(), |source| source.media.clone());
+    let local_duration = if is_local
+        || probed
+            .as_ref()
+            .is_some_and(|source| source.meta.duration <= 0.)
+    {
         Some(
-            media::probe_duration(local)
+            media::probe_duration(&media_path)
                 .await
                 .context("Could not probe the local video duration"),
         )
@@ -54,7 +61,14 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         None
     };
     let meta = if let Some(video) = &probed {
-        video.meta.clone()
+        let mut meta = video.meta.clone();
+        if meta.duration <= 0. {
+            meta.duration = local_duration
+                .as_ref()
+                .and_then(|probe| probe.as_ref().ok().copied())
+                .unwrap_or(0.);
+        }
+        meta
     } else {
         VideoMeta {
             title: sanitize_stem(local),
@@ -73,28 +87,20 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     };
     let local_duration_error = local_duration.and_then(|probe| probe.err());
     progress::stage("fetch", "done");
-    let platform = config::platform_from(&cfg.url, &meta.extractor);
+    let platform = if is_local { "local" } else { "web" };
     let source_id = if is_local {
         format!("local:sha256:{}", meta.id)
     } else {
-        format!(
-            "{}:{}",
-            platform,
-            if meta.id.is_empty() {
-                config::infer_slug(&cfg.url)
-            } else {
-                meta.id.clone()
-            }
-        )
+        format!("url:sha256:{}", execution::digest(cfg.url.as_bytes()))
     };
     let note_id = execution::digest(source_id.as_bytes());
-    let note_dir = cfg.out_root.join(&platform).join(&note_id);
+    let note_dir = cfg.out_root.join(platform).join(&note_id);
     let input = SubtitleInput::Discover(probed);
     let input = if local_duration_error.is_none() && crate::wizard::is_first_run(&cfg.asr) {
         let tmp = crate::runtime::TempWorkDir::new("subtitles")?;
         let mut probe_cfg = cfg.clone();
         probe_cfg.out_dir = tmp.path().into();
-        let selected = subtitles(&probe_cfg, is_local, input).await?;
+        let selected = subtitles(&probe_cfg, input).await?;
         if selected.is_none() {
             cfg.asr = crate::wizard::run(&cfg.asr)?;
         }
@@ -141,7 +147,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let record = FailureRecord {
         cfg: &cfg,
         is_local,
-        platform: &platform,
+        platform,
         id: &meta.id,
         started,
     };
@@ -150,7 +156,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             if let Some(error) = local_duration_error {
                 return Err(error);
             }
-            run_prepared(&cfg, &meta, &target, is_local, input, started).await
+            run_prepared(&cfg, &meta, &target, &media_path, input, started).await
         })
         .await
 }
@@ -176,7 +182,7 @@ pub(crate) async fn run_task(request: &execution::Request, cfg: &PipelineConfig)
         extractor: if is_local {
             "local".into()
         } else {
-            config::platform_from(&request.source, "")
+            "web".into()
         },
         id: request.source_id.clone(),
     };
@@ -227,23 +233,39 @@ async fn run_task_inner(
     } else {
         None
     };
-    // 批量入队的任务不带预选字幕：Auto/强制字幕模式下在任务内探测一次并自行发现
-    // 字幕，语义与 CLI 一致。探测补齐笔记所需的 UP 主与时长，标题保持入队时的候选标题。
-    let subtitle_input = if discovers_subtitles_at_runtime(&subtitle, cfg, is_local) {
-        progress::stage("fetch", "start");
-        let video = fetch::probe_video(cfg).await?;
-        progress::stage("fetch", "done");
-        if meta.uploader.trim().is_empty() {
-            meta.uploader = video.meta.uploader.clone();
-        }
-        if !meta.duration.is_finite() || meta.duration <= 0. {
-            meta.duration = video.meta.duration;
-        }
-        SubtitleInput::Discover(Some(Box::new(video)))
+    if cfg.llm.uses_service() {
+        crate::llm::validate(&cfg.llm)?;
+    }
+    if subtitle.is_none() && cfg.transcript_source == config::TranscriptSource::Asr {
+        cfg.validate_asr()?;
+    }
+    let resolved = if is_local {
+        None
     } else {
-        SubtitleInput::Selected(subtitle)
+        Some(Box::new(resolve_source(cfg).await?))
     };
-    run_prepared(cfg, &meta, target, is_local, subtitle_input, started).await
+    let media_path = resolved
+        .as_ref()
+        .map_or_else(|| PathBuf::from(&cfg.url), |source| source.media.clone());
+    if let Some(source) = &resolved {
+        if meta.uploader.trim().is_empty() {
+            meta.uploader = source.meta.uploader.clone();
+        }
+        if meta.duration <= 0. {
+            meta.duration = source.meta.duration;
+        }
+    }
+    if meta.duration <= 0. {
+        meta.duration = media::probe_duration(&media_path)
+            .await
+            .context("Could not probe source media duration")?;
+    }
+    let subtitle_input = if subtitle.is_some() {
+        SubtitleInput::Selected(subtitle)
+    } else {
+        SubtitleInput::Discover(resolved)
+    };
+    run_prepared(cfg, &meta, target, &media_path, subtitle_input, started).await
 }
 
 async fn reprocess(
@@ -346,21 +368,6 @@ async fn reprocess(
                 }
             }
         }
-        if !cfg.media_path().exists() {
-            let (prior, media, marker) = (
-                prior.to_path_buf(),
-                cfg.media_path(),
-                cfg.out_dir.join("media.sha256"),
-            );
-            blocking(move || {
-                if verified_file(&prior.join("media.mp4"), &prior.join("media.sha256"))? {
-                    std::fs::copy(prior.join("media.mp4"), &media)?;
-                    save_file_digest(&media, &marker)?;
-                }
-                Ok(())
-            })
-            .await?;
-        }
     }
     // Copy verified base images into a separate namespace; a failed new screenshot pass
     // cannot mix old and new frames or mutate the old version through shared hard links.
@@ -389,25 +396,12 @@ async fn reprocess(
         let media_path = if Path::new(&request.source).is_file() {
             PathBuf::from(&request.source)
         } else {
-            if !prepare_cached_media_async(cfg).await? {
-                anyhow::ensure!(
-                    !Path::new(&request.source).is_absolute()
-                        && !request.source_id.starts_with("local:"),
-                    "Original video is unavailable; the saved note remains readable"
-                );
-                anyhow::ensure!(
-                    !cfg.no_download,
-                    "Video required for screenshots is unavailable"
-                );
-                // 与主路径同一纪律：无法校验的现存文件已由 prepare_cached_media 归档，
-                // 此处只会真正下载新内容，不会把未校验文件标记为已校验
-                crate::error::require_ytdlp()?;
-                progress::stage("download", "start");
-                fetch::download(cfg, &cfg.media_path(), false).await?;
-                save_file_digest_async(cfg.media_path(), cfg.out_dir.join("media.sha256")).await?;
-                progress::stage("download", "done");
-            }
-            cfg.media_path()
+            anyhow::ensure!(
+                !Path::new(&request.source).is_absolute()
+                    && !request.source_id.starts_with("local:"),
+                "Original video is unavailable; the saved note remains readable"
+            );
+            resolve_source(cfg).await?.media
         };
         match cached_frames(cfg, &media_path).await {
             Ok(frames) if !frames.is_empty() => {
@@ -589,23 +583,21 @@ fn export_for_task(
 
 enum SubtitleInput {
     Resolved(Option<(Vec<timeline::TranscriptEvent>, String)>),
-    /// CLI path: the video probed once at fetch time; `None` for local files.
-    Discover(Option<Box<fetch::OnlineVideo>>),
+    /// Adapter output, or local sidecars when absent.
+    Discover(Option<Box<source::Resolved>>),
     Selected(Option<Vec<timeline::TranscriptEvent>>),
 }
 
-/// 批量任务不带预选字幕时：Auto/强制字幕模式在任务内探测并发现字幕。
-fn discovers_subtitles_at_runtime(
-    subtitle: &Option<Vec<timeline::TranscriptEvent>>,
-    cfg: &PipelineConfig,
-    is_local: bool,
-) -> bool {
-    subtitle.is_none() && cfg.transcript_source != config::TranscriptSource::Asr && !is_local
+async fn resolve_source(cfg: &PipelineConfig) -> Result<source::Resolved> {
+    let identity = execution::digest(&serde_json::to_vec(
+        &serde_json::json!({"url":cfg.url,"command":cfg.source.command}),
+    )?);
+    let cache = cfg.out_root.join(".work").join("sources").join(identity);
+    source::resolve(&cfg.url, &cfg.source, &cache, cfg.no_download).await
 }
 
 async fn subtitles(
     cfg: &PipelineConfig,
-    local: bool,
     input: SubtitleInput,
 ) -> Result<Option<(Vec<timeline::TranscriptEvent>, String)>> {
     let probed = match input {
@@ -626,23 +618,33 @@ async fn subtitles(
     if cfg.transcript_source == config::TranscriptSource::Asr {
         return Ok(None);
     }
-    let found = if local {
-        fetch::sidecar_subtitle(Path::new(&cfg.url), &cfg.asr.language)
+    let found = if let Some(mut source) = probed {
+        crate::subtitle::sort_tracks(
+            &mut source.subtitles,
+            &cfg.asr.language,
+            source.language.as_deref(),
+        );
+        source
+            .subtitles
+            .into_iter()
+            .next()
+            .map(|track| match track.origin {
+                crate::subtitle::SubtitleOrigin::File { path } => {
+                    (path, track.kind == crate::subtitle::SubtitleKind::Automatic)
+                }
+            })
     } else {
-        let video = probed.context("Missing video info; please probe again")?;
-        fetch::fetch_subtitle(&video, cfg)
-            .await
-            .context("Could not read video subtitles")?
+        crate::subtitle::sidecar_subtitle(Path::new(&cfg.url), &cfg.asr.language)
+            .map(|path| (path, false))
     };
     match found {
-        Some(file) => {
-            let content =
-                std::fs::read_to_string(&file.path).context("Cannot read subtitle file")?;
+        Some((path, automatic)) => {
+            let content = crate::subtitle::read_subtitle_text(&path)?;
             let events = crate::subtitle::parse_subtitle(&content);
             execution::validate_events(&events)?;
             Ok(Some((
                 events,
-                if file.auto {
+                if automatic {
                     "auto-caption"
                 } else {
                     "subtitle"
@@ -669,7 +671,7 @@ async fn run_prepared(
     cfg: &PipelineConfig,
     meta: &VideoMeta,
     target: &Target,
-    is_local: bool,
+    media_path: &Path,
     input: SubtitleInput,
     started: Instant,
 ) -> Result<()> {
@@ -693,39 +695,16 @@ async fn run_prepared(
         emit_done(target, &manifest, &document.sections, started);
         return Ok(());
     }
-    if cfg.llm.uses_service() {
-        crate::llm::validate(&cfg.llm)?;
-    }
-    // Subtitle evidence and cloud static validation precede any full media download.
+    // Selected subtitles and service settings are checked before media processing.
     progress::stage("subtitle", "start");
-    let selected = subtitles(cfg, is_local, input).await?;
+    let selected = subtitles(cfg, input).await?;
     progress::stage("subtitle", "done");
     if selected.is_none() {
         cfg.validate_asr()?;
     }
     crate::error::require_cmd("ffmpeg")?;
     crate::error::require_cmd("ffprobe")?;
-    if !is_local {
-        crate::error::require_ytdlp()?;
-    }
     meta.save(&cfg.meta_path())?;
-    let media_path = if is_local {
-        PathBuf::from(&cfg.url)
-    } else {
-        cfg.media_path()
-    };
-    let media_existed = !is_local && prepare_cached_media_async(cfg).await?;
-    crate::dispatch::check_control()?;
-    if !is_local && !media_existed {
-        anyhow::ensure!(
-            !cfg.no_download,
-            "The downloaded video is missing; allow downloading it again"
-        );
-        progress::stage("download", "start");
-        fetch::download(cfg, &media_path, tracing::enabled!(tracing::Level::DEBUG)).await?;
-        save_file_digest_async(media_path.clone(), cfg.out_dir.join("media.sha256")).await?;
-        progress::stage("download", "done");
-    }
     crate::dispatch::check_control()?;
     let mut outcomes = Outcomes::default();
     // 两路并行但都受 watch_control 打断：取消时任一路不再等到自身阶段边界才停；
@@ -733,7 +712,7 @@ async fn run_prepared(
     let (frames_result, transcript_result) = tokio::join!(
         async {
             tokio::select! {
-                r = cached_frames(cfg, &media_path) => r,
+                r = cached_frames(cfg, media_path) => r,
                 e = crate::dispatch::watch_control() => Err(e),
             }
         },
@@ -754,7 +733,7 @@ async fn run_prepared(
                             blocking(move || verified_file(&audio, &marker)).await?
                         };
                         if !verified {
-                            media::extract_audio(&media_path, &audio).await?;
+                            media::extract_audio(media_path, &audio).await?;
                             save_file_digest_async(audio.clone(), marker).await?;
                         }
                         progress::stage("audio", "done");
@@ -888,9 +867,6 @@ async fn run_prepared(
             &serde_json::json!({"success":true,"task_id":target.task_id,"version_id":target.version_id,"transcript_source":transcript.source,"outcomes":manifest.outcomes,"out_dir":target.version_dir()}),
         )?,
     )?;
-    if should_delete_media(is_local, cfg.no_download, media_existed, cfg.keep_video) {
-        let _ = std::fs::remove_file(&media_path);
-    }
     emit_done(target, &manifest, &sections, started);
     if !progress::is_json() && !progress::is_quiet() {
         eprintln!(
@@ -976,10 +952,6 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
 async fn save_file_digest_async(path: PathBuf, marker: PathBuf) -> Result<()> {
     blocking(move || save_file_digest(&path, &marker)).await
 }
-async fn prepare_cached_media_async(cfg: &PipelineConfig) -> Result<bool> {
-    let cfg = cfg.clone();
-    blocking(move || prepare_cached_media(&cfg)).await
-}
 fn verified_file(path: &Path, marker: &Path) -> Result<bool> {
     if !path.is_file() || !marker.is_file() {
         return Ok(false);
@@ -988,33 +960,6 @@ fn verified_file(path: &Path, marker: &Path) -> Result<bool> {
 }
 fn save_file_digest(path: &Path, marker: &Path) -> Result<()> {
     crate::checkpoint::atomic_write(marker, execution::file_digest(path)?.as_bytes())
-}
-
-/// A completed download has a durable content marker. Preserve unverifiable files
-/// separately before the caller downloads again, so recovery never consumes a partial
-/// download or destroys the old bytes while trying to repair it.
-fn prepare_cached_media(cfg: &PipelineConfig) -> Result<bool> {
-    let media = cfg.media_path();
-    if !media.is_file() {
-        return Ok(false);
-    }
-    if verified_file(&media, &cfg.out_dir.join("media.sha256"))? {
-        return Ok(true);
-    }
-    anyhow::ensure!(
-        !cfg.no_download,
-        "Cached video cannot be verified; downloading is required"
-    );
-    let archives = cfg.out_dir.join(".previous-media");
-    std::fs::create_dir_all(&archives)?;
-    let archive = tempfile::Builder::new()
-        .prefix("unverified-")
-        .tempdir_in(archives)?;
-    std::fs::rename(&media, archive.path().join("media.mp4"))?;
-    let archive_path = archive.keep();
-    crate::artifact::sync_dir(&archive_path)?;
-    crate::artifact::sync_dir(&cfg.out_dir)?;
-    Ok(false)
 }
 
 fn emit_done(
@@ -1300,95 +1245,9 @@ fn sanitize_stem(p: &Path) -> String {
         .collect()
 }
 
-/// 结束时是否允许删除媒体文件：仅当「本次运行下载的」且未要求保留。
-/// --no-download 复用的既有文件、本地输入永远不删。
-fn should_delete_media(
-    is_local: bool,
-    no_download: bool,
-    media_existed: bool,
-    keep_video: bool,
-) -> bool {
-    !is_local && !no_download && !media_existed && !keep_video
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{run, should_delete_media};
-
-    #[test]
-    fn batch_tasks_discover_subtitles_at_runtime_only_without_confirmed_text() {
-        let mut cfg = crate::options::resolve(
-            "https://example.invalid/video".into(),
-            &Default::default(),
-            &Default::default(),
-        )
-        .unwrap();
-        cfg.transcript_source = crate::config::TranscriptSource::Auto;
-        // 批量 Auto：无预选字幕 → 任务内探测并发现
-        assert!(super::discovers_subtitles_at_runtime(&None, &cfg, false));
-        // 强制字幕（无预选内容）→ 任务内发现，找不到字幕再报错
-        cfg.transcript_source = crate::config::TranscriptSource::Subtitle;
-        assert!(super::discovers_subtitles_at_runtime(&None, &cfg, false));
-        // 强制识别 / 已带字幕内容 / 本地文件：保持原路径（桌面单视频流程不变）
-        cfg.transcript_source = crate::config::TranscriptSource::Asr;
-        assert!(!super::discovers_subtitles_at_runtime(&None, &cfg, false));
-        cfg.transcript_source = crate::config::TranscriptSource::Auto;
-        assert!(!super::discovers_subtitles_at_runtime(
-            &Some(Vec::new()),
-            &cfg,
-            false
-        ));
-        assert!(!super::discovers_subtitles_at_runtime(&None, &cfg, true));
-    }
-
-    #[test]
-    fn recovery_archives_unverified_media_and_reuses_only_matching_content() {
-        let root = tempfile::tempdir().unwrap();
-        let mut cfg = crate::options::resolve(
-            "https://example.invalid/video".into(),
-            &Default::default(),
-            &Default::default(),
-        )
-        .unwrap();
-        cfg.out_dir = root.path().to_path_buf();
-        cfg.no_download = false;
-        let media = cfg.media_path();
-        std::fs::write(&media, b"unverified original bytes").unwrap();
-        assert!(!super::prepare_cached_media(&cfg).unwrap());
-        assert!(!media.exists());
-        let archive = std::fs::read_dir(root.path().join(".previous-media"))
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path()
-            .join("media.mp4");
-        assert_eq!(
-            std::fs::read(archive).unwrap(),
-            b"unverified original bytes"
-        );
-        std::fs::write(&media, b"completed replacement").unwrap();
-        super::save_file_digest(&media, &root.path().join("media.sha256")).unwrap();
-        assert!(super::prepare_cached_media(&cfg).unwrap());
-        std::fs::write(&media, b"changed externally").unwrap();
-        cfg.no_download = true;
-        assert!(super::prepare_cached_media(&cfg).is_err());
-        assert_eq!(std::fs::read(media).unwrap(), b"changed externally");
-    }
-
-    #[test]
-    fn never_delete_files_we_did_not_download() {
-        // --no-download 复用既有文件：不删（旧行为会删！）
-        assert!(!should_delete_media(false, true, true, false));
-        // 上次运行已存在的文件（resume 场景）：不删
-        assert!(!should_delete_media(false, false, true, false));
-        // 本地输入：不删
-        assert!(!should_delete_media(true, false, false, false));
-        // 本次真下载 + keep_video：不删
-        assert!(!should_delete_media(false, false, false, true));
-        // 本次真下载 + 未要求保留：删
-        assert!(should_delete_media(false, false, false, false));
-    }
+    use super::run;
 
     /// 失败也写诊断 run.json（success:false + 错误全文）。
     /// 用损坏的本地视频让 pipeline 在 out_dir 确定之后（场景检测阶段）必然失败。
@@ -1409,8 +1268,6 @@ mod tests {
         use crate::config as c;
         let cfg = c::PipelineConfig {
             url: video.display().to_string(),
-            cookies: None,
-            cookies_from_browser: None,
             out_dir: dir.clone(),
             out_root: dir.clone(),
             similarity: 0.9,
@@ -1418,13 +1275,13 @@ mod tests {
             cooldown: 10.0,
             slide_mode: c::SlideMode::First,
             stable_secs: 0.0,
-            max_height: 1080,
             roi: None,
             formats: vec![c::OutputFormat::Md],
             keep_video: true,
             no_download: true,
             resume: false,
             llm: Default::default(),
+            source: Default::default(),
             asr: crate::settings::Asr {
                 base_url: "http://127.0.0.1:9/v1".into(),
                 ..Default::default()

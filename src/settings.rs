@@ -10,14 +10,11 @@ use std::path::PathBuf;
 #[serde(default, deny_unknown_fields)]
 pub struct Defaults {
     pub out: Option<PathBuf>,
-    pub cookies: Option<PathBuf>,
-    pub cookies_from_browser: Option<String>,
     pub similarity: Option<f64>,
     pub sample_interval: Option<f64>,
     pub cooldown: Option<f64>,
     pub slide_mode: Option<crate::config::SlideMode>,
     pub stable_secs: Option<f64>,
-    pub max_height: Option<u32>,
     pub roi: Option<String>,
     /// 转写来源：auto（字幕优先）| subtitle | asr
     pub transcript_source: Option<crate::config::TranscriptSource>,
@@ -25,6 +22,21 @@ pub struct Defaults {
     pub keep_video: Option<bool>,
     pub no_download: Option<bool>,
     pub resume: Option<bool>,
+}
+
+/// External program that resolves an online URL into local media and subtitles.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Source {
+    pub command: Vec<String>,
+}
+
+impl Default for Source {
+    fn default() -> Self {
+        Self {
+            command: vec!["notepipe-source-ytdlp".into()],
+        }
+    }
 }
 
 /// HTTP transcription dialect.
@@ -87,6 +99,7 @@ impl Asr {
 #[serde(default, deny_unknown_fields)]
 pub struct ConfigFile {
     pub defaults: Defaults,
+    pub source: Source,
     pub llm: crate::llm::LlmSettings,
     pub asr: Asr,
 }
@@ -146,7 +159,6 @@ pub fn template() -> String {
             format!("{:?}", c::DEFAULT_SAMPLE_INTERVAL),
         ),
         ("{COOLDOWN}", format!("{:?}", c::DEFAULT_COOLDOWN)),
-        ("{MAX_HEIGHT}", c::DEFAULT_MAX_HEIGHT.to_string()),
         ("{STABLE_SECS}", format!("{:?}", c::DEFAULT_STABLE_SECS)),
         ("{MAX_SPEECH}", format!("{:?}", asr.max_speech)),
         ("{ASR_CONCURRENCY}", asr.concurrency.to_string()),
@@ -179,9 +191,6 @@ const TEMPLATE: &str = r#"# Configuration
 # View settings: notepipe config show
 
 [defaults]
-# Optional yt-dlp cookie sources; both may be set
-#cookies = "/path/to/cookies.txt"
-#cookies_from_browser = "firefox:default-release"
 # Output root, organized by platform/title/ID
 #out = "{OUT}"
 # Similarity (0,1]; higher captures more slides
@@ -190,8 +199,6 @@ const TEMPLATE: &str = r#"# Configuration
 #sample_interval = {SAMPLE_INTERVAL}
 # Minimum interval between slides (seconds)
 #cooldown = {COOLDOWN}
-# Maximum downloaded video height
-#max_height = {MAX_HEIGHT}
 # first: immediate; stable: wait for animations
 #slide_mode = "{SLIDE_MODE}"
 #stable_secs = {STABLE_SECS}
@@ -206,6 +213,10 @@ const TEMPLATE: &str = r#"# Configuration
 #keep_video = {KEEP_VIDEO}
 # Continue interrupted transcription
 #resume = {RESUME}
+
+[source]
+# Source adapter argv; notepipe appends URL --out DIR
+#command = ["notepipe-source-ytdlp"]
 
 [asr]
 # HTTP dialect: transcriptions, chat
@@ -253,20 +264,9 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     println!("File settings and built-in defaults, before CLI and environment overrides");
     let rows: Vec<(&str, String)> = vec![
         ("out", r.out_root.display().to_string()),
-        (
-            "cookies",
-            r.cookies
-                .as_ref()
-                .map_or_else(|| "-".into(), |path| path.display().to_string()),
-        ),
-        (
-            "cookies_from_browser",
-            r.cookies_from_browser.clone().unwrap_or_else(|| "-".into()),
-        ),
         ("similarity", r.similarity.to_string()),
         ("sample_interval", r.sample_interval.to_string()),
         ("cooldown", r.cooldown.to_string()),
-        ("max_height", r.max_height.to_string()),
         ("roi", d.roi.clone().unwrap_or_else(|| "-".into())),
         ("slide_mode", r.slide_mode.to_string()),
         ("stable_secs", r.stable_secs.to_string()),
@@ -290,6 +290,8 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     let hidden = |key: &str| {
         if key.is_empty() { "-" } else { "set, hidden)" }
     };
+    println!("[source]");
+    println!("  {:<17}: {:?}", "command", r.source.command);
     println!("[asr]");
     println!("  {:<17}: {}", "base_url", cfg.asr.base_url);
     println!("  {:<17}: {}", "model", cfg.asr.model);
@@ -370,6 +372,7 @@ mod tests {
         assert_eq!(from_template.stable_secs, built_in.stable_secs);
         assert_eq!(from_template.similarity, built_in.similarity);
         assert_eq!(from_template.cooldown, built_in.cooldown);
+        assert_eq!(from_template.source, built_in.source);
         assert_eq!(from_template.asr, built_in.asr);
         assert_eq!(from_template.formats, built_in.formats);
         assert_eq!(file.asr, super::Asr::default());

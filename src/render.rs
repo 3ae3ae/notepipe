@@ -1,6 +1,6 @@
 //! 笔记渲染：Markdown 与独立 HTML。
 
-use crate::fetch::VideoMeta;
+use crate::source::VideoMeta;
 use crate::timeline::Section;
 use std::fmt::Write as _;
 use std::path::Path;

@@ -169,9 +169,6 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             if initial.llm.enabled {
                 llm::validate(&initial.llm)?;
             }
-            if !std::path::Path::new(&source).is_file() {
-                notepipe::error::require_ytdlp()?;
-            }
             tracing::info!(out = %initial.out_dir.display(), mode = %initial.asr.mode, "start");
             Ok(notepipe::runtime::block_on(pipeline::run(&initial))??)
         }
@@ -316,7 +313,7 @@ fn summarize_note(
     Ok(())
 }
 
-/// Accept existing files and normalize URLs pasted without a scheme.
+/// Accept local files and complete HTTP(S) URLs.
 fn normalize_source(source: &str) -> anyhow::Result<String> {
     if std::path::Path::new(source).is_file() {
         return Ok(source.to_owned());
@@ -327,9 +324,6 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
             .map_err(|_| anyhow::anyhow!("Invalid URL; provide a complete video URL"))?;
         anyhow::ensure!(url.host_str().is_some(), "URL is missing a host");
         return Ok(source.to_owned());
-    }
-    if config::known_video_site(source).is_some() {
-        return Ok(format!("https://{source}"));
     }
     anyhow::bail!(
         "Video file not found or URL not recognized: {}\nCheck the path and quote paths containing spaces.",

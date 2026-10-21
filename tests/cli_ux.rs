@@ -66,8 +66,6 @@ fn no_arguments_or_help_succeed_with_guidance() {
     assert!(help.status.success());
     let text = stdout(&help);
     assert!(text.contains("Quick start"), "{text}");
-    assert!(text.contains("Netscape format;"), "{text}");
-    assert!(text.contains("Browser cookies"), "{text}");
     assert!(text.contains("Speech recognition"), "{text}");
     for cmd in ["config", "summarize", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
@@ -247,158 +245,6 @@ fn doctor_reports_required_failures_with_nonzero_exit() {
     );
 }
 
-#[cfg(all(unix, feature = "integration"))]
-#[test]
-fn remote_download_output_does_not_leak_into_json_or_quiet_mode() {
-    use std::os::unix::fs::PermissionsExt;
-    let cli = CliTest::new();
-    // Use real ffmpeg/ffprobe, with an offline yt-dlp fixture that emits noisy output.
-    let video = cli.dir.path().join("fixture.mp4");
-    let generated = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=blue:s=320x180:d=3",
-            "-c:v",
-            "libx264",
-            "-y",
-        ])
-        .arg(&video)
-        .output()
-        .unwrap();
-    assert!(generated.status.success(), "{}", stderr(&generated));
-    let bin = cli.dir.path().join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    let cookies = cli.dir.path().join("cookies with spaces.txt");
-    std::fs::write(&cookies, "saved session").unwrap();
-    let calls = cli.dir.path().join("cookie-calls");
-    let script = bin.join("yt-dlp");
-    std::fs::write(&script, r#"#!/bin/sh
-if [ "$1" = "--version" ]; then echo fixture; exit 0; fi
-selected_url=''
-for argument; do selected_url="$argument"; done
-cookies=''
-browser=''
-output=''
-subtitles=0
-simulate=0
-json=0
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -J|--dump-single-json) json=1 ;;
-    --simulate) simulate=1 ;;
-    --no-simulate) simulate=0 ;;
-    -o) shift; output="$1" ;;
-    --skip-download) subtitles=1 ;;
-    --cookies) shift; cookies="$1" ;;
-    --cookies-from-browser) shift; browser="$1" ;;
-  esac
-  shift
-done
-[ "$selected_url" = "$CLI_TEST_SOURCE" ] &&
-[ "$cookies" != "$CLI_TEST_COOKIES" ] &&
-[ "$(cat "$cookies")" = "saved session" ] &&
-[ "$browser" = "chrome:Profile 1" ] || exit 1
-if [ "$simulate" -eq 1 ]; then
-  phase=probe
-elif [ "$subtitles" -eq 1 ]; then
-  phase=subtitle
-  printf '1\n00:00:00,000 --> 00:00:02,500\nWelcome to the lecture.\n' > "$output.en.srt"
-else
-  phase=download
-  /bin/cp "$CLI_TEST_VIDEO" "$output"
-fi
-printf '%s|%s\n' "$phase" "$cookies" >> "$CLI_TEST_CALLS"
-printf 'rewritten' > "$cookies"
-if [ "$json" -eq 1 ]; then
-  printf '%s\n' '{"title":"Test lecture","id":"test","webpage_url":"https://example.test/video","duration":3,"extractor":"test","subtitles":{"en":[{"ext":"srt","url":"https://example.test/en.srt"}]},"automatic_captions":{}}'
-else
-  printf 'raw downloader output\n'
-fi
-printf 'raw downloader stderr\n' >&2
-"#).unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    for flag in ["--json", "--quiet"] {
-        let output_dir = cli.dir.path().join(flag.trim_start_matches('-'));
-        let result = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-            .args([
-                "https://example.test/video?episode=2",
-                "--transcript-source",
-                "subtitle",
-                flag,
-                "-o",
-            ])
-            .arg(&output_dir)
-            .arg("--cookies")
-            .arg(&cookies)
-            .args(["--cookies-from-browser", "chrome:Profile 1"])
-            .env("CLI_TEST_COOKIES", &cookies)
-            .env("CLI_TEST_CALLS", &calls)
-            .env("CLI_TEST_SOURCE", "https://example.test/video?episode=2")
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    bin.display(),
-                    std::env::var("PATH").unwrap_or_default()
-                ),
-            )
-            .env("CLI_TEST_VIDEO", &video)
-            .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
-            .env("XDG_CACHE_HOME", cli.dir.path().join("cache"))
-            .env("RUST_LOG", "info")
-            .stdin(std::process::Stdio::null())
-            .output()
-            .unwrap();
-        assert!(
-            result.status.success(),
-            "{} {}",
-            stdout(&result),
-            stderr(&result)
-        );
-        assert!(result.stderr.is_empty(), "{}", stderr(&result));
-        if flag == "--quiet" {
-            assert!(result.stdout.is_empty(), "{}", stdout(&result));
-        } else {
-            let events: Vec<serde_json::Value> = stdout(&result)
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect();
-            let done = events.last().unwrap();
-            assert_eq!(done["type"], "done");
-            let notes = std::path::Path::new(done["out_dir"].as_str().unwrap()).join("note.md");
-            let notes = std::fs::read_to_string(notes).unwrap();
-            assert!(notes.contains("Welcome to the lecture."));
-            assert!(notes.contains("https://example.test/video?episode=2"));
-        }
-    }
-    assert!(video.is_file());
-    assert_eq!(std::fs::read_to_string(&cookies).unwrap(), "saved session");
-    let calls = std::fs::read_to_string(calls).unwrap();
-    let calls: Vec<_> = calls
-        .lines()
-        .map(|line| line.split_once('|').unwrap())
-        .collect();
-    assert_eq!(
-        calls.iter().map(|(phase, _)| *phase).collect::<Vec<_>>(),
-        [
-            "probe", "subtitle", "download", "probe", "subtitle", "download"
-        ]
-    );
-    assert_eq!(
-        calls
-            .iter()
-            .map(|(_, path)| path)
-            .collect::<std::collections::HashSet<_>>()
-            .len(),
-        6
-    );
-}
-
 #[test]
 fn version_flags_include_only_an_explicit_build_commit() {
     let cli = CliTest::new();
@@ -412,4 +258,151 @@ fn version_flags_include_only_an_explicit_build_commit() {
         assert!(result.stderr.is_empty());
         assert_eq!(stdout(&result), expected);
     }
+}
+
+fn source_json_error(output: &Output) -> serde_json::Value {
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty(), "{}", stderr(output));
+    let events: Vec<serde_json::Value> = stdout(output)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let error = events.last().unwrap().clone();
+    assert_eq!(error["type"], "error");
+    error
+}
+
+fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
+    let python =
+        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))?;
+    let record = cli.dir.path().join("source record");
+    let command = vec![
+        python.display().to_string(),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/source_adapter.py"
+        )
+        .into(),
+        "--record".into(),
+        record.display().to_string(),
+        "--behavior".into(),
+        behavior.into(),
+        "--".into(),
+        "--format".into(),
+        "fixture quality".into(),
+    ];
+    let mut config = notepipe::settings::ConfigFile::default();
+    config.source.command = command;
+    cli.config(&toml::to_string(&config).unwrap());
+    Some(record)
+}
+
+#[test]
+fn missing_source_adapter_reports_the_install_command() {
+    let cli = CliTest::new();
+    cli.config("[source]\ncommand = ['notepipe-test-missing-source-adapter']\n");
+    let error = source_json_error(&cli.run(&["https://example.test/video", "--json"]));
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains(notepipe::source::INSTALL_HINT)
+    );
+}
+
+#[test]
+fn invalid_source_adapter_output_is_rejected() {
+    for behavior in ["malformed", "parent", "absolute", "exit"] {
+        let cli = CliTest::new();
+        if source_config(&cli, behavior).is_none() {
+            return;
+        }
+        let error = source_json_error(&cli.run(&["https://example.test/video", "--json"]));
+        let message = error["message"].as_str().unwrap();
+        assert!(
+            message.contains("source adapter") || message.contains("Source adapter"),
+            "{message}"
+        );
+        assert!(
+            message.contains("source adapter fixture diagnostics"),
+            "{message}"
+        );
+        assert!(!cli.dir.path().join("out/web").exists());
+    }
+}
+
+#[test]
+fn source_adapter_generates_notes_and_reuses_its_completed_output() {
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
+    {
+        return;
+    }
+    let cli = CliTest::new();
+    let Some(record) = source_config(&cli, "healthy") else {
+        return;
+    };
+    let url = "https://example.test/video?episode=2";
+    let invalid = source_json_error(&cli.run(&[url, "--summarize", "--json"]));
+    assert!(
+        invalid["message"]
+            .as_str()
+            .unwrap()
+            .contains("[llm].base_url")
+    );
+    assert!(!record.join("calls").exists());
+    for flag in ["--json", "--quiet"] {
+        let output = cli.run(&[
+            url,
+            "--transcript-source",
+            "subtitle",
+            "--formats",
+            "md",
+            flag,
+        ]);
+        assert!(
+            output.status.success(),
+            "{} {}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert!(output.stderr.is_empty(), "{}", stderr(&output));
+        if flag == "--quiet" {
+            assert!(output.stdout.is_empty());
+            continue;
+        }
+        let events: Vec<serde_json::Value> = stdout(&output)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| event["type"] == "progress" && event["stage"] == "download")
+        );
+        let done = events.last().unwrap();
+        assert_eq!(done["type"], "done");
+        assert_eq!(done["title"], "Fixture source");
+        assert_eq!(done["partial"], false);
+        let note = cli
+            .dir
+            .path()
+            .join(done["out_dir"].as_str().unwrap())
+            .join("note.md");
+        let note = std::fs::read_to_string(note).unwrap();
+        assert!(note.contains("Welcome to the source adapter."), "{note}");
+        assert!(!note.contains("Automatic captions."));
+        assert!(note.contains("Fixture author"));
+        assert!(note.contains(url));
+    }
+    let calls = std::fs::read_to_string(record.join("calls")).unwrap();
+    let calls: Vec<serde_json::Value> = calls
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0]["url"], url);
+    assert_eq!(
+        calls[0]["extra"],
+        serde_json::json!(["--format", "fixture quality"])
+    );
 }

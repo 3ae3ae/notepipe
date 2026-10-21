@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 pub const QUICK_START: &str = r#"Quick start:
   notepipe ./lecture.mp4
-  notepipe https://www.youtube.com/watch?v=VIDEO_ID
+  notepipe https://example.com/video
   notepipe ./lecture.mp4 -o ./notes
 
 Transcripts:
@@ -54,14 +54,6 @@ pub struct RunOpts {
     #[arg(help_heading = "Input and output")]
     pub out: Option<PathBuf>,
 
-    /// Cookie file (Netscape format; uses a private copy)
-    #[arg(long, value_name = "FILE", help_heading = "Input and output")]
-    pub cookies: Option<PathBuf>,
-
-    /// Browser cookies (e.g. chrome, firefox:default-release)
-    #[arg(long, value_name = "BROWSER", help_heading = "Input and output")]
-    pub cookies_from_browser: Option<String>,
-
     /// Similarity threshold; higher captures more slides
     #[arg(long)]
     #[arg(help_heading = "Slides")]
@@ -76,11 +68,6 @@ pub struct RunOpts {
     #[arg(long)]
     #[arg(help_heading = "Slides")]
     pub cooldown: Option<f64>,
-
-    /// Maximum download height (1080 recommended)
-    #[arg(long)]
-    #[arg(help_heading = "Slides")]
-    pub max_height: Option<u32>,
 
     /// Capture immediately or wait for stable slides
     #[arg(long, value_enum)]

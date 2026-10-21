@@ -1,7 +1,7 @@
 use anyhow::{Context, Result as AnyhowResult};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // —— 内置默认值（唯一来源）：options.rs 的合并与 settings.rs 的展示统一引用这里 ——
 /// SSIM 画面相似度阈值（越高越敏感、截图越多）
@@ -10,8 +10,6 @@ pub const DEFAULT_SIMILARITY: f64 = 0.85;
 pub const DEFAULT_SAMPLE_INTERVAL: f64 = 1.0;
 /// 两张截图之间的最小间隔（秒）
 pub const DEFAULT_COOLDOWN: f64 = 10.0;
-/// 下载视频的高度上限（讲义截图质量优先）
-pub const DEFAULT_MAX_HEIGHT: u32 = 1080;
 /// stable 模式下画面需保持不变的秒数
 pub const DEFAULT_STABLE_SECS: f64 = 0.8;
 /// 单段语音最长秒数（过长会在静音点切分）
@@ -143,14 +141,11 @@ impl fmt::Display for OutputFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub url: String,
-    pub cookies: Option<PathBuf>,
-    pub cookies_from_browser: Option<String>,
+    pub source: crate::settings::Source,
     pub out_dir: PathBuf,
     pub similarity: f64,
     pub sample_interval: f64,
     pub cooldown: f64,
-    /// 下载视频的高度上限（默认 1080；讲义截图质量优先）
-    pub max_height: u32,
     /// 截图发射模式：first（首个不同帧）| stable（等待画面稳定，适合动画课件）
     pub slide_mode: SlideMode,
     /// stable 模式下画面需保持不变的秒数
@@ -305,11 +300,6 @@ impl PipelineConfig {
             "--max-speech must be between 1 and 600 seconds (received {})",
             self.asr.max_speech
         );
-        anyhow::ensure!(
-            self.max_height >= 144,
-            "--max-height must be at least 144 (received {})",
-            self.max_height
-        );
 
         Ok(())
     }
@@ -330,9 +320,6 @@ impl PipelineConfig {
         Ok(())
     }
 
-    pub fn media_path(&self) -> PathBuf {
-        self.out_dir.join("media.mp4")
-    }
     pub fn audio_path(&self) -> PathBuf {
         self.out_dir.join("audio.wav")
     }
@@ -400,67 +387,6 @@ pub fn resolve_flag(cli_on: bool, cli_off: bool, file: Option<bool>, default: bo
     }
 }
 
-/// 已知视频站点（含子域名与短链），输入可以不带 http(s) 前缀。
-pub fn known_video_site(input: &str) -> Option<&'static str> {
-    let input = input.trim();
-    let url = url::Url::parse(input)
-        .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https"))
-        .or_else(|| url::Url::parse(&format!("https://{input}")).ok())?;
-    let host = url.host_str()?;
-    let under = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-    if under("youtube.com") || host == "youtu.be" {
-        Some("youtube")
-    } else {
-        None
-    }
-}
-
-pub fn platform_from(source: &str, extractor: &str) -> String {
-    let e = extractor.to_ascii_lowercase();
-    if Path::new(source).is_file() || e == "local" {
-        "local".into()
-    } else if e.contains("youtube") || known_video_site(source) == Some("youtube") {
-        "youtube".into()
-    } else if !e.is_empty() {
-        sanitize_component(&e)
-    } else {
-        "web".into()
-    }
-}
-
-pub fn infer_slug(source: &str) -> String {
-    let p = Path::new(source);
-    if p.is_file() {
-        return sanitize_component(p.file_stem().and_then(|s| s.to_str()).unwrap_or("local"));
-    }
-    if let Some(id) = youtube_id(source) {
-        return id;
-    }
-    sanitize_component(source)
-}
-
-fn youtube_id(s: &str) -> Option<String> {
-    let url = url::Url::parse(s)
-        .or_else(|_| url::Url::parse(&format!("https://{}", s.trim())))
-        .ok()?;
-    if known_video_site(url.as_str()) != Some("youtube") {
-        return None;
-    }
-    let id = if url.host_str()?.eq_ignore_ascii_case("youtu.be") {
-        url.path_segments()?.next()?.to_owned()
-    } else {
-        url.query_pairs()
-            .find(|(key, _)| key == "v")
-            .map(|(_, value)| value.into_owned())?
-    };
-    (id.len() >= 6
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
-    .then_some(id)
-}
-
 /// 路径组件的字符数上限（净化后的标题/平台名）：防止超长标题撑出超过
 /// 文件系统限制的路径。
 const MAX_COMPONENT_CHARS: usize = 80;
@@ -502,15 +428,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slug_from_source() {
-        assert_eq!(
-            infer_slug("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-            "dQw4w9WgXcQ"
-        );
-        assert_eq!(infer_slug("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
-    }
-
-    #[test]
     fn expand_tilde_paths() {
         let home = std::env::var("HOME").unwrap_or_default();
         if !home.is_empty() {
@@ -523,15 +440,12 @@ mod tests {
 
     fn valid_cfg() -> PipelineConfig {
         PipelineConfig {
-            url: "https://youtu.be/x".into(),
-            cookies: None,
-            cookies_from_browser: None,
+            url: "https://example.test/media".into(),
             out_dir: "out".into(),
             out_root: "out".into(),
             similarity: DEFAULT_SIMILARITY,
             sample_interval: DEFAULT_SAMPLE_INTERVAL,
             cooldown: DEFAULT_COOLDOWN,
-            max_height: DEFAULT_MAX_HEIGHT,
             slide_mode: SlideMode::Stable,
             stable_secs: DEFAULT_STABLE_SECS,
             roi: None,
@@ -540,6 +454,7 @@ mod tests {
             no_download: false,
             resume: false,
             llm: Default::default(),
+            source: Default::default(),
             asr: Default::default(),
             transcript_source: TranscriptSource::Auto,
         }
@@ -575,17 +490,6 @@ mod tests {
             c.validate().is_ok(),
             "Internal reading does not depend on optional exports"
         );
-    }
-
-    #[test]
-    fn known_video_site_covers_short_links_and_rejects_lookalikes() {
-        assert_eq!(known_video_site("https://youtu.be/x"), Some("youtube"));
-        assert_eq!(known_video_site("https://example.invalid.evil.test/"), None);
-        assert_eq!(
-            known_video_site("https://youtube.com/?example.invalid"),
-            Some("youtube")
-        );
-        assert_eq!(known_video_site("file:///example.invalid"), None);
     }
 
     #[test]

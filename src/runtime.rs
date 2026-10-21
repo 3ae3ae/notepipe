@@ -5,6 +5,8 @@
 //! - `retry_backoff` / `interruptible_sleep`：可取消的重试退避
 
 use anyhow::{Context, Result};
+#[cfg(windows)]
+mod windows;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -29,6 +31,17 @@ pub fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
 pub struct ManagedChild {
     child: Child,
     name: &'static str,
+    adapter: bool,
+    #[cfg(windows)]
+    job: Option<windows::Job>,
+}
+
+pub(crate) struct CancelOnDrop(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[cfg(windows)]
@@ -43,7 +56,58 @@ impl ManagedChild {
         let child = cmd
             .spawn()
             .with_context(|| format!("Could not start {}", name))?;
-        Ok(Self { child, name })
+        Ok(Self {
+            child,
+            name,
+            adapter: false,
+            #[cfg(windows)]
+            job: None,
+        })
+    }
+
+    /// Adapter launchers own their process trees, including download/model workers.
+    pub(crate) fn spawn_adapter(name: &'static str, command: &mut Command) -> Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        #[cfg(windows)]
+        let job = {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+            windows::Job::new()?
+        };
+        let mut child = Self::spawn(name, command)?;
+        child.adapter = true;
+        #[cfg(windows)]
+        {
+            job.assign_and_resume(&child)?;
+            child.job = Some(job);
+        }
+        Ok(child)
+    }
+
+    pub(crate) fn stop(&mut self) {
+        if self.adapter {
+            self.adapter = false;
+            #[cfg(unix)]
+            {
+                let group = -(self.id() as i32);
+                unsafe {
+                    libc::kill(group, libc::SIGTERM);
+                }
+                let _ = self.wait_within(Duration::from_secs(2));
+                // The leader may exit before its children; terminate the entire group.
+                unsafe {
+                    libc::kill(group, libc::SIGKILL);
+                }
+            }
+            #[cfg(windows)]
+            drop(self.job.take());
+        }
+        self.kill();
+        let _ = self.wait();
     }
 
     pub fn id(&self) -> u32 {
@@ -96,9 +160,7 @@ impl ManagedChild {
 
 impl Drop for ManagedChild {
     fn drop(&mut self) {
-        // 双 kill 无害（对已退出进程返回 Err 被忽略）
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
     }
 }
 

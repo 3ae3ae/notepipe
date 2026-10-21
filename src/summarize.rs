@@ -3,8 +3,8 @@
 //! 支持超长视频：字幕超过阈值时自动 map-reduce（分段摘要 → 合并）。
 //! 幻觉防护：仅以字幕为输入、temperature=0、json_object 结构化输出、要点带时间戳可溯源。
 
-use crate::fetch::VideoMeta;
 use crate::llm::{self, LlmSettings};
+use crate::source::VideoMeta;
 use crate::timeline::TranscriptEvent;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};

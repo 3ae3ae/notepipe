@@ -59,30 +59,28 @@ pub fn run() -> Result<()> {
         }
     }
     out.push("\nOptional tools by use".into());
-    match crate::ytdlp::resolve() {
-        Some(path) => match tool_version(&path, &["--version"]) {
-            Some(version) => check(
-                &mut out,
-                true,
-                "yt-dlp",
-                &format!("  {version} · {}", path.display()),
-            ),
-            None => check(
-                &mut out,
-                false,
-                "yt-dlp",
-                &format!("  found but failed to run: {}", path.display()),
-            ),
-        },
+    let path = crate::settings::config_path();
+    let loaded = crate::settings::load();
+    let default_source = crate::settings::Source::default();
+    let source = loaded.as_ref().map_or(&default_source, |cfg| &cfg.source);
+    match source
+        .command
+        .first()
+        .and_then(|program| crate::adapter::resolve_executable(program).ok())
+        .filter(|path| path.is_file())
+    {
+        Some(path) => check(
+            &mut out,
+            true,
+            "Source adapter",
+            &format!("  {}", path.display()),
+        ),
         None => out.push(format!(
-            "- yt-dlp  {}；{}",
-            crate::error::install_hint("yt-dlp"),
-            "Rerun install.sh for the bundled build"
+            "- Source adapter unavailable. {}",
+            crate::source::INSTALL_HINT
         )),
     }
     out.push("\nConfiguration".into());
-    let path = crate::settings::config_path();
-    let loaded = crate::settings::load();
     match &loaded {
         Ok(cfg) => {
             if path.is_file() {

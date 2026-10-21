@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn all_exports_survive_without_the_original_library_and_never_overwrite() {
         use crate::{
-            fetch::VideoMeta,
+            source::VideoMeta,
             timeline::{Section, TranscriptEvent},
         };
         let root = tempfile::tempdir().unwrap();

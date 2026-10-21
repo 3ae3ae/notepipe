@@ -30,50 +30,7 @@ pub enum SubtitleKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SubtitleOrigin {
-    Online {
-        /// Exact extractor key. This is not a translated display label.
-        language_key: String,
-        automatic: bool,
-        #[serde(default)]
-        inline_text: Option<String>,
-    },
-    Embedded {
-        stream_index: u32,
-        codec: String,
-    },
-    File {
-        path: PathBuf,
-    },
-}
-
-/// Failed discovery and successful discovery with no readable tracks are distinct.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum SubtitleEvidence {
-    #[default]
-    Unchecked,
-    Found {
-        tracks: Vec<SubtitleTrack>,
-        /// Some channels may fail while others return usable candidates.
-        #[serde(default)]
-        warning: Option<String>,
-    },
-    NoneFound,
-    Failed {
-        message: String,
-    },
-    Unsupported {
-        message: String,
-    },
-}
-
-impl SubtitleEvidence {
-    pub fn tracks(&self) -> &[SubtitleTrack] {
-        match self {
-            Self::Found { tracks, .. } => tracks,
-            _ => &[],
-        }
-    }
+    File { path: PathBuf },
 }
 
 fn normalize_language(language: &str) -> String {
@@ -396,23 +353,12 @@ fn clean_cue_text(line: &str) -> String {
     s.trim().to_string()
 }
 
-/// 在已有目录中挑一个字幕文件。新调用方会把确定的一条字幕抓取到独立目录；
-/// 这里绝不能选中属于其他来源的产物。
-pub fn pick_subtitle_file(dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| is_subtitle_file(path))
-}
-
 /// Same-name sidecars, preferring the requested ASR language when set.
 pub fn sidecar_subtitle(video: &Path, preferred_language: &str) -> Option<PathBuf> {
     let mut tracks = sidecar_tracks(video);
     sort_tracks(&mut tracks, preferred_language, None);
-    tracks.into_iter().find_map(|track| match track.origin {
-        SubtitleOrigin::File { path } => Some(path),
-        _ => None,
+    tracks.into_iter().next().map(|track| match track.origin {
+        SubtitleOrigin::File { path } => path,
     })
 }
 
@@ -427,10 +373,8 @@ mod tests {
             name: None,
             kind,
             source_order: 0,
-            origin: SubtitleOrigin::Online {
-                language_key: language.into(),
-                automatic: kind == SubtitleKind::Automatic,
-                inline_text: None,
+            origin: SubtitleOrigin::File {
+                path: format!("{language}.srt").into(),
             },
         }
     }
@@ -626,22 +570,6 @@ second cue
         assert_eq!(ev.len(), 2, "相邻重复应合并");
         assert!((ev[0].end - 3.0).abs() < 1e-3, "重复 cue 延长时长");
         assert_eq!(ev[1].text, "一门人工智能分支");
-    }
-
-    #[test]
-    fn pick_uses_discovery_order_for_the_selected_tracks_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = dir.path();
-        for name in ["sub.en.srt", "sub.zh-Hans.srt", "sub.ja.srt"] {
-            std::fs::write(d.join(name), b"1\n00:00:01,000 --> 00:00:02,000\nx\n").unwrap();
-        }
-        let first = std::fs::read_dir(d)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        assert_eq!(pick_subtitle_file(d).unwrap(), first);
     }
 
     #[test]

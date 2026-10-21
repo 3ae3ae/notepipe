@@ -133,7 +133,7 @@ pub fn note_tokens(stage: &str, prompt: u64, completion: u64) {
     emit(tokens_event(stage, guard.0, guard.1));
 }
 
-/// 视频下载字节进度：yt-dlp 每次刷一行，这里限流后发给 GUI。
+/// Emit throttled source-adapter download progress.
 pub fn download_progress(current: u64, total: u64) {
     static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     let mut last = crate::runtime::lock_recover(&LAST);

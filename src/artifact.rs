@@ -2,9 +2,8 @@
 
 use crate::{
     checkpoint::{atomic_write, atomic_write_shared},
-    execution,
-    fetch::VideoMeta,
-    render,
+    execution, render,
+    source::VideoMeta,
     summarize::Summary,
     timeline::{FrameEvent, Section},
 };

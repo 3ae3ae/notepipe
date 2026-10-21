@@ -44,8 +44,6 @@ fn make_test_video(path: &std::path::Path) {
 fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config::PipelineConfig {
     notepipe::config::PipelineConfig {
         url: video.display().to_string(),
-        cookies: None,
-        cookies_from_browser: None,
         out_dir: dir.to_path_buf(),
         out_root: dir.to_path_buf(),
         similarity: 0.9,
@@ -53,13 +51,13 @@ fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config:
         cooldown: 10.0,
         slide_mode: notepipe::config::SlideMode::First,
         stable_secs: 0.0,
-        max_height: 1080,
         roi: None,
         formats: vec![notepipe::config::OutputFormat::Md],
         keep_video: true,
         no_download: true,
         resume: false,
         llm: Default::default(),
+        source: Default::default(),
         asr: Default::default(),
         transcript_source: notepipe::config::TranscriptSource::Asr,
     }

@@ -111,14 +111,6 @@ pub fn sanitize_qwen_text(s: &str) -> String {
     t.to_string()
 }
 
-struct CancelOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
-
-impl Drop for CancelOnDrop {
-    fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
 /// Open the checkpoint and mark it complete only after successful transcription.
 async fn run_with_cp<F>(
     cfg: &PipelineConfig,
@@ -135,7 +127,7 @@ where
 {
     let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir, cfg.resume, identity)?;
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let _cancel_on_drop = CancelOnDrop(cancelled.clone());
+    let _cancel_on_drop = crate::runtime::CancelOnDrop(cancelled.clone());
     tokio::task::spawn_blocking(move || {
         let r = f(&mut cp, &cancelled);
         if r.is_ok() {
