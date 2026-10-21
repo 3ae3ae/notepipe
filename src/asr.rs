@@ -138,7 +138,7 @@ pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent
     .await
 }
 
-/// Shared result when speech detection finds no speech: keep the screenshots and record an empty transcript.
+/// Shared result when speech detection finds no speech.
 pub(crate) fn no_speech_events() -> Vec<TranscriptEvent> {
     tracing::warn!("No speech detected");
     Vec::new()

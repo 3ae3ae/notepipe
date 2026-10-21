@@ -604,6 +604,37 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
 }
 
 #[test]
+fn silent_audio_reports_no_speech() {
+    let root = tempfile::tempdir().unwrap();
+    let Ok(ffmpeg) = which::which("ffmpeg") else {
+        return;
+    };
+    let audio = root.path().join("silence.wav");
+    let generated = Command::new(ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi"])
+        .args(["-i", "anullsrc=r=16000:cl=mono", "-t", "3"])
+        .arg(&audio)
+        .status()
+        .unwrap();
+    assert!(generated.success());
+    let record = root.path().join("asr");
+    let Some(command) = adapter_command(&record, "healthy") else {
+        return;
+    };
+    let mut cfg = config();
+    cfg["asr"]["command"] = json!(command);
+    cfg["defaults"]["transcript_source"] = json!("asr");
+    let output = run(root.path(), audio.to_str().unwrap(), &cfg, &[]);
+    assert!(!output.status.success());
+    let error = events(&output).pop().unwrap();
+    assert_eq!(error["type"], "error");
+    assert!(
+        error["message"].as_str().unwrap().contains("No speech"),
+        "{error}"
+    );
+}
+
+#[test]
 fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
     let root = tempfile::tempdir().unwrap();
     if which::which("ffmpeg").ok().is_none() {

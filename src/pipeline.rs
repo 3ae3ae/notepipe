@@ -298,6 +298,10 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
                 progress::stage("transcribe", "start");
                 let events = asr::run(&asr_cfg, &audio).await?;
                 progress::stage("transcribe", "done");
+                anyhow::ensure!(
+                    timeline::has_readable_events(&events),
+                    "No speech was recognized in the recording"
+                );
                 events
             };
             subtitle::validate_events(&events)?;
