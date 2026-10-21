@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "notepipe-asr-xai"
 version = "0.1.0"
 description = "xAI HTTP transcription adapter for notepipe"
+readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = []

@@ -1,128 +1,171 @@
-# course2md
+# notepipe
 
-Turn **YouTube, Bilibili, or local videos** into illustrated Markdown / HTML notes. Add a video in the desktop app, generate notes, then organize and read them in your notes library.
+Turn video and audio into Markdown notes: the transcript arranged around screenshots of what was on screen, optionally
+proofread, summarized or extended by a language model.
 
-**English** · [中文](readme.zh.md) · [GitHub Wiki](https://github.com/mizorewww/course2md/wiki)
-
-**Preview 2.0 (RC16):** [release notes](https://github.com/mizorewww/course2md/releases/tag/v2.0.0-rc.16). Install with `brew install --cask mizorewww/tap/course2md-gui@rc`. The instructions below install the stable version.
+notepipe is a small engine with a command-line interface. It is useful on its own, and other programs can drive it.
+Speech recognition and language models are reached over standard HTTP APIs; local engines and online sources plug in as
+separately installed [adapters](docs/adapters.md).
 
 ## Features
 
-- Slide-style notes: a screenshot whenever the picture changes, with the transcript in paragraphs beneath it, saved as `course.md` and `course.html`.
-- YouTube, Bilibili and local files. Existing subtitles are used when available; otherwise speech is transcribed.
-- Speech recognition on your own computer: Apple Silicon works out of the box, and other systems can use a graphics card, the CPU, or an Intel Core Ultra NPU. A cloud service is optional; audio leaves your computer only if you choose it.
-- Optional AI proofreading and summaries using any OpenAI-compatible service, a local Ollama server, or a ChatGPT subscription. Off by default.
-- The desktop app adds background tasks you can pause, a notes library with folders and search, a reader with outline and find, and 10 themes.
+- **Local files and URLs** — video or audio files on your computer; web pages through a source adapter such as the
+  official [yt-dlp adapter](adapters/ytdlp).
+- **Subtitles first** — existing subtitles are used when available; otherwise speech is transcribed.
+- **Any speech service** — OpenAI-compatible transcription APIs, audio-capable chat models, or a local engine through an
+  adapter.
+- **Screenshots** — a screenshot is taken whenever the picture changes and placed next to what was said.
+- **Prompt-driven AI stages** — proofreading, summaries, translations or anything else you can describe in a prompt, with
+  any OpenAI-compatible model.
+- **Plain output** — a folder per note with `note.md` (YAML front matter and Markdown), `images/` and `note.json`.
 
+## Install
 
-## Interface languages
+notepipe needs [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`.
 
-The desktop app and CLI are available in **English, 简体中文, 繁體中文 and 日本語**. The desktop follows the system language by default; change it in **Settings → Appearance → Interface language**. The CLI follows the system locale, and `--lang en|zh-Hans|zh-Hant|ja` (or `COURSE2MD_LANG`) overrides it. Machine-readable `--json` output stays in Simplified Chinese so scripts keep stable message text.
-
-## Install the desktop app (GUI)
-
-The desktop app includes the conversion engine, so you do not need to install the CLI. It does need `ffmpeg`, which the steps below install.
-
-### macOS: Apple Silicon, macOS 15 or later
-
-**If you have Homebrew:** run this in Terminal to install the app and the video tools `ffmpeg` and `yt-dlp`:
+With [uv](https://docs.astral.sh/uv/):
 
 ```sh
-brew install --cask mizorewww/tap/course2md-gui
+uv tool install notepipe                                  # local files only
+uv tool install notepipe --with notepipe-source-ytdlp     # also URLs (via yt-dlp)
 ```
 
-After installation, open **course2md** from **Finder → Applications**.
+Add other [adapters](#adapters) the same way with more `--with` options.
 
-**Without Homebrew:** [download the DMG](https://github.com/mizorewww/course2md/releases/latest/download/course2md-gui-macos-arm64.dmg), open it, and drag **course2md** to Applications. You also need `ffmpeg`; see the [macOS guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#macos-apple-silicon).
+With Cargo: `cargo install notepipe`. Prebuilt binaries are attached to each
+[GitHub release](https://github.com/3ae3ae/notepipe/releases).
 
-### Arch Linux / CachyOS: x86_64
-
-If you have `yay`, run this to install the desktop app, video tools and required graphics libraries:
-
-```sh
-yay -S course2md-gui-bin
-```
-
-With `paru`, run `paru -S course2md-gui-bin`. Open **course2md** from your applications menu. Your graphics hardware needs a working Vulkan driver; see the [Linux installation guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#arch-linux--cachyos).
-
-### Windows: x64
-
-1. [Download the Windows portable package (ZIP)](https://github.com/mizorewww/course2md/releases/latest/download/course2md-desktop-windows-AMD64.zip) and **extract everything** to a permanent folder.
-2. Install `ffmpeg` in PowerShell:
-
-   ```powershell
-   winget install --id Gyan.FFmpeg -e
-   ```
-
-3. Open **course2md-desktop.exe** from the extracted folder. Keep the other files next to it.
-
-### Ubuntu / other Linux distributions: x86_64
-
-[Download the Linux package (tar.gz)](https://github.com/mizorewww/course2md/releases/latest/download/course2md-desktop-linux-x86_64.tar.gz), install `ffmpeg` and the graphics libraries from the [Linux guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#other-linux-x64-distributions), extract it, and run `./course2md-desktop`. Built on Ubuntu 24.04.
-
-Intel Macs and Linux ARM64 have no desktop app yet; use the [CLI](https://github.com/mizorewww/course2md/wiki/CLI-Guide).
-
-## First use
-
-1. Open **course2md** and follow the setup steps to choose a notes folder and how speech is recognized.
-2. Open **Settings → App** and check **Runtime checks** to confirm the video tools are detected.
-3. Add a video URL or local file, review the preview, and click **Start conversion**. Open the finished notes from **Notes library**.
-
-The first local transcription downloads a speech model (1–2.4 GB). See the [first-launch guide](https://github.com/mizorewww/course2md/wiki/GUI-Installation#first-launch).
-
-## Install the CLI
-
-The CLI and the desktop app share one configuration file and can be installed side by side.
-
-**macOS / Linux (prebuilt binary):**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/mizorewww/course2md/main/install.sh | bash
-```
-
-This installs `course2md` into `~/bin` (change with `COURSE2MD_BIN_DIR`). Alternatives: `brew install mizorewww/tap/course2md`, `yay -S course2md-bin`, or `cargo install --path .` from source.
-
-Requires `ffmpeg`. Online links also need `yt-dlp` (installed automatically if missing). Local recognition on non-Apple systems needs `llama-server`. Run `course2md doctor` to check.
+On Android, install [Termux](https://termux.dev), then `pkg install rust ffmpeg uv` and use either method above.
 
 ## Quick start
 
 ```sh
-course2md ./lecture.mp4                        # local file
-course2md https://www.youtube.com/watch?v=…    # or a Bilibili link
-course2md ./lecture.mp4 -o ./notes             # choose the output root
+notepipe lecture.mp4
+notepipe interview.m4a -o ~/notes
+notepipe https://www.youtube.com/watch?v=VIDEO_ID      # needs a source adapter
 ```
 
-The first run asks a few setup questions. Notes are saved under the output folder as `platform/title/ID/`.
-
-## Common commands
-
-| Command | Purpose |
-| --- | --- |
-| `course2md <URL or file>` | Convert a video into notes |
-| `course2md --login bilibili` / `--logout bilibili` | Scan a QR code to log in to Bilibili / remove the saved login |
-| `course2md --login ollama` / `--login codex` | Use a local Ollama server / import the Codex CLI's ChatGPT login (browser authorization offered when absent) |
-| `course2md doctor` | Check tools, speech backends and settings |
-| `course2md config init` / `config show` | Create a configuration template / show the config path and settings |
-| `course2md models list` / `models prepare` | Check downloaded models / pre-download a model |
-| `course2md llm setup` / `llm status` / `llm disable` | Configure, inspect or turn off AI proofreading |
-| `course2md summarize ./notes` | Add AI summaries to existing notes |
-
-Use `<command> --help` for each command's options.
+If a recording has no usable subtitles and no speech service is configured, the first interactive run asks for one and
+saves it. `notepipe doctor` checks your setup.
 
 ## Configuration
 
-Settings live in `~/.config/course2md/config.toml` (`%APPDATA%\course2md\config.toml` on Windows) and are shared with the desktop app. Command-line options override them. `course2md remove` clears saved AI service settings.
+Settings live in `~/.config/notepipe/config.toml` (`%APPDATA%\notepipe\config.toml` on Windows; `$XDG_CONFIG_HOME` is
+honored). `notepipe config init` writes a commented template and `notepipe config show` prints the effective settings.
+Command-line options override the file.
 
-## Frequently asked questions
+```toml
+[asr]                                      # speech recognition
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini-transcribe"
+language = "ko"                            # optional; detected when empty
 
-**Conversion fails with a missing `ffmpeg`.** Install `ffmpeg` (it includes `ffprobe`) and `yt-dlp` for online links — for example `brew install ffmpeg yt-dlp` on macOS — then run `course2md doctor` to confirm.
+[llm]                                      # connection shared by all AI stages
+base_url = "https://api.openai.com/v1"
+model = "gpt-5.6-luna"
 
-**A Bilibili video fails or comes back in low quality.** Run `course2md --login bilibili` and scan the QR code; `--logout bilibili` removes the saved login.
+[[llm.stages]]                             # stages run in this order
+name = "proofread"
 
-**How large are the model downloads?** About 1–2.3 GB on Apple Silicon (stored in `~/Library/Caches/qwen3-speech/`) and 2.4 GB elsewhere (`~/.cache/course2md/models/`). Download ahead of time with `course2md models prepare`.
+[[llm.stages]]
+name = "summary"
+model = "gpt-5.6-terra"                    # per-stage overrides: base_url, api_key, model, prompt, request
+request = { reasoning_effort = "medium" }  # extra fields merged into the request body
+```
 
-## Documentation and help
+API keys can stay out of the file: `NOTEPIPE_ASR_API_KEY` and `NOTEPIPE_LLM_API_KEY` are used when the file has none.
 
-[All documentation (GitHub Wiki)](https://github.com/mizorewww/course2md/wiki) · [CLI installation and usage](https://github.com/mizorewww/course2md/wiki/CLI-Guide) · [Upgrade and uninstall](https://github.com/mizorewww/course2md/wiki/GUI-Installation#upgrade-and-uninstall) · [Troubleshooting](https://github.com/mizorewww/course2md/wiki/Troubleshooting) · [Report a problem](https://github.com/mizorewww/course2md/issues)
+### Speech recognition
 
-For developers: [contributing](AGENTS.md) · [desktop development](desktop/README.md) · [engine architecture](docs/DESIGN.md) · [benchmarks](docs/BENCHMARKS.md) · [releases](docs/PACKAGING.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+| Service | `[asr]` settings |
+|---|---|
+| OpenAI | `base_url = "https://api.openai.com/v1"`, `model = "gpt-4o-mini-transcribe"` |
+| Groq | `base_url = "https://api.groq.com/openai/v1"`, `model = "whisper-large-v3-turbo"` |
+| Mistral | `base_url = "https://api.mistral.ai/v1"`, `model = "voxtral-mini-latest"` |
+| Audio-capable chat models | `mode = "chat"` with the provider's `base_url` and `model` |
+| xAI | `command = ["notepipe-asr-xai"]` — [adapter](adapters/xai) |
+| Meta | `command = ["notepipe-asr-meta"]` — [adapter](adapters/meta) |
+| llama.cpp (local, any platform) | `command = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]`, `concurrency = 1` — [adapter](adapters/llama) |
+| Intel NPU (local) | `command = ["notepipe-asr-openvino"]`, `concurrency = 1` — [adapter](adapters/openvino) |
+| Apple silicon (local) | `command = ["notepipe-asr-apple"]`, `concurrency = 1` — [adapter](adapters/apple) |
+
+When `command` is set, notepipe starts the adapter for the run and stops it afterwards. Other tuning: `max_speech`
+(longest segment, seconds), `vad_threshold` and `min_silence` (speech detection).
+
+### AI stages
+
+A stage applies a prompt either to the paragraphs of the note or to the whole transcript:
+
+| `input` | `output` | Effect |
+|---|---|---|
+| `paragraphs` | `replace` | each paragraph is replaced by the model's text (an empty result removes it) |
+| `paragraphs` | `below` | the model's text is added under each paragraph |
+| `transcript` | `top` | the model's Markdown is added at the top of the note |
+
+`proofread` (paragraphs → replace) and `summary` (transcript → top) are built in with default prompts; set `prompt` to
+change what they do. Any other name defines your own stage, for example bilingual notes:
+
+```toml
+[[llm.stages]]
+name = "translate"
+input = "paragraphs"
+output = "below"
+prompt = "Translate each item into Korean. Keep the meaning, terminology and tone; do not summarize, add or omit content. Keep names, code and formulas unchanged. Return an item unchanged if it is already in Korean."
+```
+
+Set `images = true` on a paragraphs stage to send each paragraph's screenshot along. `--stages proofread,summary` picks
+stages for one run and `--no-stages` runs none. Any OpenAI-compatible chat endpoint works:
+
+| Provider | `base_url` |
+|---|---|
+| OpenAI | `https://api.openai.com/v1` |
+| Anthropic | `https://api.anthropic.com/v1` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Ollama (local) | `http://localhost:11434/v1` |
+| LM Studio (local) | `http://localhost:1234/v1` |
+
+## Output
+
+```
+<out>/<title>/
+├── note.md        YAML front matter, stage output at the top, then the notes
+├── images/        screenshots referenced by note.md
+└── note.json      the same note as structured data
+```
+
+Running again on the same source replaces its note. Intermediate results are cached per source, so changing only AI
+settings reuses the download, screenshots and transcript; `--no-resume` starts over. `[defaults].on_complete` runs a
+command after each note is written, for example to convert or sync it.
+
+## Using notepipe from other programs
+
+Pass the configuration on standard input and read newline-delimited JSON events:
+
+```sh
+notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
+```
+
+See [docs/cli.md](docs/cli.md) for the events, exit codes, `note.json` and the completion hook.
+
+## Adapters
+
+| Package | Kind | Purpose |
+|---|---|---|
+| [`notepipe-source-ytdlp`](adapters/ytdlp) | source | URLs from any site yt-dlp supports |
+| [`notepipe-asr-llama`](adapters/llama) | speech | llama.cpp on CPU or GPU |
+| [`notepipe-asr-openvino`](adapters/openvino) | speech | Intel NPU (or CPU/GPU) with OpenVINO |
+| [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon (not yet verified on hardware) |
+| [`notepipe-asr-xai`](adapters/xai) | speech | xAI speech-to-text |
+| [`notepipe-asr-meta`](adapters/meta) | speech | Meta speech-to-text |
+
+[docs/adapters.md](docs/adapters.md) describes the contracts and how to write your own.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE). notepipe started as a fork of [course2md](https://github.com/mizorewww/course2md) by mizorewww.

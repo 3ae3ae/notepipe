@@ -1,0 +1,177 @@
+# Adapters
+
+The notepipe core turns a local media file into a note and talks to the outside world only through standard interfaces.
+Anything tied to a particular engine, vendor or website is an **adapter**: a separate program that notepipe runs. To attach
+one, install it and name it in `config.toml`; to detach it, remove that line.
+
+There are two kinds:
+
+- **Speech adapters** serve an OpenAI-compatible transcription API on localhost for the duration of a run.
+- **Source adapters** turn a URL into a local media file plus metadata and subtitles.
+
+Install official adapters next to notepipe with uv, for example `uv tool install notepipe --with notepipe-asr-llama`.
+notepipe looks for adapter programs in its own directory first, then on `PATH`.
+
+## Official adapters
+
+| Package | Kind | Notes |
+|---|---|---|
+| [`notepipe-source-ytdlp`](../adapters/ytdlp) | source | Any site yt-dlp supports; honors your yt-dlp configuration files |
+| [`notepipe-asr-llama`](../adapters/llama) | speech | Runs `llama-server`; strips Qwen3-ASR output markers |
+| [`notepipe-asr-openvino`](../adapters/openvino) | speech | Intel NPU by default; `--device CPU` or `GPU` also work |
+| [`notepipe-asr-apple`](../adapters/apple) | speech | Apple silicon Core ML / MLX; built in CI, not yet verified on hardware |
+| [`notepipe-asr-xai`](../adapters/xai) | speech | Forwards to xAI's speech-to-text API |
+| [`notepipe-asr-meta`](../adapters/meta) | speech | Forwards to Meta's speech-to-text API |
+
+## Speech adapters
+
+### Using one
+
+```toml
+[asr]
+command = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+concurrency = 1
+```
+
+When `command` is set, notepipe:
+
+1. starts the program with `--host 127.0.0.1 --port <free port>` appended to the configured arguments;
+2. waits until `GET /health` answers `200` (up to 30 minutes, because a first run may download a model);
+3. sends every speech segment to `http://127.0.0.1:<port>/v1` using `[asr].mode` (`transcriptions` by default);
+4. stops the program and its child processes when transcription ends, fails or is cancelled.
+
+`base_url` is ignored while `command` is set; `model`, `language` and `api_key` are sent as for any endpoint. Local engines
+usually handle one request at a time, so set `concurrency = 1`.
+
+A server you run yourself needs no adapter: point `base_url` at it.
+
+### Contract
+
+An adapter is any executable that accepts these arguments and serves this API.
+
+| Argument | Meaning |
+|---|---|
+| `--host HOST` | Address to listen on; bind only to it (notepipe passes `127.0.0.1`). |
+| `--port PORT` | Port to listen on. |
+
+Other arguments are the adapter's own; users write them in `command`.
+
+`GET /health` returns `200` once the adapter can transcribe; before that, return `503` or refuse connections. If the
+process exits, notepipe reports its last output lines.
+
+`POST /v1/audio/transcriptions` takes `multipart/form-data`, compatible with OpenAI's endpoint:
+
+| Field | Required | Content |
+|---|---|---|
+| `model` | no | `[asr].model`, when set |
+| `language` | no | `[asr].language`, when set, as written in the configuration (for example `ko`) |
+| `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, normally 20 seconds or less; always the last part |
+
+Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. On failure respond with a non-2xx status
+and `{"error": {"message": "…"}}`. If `[asr].api_key` is set, requests carry `Authorization: Bearer <key>`; an adapter may
+check it or forward it.
+
+Return clean text: model-specific markers or formatting are the adapter's job to remove.
+
+### Example
+
+A complete adapter in Python, using only the standard library:
+
+```python
+#!/usr/bin/env python3
+import argparse
+import email
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+def transcribe(wav_bytes, language):
+    return ""  # call your engine here
+
+
+class Handler(BaseHTTPRequestHandler):
+    def reply(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self.reply(200, {"status": "ok"})
+        else:
+            self.reply(404, {"error": {"message": "not found"}})
+
+    def do_POST(self):
+        length = int(self.headers["Content-Length"])
+        raw = b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + self.rfile.read(length)
+        parts = {
+            part.get_param("name", header="content-disposition"): part.get_payload(decode=True)
+            for part in email.message_from_bytes(raw).get_payload()
+        }
+        language = (parts.get("language") or b"").decode() or None
+        self.reply(200, {"text": transcribe(parts["file"], language)})
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--host", required=True)
+parser.add_argument("--port", type=int, required=True)
+args = parser.parse_args()
+HTTPServer((args.host, args.port), Handler).serve_forever()
+```
+
+## Source adapters
+
+### Using one
+
+For an `http(s)` source, notepipe runs `[source].command`. When it is not set, notepipe looks for executables whose names
+start with `notepipe-source-`: if it finds exactly one it uses it, and if it finds several it asks you to choose with
+`[source].command`.
+
+```toml
+[source]
+command = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
+```
+
+Results are cached per URL and adapter, so later runs on the same URL do not download again.
+
+### Contract
+
+notepipe runs:
+
+```
+<command…> <URL> --out <DIR>
+```
+
+`DIR` is an empty directory owned by notepipe. The adapter downloads the media, and any subtitles, into it.
+
+Standard output carries JSON objects, one per line. Optional progress lines look like `{"progress": 0.42}` (0 to 1). The
+last line is the result:
+
+```json
+{
+  "media": "media.mp4",
+  "title": "…",
+  "author": "…",
+  "duration": 123.4,
+  "language": "en",
+  "url": "https://…",
+  "seek_url": "https://…?t={t}",
+  "subtitles": [{"path": "media.en.vtt", "language": "en", "automatic": false}]
+}
+```
+
+Only `media` is required. Paths are relative to `DIR` and must stay inside it. Subtitles must be SRT or VTT; `automatic`
+marks machine-generated captions. `seek_url`, if present, is a URL template in which `{t}` is replaced by whole seconds to
+open the item at a given time; without it, notes link to the source URL.
+
+Write diagnostics to standard error. Exit with status 0 on success and anything else on failure; notepipe shows the last
+lines of standard error.
+
+## Publishing an adapter
+
+Name the executable `notepipe-asr-<name>` or `notepipe-source-<name>`, and publish it as a package that installs that
+executable (a Python console script or a binary wheel works well), so that `uv tool install notepipe --with <package>`
+places it next to notepipe.
