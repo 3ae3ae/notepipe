@@ -4,7 +4,7 @@ use crate::{config, llm, settings};
 
 /// The effective AI settings: the file with command-line overrides.
 fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<llm::LlmSettings> {
-    let mut settings = file.llm.clone();
+    let mut settings = file.ai.clone();
     if let Some(value) = &opts.llm_base_url {
         settings.base_url = value.clone();
     }
@@ -20,13 +20,13 @@ fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<ll
         settings.stages = names
             .iter()
             .map(|name| {
-                file.llm
+                file.ai
                     .stages
                     .iter()
                     .find(|stage| stage.name == *name)
                     .cloned()
                     .or_else(|| llm::Stage::builtin(name))
-                    .ok_or_else(|| anyhow::anyhow!("Unknown LLM stage: {name}"))
+                    .ok_or_else(|| anyhow::anyhow!("Unknown AI stage: {name}"))
             })
             .collect::<anyhow::Result<_>>()?;
     }
@@ -48,63 +48,79 @@ pub fn resolve(
     opts: &RunOpts,
     file: &settings::ConfigFile,
 ) -> anyhow::Result<config::PipelineConfig> {
-    let d = &file.defaults;
+    let screenshots = &file.screenshots;
     use config::ScreenshotMode;
     let out_root = opts
         .out
         .clone()
-        .or_else(|| d.out.clone())
+        .or_else(|| file.output.dir.clone())
         .map(config::expand_tilde)
         .unwrap_or_else(|| config::DEFAULT_OUT_DIR.into());
     Ok(config::PipelineConfig {
         url: source,
         config_path: opts.config.clone(),
-        on_complete: d.on_complete.clone(),
-        source: file.source.clone(),
+        on_complete: file.output.on_complete.clone(),
+        source: file.download.clone(),
         // The pipeline assigns the per-source work directory before processing.
         out_dir: out_root.clone(),
         out_root,
         similarity: opts
             .similarity
-            .or(d.similarity)
+            .or(screenshots.sensitivity)
             .unwrap_or(config::DEFAULT_SIMILARITY),
         sample_interval: opts
             .sample_interval
-            .or(d.sample_interval)
+            .or(screenshots.frame_interval)
             .unwrap_or(config::DEFAULT_SAMPLE_INTERVAL),
         cooldown: opts
             .cooldown
-            .or(d.cooldown)
+            .or(screenshots.min_gap)
             .unwrap_or(config::DEFAULT_COOLDOWN),
         screenshot_mode: opts
             .screenshot_mode
-            .or(d.screenshot_mode)
+            .or(screenshots.mode)
             .unwrap_or(ScreenshotMode::Stable),
         stable_secs: opts
             .stable_secs
-            .or(d.stable_secs)
+            .or(screenshots.settle)
             .unwrap_or(config::DEFAULT_STABLE_SECS),
-        roi: match &opts.roi {
-            Some(s) => Some(config::Roi::parse(s)?),
-            None => match &d.roi {
-                Some(s) => Some(config::Roi::parse(s)?),
-                None => None,
-            },
-        },
+        roi: opts
+            .roi
+            .as_ref()
+            .or_else(|| {
+                screenshots
+                    .region
+                    .as_ref()
+                    .filter(|region| !region.is_empty())
+            })
+            .map(|region| config::Roi::parse(region))
+            .transpose()?,
         no_resume: opts.no_resume,
         subtitle: opts.subtitle.clone(),
         llm: resolve_llm(opts, file)?,
         asr: resolve_asr(opts, file),
         transcript_source: opts
             .transcript_source
-            .or(d.transcript_source)
+            .or(file.transcript.source)
             .unwrap_or_default(),
     })
 }
 
-/// CLI overrides for [asr]; environment credentials are resolved only by the CLI pipeline.
+/// CLI overrides for [speech]; environment credentials are resolved only by the CLI pipeline.
 fn resolve_asr(opts: &RunOpts, file: &settings::ConfigFile) -> crate::settings::Asr {
-    let mut a = file.asr.clone();
+    let speech = &file.speech;
+    let mut a = settings::Asr {
+        mode: speech.mode,
+        base_url: speech.base_url.clone(),
+        api_key: speech.api_key.clone(),
+        model: speech.model.clone(),
+        language: file.transcript.language.clone(),
+        concurrency: speech.concurrency,
+        command: speech.command.clone(),
+        max_speech: speech.detection.max_segment,
+        vad_threshold: speech.detection.threshold,
+        min_silence: speech.detection.min_silence,
+    };
     if let Some(v) = &opts.asr_base_url {
         a.base_url = v.clone();
     }
@@ -136,13 +152,13 @@ mod tests {
         let mut file = settings::ConfigFile::default();
         let mut proofread = llm::Stage::builtin("proofread").unwrap();
         proofread.images = true;
-        file.llm.stages = vec![proofread];
+        file.ai.stages = vec![proofread];
         assert_eq!(
             resolve("video".into(), &RunOpts::default(), &file)
                 .unwrap()
                 .llm
                 .stages,
-            file.llm.stages
+            file.ai.stages
         );
         let opts = RunOpts {
             stages: Some(vec!["summary".into(), "proofread".into()]),
@@ -197,6 +213,11 @@ mod tests {
         assert!(cfg.no_resume);
         assert_eq!(cfg.stable_secs, -1.0);
         assert!(cfg.validate().is_err());
+        let opts = RunOpts {
+            roi: Some(String::new()),
+            ..Default::default()
+        };
+        assert!(resolve("video".into(), &opts, &file).is_err());
     }
 
     #[test]
@@ -218,28 +239,42 @@ mod asr_tests {
     use clap::Parser;
 
     #[test]
+    fn transcript_language_and_detection_settings_reach_the_cache_identity() {
+        let file: settings::ConfigFile = toml::from_str(
+            "[transcript]\nlanguage = 'ko'\n[speech.detection]\nthreshold = 0.6\nmin_silence = 0.5\nmax_segment = 30.0\n",
+        )
+        .unwrap();
+        let cfg = resolve("video".into(), &RunOpts::default(), &file).unwrap();
+        let identity = crate::checkpoint::AsrIdentity::new(&cfg.asr);
+        assert_eq!(identity.language, "ko");
+        assert_eq!(identity.vad_threshold, 0.6);
+        assert_eq!(identity.min_silence, 0.5);
+        assert_eq!(identity.max_speech, 30.0);
+    }
+
+    #[test]
     fn asr_flags_override_settings_and_concurrency_is_clamped() {
         let cli = crate::cli::Cli::try_parse_from([
             "notepipe",
             "video",
-            "--asr-base-url",
+            "--speech-base-url",
             "http://localhost:1234/v1",
-            "--asr-api-key",
+            "--speech-api-key",
             "key",
-            "--asr-model",
+            "--speech-model",
             "model",
-            "--asr-mode",
+            "--speech-api",
             "chat",
-            "--asr-language",
+            "--language",
             "ko",
-            "--max-speech",
+            "--max-segment",
             "12",
         ])
         .unwrap();
         let mut file = settings::ConfigFile::default();
-        file.asr.command = vec!["adapter".into()];
+        file.speech.command = vec!["adapter".into()];
         for (given, expected) in [(0, 1), (4, 4), (100, 16)] {
-            file.asr.concurrency = given;
+            file.speech.concurrency = given;
             let cfg = resolve("video".into(), &cli.opts, &file).unwrap();
             assert_eq!(cfg.asr.concurrency, expected);
             assert_eq!(cfg.asr.command, ["adapter"]);

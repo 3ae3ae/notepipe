@@ -9,7 +9,7 @@ use std::{
 use support::MockAi;
 
 fn config() -> Value {
-    json!({"defaults":{"screenshot_mode":"first"},"source":{},"asr":{},"llm":{"stages":[]}})
+    json!({"output":{},"transcript":{},"screenshots":{"mode":"first"},"download":{},"speech":{},"ai":{"stages":[]}})
 }
 fn spawn(root: &Path, source: &str, config: &Value, flags: &[&str]) -> std::process::Child {
     let config_dir = root.join("config/notepipe");
@@ -22,8 +22,8 @@ fn spawn(root: &Path, source: &str, config: &Value, flags: &[&str]) -> std::proc
         .current_dir(root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
-        .env_remove("NOTEPIPE_ASR_API_KEY")
-        .env_remove("NOTEPIPE_LLM_API_KEY")
+        .env_remove("NOTEPIPE_SPEECH_API_KEY")
+        .env_remove("NOTEPIPE_AI_API_KEY")
         .env_remove("RUST_LOG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -404,7 +404,7 @@ fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() 
         let Some(command) = source_command(&record, behavior) else {
             return;
         };
-        cfg["source"]["command"] = json!(command);
+        cfg["download"]["adapter"] = json!(command);
         let output = run(root.path(), url, &cfg, &[]);
         let doc = document(&output);
         assert_eq!(doc["meta"]["source"], url);
@@ -452,9 +452,9 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
         ))
     });
     let mut cfg = config();
-    cfg["source"]["command"] = json!(source);
-    cfg["asr"]["command"] = json!(asr);
-    cfg["defaults"]["transcript_source"] = json!("asr");
+    cfg["download"]["adapter"] = json!(source);
+    cfg["speech"]["adapter"] = json!(asr);
+    cfg["transcript"]["source"] = json!("speech");
     let url = "https://example.test/media?episode=1";
     let first = run(root.path(), url, &cfg, &[]);
     let first_done = done(&first);
@@ -492,12 +492,12 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
         .unwrap();
     let stranded_media = source_marker.parent().unwrap().join("files/media.mp4");
     std::fs::write(&stranded_media, "cached media").unwrap();
-    cfg["llm"]["stages"]
+    cfg["ai"]["stages"]
         .as_array_mut()
         .unwrap()
         .push(json!({"name":"summary"}));
-    cfg["llm"]["base_url"] = json!(mock.url.clone());
-    cfg["llm"]["model"] = json!("fixture");
+    cfg["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["ai"]["model"] = json!("fixture");
     for _ in 0..2 {
         let second = run(root.path(), url, &cfg, &[]);
         assert_eq!(done(&second)["note_dir"], first_done["note_dir"]);
@@ -566,8 +566,8 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
             return;
         };
         let mut cfg = config();
-        cfg["asr"]["command"] = json!(command);
-        cfg["defaults"]["transcript_source"] = json!("asr");
+        cfg["speech"]["adapter"] = json!(command);
+        cfg["transcript"]["source"] = json!("speech");
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         assert_eq!(
             output.status.success(),
@@ -623,8 +623,8 @@ fn silent_audio_reports_no_speech() {
         return;
     };
     let mut cfg = config();
-    cfg["asr"]["command"] = json!(command);
-    cfg["defaults"]["transcript_source"] = json!("asr");
+    cfg["speech"]["adapter"] = json!(command);
+    cfg["transcript"]["source"] = json!("speech");
     let output = run(root.path(), audio.to_str().unwrap(), &cfg, &[]);
     assert!(!output.status.success());
     let error = events(&output).pop().unwrap();
@@ -660,9 +660,9 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
         ))
     });
     let mut cfg = config();
-    cfg["source"]["command"] = json!(source);
-    cfg["asr"]["command"] = json!(asr);
-    cfg["defaults"]["transcript_source"] = json!("asr");
+    cfg["download"]["adapter"] = json!(source);
+    cfg["speech"]["adapter"] = json!(asr);
+    cfg["transcript"]["source"] = json!("speech");
     let url = "https://example.test/audio";
     let first = run(root.path(), url, &cfg, &[]);
     assert!(done(&first)["warnings"].as_array().unwrap().is_empty());
@@ -689,12 +689,12 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
         .unwrap();
     assert_eq!(std::fs::read(marker).unwrap(), b"null");
     let modified = marker.metadata().unwrap().modified().unwrap();
-    cfg["llm"]["stages"]
+    cfg["ai"]["stages"]
         .as_array_mut()
         .unwrap()
         .push(json!({"name":"proofread","images":true}));
-    cfg["llm"]["base_url"] = json!(mock.url.clone());
-    cfg["llm"]["model"] = json!("fixture");
+    cfg["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["ai"]["model"] = json!("fixture");
     for _ in 0..2 {
         let output = run(root.path(), url, &cfg, &[]);
         assert!(done(&output)["warnings"].as_array().unwrap().is_empty());
@@ -745,7 +745,7 @@ exit "$2"
     let record = root.path().join("hook calls");
     let mut cfg = config();
     for code in ["0", "7"] {
-        cfg["defaults"]["on_complete"] = json!([
+        cfg["output"]["on_complete"] = json!([
             "./completion hook.sh",
             record.to_string_lossy().into_owned(),
             code,
@@ -781,7 +781,7 @@ exit "$2"
         std::fs::read_to_string(&record).unwrap().lines().count(),
         10
     );
-    cfg["defaults"]["on_complete"] = json!(["notepipe-completion-fixture-that-does-not-exist"]);
+    cfg["output"]["on_complete"] = json!(["notepipe-completion-fixture-that-does-not-exist"]);
     let missing = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
     assert!(
         done(&missing)["warnings"]
@@ -790,7 +790,7 @@ exit "$2"
             .iter()
             .any(|warning| warning.as_str().unwrap().contains("on_complete:"))
     );
-    cfg["defaults"]["on_complete"] = json!([
+    cfg["output"]["on_complete"] = json!([
         "./completion hook.sh",
         record.to_string_lossy().into_owned(),
         "0",
@@ -824,7 +824,7 @@ fn cancelling_completion_hooks_stops_their_process_trees() {
         .unwrap();
         let record = root.path().join("hook-child");
         let mut cfg = config();
-        cfg["defaults"]["on_complete"] = json!([
+        cfg["output"]["on_complete"] = json!([
             "sh",
             "-c",
             "trap 'wait; exit 0' TERM\nsleep 30 &\nprintf '%s' \"$!\" > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\nwait",
@@ -869,15 +869,15 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
         })
     });
     let mut cfg = config();
-    cfg["llm"]["stages"]
+    cfg["ai"]["stages"]
         .as_array_mut()
         .unwrap()
         .push(json!({"name":"proofread"}));
-    cfg["llm"]["base_url"] = json!(mock.url.clone());
-    cfg["llm"]["model"] = json!("fixture");
-    cfg["llm"]["stages"][0]["prompt"] = json!("CUSTOM-RULE-42");
-    cfg["llm"]["api_key"] = json!("private-test-key");
-    cfg["llm"]["stages"][0]["images"] = json!(true);
+    cfg["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["ai"]["model"] = json!("fixture");
+    cfg["ai"]["stages"][0]["prompt"] = json!("CUSTOM-RULE-42");
+    cfg["ai"]["api_key"] = json!("private-test-key");
+    cfg["ai"]["stages"][0]["images"] = json!(true);
     for _ in 0..2 {
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         assert!(document(&output).to_string().contains("Cached fallback."));
@@ -915,7 +915,7 @@ fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
             return;
         };
         let mut cfg = config();
-        cfg["defaults"]["out"] = json!(notes);
+        cfg["output"]["dir"] = json!(notes);
         let mut published = Vec::new();
         for input in ["one", "two"] {
             let directory = root.path().join(input);
@@ -965,7 +965,7 @@ fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
             std::fs::create_dir(path).unwrap();
             std::fs::write(path.join("user-file"), "unrelated content").unwrap();
         }
-        cfg["source"]["command"] = json!(command);
+        cfg["download"]["adapter"] = json!(command);
         let failed = run(root.path(), "https://example.test/unrelated", &cfg, &[]);
         assert!(!failed.status.success());
         assert_eq!(events(&failed).last().unwrap()["type"], "error");
@@ -1033,10 +1033,10 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
         }),
     );
     assert!(!note_dir.exists());
-    cfg["asr"]["command"] = json!(command);
-    cfg["asr"]["concurrency"] = json!(1);
-    cfg["asr"]["max_speech"] = json!(1.);
-    cfg["defaults"]["transcript_source"] = json!("asr");
+    cfg["speech"]["adapter"] = json!(command);
+    cfg["speech"]["concurrency"] = json!(1);
+    cfg["speech"]["detection"]["max_segment"] = json!(1.);
+    cfg["transcript"]["source"] = json!("speech");
     let failed = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     assert!(!failed.status.success());
     assert_eq!(events(&failed).last().unwrap()["type"], "error");
@@ -1130,10 +1130,10 @@ fn sigint_and_sigterm_cancel_adapters_and_resume_completed_asr_chunks() {
             return;
         };
         let mut cfg = config();
-        cfg["asr"]["command"] = json!(command);
-        cfg["asr"]["concurrency"] = json!(1);
-        cfg["asr"]["max_speech"] = json!(1.);
-        cfg["defaults"]["transcript_source"] = json!("asr");
+        cfg["speech"]["adapter"] = json!(command);
+        cfg["speech"]["concurrency"] = json!(1);
+        cfg["speech"]["detection"]["max_segment"] = json!(1.);
+        cfg["transcript"]["source"] = json!("speech");
         let mut child = spawn(root.path(), video.to_str().unwrap(), &cfg, &[]);
         wait_for_file(&mut child, &record.join("transcribing"));
         assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
@@ -1176,7 +1176,7 @@ fn a_second_signal_kills_the_source_tree_before_exiting_immediately() {
         return;
     };
     let mut cfg = config();
-    cfg["source"]["command"] = json!(command);
+    cfg["download"]["adapter"] = json!(command);
     let mut child = spawn(root.path(), "https://example.test/media", &cfg, &[]);
     wait_for_file(&mut child, &record.join("child-ready"));
     let pid: i32 = std::fs::read_to_string(record.join("pid"))
@@ -1212,10 +1212,10 @@ fn keyless_remote_asr_and_bounded_adapter_concurrency_still_work() {
         };
         let adapter = RemoteAsr::start(&command, &record);
         let mut cfg = config();
-        cfg["defaults"]["transcript_source"] = json!("asr");
-        cfg["asr"]["base_url"] = json!(format!("{}/v1", adapter.base));
-        cfg["asr"]["max_speech"] = json!(1.);
-        cfg["asr"]["concurrency"] = json!(concurrency);
+        cfg["transcript"]["source"] = json!("speech");
+        cfg["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
+        cfg["speech"]["detection"]["max_segment"] = json!(1.);
+        cfg["speech"]["concurrency"] = json!(concurrency);
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         done(&output);
         assert_eq!(
@@ -1258,13 +1258,13 @@ fn proofreading_keys_prefer_flags_then_config_then_environment() {
             ))
         });
         let mut cfg = config();
-        cfg["llm"]["stages"]
+        cfg["ai"]["stages"]
             .as_array_mut()
             .unwrap()
             .push(json!({"name":"proofread"}));
-        cfg["llm"]["base_url"] = json!(mock.url.clone());
-        cfg["llm"]["model"] = json!("fixture");
-        cfg["llm"]["api_key"] = json!(configured);
+        cfg["ai"]["base_url"] = json!(mock.url.clone());
+        cfg["ai"]["model"] = json!("fixture");
+        cfg["ai"]["api_key"] = json!(configured);
         let path = root.path().join("settings.json");
         std::fs::write(&path, serde_json::to_vec(&cfg).unwrap()).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
@@ -1273,11 +1273,11 @@ fn proofreading_keys_prefer_flags_then_config_then_environment() {
             .args(["--config", path.to_str().unwrap(), "--json"])
             .current_dir(root.path())
             .env("XDG_CACHE_HOME", root.path().join("cache"))
-            .env("NOTEPIPE_LLM_API_KEY", "environment-key")
+            .env("NOTEPIPE_AI_API_KEY", "environment-key")
             .env_remove("RUST_LOG")
             .stdin(Stdio::null());
         if let Some(flag) = flag {
-            command.args(["--llm-api-key", flag]);
+            command.args(["--ai-api-key", flag]);
         }
         done(&command.output().unwrap());
         assert!(
@@ -1311,12 +1311,12 @@ fn retryable_and_terminal_llm_errors_preserve_text_and_never_enter_the_cache() {
         })
     });
     let mut cfg = config();
-    cfg["llm"]["stages"]
+    cfg["ai"]["stages"]
         .as_array_mut()
         .unwrap()
         .push(json!({"name":"proofread"}));
-    cfg["llm"]["base_url"] = json!(mock.url.clone());
-    cfg["llm"]["model"] = json!("fixture");
+    cfg["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["ai"]["model"] = json!("fixture");
     let first = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     let doc = document(&first);
     assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -1350,8 +1350,8 @@ fn cancellation_during_audio_cutting_sends_no_http_request() {
     };
     let adapter = RemoteAsr::start(&command, &record);
     let mut cfg = config();
-    cfg["defaults"]["transcript_source"] = json!("asr");
-    cfg["asr"]["base_url"] = json!(format!("{}/v1", adapter.base));
+    cfg["transcript"]["source"] = json!("speech");
+    cfg["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
     let bin = root.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let wrapper = bin.join("ffmpeg");
@@ -1476,7 +1476,7 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
         ))
     });
     let mut cfg = config();
-    cfg["llm"] = json!({
+    cfg["ai"] = json!({
         "base_url":main.url,"api_key":"default-key","model":"default-model",
         "request":{"temperature":0.2,"top_p":0.8},
         "stages":[
@@ -1528,8 +1528,8 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
     assert_eq!(doc["sections"][0]["speech"][0]["text"], "Original words.");
     assert!(doc["sections"][0]["speech"][0].get("below").is_none());
     let calls = main.calls.load(Ordering::SeqCst);
-    cfg["llm"]["base_url"] = json!("invalid unused URL");
-    cfg["llm"]["model"] = json!("");
+    cfg["ai"]["base_url"] = json!("invalid unused URL");
+    cfg["ai"]["model"] = json!("");
     let disabled = run(root.path(), video.to_str().unwrap(), &cfg, &["--no-stages"]);
     assert!(document(&disabled)["top"].as_array().unwrap().is_empty());
     assert_eq!(main.calls.load(Ordering::SeqCst), calls);
@@ -1572,10 +1572,10 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
             ))
         });
         let mut cfg = config();
-        cfg["llm"]["base_url"] = json!(mock.url.clone());
-        cfg["llm"]["model"] = json!("fixture");
-        cfg["llm"]["concurrency"] = json!(2);
-        cfg["llm"]["stages"]
+        cfg["ai"]["base_url"] = json!(mock.url.clone());
+        cfg["ai"]["model"] = json!("fixture");
+        cfg["ai"]["concurrency"] = json!(2);
+        cfg["ai"]["stages"]
             .as_array_mut()
             .unwrap()
             .push(json!({"name":"proofread"}));
@@ -1604,7 +1604,7 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
                         && event["message"]
                             .as_str()
                             .unwrap()
-                            .starts_with("LLM stage proofread failed;"))
+                            .starts_with("AI stage proofread failed;"))
                     .count(),
                 1
             );

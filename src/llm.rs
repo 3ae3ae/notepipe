@@ -116,7 +116,7 @@ impl Stage {
     fn validate(&self) -> Result<()> {
         anyhow::ensure!(
             !self.name.trim().is_empty(),
-            "LLM stage names must not be empty"
+            "AI stage names must not be empty"
         );
         anyhow::ensure!(
             matches!(
@@ -124,7 +124,7 @@ impl Stage {
                 (Input::Paragraphs, Output::Replace | Output::Below)
                     | (Input::Transcript, Output::Top)
             ),
-            "Invalid LLM stage input/output combination"
+            "Invalid AI stage input/output combination"
         );
         anyhow::ensure!(
             !self.images || self.input == Input::Paragraphs,
@@ -187,7 +187,7 @@ fn validate_request(request: &Map<String, Value>) -> Result<()> {
         !["model", "messages", "stream", "response_format"]
             .iter()
             .any(|key| request.contains_key(*key)),
-        "LLM request cannot override model, messages, stream or response_format"
+        "ai.request cannot override model, messages, stream or response_format"
     );
     Ok(())
 }
@@ -204,7 +204,7 @@ fn validate_stage_names(stages: &[Stage]) -> Result<()> {
     for stage in stages {
         anyhow::ensure!(
             names.insert(&stage.name),
-            "Duplicate LLM stage name: {}",
+            "Duplicate AI stage name: {}",
             stage.name
         );
     }
@@ -247,11 +247,11 @@ pub fn validate(settings: &LlmSettings) -> Result<()> {
         let settings = settings.for_stage(stage)?;
         anyhow::ensure!(
             !settings.base_url.trim().is_empty(),
-            "AI service URL is not set. Set [llm].base_url or the stage's base_url."
+            "AI service URL is not set. Set [ai].base_url or the stage's base_url."
         );
         anyhow::ensure!(
             !settings.model.trim().is_empty(),
-            "AI model is not set. Set [llm].model or the stage's model."
+            "AI model is not set. Set [ai].model or the stage's model."
         );
         crate::config::ensure_http_url(&settings.base_url)
             .with_context(|| format!("Invalid service for stage {}", stage.name))?;
@@ -350,7 +350,7 @@ pub fn paragraphs(
                     let mut first = crate::runtime::lock_recover(&first_error);
                     if first.is_none() {
                         tracing::warn!(
-                            "LLM stage {} failed; original text retained: {error:#}",
+                            "AI stage {} failed; original text retained: {error:#}",
                             stage.name
                         );
                         *first = Some(brief(&format!("{error:#}")));
@@ -809,12 +809,12 @@ mod tests {
 
     #[test]
     fn duplicate_stage_names_are_rejected_at_load_and_runtime_validation() {
-        let config = "[llm]\n[[llm.stages]]\nname = 'summary'\n[[llm.stages]]\nname = 'summary'\n";
+        let config = "[ai]\n[[ai.stages]]\nname = 'summary'\n[[ai.stages]]\nname = 'summary'\n";
         let error = toml::from_str::<crate::settings::ConfigFile>(config).unwrap_err();
         assert!(
             error
                 .to_string()
-                .contains("Duplicate LLM stage name: summary")
+                .contains("Duplicate AI stage name: summary")
         );
         let mut settings = test_settings();
         settings.stages.push(settings.stages[0].clone());
@@ -822,7 +822,7 @@ mod tests {
             validate(&settings)
                 .unwrap_err()
                 .to_string()
-                .contains("Duplicate LLM stage name: proofread")
+                .contains("Duplicate AI stage name: proofread")
         );
     }
 
@@ -830,12 +830,12 @@ mod tests {
     fn stage_overrides_merge_requests_and_protected_keys_are_rejected_at_load() {
         let settings = toml::from_str::<crate::settings::ConfigFile>(
             r#"
-[llm]
+[ai]
 base_url = "invalid unused default"
 api_key = "default-key"
 model = "default-model"
 request = { temperature = 0.2, max_tokens = 99 }
-[[llm.stages]]
+[[ai.stages]]
 name = "summary"
 base_url = "https://example.test/v1"
 api_key = "stage-key"
@@ -844,7 +844,7 @@ request = { temperature = 0.7, top_p = 0.8 }
 "#,
         )
         .unwrap()
-        .llm;
+        .ai;
         validate(&settings).unwrap();
         let effective = settings.for_stage(&settings.stages[0]).unwrap();
         assert_eq!(effective.base_url, "https://example.test/v1");

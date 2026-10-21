@@ -1,26 +1,39 @@
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-pub const QUICK_START: &str = r#"Quick start:
-  notepipe ./lecture.mp4
-  notepipe ./recording.mp3
-  notepipe https://example.com/video
-  notepipe ./lecture.mp4 -o ./notes
+pub(super) fn after_help() -> String {
+    let path = crate::settings::config_path();
+    let not_created = if path.exists() {
+        ""
+    } else {
+        " (not created yet)"
+    };
+    format!(
+        r#"Examples:
+  notepipe lecture.mp4                     A note for a local video, in the current folder
+  notepipe interview.m4a -o ~/notes        A note for an audio file, under ~/notes
+  notepipe talk.mp4 --subtitle talk.srt    Use your own transcript
+  notepipe lecture.mp4 --stages summary    Add an AI summary at the top
+  notepipe https://youtu.be/VIDEO_ID       A URL (install "notepipe[ytdlp]" first)
 
 Transcripts:
-  Platform subtitles are used first; speech recognition runs when none exist.
-  --transcript-source subtitle  Use subtitles only
-  --transcript-source asr       Force speech recognition
+  Subtitles are used when they exist: lecture.srt or lecture.vtt next to the file, or those found by the
+  download adapter. Otherwise speech is sent to the service set in [speech]; the first run in a terminal
+  asks for it and saves it.
 
-Next steps:
-  notepipe doctor              Check dependencies and settings
-  notepipe config init         Create a configuration template
+Settings:
+  Options override the configuration file, which overrides the built-in defaults.
+  File: {}{not_created}
+  notepipe config init     Create the file, with every setting explained
+  notepipe config show     Show the settings in effect
+  notepipe doctor          Check ffmpeg, adapters and settings
 
-The first conversion in a terminal offers setup; scripts should pass options explicitly.
-Use <command> --help for details.
-"#;
+Documentation: https://github.com/3ae3ae/notepipe"#,
+        path.display()
+    )
+}
 
-fn version() -> &'static str {
+pub(super) fn version() -> &'static str {
     static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     VERSION.get_or_init(|| match option_env!("NOTEPIPE_COMMIT_HASH") {
         Some(hash) => format!("{} ({hash})", env!("CARGO_PKG_VERSION")),
@@ -33,11 +46,13 @@ fn version() -> &'static str {
     name = "notepipe",
     version = version(),
     about = "Turn video and audio into Markdown notes",
+    long_about = "Turn video and audio into Markdown notes.\n\nnotepipe writes a note for a recording: the transcript in paragraphs, arranged around screenshots of what was on screen,\noptionally proofread, summarized or extended by an AI model. Each note is a folder with note.md, note.json and images/.",
     args_conflicts_with_subcommands = true,
-    after_help = QUICK_START
+    after_help = after_help()
 )]
 pub struct Cli {
-    /// Video or audio URL, or local file
+    /// A local video or audio file, or a URL (URLs need a download adapter)
+    #[arg(value_name = "SOURCE")]
     pub source: Option<String>,
 
     #[command(flatten)]
@@ -49,141 +64,159 @@ pub struct Cli {
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct RunOpts {
-    /// Output root for note folders (default: current directory)
-    #[arg(short, long)]
-    #[arg(help_heading = "Input and output")]
+    /// Folder that receives the note folders (default: the current folder; config: output.dir)
+    #[arg(short, long, value_name = "DIR", help_heading = "Output")]
     pub out: Option<PathBuf>,
 
-    /// Similarity threshold; higher captures more screenshots
-    #[arg(long)]
-    #[arg(help_heading = "Screenshots")]
-    pub similarity: Option<f64>,
-
-    /// Frame sampling interval in seconds
-    #[arg(long)]
-    #[arg(help_heading = "Screenshots")]
-    pub sample_interval: Option<f64>,
-
-    /// Minimum seconds between screenshots
-    #[arg(long)]
-    #[arg(help_heading = "Screenshots")]
-    pub cooldown: Option<f64>,
-
-    /// Capture immediately or wait for a stable frame
-    #[arg(long, value_enum)]
-    #[arg(help_heading = "Screenshots")]
-    pub screenshot_mode: Option<crate::config::ScreenshotMode>,
-
-    /// Seconds to wait for a stable frame
-    #[arg(long)]
-    #[arg(help_heading = "Screenshots")]
-    pub stable_secs: Option<f64>,
-
-    /// Detect screenshot changes in a region: left%,top%-right%,bottom%
-    #[arg(long)]
-    #[arg(help_heading = "Screenshots")]
-    pub roi: Option<String>,
-
-    /// Speech service base URL or full endpoint
-    #[arg(long)]
-    #[arg(help_heading = "Speech recognition")]
-    pub asr_base_url: Option<String>,
-
-    /// Cloud API key; prefer NOTEPIPE_ASR_API_KEY to keep it out of shell history
-    #[arg(long)]
-    #[arg(help_heading = "Speech recognition")]
-    pub asr_api_key: Option<String>,
-
-    /// Speech service model; omitted when empty
-    #[arg(long)]
-    #[arg(help_heading = "Speech recognition")]
-    pub asr_model: Option<String>,
-
-    /// HTTP dialect: transcriptions, chat
-    #[arg(long, value_enum)]
-    #[arg(help_heading = "Speech recognition")]
-    pub asr_mode: Option<crate::settings::AsrMode>,
-
-    /// Speech language code; empty means automatic detection
-    #[arg(long, help_heading = "Speech recognition")]
-    pub asr_language: Option<String>,
-
-    /// Transcript source: auto, subtitle, asr
-    #[arg(long, value_enum)]
-    #[arg(help_heading = "Input and output")]
-    pub transcript_source: Option<crate::config::TranscriptSource>,
-
-    /// Maximum speech segment length in seconds
-    #[arg(long)]
-    #[arg(help_heading = "Speech recognition")]
-    pub max_speech: Option<f32>,
-
-    /// Read TOML or JSON configuration from a file, or '-' for stdin
-    #[arg(long, value_name = "FILE", help_heading = "Input and output")]
+    /// Read settings from this file instead of the configuration file; '-' reads them from standard input
+    #[arg(long, value_name = "FILE", help_heading = "Output")]
     pub config: Option<PathBuf>,
 
-    /// Use this SRT/VTT transcript; skip subtitle discovery and speech recognition
-    #[arg(long, value_name = "FILE", help_heading = "Input and output")]
+    /// Discard this source's cached work and start over
+    #[arg(long, help_heading = "Output")]
+    pub no_resume: bool,
+
+    /// Where the transcript comes from (default: auto; config: transcript.source)
+    #[arg(
+        long = "transcript",
+        value_enum,
+        value_name = "SOURCE",
+        help_heading = "Transcript"
+    )]
+    pub transcript_source: Option<crate::config::TranscriptSource>,
+
+    /// Use this SRT or VTT file as the transcript
+    #[arg(long, value_name = "FILE", help_heading = "Transcript")]
     pub subtitle: Option<PathBuf>,
 
-    /// LLM connection base URL (OpenAI-compatible)
-    #[arg(long)]
-    #[arg(help_heading = "LLM stages")]
-    pub llm_base_url: Option<String>,
+    /// Spoken language, such as en or ko; also picks the subtitle language (default: detect; config: transcript.language)
+    #[arg(long = "language", value_name = "CODE", help_heading = "Transcript")]
+    pub asr_language: Option<String>,
 
-    /// LLM connection key; prefer NOTEPIPE_LLM_API_KEY to keep it out of shell history
-    #[arg(long)]
-    #[arg(help_heading = "LLM stages")]
-    pub llm_api_key: Option<String>,
+    /// OpenAI-compatible speech service, such as https://api.openai.com/v1 (config: speech.base_url)
+    #[arg(
+        long = "speech-base-url",
+        value_name = "URL",
+        help_heading = "Speech recognition"
+    )]
+    pub asr_base_url: Option<String>,
 
-    /// LLM connection model name
-    #[arg(long)]
-    #[arg(help_heading = "LLM stages")]
-    pub llm_model: Option<String>,
+    /// API key for the speech service; NOTEPIPE_SPEECH_API_KEY keeps it out of shell history (config: speech.api_key)
+    #[arg(
+        long = "speech-api-key",
+        value_name = "KEY",
+        help_heading = "Speech recognition"
+    )]
+    pub asr_api_key: Option<String>,
 
-    /// Override the selected proofread stage's prompt
-    #[arg(long)]
-    #[arg(help_heading = "LLM stages")]
-    pub llm_prompt: Option<String>,
+    /// Speech model, such as gpt-4o-mini-transcribe (config: speech.model)
+    #[arg(
+        long = "speech-model",
+        value_name = "NAME",
+        help_heading = "Speech recognition"
+    )]
+    pub asr_model: Option<String>,
 
-    /// Ordered built-in or configured LLM stage names, comma-separated
+    /// How audio is sent to the service (default: transcriptions; config: speech.api)
+    #[arg(
+        long = "speech-api",
+        value_enum,
+        value_name = "API",
+        help_heading = "Speech recognition"
+    )]
+    pub asr_mode: Option<crate::settings::AsrMode>,
+
+    /// Longest piece of speech sent in one request, 1 to 600 (default: 20; config: speech.detection.max_segment)
+    #[arg(
+        long = "max-segment",
+        value_name = "SECONDS",
+        help_heading = "Speech recognition"
+    )]
+    pub max_speech: Option<f32>,
+
+    /// When to take a screenshot after the picture changes (default: stable; config: screenshots.mode)
+    #[arg(long, value_enum, value_name = "MODE", help_heading = "Screenshots")]
+    pub screenshot_mode: Option<crate::config::ScreenshotMode>,
+
+    /// How small a change triggers a screenshot; higher takes more (default: 0.85; config: screenshots.sensitivity)
+    #[arg(long = "sensitivity", value_name = "0-1", help_heading = "Screenshots")]
+    pub similarity: Option<f64>,
+
+    /// Seconds between the frames that are compared, at least 0.2 (default: 1; config: screenshots.frame_interval)
+    #[arg(
+        long = "frame-interval",
+        value_name = "SECONDS",
+        help_heading = "Screenshots"
+    )]
+    pub sample_interval: Option<f64>,
+
+    /// Least time between two screenshots (default: 10; config: screenshots.min_gap)
+    #[arg(long = "min-gap", value_name = "SECONDS", help_heading = "Screenshots")]
+    pub cooldown: Option<f64>,
+
+    /// In stable mode, how long the picture must stay still (default: 0.8; config: screenshots.settle)
+    #[arg(long = "settle", value_name = "SECONDS", help_heading = "Screenshots")]
+    pub stable_secs: Option<f64>,
+
+    /// Watch only part of the frame, as left%,top%-right%,bottom% (config: screenshots.region)
+    ///
+    /// For example, 40%,0%-100%,100% ignores the left 40% of the frame, where a speaker's video might be.
+    #[arg(long = "region", value_name = "AREA", help_heading = "Screenshots")]
+    pub roi: Option<String>,
+
+    /// AI stages to run, in order, such as proofread,summary (default: the [[ai.stages]] in the configuration)
     #[arg(
         long,
+        value_name = "NAMES",
         value_delimiter = ',',
         conflicts_with = "no_stages",
-        help_heading = "LLM stages"
+        help_heading = "AI stages"
     )]
     pub stages: Option<Vec<String>>,
 
-    /// Run without LLM stages
-    #[arg(long, help_heading = "LLM stages")]
+    /// Run no AI stages
+    #[arg(long, help_heading = "AI stages")]
     pub no_stages: bool,
 
-    /// Diagnostic logs; -vv for debug details
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    #[arg(help_heading = "Terminal output")]
+    /// OpenAI-compatible chat service used by every stage (config: ai.base_url)
+    #[arg(long = "ai-base-url", value_name = "URL", help_heading = "AI stages")]
+    pub llm_base_url: Option<String>,
+
+    /// API key for the AI service; NOTEPIPE_AI_API_KEY keeps it out of shell history (config: ai.api_key)
+    #[arg(long = "ai-api-key", value_name = "KEY", help_heading = "AI stages")]
+    pub llm_api_key: Option<String>,
+
+    /// Model for every stage that does not set its own (config: ai.model)
+    #[arg(long = "ai-model", value_name = "NAME", help_heading = "AI stages")]
+    pub llm_model: Option<String>,
+
+    /// Replace the proofread stage's prompt for this run
+    #[arg(
+        long = "proofread-prompt",
+        value_name = "TEXT",
+        help_heading = "AI stages"
+    )]
+    pub llm_prompt: Option<String>,
+
+    /// Show more detail; -vv for debugging
+    #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Terminal")]
     pub verbose: u8,
 
-    /// Clear this source's cached work and start again
-    #[arg(long, help_heading = "Input and output")]
-    pub no_resume: bool,
-
-    /// Quiet mode: report errors only
-    #[arg(short, long)]
-    #[arg(help_heading = "Terminal output")]
+    /// Show errors only
+    #[arg(short, long, help_heading = "Terminal")]
     pub quiet: bool,
 
-    /// Stream NDJSON progress without prompts
-    #[arg(long)]
-    #[arg(help_heading = "Terminal output")]
+    /// Print progress as JSON lines for other programs, and never prompt
+    #[arg(long, help_heading = "Terminal")]
     pub json: bool,
 }
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Check tools, speech backends and settings
+    /// Check that ffmpeg, adapters and settings are ready
     Doctor,
-    /// Manage the configuration file
+    /// Create, find and show the configuration file
+    #[command(arg_required_else_help = true)]
     Config {
         #[command(subcommand)]
         cmd: ConfigCmd,
@@ -192,11 +225,14 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum ConfigCmd {
-    /// Create a template; --force replaces existing settings
+    /// Create the configuration file, with every setting explained in comments
     Init {
+        /// Replace an existing configuration file
         #[arg(long)]
         force: bool,
     },
-    /// Show the config path and file settings
+    /// Print where the configuration file is
+    Path,
+    /// Show the settings in effect, from the file and the built-in defaults
     Show,
 }

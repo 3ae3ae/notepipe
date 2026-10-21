@@ -10,8 +10,7 @@ use std::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
-pub const ADAPTER_HINT: &str =
-    "URLs need a source adapter; see the README, or set [source].command";
+pub const ADAPTER_HINT: &str = "URLs need a download adapter: install one, for example `uv tool install \"notepipe[ytdlp]\"`, or set [download].adapter";
 const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
 /// Public, vendor-neutral note metadata.
@@ -56,8 +55,8 @@ pub struct Resolved {
 
 fn output_path(root: &Path, relative: &str) -> Result<PathBuf> {
     let path = crate::artifact::safe_asset_path(root, relative)
-        .context("Invalid source adapter path; paths must stay inside its output directory")?;
-    ensure!(path.is_file(), "Source adapter path is not a file");
+        .context("Invalid download adapter path; paths must stay inside its output directory")?;
+    ensure!(path.is_file(), "Download adapter path is not a file");
     Ok(path.canonicalize()?)
 }
 
@@ -69,21 +68,21 @@ impl Output {
         }
         Ok(Some(
             serde_json::from_slice(&std::fs::read(path)?)
-                .context("Invalid source adapter cache")?,
+                .context("Invalid download adapter cache")?,
         ))
     }
 
     pub(crate) fn metadata(&self, source: &str) -> Result<MediaMeta> {
         ensure!(
             self.duration.is_finite() && self.duration >= 0.,
-            "Invalid source adapter duration"
+            "Invalid download adapter duration"
         );
         if let Some(url) = self.url.as_deref().filter(|url| !url.is_empty()) {
-            crate::config::ensure_http_url(url).context("Invalid source adapter URL")?;
+            crate::config::ensure_http_url(url).context("Invalid download adapter URL")?;
         }
         if let Some(template) = &self.seek_url {
             crate::config::ensure_http_url(&template.replace("{t}", "0"))
-                .context("Invalid source adapter seek URL")?;
+                .context("Invalid download adapter seek URL")?;
         }
         Ok(MediaMeta {
             title: if self.title.trim().is_empty() {
@@ -150,7 +149,7 @@ pub fn command(source: &Source) -> Result<(PathBuf, &[String])> {
     if let Some((program, args)) = source.command.split_first() {
         ensure!(
             !program.trim().is_empty(),
-            "The source adapter command must name an executable"
+            "The download adapter command must name an executable"
         );
         let path = crate::adapter::resolve_executable(program).context(ADAPTER_HINT)?;
         ensure!(path.is_file(), "{ADAPTER_HINT}");
@@ -207,7 +206,7 @@ fn discover(directories: impl IntoIterator<Item = PathBuf>) -> Result<PathBuf> {
     ensure!(!found.is_empty(), "{ADAPTER_HINT}");
     ensure!(
         found.len() == 1,
-        "Multiple source adapters found: {}. Set [source].command.",
+        "Multiple download adapters found: {}. Choose one with [download].adapter.",
         found.keys().cloned().collect::<Vec<_>>().join(", ")
     );
     Ok(found.into_values().next().unwrap())
@@ -230,19 +229,19 @@ fn windows_executable(name: &str, pathext: Option<&str>) -> bool {
 fn accept_line(line: &[u8], last: &mut Option<Output>) -> Result<()> {
     ensure!(
         line.len() as u64 <= MAX_LINE_BYTES,
-        "Source adapter output line exceeds 1 MiB"
+        "Download adapter output line exceeds 1 MiB"
     );
     let value: serde_json::Value =
-        serde_json::from_slice(line).context("Invalid source adapter JSON")?;
+        serde_json::from_slice(line).context("Invalid download adapter JSON")?;
     if let Some(progress) = value.get("progress") {
         let progress = progress
             .as_f64()
             .filter(|value| (0.0..=1.0).contains(value))
-            .context("Invalid source adapter progress")?;
+            .context("Invalid download adapter progress")?;
         crate::progress::download_progress((progress * 10000.).round() as u64, 10000);
         *last = None;
     } else {
-        *last = Some(serde_json::from_value(value).context("Invalid source adapter result")?);
+        *last = Some(serde_json::from_value(value).context("Invalid download adapter result")?);
     }
     Ok(())
 }
@@ -257,7 +256,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
     let marker = cache.join("complete.json");
     if marker.is_file() {
         let output: Output = serde_json::from_slice(&std::fs::read(&marker)?)
-            .context("Invalid source adapter cache")?;
+            .context("Invalid download adapter cache")?;
         match output.resolve(&directory, url) {
             Ok(resolved) => return Ok(resolved),
             Err(error)
@@ -288,18 +287,18 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     runtime::check_cancelled()?;
-    let mut child = runtime::ManagedChild::spawn_tree("source adapter", &mut command)?;
+    let mut child = runtime::ManagedChild::spawn_tree("download adapter", &mut command)?;
     let stderr = runtime::StderrTail::default();
     let drain = stderr.drain(
         child
             .take_stderr()
-            .context("Missing source adapter stderr pipe")?,
-        "source adapter",
+            .context("Missing download adapter stderr pipe")?,
+        "download adapter",
     );
     let stdout = tokio::process::ChildStdout::from_std(
         child
             .take_stdout()
-            .context("Missing source adapter stdout pipe")?,
+            .context("Missing download adapter stdout pipe")?,
     )?;
     let mut stdout = tokio::io::BufReader::new(stdout);
     let mut line = Vec::new();
@@ -345,14 +344,14 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
     let _ = drain.join();
     let result = result
         .and_then(|status| {
-            ensure!(status.success(), "Source adapter failed ({status})");
-            let output = last.context("Source adapter returned no result")?;
+            ensure!(status.success(), "Download adapter failed ({status})");
+            let output = last.context("Download adapter returned no result")?;
             let resolved = output.resolve(&directory, url)?;
             runtime::check_cancelled()?;
             crate::checkpoint::atomic_write(&marker, &serde_json::to_vec(&output)?)?;
             Ok(resolved)
         })
-        .map_err(|error| stderr.attach(error, "Source adapter diagnostics"))?;
+        .map_err(|error| stderr.attach(error, "Download adapter diagnostics"))?;
     crate::progress::stage("download", "done");
     Ok(result)
 }
@@ -665,7 +664,7 @@ mod tests {
         for text in [
             "notepipe-source-first",
             "notepipe-source-second",
-            "[source].command",
+            "[download].adapter",
         ] {
             assert!(error.contains(text), "{error}");
         }

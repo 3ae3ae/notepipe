@@ -51,7 +51,8 @@ fn set_connection(asr: &mut Asr, adapter: bool, input: &str, mode: AsrMode) -> R
 fn save_asr(cfg: &PipelineConfig) -> Result<PathBuf> {
     cfg.validate_asr()?;
     let mut file = crate::settings::load_from(cfg.config_path.as_deref())?;
-    file.asr = cfg.asr.clone();
+    file.speech = (&cfg.asr).into();
+    file.transcript.language = cfg.asr.language.clone();
     crate::settings::save(&file, cfg.config_path.as_deref())
 }
 
@@ -59,7 +60,7 @@ fn save_asr(cfg: &PipelineConfig) -> Result<PathBuf> {
 pub fn run(cfg: &PipelineConfig) -> Result<Asr> {
     anyhow::ensure!(
         cfg.config_path.as_deref() != Some(Path::new("-")),
-        "Setup is unavailable with --config -; configure [asr] in the supplied configuration."
+        "Setup is unavailable with --config -; set [speech] in the supplied configuration."
     );
     let choice = selected_or_cancelled(
         dialoguer::Select::new()
@@ -107,7 +108,7 @@ pub fn run(cfg: &PipelineConfig) -> Result<Asr> {
         .to_owned();
     let path = save_asr(&cfg)?;
     eprintln!(
-        "Saved [asr] to {}. See README.md for service examples.",
+        "Saved the speech recognition settings to {}. Run `notepipe config show` to review them.",
         path.display()
     );
     Ok(cfg.asr)
@@ -168,8 +169,8 @@ mod tests {
                 "selected.toml"
             });
             let mut file = crate::settings::ConfigFile::default();
-            file.defaults.out = Some("my-notes".into());
-            file.llm.model = "my-model".into();
+            file.output.dir = Some("my-notes".into());
+            file.ai.model = "my-model".into();
             let original = if json {
                 serde_json::to_string(&file).unwrap()
             } else {
@@ -188,9 +189,11 @@ mod tests {
                 AsrMode::Chat,
             )
             .unwrap();
+            cfg.asr.language = "ko".into();
             assert_eq!(save_asr(&cfg).unwrap(), path.canonicalize().unwrap());
             let saved = crate::settings::load_from(Some(&path)).unwrap();
-            file.asr = cfg.asr;
+            file.speech = (&cfg.asr).into();
+            file.transcript.language = cfg.asr.language;
             assert_eq!(saved, file);
             assert_eq!(
                 std::fs::read_to_string(&path).unwrap().starts_with('{'),
@@ -209,7 +212,7 @@ mod tests {
     fn setup_rejects_a_mismatched_endpoint_before_saving() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("selected.toml");
-        let original = "[defaults]\nout = 'my-notes'\n";
+        let original = "[output]\ndir = 'my-notes'\n";
         std::fs::write(&path, original).unwrap();
         let opts = crate::cli::RunOpts {
             config: Some(path.clone()),

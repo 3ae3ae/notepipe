@@ -62,15 +62,15 @@ pub fn run() -> Result<()> {
     let path = crate::settings::config_path();
     let loaded = crate::settings::load();
     let default_source = crate::settings::Source::default();
-    let source = loaded.as_ref().map_or(&default_source, |cfg| &cfg.source);
+    let source = loaded.as_ref().map_or(&default_source, |cfg| &cfg.download);
     match crate::source::command(source) {
         Ok((path, _)) => check(
             &mut out,
             true,
-            "Source adapter",
+            "Download adapter",
             &format!("  {}", path.display()),
         ),
-        Err(error) => out.push(format!("- Source adapter unavailable. {error:#}")),
+        Err(error) => out.push(format!("- Download adapter unavailable. {error:#}")),
     }
     out.push("\nConfiguration".into());
     match &loaded {
@@ -78,11 +78,8 @@ pub fn run() -> Result<()> {
             if path.is_file() {
                 check(&mut out, true, "config", &format!("  {}", path.display()));
             } else {
-                out.push(format!(
-                    "- config  Using built-in defaults: {}",
-                    path.display()
-                ));
-                out.push("  Optional setup: notepipe config init".into());
+                out.push(format!("- config  Not created yet: {}", path.display()));
+                out.push("  Create it with: notepipe config init".into());
             }
             // Validate the same merged defaults as conversion, without requiring a source or network.
             match crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)
@@ -94,40 +91,40 @@ pub fn run() -> Result<()> {
                     check(&mut out, false, "Settings values", &format!("  {error:#}"));
                 }
             }
-            if cfg.asr.is_configured() {
+            if cfg.speech.is_configured() {
                 match crate::options::resolve(String::new(), &Default::default(), cfg)
                     .and_then(|cfg| cfg.validate_asr())
                 {
                     Ok(()) => {
-                        if let Some(program) = cfg.asr.command.first() {
+                        if let Some(program) = cfg.speech.command.first() {
                             match crate::adapter::resolve_executable(program) {
                                 Ok(path) if path.is_file() => check(
                                     &mut out,
                                     true,
-                                    "ASR adapter",
+                                    "Speech adapter",
                                     &format!("  {}", path.display()),
                                 ),
                                 _ => {
                                     failures += 1;
-                                    check(&mut out, false, "ASR adapter", program);
+                                    check(&mut out, false, "Speech adapter", program);
                                 }
                             }
                         } else {
                             check(
                                 &mut out,
                                 true,
-                                "ASR",
-                                &format!("  {} ({})", cfg.asr.base_url, cfg.asr.mode),
+                                "Speech service",
+                                &format!("  {} ({})", cfg.speech.base_url, cfg.speech.mode),
                             );
                         }
                     }
                     Err(error) => {
                         failures += 1;
-                        check(&mut out, false, "ASR", &format!("  {error:#}"));
+                        check(&mut out, false, "Speech service", &format!("  {error:#}"));
                     }
                 }
             } else {
-                out.push("ASR is not configured; set [asr] in `notepipe config init` when transcription is needed.".into());
+                out.push("- Speech recognition is not set up; it is needed only when there are no subtitles. Set [speech] in the configuration file.".into());
             }
         }
         Err(error) => {

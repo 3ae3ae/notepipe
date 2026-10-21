@@ -5,26 +5,36 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// `[defaults]`: defaults for command-line options; unset values use the built-in defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct Defaults {
-    pub out: Option<PathBuf>,
-    pub similarity: Option<f64>,
-    pub sample_interval: Option<f64>,
-    pub cooldown: Option<f64>,
-    pub screenshot_mode: Option<crate::config::ScreenshotMode>,
-    pub stable_secs: Option<f64>,
-    pub roi: Option<String>,
-    /// Transcript source: auto (subtitles first), subtitle or asr.
-    pub transcript_source: Option<crate::config::TranscriptSource>,
+pub struct Output {
+    pub dir: Option<PathBuf>,
     pub on_complete: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Transcript {
+    pub source: Option<crate::config::TranscriptSource>,
+    pub language: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Screenshots {
+    pub mode: Option<crate::config::ScreenshotMode>,
+    pub sensitivity: Option<f64>,
+    pub frame_interval: Option<f64>,
+    pub min_gap: Option<f64>,
+    pub settle: Option<f64>,
+    pub region: Option<String>,
 }
 
 /// External program that resolves an online URL into local media and subtitles.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Source {
+    #[serde(rename = "adapter")]
     pub command: Vec<String>,
 }
 
@@ -32,8 +42,10 @@ pub struct Source {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum AsrMode {
+    /// POST /audio/transcriptions, the OpenAI speech-to-text API
     #[default]
     Transcriptions,
+    /// Audio input to /chat/completions, for audio-capable chat models
     Chat,
 }
 
@@ -84,13 +96,78 @@ impl Asr {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Detection {
+    pub threshold: f32,
+    pub min_silence: f32,
+    pub max_segment: f32,
+}
+
+impl Default for Detection {
+    fn default() -> Self {
+        let asr = Asr::default();
+        Self {
+            threshold: asr.vad_threshold,
+            min_silence: asr.min_silence,
+            max_segment: asr.max_speech,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Speech {
+    #[serde(rename = "api")]
+    pub mode: AsrMode,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub concurrency: usize,
+    #[serde(rename = "adapter")]
+    pub command: Vec<String>,
+    pub detection: Detection,
+}
+
+impl Default for Speech {
+    fn default() -> Self {
+        Self::from(&Asr::default())
+    }
+}
+
+impl From<&Asr> for Speech {
+    fn from(asr: &Asr) -> Self {
+        Self {
+            mode: asr.mode,
+            base_url: asr.base_url.clone(),
+            api_key: asr.api_key.clone(),
+            model: asr.model.clone(),
+            concurrency: asr.concurrency,
+            command: asr.command.clone(),
+            detection: Detection {
+                threshold: asr.vad_threshold,
+                min_silence: asr.min_silence,
+                max_segment: asr.max_speech,
+            },
+        }
+    }
+}
+
+impl Speech {
+    pub fn is_configured(&self) -> bool {
+        !self.command.is_empty() || !self.base_url.trim().is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConfigFile {
-    pub defaults: Defaults,
-    pub source: Source,
-    pub llm: crate::llm::LlmSettings,
-    pub asr: Asr,
+    pub output: Output,
+    pub transcript: Transcript,
+    pub speech: Speech,
+    pub screenshots: Screenshots,
+    pub ai: crate::llm::LlmSettings,
+    pub download: Source,
 }
 
 pub fn config_path() -> PathBuf {
@@ -211,125 +288,237 @@ pub fn template() -> String {
     })
 }
 
-const TEMPLATE: &str = r#"# Configuration
-# Priority: CLI > this file > built-in defaults
-# Uncomment values to set defaults
-# View settings: notepipe config show
+const TEMPLATE: &str = r#"# notepipe configuration
+#
+# These settings apply to every run. Command-line options override them, and anything not set
+# here uses the built-in default shown next to it. Lines starting with # are ignored: remove the
+# # in front of a setting to change it.
+#
+#   notepipe config show    the settings in effect
+#   notepipe config path    where this file is
+#   notepipe --help         the matching command-line options
+#
+# Reference: https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
 
-[defaults]
-# Output root; each note gets its own title folder
-#out = "{OUT}"
-# Similarity (0,1]; higher captures more screenshots
-#similarity = {SIMILARITY}
-# Frame sampling interval (seconds)
-#sample_interval = {SAMPLE_INTERVAL}
-# Minimum interval between screenshots (seconds)
-#cooldown = {COOLDOWN}
-# first: immediate; stable: wait for animations
-#screenshot_mode = "{SCREENSHOT_MODE}"
-#stable_secs = {STABLE_SECS}
-# Compare only this region
-#roi = "40%,0%-100%,100%"
-# auto: subtitles first, then speech recognition
-# subtitle: subtitles only; asr: speech recognition only
-#transcript_source = "{TRANSCRIPT_SOURCE}"
-# Run after publication, in the note folder (argv; no shell)
+
+# ── Output ────────────────────────────────────────────────────────────────────────────────
+[output]
+
+# Folder that receives the notes. Each note is a folder named after the recording's title,
+# holding note.md, note.json and images/. "~" stands for your home folder.
+#dir = "{OUT}"
+
+# A program to run after each note is written, as a list of arguments (no shell). It runs in the
+# note folder and receives NOTEPIPE_NOTE_DIR, NOTEPIPE_MARKDOWN, NOTEPIPE_JSON and
+# NOTEPIPE_WARNINGS. For example, to copy every note into another folder:
+#   on_complete = ["sh", "-c", "cp -R \"$NOTEPIPE_NOTE_DIR\" ~/Documents/notes/"]
 #on_complete = []
 
-[source]
-# Source adapter argv; empty discovers a single notepipe-source-* executable
-#command = []
 
-[asr]
-# HTTP dialect: transcriptions, chat
-#mode = "transcriptions"
-# Service root or full endpoint; ignored when command is set
-#base_url = ""
-# Optional; CLI also reads NOTEPIPE_ASR_API_KEY
-#api_key = ""
-#model = ""
-# Empty language means automatic detection
+# ── Transcript ────────────────────────────────────────────────────────────────────────────
+[transcript]
+
+# Where the transcript comes from:
+#   "auto"       subtitles when there are any, otherwise speech recognition
+#   "subtitles"  subtitles only; fail when there are none
+#   "speech"     speech recognition only, even when subtitles exist
+# Subtitles are lecture.srt or lecture.vtt next to a local lecture.mp4, or those a download
+# adapter finds.
+#source = "{TRANSCRIPT_SOURCE}"
+
+# The spoken language, as a code such as "en", "ko" or "ja". It is passed to speech recognition
+# and chooses between subtitles in several languages. Empty: detect automatically.
 #language = ""
-# Parallel requests, clamped to 1..=16
+
+
+# ── Speech recognition ────────────────────────────────────────────────────────────────────
+# Used when the transcript comes from speech. Set either base_url, for a service, or adapter,
+# for a local engine that notepipe starts.
+[speech]
+
+# Address of an OpenAI-compatible speech service, for example:
+#   OpenAI    https://api.openai.com/v1         model "gpt-4o-mini-transcribe"
+#   Groq      https://api.groq.com/openai/v1    model "whisper-large-v3-turbo"
+#   Mistral   https://api.mistral.ai/v1         model "voxtral-mini-latest"
+#   a server of your own, such as http://localhost:8000/v1
+#base_url = ""
+
+# API key, sent as "Authorization: Bearer <key>". Leave it empty to read the
+# NOTEPIPE_SPEECH_API_KEY environment variable instead, which keeps the key out of this file.
+#api_key = ""
+
+# Model name. Sent only when set.
+#model = ""
+
+# How audio is sent:
+#   "transcriptions"  POST /audio/transcriptions, the OpenAI speech-to-text API
+#   "chat"            audio input to /chat/completions, for audio-capable chat models
+#api = "transcriptions"
+
+# A local engine instead of base_url: the adapter's command and its arguments. notepipe starts
+# it for the run and stops it afterwards. Install an official adapter as an extra, for example
+# `uv tool install "notepipe[llama]"`, and then:
+#   adapter = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+#adapter = []
+
+# How many requests run at the same time, 1 to 16. Local engines usually want 1.
 #concurrency = {ASR_CONCURRENCY}
-# Managed adapter argv; notepipe adds --host and --port
-#command = []
-#max_speech = {MAX_SPEECH}
-#vad_threshold = {VAD_THRESHOLD}
+
+# How speech is found and cut into pieces before it is sent. The defaults suit most recordings.
+[speech.detection]
+
+# How sure the detector must be that a sound is speech, from 0 to 1. Lower keeps quieter speech.
+#threshold = {VAD_THRESHOLD}
+
+# Pauses shorter than this many seconds do not split speech.
 #min_silence = {MIN_SILENCE}
 
-[llm]
-# Connection defaults for all stages
+# The longest piece of speech sent in one request, 1 to 600 seconds.
+#max_segment = {MAX_SPEECH}
+
+
+# ── Screenshots ───────────────────────────────────────────────────────────────────────────
+# A screenshot is taken when the picture changes. Audio files have none.
+[screenshots]
+
+# "stable" waits until the picture stops changing, which suits animated slides;
+# "first" takes the screenshot as soon as the picture changes.
+#mode = "{SCREENSHOT_MODE}"
+
+# How small a change triggers a screenshot, from 0 to 1. Higher takes more screenshots.
+#sensitivity = {SIMILARITY}
+
+# Seconds between the frames that are compared, at least 0.2.
+#frame_interval = {SAMPLE_INTERVAL}
+
+# The least time between two screenshots, in seconds.
+#min_gap = {COOLDOWN}
+
+# In "stable" mode, how long the picture must stay still, in seconds.
+#settle = {STABLE_SECS}
+
+# Watch only part of the frame, as "left%,top%-right%,bottom%". For example,
+# "40%,0%-100%,100%" ignores the left 40%, where a speaker's video might be. Empty: the whole frame.
+#region = ""
+
+
+# ── AI stages ─────────────────────────────────────────────────────────────────────────────
+# Optional steps that send the note to a language model, run in the order of the [[ai.stages]]
+# blocks below. None run unless you add a block here or pass --stages.
+[ai]
+
+# Address of an OpenAI-compatible chat service, used by every stage, for example:
+#   OpenAI       https://api.openai.com/v1
+#   Anthropic    https://api.anthropic.com/v1
+#   Gemini       https://generativelanguage.googleapis.com/v1beta/openai
+#   OpenRouter   https://openrouter.ai/api/v1
+#   Ollama       http://localhost:11434/v1
 #base_url = "{LLM_BASE_URL}"
-# Optional; CLI also reads NOTEPIPE_LLM_API_KEY
+
+# API key. Leave it empty to read the NOTEPIPE_AI_API_KEY environment variable instead.
 #api_key = ""
+
+# The model for every stage that does not name its own.
 #model = "{LLM_MODEL}"
+
+# How many requests each stage runs at the same time, 1 to 16.
 #concurrency = {LLM_CONCURRENCY}
-# Extra request fields; model, messages, stream and response_format are reserved
+
+# Extra fields added to every request, for options your service supports, for example:
+#   request = { temperature = 0.2, reasoning_effort = "low" }
+# notepipe sets model, messages, stream and response_format itself; they cannot be changed here.
 #request = {}
-# No stages run by default; --stages proofread,summary selects built-ins
-#stages = []
 
-# Example: enable a built-in stage using its default prompt
-# [[llm.stages]]
-# name = "proofread"
-# images = false
-# Per-stage overrides: prompt, base_url, api_key, model, request
-# Custom stages also require input (paragraphs/transcript), output (replace/below/top), and prompt
+# Each [[ai.stages]] block adds one stage. Two stages are built in and need only their name:
+#
+#   [[ai.stages]]
+#   name = "proofread"     # corrects recognition errors and removes filler in each paragraph
+#
+#   [[ai.stages]]
+#   name = "summary"       # adds a summary at the top of the note
+#
+# Every prompt is yours to change: a built-in stage takes a prompt that replaces its own, and any
+# stage can also set its own base_url, api_key, model or request. A stage of your own needs a
+# name, a prompt, and what it reads and writes:
+#
+#   [[ai.stages]]
+#   name = "translate"
+#   input = "paragraphs"   # "paragraphs": each paragraph; "transcript": the whole transcript
+#   output = "below"       # paragraphs: "replace" or "below"; transcript: "top"
+#   prompt = "Translate each item into Korean. Keep names, code and formulas unchanged."
+#
+# For paragraph stages, images = true also sends the screenshot shown during each paragraph, for
+# models that accept images.
 
+
+# ── Downloads ─────────────────────────────────────────────────────────────────────────────
+# URLs are fetched by a download adapter, such as notepipe-source-ytdlp
+# (`uv tool install "notepipe[ytdlp]"`).
+[download]
+
+# The adapter's command and its arguments. Empty: use the notepipe-source-* program that is
+# installed, if there is exactly one. For the yt-dlp adapter, arguments after "--" go to yt-dlp:
+#   adapter = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
+#adapter = []
 "#;
 
 /// Prints the file merged with the built-in defaults, without command-line or environment overrides.
 /// Uses [`crate::options::resolve`], the same resolution as a real run.
 pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
-    let d = &cfg.defaults;
     let r = crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)?;
-    println!("Configuration: {}", config_path().display());
-    println!("File settings and built-in defaults, before CLI and environment overrides");
-    let rows: Vec<(&str, String)> = vec![
-        ("out", r.out_root.display().to_string()),
-        ("similarity", r.similarity.to_string()),
-        ("sample_interval", r.sample_interval.to_string()),
-        ("cooldown", r.cooldown.to_string()),
-        ("roi", d.roi.clone().unwrap_or_else(|| "-".into())),
-        ("screenshot_mode", r.screenshot_mode.to_string()),
-        ("stable_secs", r.stable_secs.to_string()),
-        ("transcript_source", r.transcript_source.to_string()),
-        ("on_complete", format!("{:?}", r.on_complete)),
-    ];
-    println!("[defaults]");
-    for (key, value) in rows {
-        println!("  {key:<17}: {value}");
+    let path = config_path();
+    println!("Configuration file: {}", path.display());
+    if !path.is_file() {
+        println!("(not created yet; `notepipe config init` creates it)");
     }
-    let hidden = |key: &str| {
-        if key.is_empty() { "-" } else { "set, hidden)" }
-    };
-    println!("[source]");
-    println!("  {:<17}: {:?}", "command", r.source.command);
-    println!("[asr]");
-    println!("  {:<17}: {}", "base_url", cfg.asr.base_url);
-    println!("  {:<17}: {}", "model", cfg.asr.model);
-    println!("  {:<17}: {}", "mode", cfg.asr.mode);
-    println!("  {:<17}: {}", "api_key", hidden(&cfg.asr.api_key));
+    println!(
+        "Settings in effect, from the file and the built-in defaults (command-line options and environment variables are not included):"
+    );
+    println!();
+    println!("[output]");
+    println!("  {:<17}: {}", "dir", r.out_root.display());
+    println!("  {:<17}: {:?}", "on_complete", r.on_complete);
+    println!("[transcript]");
+    println!("  {:<17}: {}", "source", r.transcript_source);
     println!("  {:<17}: {}", "language", r.asr.language);
+    let hidden = |key: &str| {
+        if key.is_empty() { "-" } else { "(set, hidden)" }
+    };
+    println!("[speech]");
+    println!("  {:<17}: {}", "base_url", r.asr.base_url);
+    println!("  {:<17}: {}", "api_key", hidden(&r.asr.api_key));
+    println!("  {:<17}: {}", "model", r.asr.model);
+    println!("  {:<17}: {}", "api", r.asr.mode);
+    println!("  {:<17}: {:?}", "adapter", r.asr.command);
     println!("  {:<17}: {}", "concurrency", r.asr.concurrency);
-    println!("  {:<17}: {:?}", "command", r.asr.command);
-    println!("  {:<17}: {}", "max_speech", r.asr.max_speech);
-    println!("  {:<17}: {}", "vad_threshold", r.asr.vad_threshold);
+    println!("[speech.detection]");
+    println!("  {:<17}: {}", "threshold", r.asr.vad_threshold);
     println!("  {:<17}: {}", "min_silence", r.asr.min_silence);
-    println!("[llm]");
-    println!("  {:<17}: {}", "base_url", cfg.llm.base_url);
-    println!("  {:<17}: {}", "api_key", hidden(&cfg.llm.api_key));
-    println!("  {:<17}: {}", "model", cfg.llm.model);
-    println!("  {:<17}: {}", "concurrency", cfg.llm.concurrency);
+    println!("  {:<17}: {}", "max_segment", r.asr.max_speech);
+    println!("[screenshots]");
+    println!("  {:<17}: {}", "mode", r.screenshot_mode);
+    println!("  {:<17}: {}", "sensitivity", r.similarity);
+    println!("  {:<17}: {}", "frame_interval", r.sample_interval);
+    println!("  {:<17}: {}", "min_gap", r.cooldown);
+    println!("  {:<17}: {}", "settle", r.stable_secs);
+    println!(
+        "  {:<17}: {}",
+        "region",
+        cfg.screenshots.region.as_deref().unwrap_or("-")
+    );
+    println!("[ai]");
+    println!("  {:<17}: {}", "base_url", cfg.ai.base_url);
+    println!("  {:<17}: {}", "api_key", hidden(&cfg.ai.api_key));
+    println!("  {:<17}: {}", "model", cfg.ai.model);
+    println!("  {:<17}: {}", "concurrency", cfg.ai.concurrency);
     println!(
         "  {:<17}: {:?}",
         "request keys",
-        cfg.llm.request.keys().collect::<Vec<_>>()
+        cfg.ai.request.keys().collect::<Vec<_>>()
     );
-    for stage in &cfg.llm.stages {
-        let effective = cfg.llm.for_stage(stage)?;
-        println!("[[llm.stages]]");
+    for stage in &cfg.ai.stages {
+        let effective = cfg.ai.for_stage(stage)?;
+        println!("[[ai.stages]]");
         println!("  {:<17}: {}", "name", stage.name);
         println!("  {:<17}: {:?}", "input", stage.input);
         println!("  {:<17}: {:?}", "output", stage.output);
@@ -343,11 +532,18 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
             effective.request.keys().collect::<Vec<_>>()
         );
     }
+    println!("[download]");
+    println!("  {:<17}: {:?}", "adapter", r.source.command);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn old_sections_are_rejected() {
+        assert!(super::parse("[asr]\nbase_url = 'https://example.test/v1'\n").is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn saving_a_symlinked_configuration_updates_and_backs_up_its_target() {
@@ -355,11 +551,11 @@ mod tests {
         let target = root.path().join("dotfiles/settings.toml");
         let link = root.path().join("config.toml");
         std::fs::create_dir(target.parent().unwrap()).unwrap();
-        let original = "[defaults]\nout = 'my-notes'\n";
+        let original = "[output]\ndir = 'my-notes'\n";
         std::fs::write(&target, original).unwrap();
         std::os::unix::fs::symlink("dotfiles/settings.toml", &link).unwrap();
         let mut cfg = super::load_from(Some(&link)).unwrap();
-        cfg.asr.base_url = "https://example.test/v1".into();
+        cfg.speech.base_url = "https://example.test/v1".into();
         assert_eq!(
             super::save(&cfg, Some(&link)).unwrap(),
             target.canonicalize().unwrap()
@@ -401,9 +597,15 @@ mod tests {
                 .unwrap();
         assert_eq!(from_template.stable_secs, built_in.stable_secs);
         assert_eq!(from_template.similarity, built_in.similarity);
+        assert_eq!(from_template.sample_interval, built_in.sample_interval);
         assert_eq!(from_template.cooldown, built_in.cooldown);
+        assert_eq!(from_template.screenshot_mode, built_in.screenshot_mode);
+        assert_eq!(from_template.roi, built_in.roi);
+        assert_eq!(from_template.transcript_source, built_in.transcript_source);
+        assert_eq!(file.transcript.language, built_in.asr.language);
         assert_eq!(from_template.source, built_in.source);
         assert_eq!(from_template.asr, built_in.asr);
-        assert_eq!(file.asr, super::Asr::default());
+        assert_eq!(file.speech, super::Speech::default());
+        assert_eq!(file.speech.detection, super::Detection::default());
     }
 }

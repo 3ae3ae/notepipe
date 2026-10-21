@@ -57,11 +57,11 @@ fn sections(
             "--config",
             "-",
             "--json",
-            "--transcript-source",
-            "subtitle",
-            "--similarity",
+            "--transcript",
+            "subtitles",
+            "--sensitivity",
             "0.9",
-            "--sample-interval",
+            "--frame-interval",
             "0.5",
         ])
         .args(options)
@@ -111,11 +111,11 @@ fn scene_detects_slides_with_true_timestamps() {
         &video,
         &dir,
         &[
-            "--cooldown",
+            "--min-gap",
             "10",
             "--screenshot-mode",
             "first",
-            "--stable-secs",
+            "--settle",
             "0",
         ],
     );
@@ -142,7 +142,7 @@ fn scene_detects_slides_with_true_timestamps() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Stable mode: intermediate pictures shorter than stable_secs are skipped and only the settled one is kept,
+/// Stable mode: intermediate pictures shorter than settle are skipped and only the settled one is kept,
 /// placed at its onset and captured once it is stable.
 #[test]
 fn stable_mode_waits_for_settled_state() {
@@ -170,11 +170,11 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
         &video,
         &dir,
         &[
-            "--cooldown",
+            "--min-gap",
             "2",
             "--screenshot-mode",
             "stable",
-            "--stable-secs",
+            "--settle",
             "1.2",
         ],
     );
@@ -182,7 +182,7 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
         .iter()
         .map(|frame| frame["t"].as_f64().unwrap())
         .collect();
-    // Whether the black picture (1.5 s, longer than stable_secs 1.2 s) is kept depends on sampling phase,
+    // Whether the black picture (1.5 s, longer than settle 1.2 s) is kept depends on sampling phase,
     // so only the first screenshot (~0 s) and the gray onset (~3.5 s) are asserted.
     assert!(
         ts.len() >= 2,
@@ -264,7 +264,7 @@ fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
         .unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_notepipe"))
             .arg(&media)
-            .args(["--transcript-source", "subtitle", "--json", "--config", "-"])
+            .args(["--transcript", "subtitles", "--json", "--config", "-"])
             .current_dir(root.path())
             .env("XDG_CACHE_HOME", root.path().join("cache"))
             .stdin(std::process::Stdio::piped())

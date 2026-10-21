@@ -128,7 +128,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     let path = settings::config_path();
                     if path.is_file() && !force {
                         anyhow::bail!(
-                            "Configuration already exists: {}. Use --force instead",
+                            "{} already exists. Run `notepipe config init --force` to replace it.",
                             path.display()
                         );
                     }
@@ -136,8 +136,12 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                         std::fs::create_dir_all(dir)?;
                     }
                     std::fs::write(&path, settings::template())?;
-                    println!("Configuration template created: {}", path.display());
+                    println!("Created {}", path.display());
+                    println!(
+                        "Every setting is explained in the file. Remove the # in front of a setting to change it."
+                    );
                 }
+                ConfigCmd::Path => println!("{}", settings::config_path().display()),
                 ConfigCmd::Show => settings::print_effective(&settings::load()?)?,
             }
             Ok(())
@@ -150,9 +154,11 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                         no_args,
                         "Missing video or audio source. Example: notepipe ./lecture.mp4"
                     );
-                    println!("notepipe — Turn video and audio into Markdown notes\n");
-                    println!("{}", crate::cli::QUICK_START);
-                    println!("All options: notepipe --help");
+                    println!(
+                        "notepipe {} — turn video and audio into Markdown notes\n\n{}\n\nRun `notepipe --help` for every option.",
+                        crate::cli::version(),
+                        crate::cli::after_help()
+                    );
                     return Ok(());
                 }
             };

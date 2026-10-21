@@ -17,8 +17,8 @@ impl CliTest {
             .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
             .env("XDG_CACHE_HOME", self.dir.path().join("cache"))
             .env_remove("RUST_LOG")
-            .env_remove("NOTEPIPE_ASR_API_KEY")
-            .env_remove("NOTEPIPE_LLM_API_KEY")
+            .env_remove("NOTEPIPE_SPEECH_API_KEY")
+            .env_remove("NOTEPIPE_AI_API_KEY")
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap()
@@ -56,21 +56,20 @@ fn no_arguments_or_help_succeed_with_guidance() {
         let result = cli.run(&args);
         assert!(result.status.success());
         let text = stdout(&result);
-        assert!(text.contains("Quick start"), "{text}");
-        assert!(
-            text.to_ascii_lowercase().contains("speech recognition"),
-            "{text}"
-        );
+        assert!(text.contains("Examples:"), "{text}");
+        assert!(text.contains("[speech]"), "{text}");
     }
     let help = cli.run(&["--help"]);
     assert!(help.status.success());
     let text = stdout(&help);
-    assert!(text.contains("Quick start"), "{text}");
+    assert!(text.contains("Examples:"), "{text}");
     assert!(text.contains("Speech recognition"), "{text}");
+    assert!(text.contains("config: screenshots.sensitivity"), "{text}");
+    assert!(text.contains("notepipe config init"), "{text}");
     for description in [
-        "Prefer subtitles; transcribe speech if unavailable",
-        "Subtitles only; local files need a matching .srt/.vtt",
-        "Transcribe with the selected backend; skip subtitles",
+        "Subtitles when there are any, otherwise speech recognition",
+        "Subtitles only; fail when there are none",
+        "Speech recognition only, even when subtitles exist",
     ] {
         assert!(text.contains(description), "{text}");
     }
@@ -81,12 +80,53 @@ fn no_arguments_or_help_succeed_with_guidance() {
     for cmd in ["config", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
     }
+    let config = cli.run(&["config"]);
+    let text = format!("{}{}", stdout(&config), stderr(&config));
+    assert!(
+        text.contains("Create, find and show the configuration file"),
+        "{text}"
+    );
+    assert!(text.contains("notepipe config <COMMAND>"), "{text}");
+}
+
+#[test]
+fn config_path_and_missing_file_guidance_use_the_configuration_path() {
+    let cli = CliTest::new();
+    let path = cli.dir.path().join("config/notepipe/config.toml");
+    let result = cli.run(&["config", "path"]);
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty(), "{}", stderr(&result));
+    assert_eq!(stdout(&result), format!("{}\n", path.display()));
+    let shown = cli.run(&["config", "show"]);
+    assert!(shown.status.success());
+    assert!(stdout(&shown).contains("notepipe config init"));
+    for args in [vec![], vec!["-h"], vec!["--help"]] {
+        let output = cli.run(&args);
+        assert!(output.status.success());
+        assert!(
+            stdout(&output).contains(&format!("File: {} (not created yet)", path.display())),
+            "{}",
+            stdout(&output)
+        );
+    }
+    assert!(cli.run(&["config", "init"]).status.success());
+    let result = cli.run(&["config", "path"]);
+    assert_eq!(stdout(&result), format!("{}\n", path.display()));
+    for args in [vec![], vec!["-h"], vec!["--help"]] {
+        let output = cli.run(&args);
+        assert!(output.status.success());
+        assert!(
+            stdout(&output).contains(&format!("File: {}\n", path.display())),
+            "{}",
+            stdout(&output)
+        );
+    }
 }
 
 #[test]
 fn missing_or_invalid_sources_fail_with_recovery() {
     let cli = CliTest::new();
-    let missing = cli.run(&["--asr-mode", "chat"]);
+    let missing = cli.run(&["--speech-api", "chat"]);
     assert!(!missing.status.success());
     assert!(
         stderr(&missing).contains("Missing video or audio source"),
@@ -108,9 +148,9 @@ fn json_covers_missing_source_parse_and_config_errors() {
     let cli = CliTest::new();
     json_error(&cli.run(&["--json"]));
     json_error(&cli.run(&["./missing.mp4", "--json"]));
-    json_error(&cli.run(&["./missing.mp4", "--json", "--asr-mode", "invalid"]));
+    json_error(&cli.run(&["./missing.mp4", "--json", "--speech-api", "invalid"]));
     std::fs::write(cli.dir.path().join("lecture.mp4"), []).unwrap();
-    cli.config("[defaults\n");
+    cli.config("[output\n");
     let error = json_error(&cli.run(&["./lecture.mp4", "--json"]));
     assert!(error["message"].as_str().unwrap().contains("configuration"));
 }
@@ -119,13 +159,13 @@ fn json_covers_missing_source_parse_and_config_errors() {
 fn validation_precedes_dependency_checks_and_downloads() {
     let cli = CliTest::new();
     std::fs::write(cli.dir.path().join("lecture.mp4"), []).unwrap();
-    let result = cli.run(&["./lecture.mp4", "--sample-interval", "0", "--json"]);
+    let result = cli.run(&["./lecture.mp4", "--frame-interval", "0", "--json"]);
     let error = json_error(&result);
     assert!(
         error["message"]
             .as_str()
             .unwrap()
-            .contains("--sample-interval")
+            .contains("--frame-interval")
     );
     assert!(!cli.dir.path().join("cache").exists());
 }
@@ -144,9 +184,9 @@ fn config_show_reports_the_defaults_conversion_uses() {
             .unwrap_or_default()
             .to_owned()
     };
-    assert_eq!(value("out "), ".");
-    assert_eq!(value("stable_secs "), "0.8");
-    assert_eq!(value("screenshot_mode "), "stable");
+    assert_eq!(value("dir "), ".");
+    assert_eq!(value("settle "), "0.8");
+    assert_eq!(value("mode "), "stable");
 }
 
 #[test]
@@ -154,16 +194,16 @@ fn screenshot_mode_is_configurable_and_unknown_keys_are_rejected() {
     let cli = CliTest::new();
     let help = stdout(&cli.run(&["--help"]));
     assert!(help.contains("--screenshot-mode") && help.contains("Screenshots"));
-    cli.config("[defaults]\nscreenshot_mode = 'first'\n");
+    cli.config("[screenshots]\nmode = 'first'\n");
     let shown = cli.run(&["config", "show"]);
     assert!(shown.status.success());
     assert!(
         stdout(&shown)
             .lines()
-            .any(|line| line.contains("screenshot_mode") && line.ends_with("first"))
+            .any(|line| line.contains("mode") && line.ends_with("first"))
     );
     std::fs::write(cli.dir.path().join("media.mp4"), "placeholder").unwrap();
-    cli.config("[defaults]\nunknown_key = 1\n");
+    cli.config("[screenshots]\nunknown_key = 1\n");
     let error = json_error(&cli.run(&["media.mp4", "--json"]));
     assert!(error["message"].as_str().unwrap().contains("configuration"));
 }
@@ -171,7 +211,9 @@ fn screenshot_mode_is_configurable_and_unknown_keys_are_rejected() {
 #[test]
 fn settings_never_print_saved_keys() {
     let cli = CliTest::new();
-    cli.config("[llm]\napi_key = 'secret-llm-test-key'\n[asr]\napi_key = 'secret-asr-test-key'\n");
+    cli.config(
+        "[ai]\napi_key = 'secret-llm-test-key'\n[speech]\napi_key = 'secret-asr-test-key'\n",
+    );
     let result = cli.run(&["config", "show"]);
     assert!(result.status.success());
     assert!(!stdout(&result).contains("secret-"));
@@ -180,12 +222,26 @@ fn settings_never_print_saved_keys() {
 #[test]
 fn generated_template_parses_and_does_not_overwrite_existing_config() {
     let cli = CliTest::new();
-    assert!(cli.run(&["config", "init"]).status.success());
+    let created = cli.run(&["config", "init"]);
+    assert!(created.status.success());
+    let path = cli.dir.path().join("config/notepipe/config.toml");
+    assert_eq!(
+        stdout(&created),
+        format!(
+            "Created {}\nEvery setting is explained in the file. Remove the # in front of a setting to change it.\n",
+            path.display()
+        )
+    );
     assert!(cli.run(&["config", "show"]).status.success());
-    cli.config("[defaults]\nsimilarity = 0.7\n");
-    assert!(!cli.run(&["config", "init"]).status.success());
+    cli.config("[screenshots]\nsensitivity = 0.7\n");
+    let existing = cli.run(&["config", "init"]);
+    assert!(!existing.status.success());
+    assert!(stderr(&existing).contains(&format!(
+        "{} already exists. Run `notepipe config init --force` to replace it.",
+        path.display()
+    )));
     let file = std::fs::read_to_string(cli.dir.path().join("config/notepipe/config.toml")).unwrap();
-    assert!(file.contains("similarity = 0.7"));
+    assert!(file.contains("sensitivity = 0.7"));
 }
 
 #[test]
@@ -235,7 +291,7 @@ fn doctor_reports_missing_llm_settings_for_enabled_stages_offline() {
         ),
     ] {
         cli.config(&format!(
-            "[llm]\n{settings}[[llm.stages]]\nname = 'summary'\n"
+            "[ai]\n{settings}[[ai.stages]]\nname = 'summary'\n"
         ));
         let result = cli.run(&["doctor"]);
         assert!(!result.status.success());
@@ -295,20 +351,20 @@ fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
         "--format".into(),
         "fixture quality".into(),
     ];
-    cli.config(&serde_json::json!({"source":{"command":command}}).to_string());
+    cli.config(&serde_json::json!({"download":{"adapter":command}}).to_string());
     Some(record)
 }
 
 #[test]
 fn missing_source_adapter_reports_generic_guidance() {
     let cli = CliTest::new();
-    cli.config("[source]\ncommand = ['notepipe-test-missing-source-adapter']\n");
+    cli.config("[download]\nadapter = ['notepipe-test-missing-source-adapter']\n");
     let error = source_json_error(&cli.run(&["https://example.test/video", "--json"]));
     assert!(
         error["message"]
             .as_str()
             .unwrap()
-            .contains("URLs need a source adapter")
+            .contains("URLs need a download adapter")
     );
 }
 
@@ -322,7 +378,7 @@ fn invalid_source_adapter_output_is_rejected() {
         let error = source_json_error(&cli.run(&["https://example.test/video", "--json"]));
         let message = error["message"].as_str().unwrap();
         assert!(
-            message.contains("source adapter") || message.contains("Source adapter"),
+            message.contains("download adapter") || message.contains("Download adapter"),
             "{message}"
         );
         assert!(
@@ -348,14 +404,14 @@ fn source_adapter_generates_notes_and_reuses_its_completed_output() {
         invalid["message"]
             .as_str()
             .unwrap()
-            .contains("[llm].base_url")
+            .contains("[ai].base_url")
     );
     assert!(!record.join("calls").exists());
     for flag in ["--json", "--quiet"] {
         let output = cli.run(&[
             url,
-            "--transcript-source",
-            "subtitle",
+            "--transcript",
+            "subtitles",
             "--screenshot-mode",
             "first",
             flag,
@@ -411,11 +467,11 @@ fn forced_asr_settings_are_checked_before_running_a_source_adapter() {
     };
     let error = source_json_error(&cli.run(&[
         "https://example.test/media",
-        "--transcript-source",
-        "asr",
+        "--transcript",
+        "speech",
         "--json",
     ]));
-    assert!(error["message"].as_str().unwrap().contains("[asr]"));
+    assert!(error["message"].as_str().unwrap().contains("[speech]"));
     assert!(!record.join("calls").exists());
 }
 
@@ -430,7 +486,7 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
         return;
     };
     let cli = CliTest::new();
-    cli.config("[source]\ncommand = []\n");
+    cli.config("[download]\nadapter = []\n");
     let bin = cli.dir.path().join("bin");
     let record = cli.dir.path().join("record");
     std::fs::create_dir(&bin).unwrap();
@@ -451,7 +507,7 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
         missing["message"]
             .as_str()
             .unwrap()
-            .contains("URLs need a source adapter")
+            .contains("URLs need a download adapter")
     );
     let quote = |value: &std::path::Path| {
         format!("'{}'", value.display().to_string().replace('\'', "'\\''"))
@@ -476,7 +532,7 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
         invoked["message"]
             .as_str()
             .unwrap()
-            .contains("Source adapter failed")
+            .contains("Download adapter failed")
     );
     install("notepipe-source-second");
     let ambiguous = source_json_error(&run());
@@ -484,7 +540,7 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
     for text in [
         "notepipe-source-first",
         "notepipe-source-second",
-        "[source].command",
+        "[download].adapter",
     ] {
         assert!(message.contains(text), "{message}");
     }
@@ -500,7 +556,7 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
 #[test]
 fn source_discovery_never_uses_unset_or_empty_path_entries_as_the_current_directory() {
     let cli = CliTest::new();
-    cli.config("[source]\ncommand = []\n");
+    cli.config("[download]\nadapter = []\n");
     let adapter = cli.dir.path().join(if cfg!(windows) {
         "notepipe-source-untrusted.cmd"
     } else {
@@ -522,7 +578,7 @@ fn source_discovery_never_uses_unset_or_empty_path_entries_as_the_current_direct
             .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
             .env("XDG_CACHE_HOME", cli.dir.path().join("cache"))
             .env_remove("RUST_LOG")
-            .env_remove("NOTEPIPE_LLM_API_KEY")
+            .env_remove("NOTEPIPE_AI_API_KEY")
             .stdin(std::process::Stdio::null());
         if let Some(path) = path {
             command.env("PATH", path);
@@ -534,7 +590,7 @@ fn source_discovery_never_uses_unset_or_empty_path_entries_as_the_current_direct
             error["message"]
                 .as_str()
                 .unwrap()
-                .contains("URLs need a source adapter"),
+                .contains("URLs need a download adapter"),
             "{error}"
         );
     }
@@ -547,8 +603,8 @@ fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_override
     cli.config("[invalid ambient configuration");
     std::fs::write(cli.dir.path().join("media.mp4"), "placeholder").unwrap();
     for text in [
-        "[defaults]\nsample_interval = 0.5\n",
-        "  {\"defaults\":{\"sample_interval\":0.5}}",
+        "[screenshots]\nframe_interval = 0.5\n",
+        "  {\"screenshots\":{\"frame_interval\":0.5}}",
     ] {
         for input in ["settings.conf", "-"] {
             std::fs::write(cli.dir.path().join("settings.conf"), text).unwrap();
@@ -557,7 +613,7 @@ fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_override
                     "./media.mp4",
                     "--config",
                     input,
-                    "--sample-interval",
+                    "--frame-interval",
                     "0",
                     "--json",
                 ])
@@ -580,13 +636,13 @@ fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_override
                 error["message"]
                     .as_str()
                     .unwrap()
-                    .contains("--sample-interval")
+                    .contains("--frame-interval")
             );
         }
     }
     for invalid in [
-        "[llm]\napi_key = 'private-test-key",
-        "{\"llm\":{\"api_key\":\"private-test-key",
+        "[ai]\napi_key = 'private-test-key",
+        "{\"ai\":{\"api_key\":\"private-test-key",
     ] {
         std::fs::write(cli.dir.path().join("invalid.conf"), invalid).unwrap();
         let error = json_error(&cli.run(&["./media.mp4", "--config", "invalid.conf", "--json"]));
@@ -615,15 +671,15 @@ fn stage_selection_is_explicit_and_validated() {
         error["message"]
             .as_str()
             .unwrap()
-            .contains("Unknown LLM stage")
+            .contains("Unknown AI stage")
     );
-    cli.config("[llm]\nbase_url = 'invalid unused URL'\nmodel = ''\n");
-    let error = json_error(&cli.run(&["media.mp4", "--sample-interval", "0", "--json"]));
+    cli.config("[ai]\nbase_url = 'invalid unused URL'\nmodel = ''\n");
+    let error = json_error(&cli.run(&["media.mp4", "--frame-interval", "0", "--json"]));
     assert!(
         error["message"]
             .as_str()
             .unwrap()
-            .contains("--sample-interval")
+            .contains("--frame-interval")
     );
 }
 
@@ -640,8 +696,8 @@ fn llm_request_tables_are_validated_before_any_source_work() {
         "{ response_format = {} }",
     ] {
         for config in [
-            format!("[llm]\nrequest = {request}\n"),
-            format!("[[llm.stages]]\nname = 'summary'\nrequest = {request}\n"),
+            format!("[ai]\nrequest = {request}\n"),
+            format!("[[ai.stages]]\nname = 'summary'\nrequest = {request}\n"),
         ] {
             cli.config(&config);
             let error = json_error(&cli.run(&["https://example.test/media", "--json"]));
@@ -654,7 +710,7 @@ fn llm_request_tables_are_validated_before_any_source_work() {
 #[test]
 fn duplicate_stage_names_are_rejected_before_selection_or_source_work() {
     let cli = CliTest::new();
-    cli.config("[[llm.stages]]\nname = 'summary'\n[[llm.stages]]\nname = 'summary'\n");
+    cli.config("[[ai.stages]]\nname = 'summary'\n[[ai.stages]]\nname = 'summary'\n");
     for selection in [vec![], vec!["--stages", "summary"], vec!["--no-stages"]] {
         let mut args = vec!["https://example.test/media", "--json"];
         args.extend(selection);

@@ -63,16 +63,16 @@ pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
     Ok(append_endpoint_suffix(base, suffix))
 }
 
-/// Speech API key from `NOTEPIPE_ASR_API_KEY`.
+/// Speech API key from `NOTEPIPE_SPEECH_API_KEY`.
 pub fn asr_api_key_from_env() -> Option<String> {
-    std::env::var("NOTEPIPE_ASR_API_KEY")
+    std::env::var("NOTEPIPE_SPEECH_API_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
 }
 
 /// CLI fallback for an empty LLM key.
 pub fn llm_api_key_from_env() -> Option<String> {
-    std::env::var("NOTEPIPE_LLM_API_KEY")
+    std::env::var("NOTEPIPE_AI_API_KEY")
         .ok()
         .filter(|key| !key.trim().is_empty())
 }
@@ -81,17 +81,19 @@ pub fn llm_api_key_from_env() -> Option<String> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ScreenshotMode {
-    First,
+    /// Once the picture stops changing, for animated slides
     #[default]
     Stable,
+    /// As soon as the picture changes
+    First,
 }
 
 impl fmt::Display for TranscriptSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Auto => "auto",
-            Self::Subtitle => "subtitle",
-            Self::Asr => "asr",
+            Self::Subtitle => "subtitles",
+            Self::Asr => "speech",
         })
     }
 }
@@ -109,12 +111,16 @@ impl fmt::Display for ScreenshotMode {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriptSource {
-    /// Prefer subtitles; transcribe speech if unavailable
+    /// Subtitles when there are any, otherwise speech recognition
     #[default]
     Auto,
-    /// Subtitles only; local files need a matching .srt/.vtt
+    /// Subtitles only; fail when there are none
+    #[serde(rename = "subtitles")]
+    #[value(name = "subtitles")]
     Subtitle,
-    /// Transcribe with the selected backend; skip subtitles
+    /// Speech recognition only, even when subtitles exist
+    #[serde(rename = "speech")]
+    #[value(name = "speech")]
     Asr,
 }
 
@@ -164,13 +170,13 @@ impl Roi {
     pub fn parse(s: &str) -> anyhow::Result<Self> {
         let (a, b) = s
             .split_once('-')
-            .ok_or_else(|| anyhow::anyhow!("ROI must use x1,y1-x2,y2: {s:?}"))?;
+            .ok_or_else(|| anyhow::anyhow!("screenshots.region must use x1,y1-x2,y2: {s:?}"))?;
         let (x1, y1) = parse_xy(a)?;
         let (x2, y2) = parse_xy(b)?;
         let (x1, x2) = (x1.min(x2), x1.max(x2));
         let (y1, y2) = (y1.min(y2), y1.max(y2));
         if x2 <= x1 || y2 <= y1 {
-            anyhow::bail!("ROI must have a positive width and height: {s:?}");
+            anyhow::bail!("screenshots.region must have a positive width and height: {s:?}");
         }
         Ok(Self { x1, y1, x2, y2 })
     }
@@ -194,24 +200,24 @@ impl Roi {
 fn parse_xy(pair: &str) -> anyhow::Result<(f64, f64)> {
     let (a, b) = pair
         .split_once(',')
-        .ok_or_else(|| anyhow::anyhow!("ROI coordinates must use x,y: {pair:?}"))?;
+        .ok_or_else(|| anyhow::anyhow!("screenshots.region coordinates must use x,y: {pair:?}"))?;
     Ok((parse_coord(a)?, parse_coord(b)?))
 }
 
 fn parse_coord(s: &str) -> anyhow::Result<f64> {
     let s = s.trim();
-    let p = s
-        .strip_suffix('%')
-        .ok_or_else(|| anyhow::anyhow!("ROI coordinates must use percentages: {s:?}"))?;
+    let p = s.strip_suffix('%').ok_or_else(|| {
+        anyhow::anyhow!("screenshots.region coordinates must use percentages: {s:?}")
+    })?;
     let percent: f64 = p.trim().parse()?;
     anyhow::ensure!(
         (0.0..=100.0).contains(&percent),
-        "ROI percentages must be between 0 and 100"
+        "screenshots.region percentages must be between 0 and 100"
     );
     let v = percent / 100.0;
     anyhow::ensure!(
         v.is_finite() && v >= 0.0,
-        "ROI coordinates must be finite, non-negative numbers"
+        "screenshots.region coordinates must be finite, non-negative numbers"
     );
     Ok(v)
 }
@@ -227,46 +233,46 @@ impl PipelineConfig {
             );
             Ok(())
         };
-        finite("similarity", self.similarity)?;
-        finite("sample_interval", self.sample_interval)?;
-        finite("cooldown", self.cooldown)?;
-        finite("stable_secs", self.stable_secs)?;
-        finite("asr.max_speech", self.asr.max_speech as f64)?;
-        finite("asr.vad_threshold", self.asr.vad_threshold as f64)?;
-        finite("asr.min_silence", self.asr.min_silence as f64)?;
+        finite("screenshots.sensitivity", self.similarity)?;
+        finite("screenshots.frame_interval", self.sample_interval)?;
+        finite("screenshots.min_gap", self.cooldown)?;
+        finite("screenshots.settle", self.stable_secs)?;
+        finite("speech.detection.max_segment", self.asr.max_speech as f64)?;
+        finite("speech.detection.threshold", self.asr.vad_threshold as f64)?;
+        finite("speech.detection.min_silence", self.asr.min_silence as f64)?;
 
         anyhow::ensure!(
             self.similarity > 0.0 && self.similarity <= 1.0,
-            "--similarity must be greater than 0 and at most 1 (received {})",
+            "--sensitivity (screenshots.sensitivity) must be greater than 0 and at most 1 (received {})",
             self.similarity
         );
         anyhow::ensure!(
             self.sample_interval >= 0.2,
-            "--sample-interval must be at least 0.2 seconds (received {})",
+            "--frame-interval (screenshots.frame_interval) must be at least 0.2 seconds (received {})",
             self.sample_interval
         );
         anyhow::ensure!(
             self.cooldown >= 0.0,
-            "--cooldown must be at least 0 seconds (received {})",
+            "--min-gap (screenshots.min_gap) must be at least 0 seconds (received {})",
             self.cooldown
         );
         anyhow::ensure!(
             self.stable_secs >= 0.0,
-            "--stable-secs must be at least 0 seconds (received {})",
+            "--settle (screenshots.settle) must be at least 0 seconds (received {})",
             self.stable_secs
         );
         anyhow::ensure!(
             (0.0..=1.0).contains(&self.asr.vad_threshold),
-            "asr.vad_threshold must be between 0 and 1."
+            "speech.detection.threshold must be between 0 and 1."
         );
         anyhow::ensure!(
             self.asr.min_silence >= 0.0,
-            "asr.min_silence must be non-negative."
+            "speech.detection.min_silence must be non-negative."
         );
         // The lower bound keeps split_smart's clamp(min, max) valid; 0 would panic.
         anyhow::ensure!(
             self.asr.max_speech >= 1.0 && self.asr.max_speech <= 600.0,
-            "--max-speech must be between 1 and 600 seconds (received {})",
+            "--max-segment (speech.detection.max_segment) must be between 1 and 600 seconds (received {})",
             self.asr.max_speech
         );
 
@@ -276,7 +282,7 @@ impl PipelineConfig {
     pub fn validate_asr(&self) -> AnyhowResult<()> {
         anyhow::ensure!(
             self.asr.is_configured(),
-            "Configure [asr] with a base_url or command; run `notepipe config init` to create the template."
+            "Speech recognition is not set up. Set base_url or adapter under [speech] in the configuration file (`notepipe config path` shows where; `notepipe config init` creates it), or pass --speech-base-url."
         );
         if self.asr.command.is_empty() {
             ensure_http_url(&asr_endpoint(&self.asr)?)?;
@@ -554,7 +560,7 @@ mod asr_tests {
             crate::options::resolve("video".into(), &Default::default(), &Default::default())
                 .unwrap();
         let error = cfg.validate_asr().unwrap_err().to_string();
-        assert!(error.contains("[asr]") && error.contains("notepipe config init"));
+        assert!(error.contains("[speech]") && error.contains("notepipe config init"));
         cfg.asr.base_url = "http://localhost:8000/v1".into();
         cfg.validate_asr().unwrap();
         cfg.asr.base_url = "invalid ignored URL".into();
@@ -565,9 +571,9 @@ mod asr_tests {
         for field in ["vad_threshold", "min_silence"] {
             let mut file = ConfigFile::default();
             if field == "vad_threshold" {
-                file.asr.vad_threshold = 1.1;
+                file.speech.detection.threshold = 1.1;
             } else {
-                file.asr.min_silence = -0.1;
+                file.speech.detection.min_silence = -0.1;
             }
             let cfg = crate::options::resolve("video".into(), &Default::default(), &file).unwrap();
             assert!(cfg.validate().is_err());

@@ -161,7 +161,7 @@ def main(argv=None):
         parser = argparse.ArgumentParser(description="Download one media item with yt-dlp")
         parser.add_argument("url")
         parser.add_argument("--out", required=True)
-        parser.epilog = "Pass yt-dlp options after -- (also supported before URL --out DIR in [source].command)."
+        parser.epilog = "Pass yt-dlp options after -- (also supported before URL --out DIR in [download].adapter)."
         argv = list(sys.argv[1:] if argv is None else argv)
         if argv[:1] == ["--"]:
             # The core appends URL --out DIR to the configured command.
