@@ -137,6 +137,14 @@ fn parse(text: &str) -> Result<ConfigFile> {
 pub fn save(cfg: &ConfigFile, path: Option<&Path>) -> Result<PathBuf> {
     let p = path.map(Path::to_path_buf).unwrap_or_else(config_path);
     anyhow::ensure!(p != Path::new("-"), "Cannot save configuration to stdin");
+    let p = match p.canonicalize() {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !p.is_symlink() => p,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Cannot resolve configuration: {}", p.display()));
+        }
+    };
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -336,6 +344,38 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn saving_a_symlinked_configuration_updates_and_backs_up_its_target() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("dotfiles/settings.toml");
+        let link = root.path().join("config.toml");
+        std::fs::create_dir(target.parent().unwrap()).unwrap();
+        let original = "[defaults]\nout = 'my-notes'\n";
+        std::fs::write(&target, original).unwrap();
+        std::os::unix::fs::symlink("dotfiles/settings.toml", &link).unwrap();
+        let mut cfg = super::load_from(Some(&link)).unwrap();
+        cfg.asr.base_url = "https://example.test/v1".into();
+        assert_eq!(
+            super::save(&cfg, Some(&link)).unwrap(),
+            target.canonicalize().unwrap()
+        );
+        assert!(link.symlink_metadata().unwrap().is_symlink());
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            std::path::PathBuf::from("dotfiles/settings.toml")
+        );
+        assert_eq!(super::load_from(Some(&link)).unwrap(), cfg);
+        assert_eq!(
+            std::fs::read_to_string(target.with_extension("toml.bak")).unwrap(),
+            original
+        );
+        assert!(!root.path().join("config.toml.bak").exists());
+        std::fs::remove_file(&target).unwrap();
+        assert!(super::save(&cfg, Some(&link)).is_err());
+        assert!(link.symlink_metadata().unwrap().is_symlink());
+    }
+
     #[test]
     fn vendor_asr_modes_are_rejected() {
         for mode in ["xai", "meta"] {

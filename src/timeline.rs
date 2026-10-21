@@ -1,6 +1,8 @@
 //! Timeline events, screenshot alignment, and paragraph assembly.
 
 use serde::{Deserialize, Serialize};
+use unicode_general_category::{GeneralCategory, get_general_category};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FrameEvent {
@@ -263,7 +265,31 @@ fn paragraph_units(text: &str) -> usize {
 }
 
 fn needs_space(paragraph: &str, next: &str) -> bool {
-    match (paragraph.chars().next_back(), next.chars().next()) {
+    let (Some(left), Some(right)) = (
+        paragraph.graphemes(true).next_back(),
+        next.graphemes(true).next(),
+    ) else {
+        return false;
+    };
+    if ![left, right]
+        .concat()
+        .grapheme_indices(true)
+        .any(|(offset, _)| offset == left.len())
+    {
+        return false;
+    }
+    let boundary_character = |c: &char| {
+        !matches!(
+            get_general_category(*c),
+            GeneralCategory::NonspacingMark
+                | GeneralCategory::EnclosingMark
+                | GeneralCategory::Format
+        )
+    };
+    match (
+        paragraph.chars().rfind(boundary_character),
+        next.chars().find(boundary_character),
+    ) {
         (Some(left), Some(right)) => {
             !left.is_whitespace()
                 && !right.is_whitespace()
@@ -547,6 +573,27 @@ mod tests {
             ("字\n", "字", "字\n字"),
             ("", "right", "right"),
             ("left", "", "left"),
+        ] {
+            let mut paragraph = left.to_owned();
+            append_text(&mut paragraph, right);
+            assert_eq!(paragraph, expected);
+        }
+    }
+
+    #[test]
+    fn fragment_joining_preserves_marks_and_never_splits_a_grapheme() {
+        for (left, right, expected) in [
+            ("葛\u{e0100}", "飾", "葛\u{e0100}飾"),
+            ("葛", "\u{e0100}飾", "葛\u{e0100}飾"),
+            ("e", "\u{301}clair", "e\u{301}clair"),
+            ("cafe\u{301}", "noir", "cafe\u{301} noir"),
+            ("A", "\u{20dd}", "A\u{20dd}"),
+            ("字\u{200e}", "字", "字\u{200e}字"),
+            ("a", "\u{200e}b", "a \u{200e}b"),
+            ("👩\u{200d}", "💻", "👩\u{200d}💻"),
+            ("👍", "🏽", "👍🏽"),
+            ("🇰", "🇷", "🇰🇷"),
+            ("क्", "ष", "क्ष"),
         ] {
             let mut paragraph = left.to_owned();
             append_text(&mut paragraph, right);

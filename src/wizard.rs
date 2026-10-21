@@ -188,7 +188,7 @@ mod tests {
                 AsrMode::Chat,
             )
             .unwrap();
-            assert_eq!(save_asr(&cfg).unwrap(), path);
+            assert_eq!(save_asr(&cfg).unwrap(), path.canonicalize().unwrap());
             let saved = crate::settings::load_from(Some(&path)).unwrap();
             file.asr = cfg.asr;
             assert_eq!(saved, file);

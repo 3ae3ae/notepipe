@@ -354,18 +354,6 @@ pub fn expand_tilde(p: PathBuf) -> PathBuf {
     p
 }
 
-/// Tri-state flag: an explicit off wins over on; otherwise the file value,
-/// then the built-in default.
-pub fn resolve_flag(cli_on: bool, cli_off: bool, file: Option<bool>, default: bool) -> bool {
-    if cli_off {
-        false
-    } else if cli_on {
-        true
-    } else {
-        file.unwrap_or(default)
-    }
-}
-
 const MAX_COMPONENT_CHARS: usize = 80;
 // Also bound UTF-8 bytes, leaving room for collision suffixes and the backup name.
 const MAX_COMPONENT_BYTES: usize = 200;
@@ -516,17 +504,6 @@ mod tests {
         c.sample_interval = 0.0;
         assert!(c.validate().is_err());
         c.sample_interval = DEFAULT_SAMPLE_INTERVAL;
-    }
-
-    #[test]
-    fn flag_priority() {
-        // Explicit off beats on; then on; then the file; then the default.
-        assert!(!resolve_flag(true, true, Some(true), true));
-        assert!(!resolve_flag(false, true, Some(true), true));
-        assert!(resolve_flag(true, false, Some(false), false));
-        assert!(resolve_flag(false, false, Some(true), false));
-        assert!(!resolve_flag(false, false, Some(false), true));
-        assert!(resolve_flag(false, false, None, true));
     }
 
     #[test]

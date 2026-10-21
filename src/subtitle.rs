@@ -67,6 +67,7 @@ pub fn sort_tracks(
                     .enumerate()
                     .find_map(|(index, preference)| {
                         let same = language == preference;
+                        // shortcut: tags are compared as written (primary subtag, case-insensitive), so "eng" does not match "en"; add an ISO 639-2 to 639-1 table if local sidecars commonly use three-letter codes
                         let family = language.split('-').next() == preference.split('-').next();
                         (same || family).then_some((
                             index,

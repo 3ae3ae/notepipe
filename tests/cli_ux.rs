@@ -242,6 +242,30 @@ fn doctor_reports_required_failures_with_nonzero_exit() {
 }
 
 #[test]
+fn doctor_reports_missing_llm_settings_for_enabled_stages_offline() {
+    let cli = CliTest::new();
+    for (settings, expected) in [
+        ("", "AI service URL is not set"),
+        (
+            "base_url = 'http://127.0.0.1:9/v1'\n",
+            "AI model is not set",
+        ),
+    ] {
+        cli.config(&format!(
+            "[llm]\n{settings}[[llm.stages]]\nname = 'summary'\n"
+        ));
+        let result = cli.run(&["doctor"]);
+        assert!(!result.status.success());
+        let text = stdout(&result);
+        assert!(
+            text.contains("✗ Settings values") && text.contains(expected),
+            "{text}"
+        );
+        assert!(stderr(&result).contains("required-tool or configuration issues"));
+    }
+}
+
+#[test]
 fn version_flags_include_only_an_explicit_build_commit() {
     let cli = CliTest::new();
     let suffix = option_env!("NOTEPIPE_COMMIT_HASH")
