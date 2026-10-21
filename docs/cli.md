@@ -59,10 +59,10 @@ killing adapter processes.
 ```
 
 The folder name comes from the title. A run on the same source replaces that folder; a different source with the same
-title gets a `-2`, `-3`, … suffix. If the title of a source changes, its next note gets a new folder and the old one
-stays. The note is built in a staging folder and moved into place, so a reader never sees a half-written note. If moving
-the new note into place fails and the previous note cannot be moved back either, the error message gives the path where
-the previous note was kept; the next run restores it.
+title gets a `-2`, `-3`, … suffix. Folders are found by name, so after a source's title changes, its note goes to the
+folder named after the new title. The note is built in a staging folder and moved into place, so a reader never sees a
+half-written note. If moving the new note into place fails and the previous note cannot be moved back either, the error
+message gives the path where the previous note was kept; the next run restores it.
 
 `note.md` starts with YAML front matter:
 

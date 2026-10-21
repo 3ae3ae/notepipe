@@ -43,9 +43,9 @@ prints the effective values.
 | `vad_threshold` | — | `0.5` | Speech detection threshold, 0 to 1; lower keeps quieter speech |
 | `min_silence` | — | `0.4` | Pauses shorter than this many seconds do not split segments |
 
-Speech recognition runs when no subtitles are found, or with `--transcript-source asr`; subtitles that are found but
-cannot be read are an error. When an interactive run finds no subtitles and `[asr]` is empty, it asks for these settings
-and saves them. With `--transcript-source asr`, empty settings are an error instead.
+With `transcript_source = "auto"`, speech recognition runs when no subtitles are found; `asr` always uses it and
+`subtitle` never does. Subtitles that are found but cannot be read are an error. When an interactive `auto` run finds no
+subtitles and `[asr]` is empty, it asks for these settings and saves them; with `asr`, empty settings are an error.
 
 ## `[llm]` — AI stages
 
