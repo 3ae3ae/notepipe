@@ -281,3 +281,32 @@ jobs:
         with:
           # Adapters are versioned independently; versions already on PyPI are left as they are.
           skip-existing: true
+
+  crates-io:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # crates.io trusted publishing needs an existing crate, so the first version uses this secret.
+      FIRST_PUBLISH_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check whether this version is on crates.io
+        id: published
+        run: |
+          if curl -fsS -o /dev/null -A "notepipe release (https://github.com/3ae3ae/notepipe)" \
+            "https://crates.io/api/v1/crates/notepipe/${VERSION#v}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+        if: steps.published.outputs.exists != 'true' && env.FIRST_PUBLISH_TOKEN == ''
+      - name: Publish the crate
+        if: steps.published.outputs.exists != 'true'
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.FIRST_PUBLISH_TOKEN || steps.auth.outputs.token }}
