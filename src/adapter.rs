@@ -181,8 +181,24 @@ mod tests {
         });
         assert!(format!("{:#}", result.err().unwrap()).contains("test cancellation"));
         assert!(start.elapsed() < Duration::from_secs(60));
+        // A starved runner may not run the SIGTERM handler within the grace period, so check that the process is gone;
+        // the drop test above covers the graceful path.
         #[cfg(unix)]
-        assert!(dir.path().join("terminated").is_file());
+        {
+            let pid: i32 = std::fs::read_to_string(dir.path().join("pid"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            let start = Instant::now();
+            while unsafe { libc::kill(pid, 0) } == 0 && start.elapsed() < Duration::from_secs(30) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(
+                unsafe { libc::kill(pid, 0) },
+                -1,
+                "adapter survived cancellation"
+            );
+        }
     }
 
     #[cfg(unix)]
