@@ -148,6 +148,8 @@ def download(url, out, extra_args, output):
     for source, target in [("title", "title"), ("uploader", "author"), ("duration", "duration"), ("language", "language")]:
         if info.get(source) is not None:
             result[target] = info[source]
+    if info.get("extractor_key") == "Youtube":
+        result["seek_url"] = f"https://www.youtube.com/watch?v={info['id']}&t={{t}}s"
     emit(result)
 
 
