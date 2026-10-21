@@ -21,6 +21,7 @@ mod source;
 mod subtitle;
 mod summarize;
 mod timeline;
+mod vad;
 mod wizard;
 
 /// OS-generated URL-safe random bytes for multipart boundaries.
