@@ -15,17 +15,24 @@ Transcripts:
 Next steps:
   notepipe doctor              Check dependencies and settings
   notepipe config init         Create a configuration template
-  notepipe llm setup           Set up optional AI proofreading
   notepipe summarize ./notes   Summarize existing notes
 
 The first conversion in a terminal offers setup; scripts should pass options explicitly.
 Use <command> --help for details.
 "#;
 
+fn version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION.get_or_init(|| match option_env!("NOTEPIPE_COMMIT_HASH") {
+        Some(hash) => format!("{} ({hash})", env!("CARGO_PKG_VERSION")),
+        None => env!("CARGO_PKG_VERSION").into(),
+    })
+}
+
 #[derive(Parser)]
 #[command(
     name = "notepipe",
-    version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("NOTEPIPE_COMMIT_HASH"), ")"),
+    version = version(),
     about = crate::tr!("Turn video and audio into Markdown notes"),
     args_conflicts_with_subcommands = true,
     after_help = QUICK_START
@@ -35,14 +42,6 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "LANG", help = crate::tr!("Interface language: {}", language_choices()))]
     pub lang: Option<String>,
 
-    /// Log in (ollama local, codex subscription), optionally then process a video
-    #[arg(long, value_enum, conflicts_with_all = ["logout", "json"])]
-    pub login: Option<LoginPlatform>,
-
-    /// Remove saved login credentials
-    #[arg(long, value_enum, conflicts_with_all = ["login", "source", "json"])]
-    pub logout: Option<LoginPlatform>,
-
     /// Video URL or local file
     pub source: Option<String>,
 
@@ -51,12 +50,6 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<Command>,
-}
-
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
-pub enum LoginPlatform {
-    Ollama,
-    Codex,
 }
 
 #[derive(Args, Clone, Debug, Default)]
@@ -178,7 +171,7 @@ pub struct RunOpts {
     #[arg(help_heading = "AI proofreading")]
     pub llm_base_url: Option<String>,
 
-    /// AI proofreading key (prefer llm setup to keep it out of shell history)
+    /// AI proofreading key; prefer NOTEPIPE_LLM_API_KEY to keep it out of shell history
     #[arg(long)]
     #[arg(help_heading = "AI proofreading")]
     pub llm_api_key: Option<String>,
@@ -202,11 +195,6 @@ pub struct RunOpts {
     #[arg(long, conflicts_with = "llm_vision")]
     #[arg(help_heading = "AI proofreading")]
     pub no_llm_vision: bool,
-
-    /// Hide the optional AI proofreading tip
-    #[arg(long)]
-    #[arg(help_heading = "AI proofreading")]
-    pub no_llm_hint: bool,
 
     /// Generate a video summary and add it to the notes
     #[arg(long)]
@@ -259,11 +247,6 @@ pub enum Command {
     /// Execute a saved task from stdin JSON
     #[command(hide = true)]
     RunTask,
-    /// Configure optional AI proofreading
-    Llm {
-        #[command(subcommand)]
-        cmd: LlmCmd,
-    },
     /// Check tools, speech backends and settings
     Doctor,
     /// Manage the configuration file
@@ -273,15 +256,6 @@ pub enum Command {
     },
     /// Add AI summaries to existing notes
     Summarize(SummarizeArgs),
-    /// Clear the AI proofreading endpoint, key, model and Codex login
-    Remove(RemoveArgs),
-}
-
-#[derive(Args)]
-pub struct RemoveArgs {
-    /// Also clear the cloud speech API key
-    #[arg(long)]
-    pub asr: bool,
 }
 
 #[derive(Args)]
@@ -298,26 +272,6 @@ pub struct SummarizeArgs {
     /// Quiet mode: report errors only
     #[arg(short, long)]
     pub quiet: bool,
-}
-
-#[derive(Subcommand)]
-pub enum LlmCmd {
-    /// Set up AI proofreading; prompts in a terminal
-    Setup {
-        #[arg(long)]
-        base_url: Option<String>,
-        #[arg(long)]
-        api_key: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
-        /// Hide the completion tip
-        #[arg(long)]
-        disable_hint: bool,
-    },
-    /// Show settings with keys hidden
-    Status,
-    /// Disable AI proofreading and keep credentials
-    Disable,
 }
 
 #[derive(Subcommand)]

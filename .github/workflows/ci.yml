@@ -49,7 +49,7 @@ jobs:
         run: cargo test --lib
 
       - name: Integration tests (task protocol, CLI)
-        run: cargo test --test cli_ux --test login_cli --test task_execution
+        run: cargo test --test cli_ux --test task_execution
 
       - name: Integration tests (synthetic video)
         if: runner.os != 'Windows'

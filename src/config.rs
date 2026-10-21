@@ -80,6 +80,13 @@ pub fn asr_api_key_from_env() -> Option<String> {
         .filter(|k| !k.trim().is_empty())
 }
 
+/// CLI-only fallback for an empty LLM key; never read by saved-task execution.
+pub fn llm_api_key_from_env() -> Option<String> {
+    std::env::var("NOTEPIPE_LLM_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+}
+
 /// 截图发射模式：first（首个不同帧）| stable（等待画面稳定，适合动画课件）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -419,15 +426,6 @@ pub fn known_video_site(input: &str) -> Option<&'static str> {
     }
 }
 
-/// 像 URL、已知视频站点或已存在的本地文件才当作输入。
-pub fn looks_like_source(s: &str) -> bool {
-    let t = s.trim();
-    Path::new(s).is_file()
-        || t.starts_with("http://")
-        || t.starts_with("https://")
-        || known_video_site(t).is_some()
-}
-
 pub fn platform_from(source: &str, extractor: &str) -> String {
     let e = extractor.to_ascii_lowercase();
     if Path::new(source).is_file() || e == "local" {
@@ -512,13 +510,6 @@ pub fn sanitize_component(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn source_gate() {
-        assert!(!looks_like_source("notepipe"));
-        assert!(looks_like_source("https://example.invalid/watch/video"));
-        assert!(looks_like_source("https://youtu.be/dQw4w9WgXcQ"));
-    }
 
     #[test]
     fn slug_from_source() {

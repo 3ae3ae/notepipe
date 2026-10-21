@@ -24,9 +24,6 @@ fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> llm::LlmSettings 
     if let Some(v) = &opts.llm_prompt {
         s.prompt = Some(v.clone());
     }
-    if opts.no_llm_hint {
-        s.disable_hint = true;
-    }
     s.summarize = config::resolve_flag(opts.summarize, opts.no_summarize, None, s.summarize);
     if opts.no_translate {
         s.translate = None;

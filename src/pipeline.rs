@@ -128,6 +128,11 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     {
         cfg.asr.api_key = key;
     }
+    if cfg.llm.api_key.trim().is_empty()
+        && let Some(key) = config::llm_api_key_from_env()
+    {
+        cfg.llm.api_key = key;
+    }
     cfg.resume = true;
     let _dispatch = crate::dispatch::install(&cfg.out_dir, None, &Default::default())?;
     std::fs::create_dir_all(&cfg.out_dir)?;
@@ -905,11 +910,6 @@ async fn run_prepared(
             },
             target.version_dir().display()
         );
-        if !cfg.llm.enabled && !cfg.llm.disable_hint {
-            crate::eprintln_tr!(
-                "Tip: run notepipe llm setup to enable AI proofreading and summaries"
-            );
-        }
     }
     Ok(())
 }

@@ -22,6 +22,7 @@ impl CliTest {
             .env("NOTEPIPE_LANG", lang)
             .env_remove("RUST_LOG")
             .env_remove("NOTEPIPE_ASR_API_KEY")
+            .env_remove("NOTEPIPE_LLM_API_KEY")
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap()
@@ -79,7 +80,7 @@ fn no_arguments_or_help_succeed_with_localized_guidance() {
     let traditional = cli.run_with_lang(&["--help"], "zh-Hant");
     assert!(traditional.status.success());
     assert!(stdout(&traditional).contains("Cookie 檔案"));
-    for cmd in ["llm", "config", "summarize", "remove", "doctor"] {
+    for cmd in ["config", "summarize", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
     }
 }
@@ -214,12 +215,24 @@ fn translation_accepts_language_names_and_rejects_invalid_cli_and_config_values(
 }
 
 #[test]
-fn noninteractive_setup_explains_missing_values_without_saving() {
+fn removed_login_and_setup_commands_fail_without_saving() {
     let cli = CliTest::new();
-    let result = cli.run(&["llm", "setup"]);
-    assert!(!result.status.success());
-    assert!(stderr(&result).contains("--base-url"));
-    assert!(!cli.dir.path().join("config/notepipe/config.toml").exists());
+    for args in [
+        vec!["--login", "codex"],
+        vec!["--logout", "ollama"],
+        vec!["--no-llm-hint"],
+        vec!["llm", "setup"],
+        vec!["llm", "status"],
+        vec!["llm", "disable"],
+        vec!["remove", "--asr"],
+    ] {
+        assert!(!cli.run(&args).status.success(), "{args:?}");
+    }
+    let help = stdout(&cli.run(&["--help"]));
+    for removed in ["--login", "--logout", "--no-llm-hint", "llm setup"] {
+        assert!(!help.contains(removed), "{help}");
+    }
+    assert!(!cli.dir.path().join("config/notepipe").exists());
 }
 
 #[test]
@@ -241,14 +254,12 @@ fn config_show_reports_the_defaults_conversion_uses() {
 }
 
 #[test]
-fn settings_and_status_never_print_saved_keys() {
+fn settings_never_print_saved_keys() {
     let cli = CliTest::new();
     cli.config("[llm]\napi_key = 'secret-llm-test-key'\n[asr]\napi_key = 'secret-asr-test-key'\n");
-    for args in [["config", "show"], ["llm", "status"]] {
-        let result = cli.run(&args);
-        assert!(result.status.success());
-        assert!(!stdout(&result).contains("secret-"));
-    }
+    let result = cli.run(&["config", "show"]);
+    assert!(result.status.success());
+    assert!(!stdout(&result).contains("secret-"));
 }
 
 #[test]
@@ -441,13 +452,12 @@ printf 'raw downloader stderr\n' >&2
 }
 
 #[test]
-fn version_flags_include_the_build_commit() {
+fn version_flags_include_only_an_explicit_build_commit() {
     let cli = CliTest::new();
-    let expected = format!(
-        "notepipe {} ({})\n",
-        env!("CARGO_PKG_VERSION"),
-        env!("NOTEPIPE_COMMIT_HASH")
-    );
+    let suffix = option_env!("NOTEPIPE_COMMIT_HASH")
+        .map(|hash| format!(" ({hash})"))
+        .unwrap_or_default();
+    let expected = format!("notepipe {}{suffix}\n", env!("CARGO_PKG_VERSION"));
     for flag in ["-V", "--version"] {
         let result = cli.run(&[flag]);
         assert!(result.status.success());

@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
-use notepipe::cli::{Cli, Command, ConfigCmd, LlmCmd};
+use notepipe::cli::{Cli, Command, ConfigCmd};
 use notepipe::{config, doctor, llm, pipeline, progress, settings};
 use tracing_subscriber::EnvFilter;
 
@@ -140,19 +140,6 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
-    if let Some(platform) = cli.logout {
-        return notepipe::login::logout(platform);
-    }
-    if let Some(platform) = cli.login {
-        anyhow::ensure!(
-            cli.source.as_deref().is_none_or(config::looks_like_source),
-            notepipe::tr!("After --login, provide only a video URL or local file path")
-        );
-        notepipe::login::login(platform)?;
-        if cli.source.is_none() {
-            return Ok(());
-        }
-    }
     match cli.command {
         Some(Command::RunTask) => {
             notepipe::dispatch::watch_parent();
@@ -160,43 +147,6 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             Ok(notepipe::runtime::block_on(notepipe::execution::run(
                 request,
             ))??)
-        }
-        Some(Command::Llm { cmd }) => {
-            match cmd {
-                LlmCmd::Setup {
-                    base_url,
-                    api_key,
-                    model,
-                    disable_hint,
-                } => {
-                    let cfg = llm::setup_interactive(
-                        settings::load()?,
-                        base_url,
-                        api_key,
-                        model,
-                        disable_hint,
-                    )?;
-                    let path = settings::save(&cfg)?;
-                    println!("Saved and enabled: {}", path.display());
-                    match llm::test_connection(&cfg.llm) {
-                        Ok(()) => notepipe::println_tr!("Connection test passed."),
-                        Err(e) => anyhow::bail!(
-                            "Settings saved, but connection test failed; check endpoint, key and model: {e:#}"
-                        ),
-                    }
-                }
-                LlmCmd::Status => llm::print_status(&settings::load()?),
-                LlmCmd::Disable => {
-                    let mut cfg = settings::load()?;
-                    cfg.llm.enabled = false;
-                    let path = settings::save(&cfg)?;
-                    println!(
-                        "AI proofreading disabled; credentials kept: {}",
-                        path.display()
-                    );
-                }
-            }
-            Ok(())
         }
         Some(Command::Doctor) => doctor::run(),
         Some(Command::Config { cmd }) => {
@@ -223,7 +173,12 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Summarize(args)) => {
-            let file = settings::load()?;
+            let mut file = settings::load()?;
+            if file.llm.api_key.trim().is_empty()
+                && let Some(key) = config::llm_api_key_from_env()
+            {
+                file.llm.api_key = key;
+            }
             llm::validate(&file.llm)?;
             let mut targets: Vec<std::path::PathBuf> = vec![];
             for dir in &args.dirs {
@@ -241,44 +196,6 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             }
             for dir in &targets {
                 summarize_note(&file, dir, args.force, args.out.as_deref())?;
-            }
-            Ok(())
-        }
-        Some(Command::Remove(args)) => {
-            let mut cfg = settings::load()?;
-            let mut cleared: Vec<String> = vec![];
-            // 只列出确实非空、本次真正清掉的字段（空配置不冒充「已清除」）
-            for (name, value) in [
-                ("llm.api_key", &cfg.llm.api_key),
-                ("llm.base_url", &cfg.llm.base_url),
-                ("llm.model", &cfg.llm.model),
-            ] {
-                if !value.is_empty() {
-                    cleared.push(name.to_string());
-                }
-            }
-            if notepipe::login::codex::remove_credentials()? {
-                cleared.push("codex".to_string());
-            }
-            cfg.llm = notepipe::llm::LlmSettings::default();
-            if args.asr {
-                if !cfg.asr.api_key.is_empty() {
-                    cleared.push("asr.api_key".to_string());
-                }
-                cfg.asr.api_key.clear();
-            }
-            let path = settings::save(&cfg)?;
-            if cleared.is_empty() {
-                println!("No saved API settings to clear: {}", path.display());
-            } else {
-                println!(
-                    "Cleared API settings ({}): {}",
-                    cleared.join(", "),
-                    path.display()
-                );
-            }
-            if !args.asr {
-                notepipe::println_tr!("Cloud speech key kept; to clear it: notepipe remove --asr");
             }
             Ok(())
         }

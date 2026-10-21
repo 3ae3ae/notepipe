@@ -153,7 +153,7 @@ fn chat_once(
     user: &str,
     description: &str,
 ) -> Result<String> {
-    let body = crate::provider::chat_body(s, sys, user, llm::CHAT_MAX_TOKENS);
+    let body = llm::chat_body(s, sys, user, llm::CHAT_MAX_TOKENS);
     llm::send_chat_described(
         agent,
         s,

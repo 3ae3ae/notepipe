@@ -58,6 +58,7 @@ fn run(root: &Path, request: &Request) -> Output {
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("NOTEPIPE_ASR_API_KEY", "environment-key-must-not-be-used")
+        .env("NOTEPIPE_LLM_API_KEY", "environment-key-must-not-be-used")
         .env_remove("RUST_LOG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -388,6 +389,7 @@ struct MockAi {
     url: String,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     bodies: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+    headers: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
@@ -429,6 +431,8 @@ impl MockAi {
         let calls = Arc::new(AtomicUsize::new(0));
         let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
         let received = bodies.clone();
+        let headers = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received_headers = headers.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let (count, shutdown) = (calls.clone(), stop.clone());
         let worker = std::thread::spawn(move || {
@@ -475,6 +479,10 @@ impl MockAi {
                 let body: serde_json::Value =
                     serde_json::from_slice(&data[header_end..header_end + length]).unwrap();
                 received.lock().unwrap().push(body.clone());
+                received_headers
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&data[..header_end]).into_owned());
                 let Some((status, response)) = respond(number, &body) else {
                     continue;
                 };
@@ -487,6 +495,7 @@ impl MockAi {
             url,
             calls,
             bodies,
+            headers,
             stop,
             worker: Some(worker),
         }
@@ -506,6 +515,176 @@ impl Drop for MockAi {
 
 fn summary_response() -> serde_json::Value {
     serde_json::json!({"choices":[{"message":{"content":serde_json::json!({"tldr":"这份摘要来自保留的正文。","key_points":["正文内容"],"outline":[{"t":0,"title":"开头","detail":"正文内容"}]}).to_string()}}]})
+}
+
+#[test]
+fn cli_llm_keys_prefer_flags_then_config_then_environment_without_affecting_saved_tasks() {
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
+    {
+        return;
+    }
+    let mock = MockAi::respond_with(|_, body| {
+        Some((
+            200,
+            if body.to_string().contains("tldr") {
+                summary_response()
+            } else {
+                serde_json::json!({"choices":[{"message":{"content":"{\"segments\":[{\"id\":0,\"text\":\"Proofread.\"}]}"}}]})
+            },
+        ))
+    });
+    let root = tempfile::tempdir().unwrap();
+    let video = root.path().join("lecture.mp4");
+    let generated = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=64x32:r=1",
+            "-t",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&video)
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    std::fs::write(
+        video.with_extension("srt"),
+        "1\n00:00:00,000 --> 00:00:01,000\nOriginal.\n",
+    )
+    .unwrap();
+    for (index, (saved, environment, flag, expected)) in [
+        (
+            "",
+            Some("environment-test-key"),
+            None,
+            Some("environment-test-key"),
+        ),
+        (
+            "  ",
+            Some("environment-test-key"),
+            None,
+            Some("environment-test-key"),
+        ),
+        (
+            "saved-test-key",
+            Some("environment-test-key"),
+            None,
+            Some("saved-test-key"),
+        ),
+        (
+            "saved-test-key",
+            Some("environment-test-key"),
+            Some("cli-test-key"),
+            Some("cli-test-key"),
+        ),
+        ("", None, None, None),
+        ("", Some("  "), None, None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let case = root.path().join(index.to_string());
+        let config = case.join("config/notepipe/config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        let contents = format!(
+            "[llm]\nenabled = true\nbase_url = {:?}\nmodel = 'mock'\napi_key = {saved:?}\n",
+            mock.url
+        );
+        std::fs::write(&config, &contents).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
+        command
+            .arg(&video)
+            .args([
+                "--json",
+                "--formats",
+                "md",
+                "--slide-mode",
+                "first",
+                "--transcript-source",
+                "subtitle",
+                "-o",
+            ])
+            .arg(case.join("notes"))
+            .env("XDG_CONFIG_HOME", case.join("config"))
+            .env("XDG_CACHE_HOME", case.join("cache"))
+            .env("NOTEPIPE_LANG", "en")
+            .env_remove("RUST_LOG")
+            .env_remove("NOTEPIPE_LLM_API_KEY")
+            .stdin(Stdio::null());
+        if let Some(value) = environment {
+            command.env("NOTEPIPE_LLM_API_KEY", value);
+        }
+        if let Some(value) = flag {
+            command.args(["--llm-api-key", value]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let headers = mock.headers.lock().unwrap().last().unwrap().clone();
+        let auth = headers.lines().find_map(|line| {
+            line.split_once(':')
+                .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                .map(|(_, value)| value.trim().to_owned())
+        });
+        assert_eq!(auth, expected.map(|key| format!("Bearer {key}")));
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), contents);
+        for bytes in [&output.stdout, &output.stderr] {
+            assert!(!String::from_utf8_lossy(bytes).contains("test-key"));
+        }
+        if index == 0 {
+            let done = events(&output)
+                .into_iter()
+                .find(|event| event["type"] == "done")
+                .unwrap();
+            let summary = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+                .args(["summarize", done["out_dir"].as_str().unwrap()])
+                .env("XDG_CONFIG_HOME", case.join("config"))
+                .env("XDG_CACHE_HOME", case.join("cache"))
+                .env("NOTEPIPE_LANG", "en")
+                .env("NOTEPIPE_LLM_API_KEY", "environment-test-key")
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            assert!(
+                summary.status.success(),
+                "{}",
+                String::from_utf8_lossy(&summary.stderr)
+            );
+            assert!(
+                mock.headers
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .contains("Bearer environment-test-key")
+            );
+        }
+    }
+    let mut frozen = request(&root.path().join("frozen"), &video);
+    frozen.config.llm.enabled = true;
+    frozen.config.llm.base_url = mock.url.clone();
+    frozen.config.llm.model = "mock".into();
+    let output = run(root.path(), &frozen);
+    assert!(output.status.success(), "{:?}", events(&output));
+    assert!(
+        !mock
+            .headers
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .to_ascii_lowercase()
+            .contains("authorization:")
+    );
 }
 
 #[test]

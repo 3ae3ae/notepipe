@@ -38,10 +38,6 @@ sys-locale = "0.3"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
-[build-dependencies]
-# 纯 Rust 读取 git 信息（gix 后端），替代手写 git CLI 调用；天然处理 worktree 的 .git 指针文件
-vergen-gix = { version = "10", features = ["emit_and_set"] }
-
 [profile.release]
 lto = "thin"
 strip = true

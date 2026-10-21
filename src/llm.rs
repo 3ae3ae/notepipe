@@ -2,7 +2,6 @@
 //!
 //! 配置文件：`~/.config/notepipe/config.toml`（XDG；Windows 为 `%APPDATA%\notepipe\config.toml`）。
 //! 支持 OpenAI 兼容 /chat/completions 端点；所有配置项均可被命令行覆盖。
-//! 关闭时每次任务结束打印开启提示（可用配置项或 `--no-llm-hint` 关闭）。
 //!
 //! 视觉校对（`vision = true`）：按 Section 分批，每个请求附该节幻灯片截图，
 //! 供模型校正技术词汇拼写；请求失败时该批保留原文，不改发纯文本请求。
@@ -10,7 +9,6 @@
 use crate::timeline::{Section, TranscriptEvent};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
@@ -31,49 +29,16 @@ JSON 字符串里的反斜杠必须写成 \\\\（如 \\\\frac）。";
 /// 每次请求合并的语音段数。
 const BATCH: usize = 20;
 
-/// LLM 服务方言/登录方式。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum LlmProvider {
-    /// OpenAI 兼容 /chat/completions 端点
-    #[default]
-    OpenAiCompatible,
-    /// 本地 Ollama 服务（OpenAI 兼容方言，无需密钥）
-    Ollama,
-    /// OpenAI Codex 订阅登录（ChatGPT 后端 Responses API）
-    Codex,
-}
-
-impl LlmProvider {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::OpenAiCompatible => "openai-compatible",
-            Self::Ollama => "ollama",
-            Self::Codex => "codex",
-        }
-    }
-}
-
-impl std::fmt::Display for LlmProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct LlmSettings {
     pub enabled: bool,
-    /// 服务方言/登录方式（默认 OpenAI 兼容）
-    pub provider: LlmProvider,
     /// OpenAI 兼容 base URL，如 https://api.deepseek.com/v1
     pub base_url: String,
     pub api_key: String,
     pub model: String,
     /// 自定义校对指令（输出格式约束由系统自动追加，prompt 无法覆盖）
     pub prompt: Option<String>,
-    /// 关闭「可开启 LLM」的结束提示
-    pub disable_hint: bool,
     /// 视觉校对：每个请求附对应幻灯片截图，辅助纠正技术词汇（模型须支持图片输入）
     pub vision: bool,
     /// 独立生成视频摘要并写入笔记（不依赖校对 enabled）
@@ -89,12 +54,10 @@ impl Default for LlmSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: LlmProvider::default(),
             base_url: String::new(),
             api_key: String::new(),
             model: String::new(),
             prompt: None,
-            disable_hint: false,
             vision: false,
             summarize: false,
             translate: None,
@@ -128,6 +91,26 @@ impl Purpose {
     }
 }
 
+/// Standard OpenAI-compatible chat body. Temperature is fixed at 0 because
+/// proofreading and summaries require deterministic output.
+pub(crate) fn chat_body(
+    s: &LlmSettings,
+    system: &str,
+    user: impl Into<serde_json::Value>,
+    max_tokens: u32,
+) -> serde_json::Value {
+    serde_json::json!({
+        "model": s.model,
+        "temperature": 0.0,
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user.into()},
+        ]
+    })
+}
+
 /// base_url -> 完整 chat/completions URL。
 pub fn endpoint(base_url: &str) -> String {
     crate::config::append_endpoint_suffix(base_url.trim(), "/chat/completions")
@@ -138,17 +121,17 @@ pub fn validate(s: &LlmSettings) -> Result<()> {
     if let Some(target) = &s.translate {
         crate::language::target(target).map_err(anyhow::Error::msg)?;
     }
-    if s.provider != LlmProvider::Codex && s.base_url.trim().is_empty() {
+    if s.base_url.trim().is_empty() {
         bail!(crate::tr!(
-            "AI service URL is not set. Run: notepipe llm setup"
+            "AI service URL is not set. Set [llm].base_url or pass --llm-base-url."
         ));
     }
     if s.model.trim().is_empty() {
-        bail!(crate::tr!("AI model is not set. Run: notepipe llm setup"));
+        bail!(crate::tr!(
+            "AI model is not set. Set [llm].model or pass --llm-model."
+        ));
     }
-    if !s.base_url.trim().is_empty() {
-        crate::config::ensure_http_url(&s.base_url)?;
-    }
+    crate::config::ensure_http_url(&s.base_url)?;
     Ok(())
 }
 
@@ -172,11 +155,6 @@ pub(crate) fn chat_agent() -> ureq::Agent {
 
 const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// Times a request to a service without per-request billing is sent when its
-/// result stays unconfirmed (a stalled or unfinished response).
-const FREE_RESEND_ATTEMPTS: u32 = 3;
-
-const ERROR_BODY_LIMIT: u64 = 4 * 1024 * 1024;
 /// 单次请求输出 token 上限（校对与摘要共用）。
 pub(crate) const CHAT_MAX_TOKENS: u32 = 16384;
 
@@ -449,7 +427,7 @@ fn translation_body(s: &LlmSettings, target: &str, items: &[&str]) -> Result<ser
          with exactly one entry per input id. {MATH_RULE}",
         crate::language::english_name(target)
     );
-    Ok(crate::provider::chat_body(
+    Ok(chat_body(
         s,
         &system,
         serde_json::Value::String(serde_json::to_string(&payload)?),
@@ -667,7 +645,7 @@ fn build_chat_body(
             "image_url": {"url": format!("data:image/jpeg;base64,{b64}")},
         }));
     }
-    Ok(crate::provider::chat_body(
+    Ok(chat_body(
         s,
         &system,
         serde_json::Value::Array(content),
@@ -883,11 +861,13 @@ pub(crate) fn send_chat_described(
             let degradable = first
                 .downcast_ref::<crate::dispatch::Failure>()
                 .is_some_and(|failure| failure.unsupported_response_format);
-            if !(degradable && crate::provider::has_structured_format(s, body)) {
+            if !(degradable && body.get("response_format").is_some()) {
                 return Err(first);
             }
             let mut relaxed = body.clone();
-            crate::provider::strip_structured_format(s, &mut relaxed);
+            if let Some(object) = relaxed.as_object_mut() {
+                object.remove("response_format");
+            }
             // 降级请求只试一次：原请求已按 MAX_ATTEMPTS 重试过，这里只验证兼容性
             let response = request_chat_once(agent, s, &relaxed, purpose, description, validate)?;
             tracing::debug!("{}", crate::tr!("Retry succeeded without response_format"));
@@ -895,7 +875,6 @@ pub(crate) fn send_chat_described(
         }
     };
     // token 用量实时反馈：GUI 阶段行据此跳动（上传=prompt，下载=completion）。
-    // Codex SSE 已在 provider::sse_to_chat_json 归一成 chat/completions 同一形状。
     let usage = &resp["usage"];
     if resp[crate::dispatch::REPLAYED] != true {
         crate::progress::note_tokens(
@@ -920,73 +899,20 @@ fn request_chat_once(
     description: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> std::result::Result<serde_json::Value, crate::dispatch::Failure> {
-    let url = crate::provider::endpoint(s);
-    let headers = crate::provider::auth_headers(s).map_err(crate::dispatch::Failure::local)?;
-    let sse = crate::provider::is_sse(s);
+    let url = endpoint(&s.base_url);
     crate::dispatch::json_request_described(
         "llm",
         purpose.ledger_name(),
         description,
         &url,
         body,
-        if crate::provider::free_to_resend(s) {
-            crate::dispatch::Resend::Free
-        } else {
-            crate::dispatch::Resend::AskUser
-        },
+        crate::dispatch::Resend::AskUser,
         || {
-            let send = || -> std::result::Result<
-                crate::dispatch::HttpResponse,
-                crate::dispatch::NetworkFailure,
-            > {
-                let mut request = agent.post(&url).set("Content-Type", "application/json");
-                for (name, value) in &headers {
-                    request = request.set(name, value);
-                }
-                let response = crate::dispatch::receive(request.send_json(body))?;
-                // Codex Responses API 只提供 SSE 流：聚合为 chat/completions 形状，
-                // 下游校验与解析不变；非 2xx 原样上交（重试/降级逻辑要看状态码）
-                if sse && (200..300).contains(&response.status) {
-                    let canonical =
-                        crate::provider::sse_to_chat_json(&response.body).map_err(|e| {
-                            crate::dispatch::NetworkFailure {
-                                message: format!("{e:#}"),
-                                definitely_unsent: false,
-                            }
-                        })?;
-                    return Ok(crate::dispatch::HttpResponse {
-                        status: response.status,
-                        body: serde_json::to_vec(&canonical).unwrap_or_default(),
-                    });
-                }
-                Ok(response)
-            };
-            // A response that stalls or ends unfinished returns nothing usable.
-            // Without per-request billing (a ChatGPT plan, a local server)
-            // sending it again costs nothing, so it is resent here instead of
-            // becoming an uncertain result that stops every later request.
-            // Billed APIs keep asking the user before a resend.
-            let free = crate::provider::free_to_resend(s);
-            let mut attempt = 1;
-            loop {
-                match send() {
-                    Err(failure)
-                        if free
-                            && !failure.definitely_unsent
-                            && attempt < FREE_RESEND_ATTEMPTS
-                            && crate::dispatch::check_control().is_ok() =>
-                    {
-                        tracing::warn!(attempt, "AI response was interrupted; sending again");
-                        crate::runtime::interruptible_sleep(crate::runtime::retry_backoff(attempt))
-                            .map_err(|e| crate::dispatch::NetworkFailure {
-                                message: format!("{e:#}"),
-                                definitely_unsent: false,
-                            })?;
-                        attempt += 1;
-                    }
-                    result => return result,
-                }
+            let mut request = agent.post(&url).set("Content-Type", "application/json");
+            if !s.api_key.is_empty() {
+                request = request.set("Authorization", &format!("Bearer {}", s.api_key));
             }
+            crate::dispatch::receive(request.send_json(body))
         },
         |value| {
             // A gateway may return HTTP 200 with an error object. Missing content is a
@@ -1041,188 +967,6 @@ fn effective_prompt(s: &LlmSettings) -> &str {
         .as_deref()
         .filter(|p| !p.trim().is_empty())
         .unwrap_or(DEFAULT_PROMPT)
-}
-
-/// 1×1 PNG 测试图：vision=true 时连接测试附带，
-/// 避免「文本请求通了但实际图片请求不可用」的假阳性。
-const TEST_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-
-/// 用最小请求验证端点与凭据可用；vision=true 时附带测试图片，
-/// 同时验证图片输入路径（失败会明确报出，不会显示为已验证可用）。
-pub fn test_connection(s: &LlmSettings) -> Result<()> {
-    validate(s)?;
-    let user: serde_json::Value = if s.vision {
-        serde_json::json!([
-            {"type": "text", "text": "只回复两个字符：ok"},
-            {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{TEST_PNG_B64}")}},
-        ])
-    } else {
-        serde_json::Value::String(crate::tr!("只回复两个字符：ok").into())
-    };
-    let body = crate::provider::test_body(s, user);
-    let fail_hint = if s.vision {
-        crate::tr!("Connection failed. Check the URL, API key, model, and image input support.")
-    } else {
-        crate::tr!("Connection failed. Check the URL, API key, and model.")
-    };
-    // 与生产路径同一纪律：禁止跟随重定向；空密钥不发送 Bearer 头（本地无鉴权服务）
-    let agent = crate::runtime::http_agent(Duration::from_secs(60));
-    let mut request = agent.post(&crate::provider::endpoint(s));
-    for (name, value) in crate::provider::auth_headers(s)? {
-        request = request.set(&name, &value);
-    }
-    let resp = request.send_json(body).context(fail_hint)?;
-    let v: serde_json::Value = if crate::provider::is_sse(s) {
-        let mut bytes = Vec::new();
-        use std::io::Read as _;
-        resp.into_reader()
-            .take(ERROR_BODY_LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .context(crate::tr!("Service response was interrupted"))?;
-        crate::provider::sse_to_chat_json(&bytes)?
-    } else {
-        resp.into_json()
-            .context(crate::tr!("Cannot parse response"))?
-    };
-    let text = v["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .trim();
-    anyhow::ensure!(
-        !text.is_empty(),
-        crate::tr!("The service returned an empty response; make sure the model works")
-    );
-    Ok(())
-}
-
-/// `llm setup`：交互式补齐缺失项并写盘。
-/// 使用 dialoguer（console 行编辑）：支持左右箭头/Home/End 移动、
-/// 退格/删除等标准编辑键（裸 read_line 无法处理方向键转义序列）。
-pub fn setup_interactive(
-    mut cfg: crate::settings::ConfigFile,
-    base_url: Option<String>,
-    api_key: Option<String>,
-    model: Option<String>,
-    disable_hint: bool,
-) -> Result<crate::settings::ConfigFile> {
-    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-    let cur_or = |v: String, cur: &str| {
-        if v.trim().is_empty() {
-            cur.to_string()
-        } else {
-            v.trim().to_string()
-        }
-    };
-    if let Some(v) = base_url {
-        cfg.llm.base_url = v.trim().to_string();
-    } else if interactive {
-        let v: String = dialoguer::Input::new()
-            .with_prompt(crate::tr!(
-                "Base URL (OpenAI-compatible, e.g. https://api.deepseek.com/v1)"
-            ))
-            .with_initial_text(&cfg.llm.base_url)
-            .allow_empty(true)
-            .interact_text()?;
-        cfg.llm.base_url = cur_or(v, &cfg.llm.base_url);
-    }
-    if let Some(v) = api_key {
-        cfg.llm.api_key = v;
-    } else if interactive {
-        let keep_hint = if cfg.llm.api_key.is_empty() {
-            crate::tr!("API key (hidden; leave blank for a local service without authentication)")
-        } else {
-            crate::tr!("API key (hidden; Enter keeps the saved key)")
-        };
-        let v = dialoguer::Password::new()
-            .with_prompt(format!("API Key{keep_hint}"))
-            .allow_empty_password(true)
-            .interact()?;
-        cfg.llm.api_key = cur_or(v, &cfg.llm.api_key);
-    }
-    if let Some(v) = model {
-        cfg.llm.model = v.trim().to_string();
-    } else if interactive {
-        let v: String = dialoguer::Input::new()
-            .with_prompt(crate::tr!("Model name (e.g. deepseek-chat)"))
-            .with_initial_text(&cfg.llm.model)
-            .allow_empty(true)
-            .interact_text()?;
-        cfg.llm.model = cur_or(v, &cfg.llm.model);
-    }
-    anyhow::ensure!(
-        !cfg.llm.base_url.trim().is_empty() && !cfg.llm.model.trim().is_empty(),
-        crate::tr!(
-            "A base URL and model are required. Run notepipe llm setup in a terminal, or pass --base-url and --model."
-        )
-    );
-    // 容错：没写 scheme 时补 https://
-    if !cfg.llm.base_url.is_empty() && !cfg.llm.base_url.contains("://") {
-        cfg.llm.base_url = format!("https://{}", cfg.llm.base_url.trim());
-    }
-    // 视觉能力仅交互式终端询问（脚本化调用全部传参时不阻塞）
-    if interactive {
-        cfg.llm.vision = dialoguer::Select::new()
-            .with_prompt(crate::tr!(
-                "Attach slide images when polishing? Requires an image-capable model."
-            ))
-            .items([
-                crate::tr!("Send text only"),
-                crate::tr!("Send text and slide images"),
-            ])
-            .default(if cfg.llm.vision { 1 } else { 0 })
-            .interact_opt()?
-            .ok_or_else(|| {
-                anyhow::anyhow!(crate::tr!("Setup cancelled; no configuration saved."))
-            })?
-            == 1;
-    }
-    // setup 面向 OpenAI 兼容端点；codex/ollama 登录态由此显式退出
-    cfg.llm.provider = LlmProvider::OpenAiCompatible;
-    validate(&cfg.llm)?;
-    cfg.llm.disable_hint |= disable_hint;
-    cfg.llm.enabled = true;
-    Ok(cfg)
-}
-
-pub fn print_status(cfg: &crate::settings::ConfigFile) {
-    let s = &cfg.llm;
-    let state = |enabled| {
-        if enabled {
-            crate::tr!("enabled")
-        } else {
-            crate::tr!("disabled")
-        }
-    };
-    println!(
-        "Configuration: {}",
-        crate::settings::config_path().display()
-    );
-    println!("Transcript polish: {}", state(s.enabled));
-    println!("Provider: {}", s.provider);
-    println!(
-        "Base URL: {}",
-        if s.base_url.is_empty() {
-            "—"
-        } else {
-            &s.base_url
-        }
-    );
-    println!(
-        "  API key: {}",
-        if s.api_key.is_empty() {
-            crate::tr!("not set")
-        } else {
-            crate::tr!("set (hidden)")
-        }
-    );
-    println!("Model: {}", if s.model.is_empty() { "—" } else { &s.model });
-    println!("Slide-assisted polish: {}", state(s.vision));
-    println!("Automatic summary: {}", state(s.summarize));
-    println!("Concurrent requests: {}", s.concurrency);
-    println!("Usage hint: {}", state(!s.disable_hint));
-    if !s.enabled {
-        crate::println_tr!("Enable transcript polish: notepipe llm setup");
-    }
 }
 
 #[cfg(test)]
@@ -1309,12 +1053,10 @@ mod tests {
     fn test_settings() -> LlmSettings {
         LlmSettings {
             enabled: true,
-            provider: LlmProvider::OpenAiCompatible,
             base_url: "https://api.x.com/v1".into(),
             api_key: "k".into(),
             model: "m".into(),
             prompt: None,
-            disable_hint: false,
             vision: false,
             summarize: false,
             translate: None,
@@ -1431,6 +1173,9 @@ mod tests {
         let s = test_settings();
         let items = ["hello"];
         let text_only = build_chat_body(&s, &items, None).unwrap();
+        assert_eq!(text_only["response_format"]["type"], "json_object");
+        assert_eq!(text_only["model"], "m");
+        assert_eq!(text_only["max_tokens"], CHAT_MAX_TOKENS);
         let user: &Vec<serde_json::Value> = text_only["messages"][1]["content"].as_array().unwrap();
         assert_eq!(user.len(), 1);
         assert_eq!(user[0]["type"], "text");

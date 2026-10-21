@@ -169,7 +169,6 @@ pub fn template() -> String {
         ("{LLM_MODEL}", llm.model),
         ("{LLM_VISION}", llm.vision.to_string()),
         ("{LLM_SUMMARIZE}", llm.summarize.to_string()),
-        ("{LLM_DISABLE_HINT}", llm.disable_hint.to_string()),
         ("{LLM_CONCURRENCY}", llm.concurrency.to_string()),
     ]
     .into_iter()
@@ -232,15 +231,14 @@ const TEMPLATE: &str = r#"# Configuration
 #min_silence = {MIN_SILENCE}
 
 [llm]
-# Optional AI proofreading; configure with notepipe llm setup
+# Optional AI proofreading
 enabled = {LLM_ENABLED}
 #base_url = "{LLM_BASE_URL}"
+# Optional; CLI also reads NOTEPIPE_LLM_API_KEY
 #api_key = ""
 #model = "{LLM_MODEL}"
 # Custom proofreading instructions
 #prompt = ""
-# Hide the completion tip
-#disable_hint = {LLM_DISABLE_HINT}
 # Attach slides; requires an image-capable model
 #vision = {LLM_VISION}
 # Concurrent requests
@@ -333,6 +331,13 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn removed_llm_fields_are_rejected() {
+        for setting in ["provider = 'codex'", "disable_hint = true"] {
+            assert!(toml::from_str::<super::ConfigFile>(&format!("[llm]\n{setting}")).is_err());
+        }
+    }
+
     #[test]
     fn template_parses_to_built_in_defaults_when_uncommented() {
         assert!(crate::i18n::has_translation(super::TEMPLATE));

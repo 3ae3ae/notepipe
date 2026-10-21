@@ -13,14 +13,12 @@ pub mod fetch;
 pub mod i18n;
 pub mod language;
 pub mod llm;
-pub mod login;
 pub mod math;
 pub mod media;
 pub mod options;
 pub mod pipeline;
 pub mod portable;
 pub mod progress;
-pub mod provider;
 pub mod render;
 pub mod runtime;
 pub mod scene;
@@ -31,7 +29,7 @@ pub mod timeline;
 pub mod wizard;
 pub mod ytdlp;
 
-/// 操作系统随机源生成的 URL-safe base64 串（会话令牌、PKCE 参数）。
+/// OS-generated URL-safe random bytes for multipart boundaries.
 pub(crate) fn random_b64url(bytes: usize) -> anyhow::Result<String> {
     use base64::Engine as _;
     let mut buf = vec![0u8; bytes];
