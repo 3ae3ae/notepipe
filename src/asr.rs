@@ -97,43 +97,16 @@ impl EmptyResultTracker {
     }
 }
 
-/// Open the checkpoint and mark it complete only after successful transcription.
-async fn run_with_cp<F>(
-    cfg: &PipelineConfig,
-    identity: &crate::checkpoint::AsrIdentity,
-    f: F,
-) -> Result<Vec<TranscriptEvent>>
-where
-    F: FnOnce(
-            &mut crate::checkpoint::Checkpoint,
-            &std::sync::atomic::AtomicBool,
-        ) -> Result<Vec<TranscriptEvent>>
-        + Send
-        + 'static,
-{
-    let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir, true, identity)?;
-    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let _cancel_on_drop = crate::runtime::CancelOnDrop(cancelled.clone());
-    tokio::task::spawn_blocking(move || {
-        let r = f(&mut cp, &cancelled);
-        if r.is_ok() {
-            cp.finish()?;
-        }
-        r
-    })
-    .await
-    .context("Speech recognition task did not complete")?
-}
-
 pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent>> {
     cfg.validate_asr()?;
-    let identity = crate::checkpoint::AsrIdentity::new(&cfg.asr);
     let api = cfg.asr.clone();
     let wav = wav.to_path_buf();
-    run_with_cp(cfg, &identity, move |cp, cancelled| {
-        run_api(&api, &wav, cp, cancelled)
-    })
-    .await
+    let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir)?;
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _cancel_on_drop = crate::runtime::CancelOnDrop(cancelled.clone());
+    tokio::task::spawn_blocking(move || run_api(&api, &wav, &mut cp, &cancelled))
+        .await
+        .context("Speech recognition task did not complete")?
 }
 
 /// Shared result when speech detection finds no speech.
@@ -175,7 +148,10 @@ fn run_api(
         return Ok(cp.sorted_events());
     }
 
-    let tmp = crate::runtime::TempWorkDir::new("asr")?;
+    let tmp = tempfile::Builder::new()
+        .prefix("notepipe-asr-")
+        .tempdir()
+        .context("Could not create a temporary working directory")?;
     let mut api = api.clone();
     let mut adapter = if api.command.is_empty() {
         None
@@ -651,12 +627,7 @@ mod http_tests {
                 max_speech: 1.0,
                 ..Default::default()
             };
-            let mut cp = crate::checkpoint::Checkpoint::open(
-                dir.path(),
-                false,
-                &crate::checkpoint::AsrIdentity::new(&api),
-            )
-            .unwrap();
+            let mut cp = crate::checkpoint::Checkpoint::open(dir.path()).unwrap();
             let cancelled = AtomicBool::new(false);
             let done = AtomicBool::new(false);
             std::thread::scope(|scope| {
@@ -910,7 +881,7 @@ mod http_tests {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             assert!(record.join("terminated").is_file());
-            assert!(!dir.path().join("work/.asr_done").exists());
+            assert!(!dir.path().join("work/asr.jsonl").exists());
         });
     }
 }

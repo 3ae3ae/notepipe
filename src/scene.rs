@@ -245,11 +245,9 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
         .with_template("{spinner:.green} extract {pos}/{len} [{bar:32.cyan/blue}] {msg}");
     // Emit before launching ffmpeg: the first image may take a long time.
     pb.set_position(0);
-    // Extract with at most EXTRACT_CONCURRENCY ffmpeg processes and sort the results by index,
-    // so names and order match a sequential run.
+    // Extract with at most EXTRACT_CONCURRENCY ffmpeg processes.
     let mut set: tokio::task::JoinSet<(usize, Result<()>)> = tokio::task::JoinSet::new();
     let mut pending = times.iter().copied().enumerate();
-    let mut results: Vec<(usize, Result<()>)> = Vec::with_capacity(times.len());
     loop {
         crate::runtime::check_cancelled()?;
         while set.len() < EXTRACT_CONCURRENCY {
@@ -262,9 +260,8 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
             set.spawn(async move { (i, extract_frame(&media, capture_t, &path).await) });
         }
         match set.join_next().await {
-            Some(Ok((i, Ok(())))) => {
+            Some(Ok((_, Ok(())))) => {
                 pb.inc(1);
-                results.push((i, Ok(())));
             }
             Some(Ok((i, Err(error)))) => {
                 set.abort_all();
@@ -282,22 +279,14 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
             None => break,
         }
     }
-    results.sort_by_key(|(i, _)| *i);
-    let mut frames = Vec::with_capacity(results.len());
-    for (i, r) in results {
-        let (onset_t, _) = times[i];
-        r.with_context(|| {
-            format!(
-                "Could not extract screenshot {n} (t={onset_t:.1}s)",
-                n = i + 1
-            )
-        })?;
-        let name = slide_name(i + 1);
-        frames.push(FrameEvent {
+    let frames: Vec<_> = times
+        .into_iter()
+        .enumerate()
+        .map(|(i, (onset_t, _))| FrameEvent {
             t: onset_t,
-            image: format!("frames/{name}"),
-        });
-    }
+            image: format!("frames/{}", slide_name(i + 1)),
+        })
+        .collect();
     tracing::info!(
         frames = frames.len(),
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),

@@ -1140,7 +1140,6 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
         std::fs::read_to_string(checkpoint).unwrap().lines().count(),
         1
     );
-    assert!(!checkpoint.parent().unwrap().join(".asr_done").exists());
     std::fs::write(record.join("release"), "ready").unwrap();
     done(&run(root.path(), video.to_str().unwrap(), &cfg, &[]));
     let chunks = std::fs::read_to_string(checkpoint).unwrap().lines().count();
@@ -1234,11 +1233,6 @@ fn sigint_and_sigterm_cancel_adapters_and_resume_completed_asr_chunks() {
             std::fs::read_to_string(checkpoint).unwrap().lines().count(),
             1
         );
-        assert!(
-            !cache
-                .iter()
-                .any(|path| path.file_name().unwrap() == ".asr_done")
-        );
         std::fs::write(record.join("release"), "ready").unwrap();
         let resumed = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         done(&resumed);
@@ -1282,6 +1276,52 @@ fn a_second_signal_kills_the_source_tree_before_exiting_immediately() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn speech_settings_select_separate_checkpoints_without_inner_markers() {
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let record = root.path().join("asr");
+    let Some(command) = adapter_command(&record, "healthy") else {
+        return;
+    };
+    let adapter = RemoteAsr::start(&command, &record);
+    let mut cfg = config();
+    cfg["transcript"]["source"] = json!("speech");
+    cfg["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
+    done(&run(root.path(), video.to_str().unwrap(), &cfg, &[]));
+    let chunks = calls(&record);
+    assert!(chunks > 0);
+    done(&run(root.path(), video.to_str().unwrap(), &cfg, &[]));
+    assert_eq!(calls(&record), chunks, "unchanged settings reuse results");
+    for (index, (section, field, value)) in [
+        ("transcript", "language", "ko"),
+        ("speech", "model", "another-model"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        cfg[section][field] = json!(value);
+        done(&run(root.path(), video.to_str().unwrap(), &cfg, &[]));
+        assert_eq!(calls(&record), chunks * (index + 2));
+    }
+    let cached = files(&root.path().join("cache/notepipe/work"));
+    assert_eq!(
+        cached
+            .iter()
+            .filter(|path| path.file_name().unwrap() == "asr.jsonl")
+            .count(),
+        3
+    );
+    assert!(!cached.iter().any(|path| {
+        matches!(
+            path.file_name().unwrap().to_str(),
+            Some(".asr_identity" | ".asr_done")
+        )
+    }));
 }
 
 #[test]

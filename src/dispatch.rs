@@ -40,14 +40,8 @@ impl Failure {
         }
     }
 }
-struct Rejection {
-    retryable: bool,
-    unsupported_response_format: bool,
-    message: String,
-}
-
-fn classify_rejection(status: u16, body: &[u8]) -> Rejection {
-    Rejection {
+fn classify_rejection(status: u16, body: &[u8]) -> Failure {
+    Failure {
         retryable: status == 429 || (500..=599).contains(&status),
         unsupported_response_format: rejects_response_format(status, body),
         message: rejection_message(status),
@@ -176,11 +170,7 @@ pub fn json_request(
     let response = send()?;
     runtime::check_cancelled().map_err(Failure::local)?;
     if !(200..300).contains(&response.status) {
-        let rejection = classify_rejection(response.status, &response.body);
-        return Err(Failure {
-            unsupported_response_format: rejection.unsupported_response_format,
-            ..Failure::new(rejection.retryable, rejection.message)
-        });
+        return Err(classify_rejection(response.status, &response.body));
     }
     let value = serde_json::from_slice(&response.body)
         .map_err(|_| Failure::local("The service response is not valid JSON"))?;

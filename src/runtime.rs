@@ -470,26 +470,6 @@ pub fn free_port() -> Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
-/// Temporary work directory for intermediate files; creation errors are reported,
-/// and the directory is removed on drop. Its name carries a tag and a random suffix to avoid clashes.
-pub struct TempWorkDir {
-    dir: tempfile::TempDir,
-}
-
-impl TempWorkDir {
-    pub fn new(tag: &str) -> Result<Self> {
-        let dir = tempfile::Builder::new()
-            .prefix(&format!("notepipe-{tag}-"))
-            .tempdir()
-            .context("Could not create a temporary working directory")?;
-        Ok(Self { dir })
-    }
-
-    pub fn path(&self) -> &Path {
-        self.dir.path()
-    }
-}
-
 /// Runs `work` for every item on a bounded number of OS threads, preserving
 /// input order. Workers stop taking new items after the first error, but every
 /// started item is joined so confirmed side effects can still be saved.

@@ -1,17 +1,11 @@
 //! ASR checkpoint: each finished chunk is appended to asr.jsonl, and a rerun skips chunks by their exact time bounds.
 //!
 //! Rules:
-//! - **Identity**: `.asr_identity` records the schema version, dialect, endpoint or command, model, language and VAD settings.
-//!   Progress with a different identity (another model, endpoint or segmentation) is discarded and redone,
-//!   so a resumed transcript never mixes two models.
 //! - **Empty results count**: a chunk recognized as silence is recorded with `text: ""`;
 //!   otherwise every resume would transcribe silent chunks again.
 //! - **Only durable results count**: `record()` marks a chunk done only after it is written.
 //! - **Corruption**: a half-written last line from a crash is tolerated and repaired;
 //!   a corrupt line anywhere else is an error, because skipping it would silently lose text.
-//! - **Incompatible progress is archived** to .previous-asr instead of being reused,
-//!   so old and new records never combine into duplicated text.
-//! - When every chunk is done, `.asr_done` is written atomically and a rerun skips ASR entirely.
 
 use crate::timeline::TranscriptEvent;
 use anyhow::{Context, Result};
@@ -66,7 +60,6 @@ impl AsrIdentity {
 
 pub struct Checkpoint {
     path: PathBuf,
-    done_path: PathBuf,
     file: Option<std::fs::File>,
     done: HashSet<(u64, u64)>,
     events: Vec<TranscriptEvent>,
@@ -88,145 +81,65 @@ struct LoadedEvents {
 }
 
 impl Checkpoint {
-    /// Opens the checkpoint in `out_dir`, starting over when resuming is off or the identity differs.
-    pub fn open(out_dir: &Path, resume: bool, identity: &AsrIdentity) -> Result<Self> {
+    /// Opens the checkpoint and repairs an interrupted final record before appending.
+    pub fn open(out_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(out_dir).with_context(|| {
+            format!(
+                "Failed to create checkpoint directory {}",
+                out_dir.display()
+            )
+        })?;
         let path = out_dir.join("asr.jsonl");
-        let done_path = out_dir.join(".asr_done");
-        let identity_path = out_dir.join(".asr_identity");
         let mut cp = Checkpoint {
             path: path.clone(),
-            done_path: done_path.clone(),
             file: None,
             done: HashSet::new(),
             events: vec![],
         };
-
-        let identity_matches = Self::stored_identity(&identity_path).map(|stored| {
-            let ok = stored.as_ref() == Some(identity);
-            if !ok {
-                match stored {
-                    Some(old) => tracing::info!(
-                        old = ?old, new = ?identity,
-                        "asr checkpoint identity mismatch (model/backend/version changed); old progress discarded and recomputed"
-                    ),
-                    None => tracing::info!(
-                        "asr checkpoint has no identity marker; old progress discarded and recomputed"
-                    ),
-                }
-            }
-            ok
-        });
-
-        let usable = resume && identity_matches?;
-        if !usable {
-            // Not reusing: remove all old progress so it cannot combine with this run's records.
-            Self::clear(&path, &done_path, &identity_path)?;
-        } else if done_path.is_file() {
-            let events = Self::load_events(&path)?.events;
-            cp.done = events.iter().map(|e| key(e.start, e.end)).collect();
-            cp.events = events
+        let loaded = Self::load_events(&path)?;
+        if path.is_file() {
+            tracing::info!(n = loaded.events.len(), "asr checkpoint resumed (partial)");
+            cp.done = loaded.events.iter().map(|e| key(e.start, e.end)).collect();
+            cp.events = loaded
+                .events
                 .into_iter()
                 .filter(|e| !e.text.trim().is_empty())
                 .collect();
-            tracing::info!(n = cp.events.len(), "asr checkpoint complete, reusing");
-        } else {
-            let loaded = Self::load_events(&path)?;
-            if path.is_file() {
-                tracing::info!(n = loaded.events.len(), "asr checkpoint resumed (partial)");
-                cp.done = loaded.events.iter().map(|e| key(e.start, e.end)).collect();
-                cp.events = loaded
-                    .events
-                    .into_iter()
-                    .filter(|e| !e.text.trim().is_empty())
-                    .collect();
-                let mut f = std::fs::OpenOptions::new()
-                    .create(true)
-                    .read(true)
-                    .write(true)
-                    // Partial resume: keep the existing content.
-                    .truncate(false)
-                    .open(&path)
-                    .with_context(|| format!("Failed to open checkpoint {}", path.display()))?;
-                let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
-                if loaded.valid_len < file_len {
-                    // Truncate to the last complete line before opening the writer; otherwise a half-written line
-                    // from a crash and the next record would form a corrupt line in the middle of the file,
-                    // which the next resume would reject.
-                    // set_len cannot use an append-only handle: on Windows FILE_APPEND_DATA
-                    // does not include the right to change the length (Access denied).
-                    f.set_len(loaded.valid_len).with_context(|| {
-                        format!(
-                            "Failed to truncate checkpoint partial line {}",
-                            path.display()
-                        )
-                    })?;
-                } else if loaded.needs_newline {
-                    // Valid last line without a trailing newline (hand-edited): add the newline before appending.
-                    use std::io::Seek as _;
-                    f.seek(std::io::SeekFrom::End(0))?;
-                    f.write_all(b"\n").with_context(|| {
-                        format!("Failed to append newline to {}", path.display())
-                    })?;
-                }
-                // Not an append handle: seek to the end once; this process is the only writer.
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                // Partial resume: keep the existing content.
+                .truncate(false)
+                .open(&path)
+                .with_context(|| format!("Failed to open checkpoint {}", path.display()))?;
+            let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
+            if loaded.valid_len < file_len {
+                // Truncate to the last complete line before opening the writer; otherwise a half-written line
+                // from a crash and the next record would form a corrupt line in the middle of the file,
+                // which the next resume would reject.
+                // set_len cannot use an append-only handle: on Windows FILE_APPEND_DATA
+                // does not include the right to change the length (Access denied).
+                f.set_len(loaded.valid_len).with_context(|| {
+                    format!(
+                        "Failed to truncate checkpoint partial line {}",
+                        path.display()
+                    )
+                })?;
+            } else if loaded.needs_newline {
+                // Valid last line without a trailing newline (hand-edited): add the newline before appending.
                 use std::io::Seek as _;
-                f.seek(std::io::SeekFrom::End(0))
-                    .with_context(|| format!("seek checkpoint {}", path.display()))?;
-                cp.file = Some(f);
+                f.seek(std::io::SeekFrom::End(0))?;
+                f.write_all(b"\n")
+                    .with_context(|| format!("Failed to append newline to {}", path.display()))?;
             }
+            // Not an append handle: seek to the end once; this process is the only writer.
+            use std::io::Seek as _;
+            f.seek(std::io::SeekFrom::End(0))
+                .with_context(|| format!("seek checkpoint {}", path.display()))?;
+            cp.file = Some(f);
         }
-        // Record this run's identity atomically; it also marks a fresh start.
-        let id = serde_json::to_string(identity)?;
-        atomic_write(&identity_path, id.as_bytes())?;
         Ok(cp)
-    }
-
-    /// The identity stored on disk, or None when there is none.
-    fn stored_identity(path: &Path) -> Result<Option<AsrIdentity>> {
-        if !path.is_file() {
-            return Ok(None);
-        }
-        let s = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read {}", path.display()))?;
-        let header: serde_json::Value =
-            serde_json::from_str(&s).context("The transcription progress record is damaged")?;
-        if header["schema_version"]
-            .as_u64()
-            .is_some_and(|version| version != u64::from(CHECKPOINT_SCHEMA_VERSION))
-        {
-            return Ok(None);
-        }
-        Ok(Some(
-            serde_json::from_str(&s).context("The transcription progress record is damaged")?,
-        ))
-    }
-
-    fn clear(path: &Path, done_path: &Path, identity_path: &Path) -> Result<()> {
-        let old = [path, done_path, identity_path]
-            .into_iter()
-            .filter(|p| p.exists())
-            .collect::<Vec<_>>();
-        if old.is_empty() {
-            return Ok(());
-        }
-        let history = path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(".previous-asr");
-        std::fs::create_dir_all(&history)?;
-        let archive = tempfile::Builder::new()
-            .prefix("checkpoint-")
-            .tempdir_in(&history)?
-            .keep();
-        for file in old {
-            std::fs::rename(file, archive.join(file.file_name().unwrap())).with_context(|| {
-                format!(
-                    "Cannot preserve previous transcription progress {}",
-                    file.display()
-                )
-            })?;
-        }
-        Ok(())
     }
 
     /// Reads the event lines. A half-written last line is tolerated; corruption elsewhere is an error.
@@ -355,13 +268,6 @@ impl Checkpoint {
         }
         Ok(())
     }
-
-    /// Marks the transcript complete atomically, so later runs skip ASR.
-    pub fn finish(&mut self) -> Result<()> {
-        atomic_write(&self.done_path, b"done\n")?;
-        self.file = None;
-        Ok(())
-    }
 }
 
 /// Atomic write for small files: temporary file, fsync, rename, so a crash never leaves a partial file.
@@ -388,13 +294,6 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn identity(model: &str) -> AsrIdentity {
-        AsrIdentity::new(&crate::settings::Asr {
-            model: model.into(),
-            ..Default::default()
-        })
-    }
-
     fn tmpdir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("notepipe-cp-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -405,9 +304,9 @@ mod tests {
     #[test]
     fn complete_corrupt_line_is_not_treated_as_truncation() {
         let dir = tempfile::tempdir().unwrap();
-        Checkpoint::open(dir.path(), true, &identity("qwen3")).unwrap();
+        Checkpoint::open(dir.path()).unwrap();
         std::fs::write(dir.path().join("asr.jsonl"), b"garbage\n").unwrap();
-        assert!(Checkpoint::open(dir.path(), true, &identity("qwen3")).is_err());
+        assert!(Checkpoint::open(dir.path()).is_err());
     }
 
     #[test]
@@ -437,81 +336,15 @@ mod tests {
     #[test]
     fn empty_chunk_is_recorded_and_skipped_on_resume() {
         let d = tmpdir("empty");
-        let mut cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let mut cp = Checkpoint::open(&d).unwrap();
         cp.record(0.0, 2.0, "hello").unwrap();
         cp.record(2.0, 4.0, "").unwrap(); // silent chunk
-        cp.finish().unwrap();
         drop(cp);
 
-        let cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let cp = Checkpoint::open(&d).unwrap();
         assert!(cp.is_done(0.0, 2.0));
         assert!(cp.is_done(2.0, 4.0), "an empty chunk is done");
         assert_eq!(cp.events().len(), 1, "empty text is not an event");
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn identity_mismatch_discards_old_progress() {
-        let d = tmpdir("ident");
-        let mut cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
-        cp.record(0.0, 2.0, "old model output").unwrap();
-        drop(cp); // not finished: simulates an interruption
-
-        let cp = Checkpoint::open(&d, true, &identity("whisper")).unwrap();
-        assert!(!cp.is_done(0.0, 2.0), "a new model discards old chunks");
-        assert!(cp.events().is_empty());
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn no_resume_clears_old_files() {
-        let d = tmpdir("clear");
-        let mut cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
-        cp.record(0.0, 2.0, "x").unwrap();
-        cp.finish().unwrap();
-        assert!(d.join(".asr_done").is_file());
-
-        // --no-resume clears old progress instead of adding to it.
-        let mut cp = Checkpoint::open(&d, false, &identity("qwen3")).unwrap();
-        assert!(cp.events().is_empty() && cp.done.is_empty());
-        cp.record(0.0, 2.0, "y").unwrap();
-        drop(cp);
-
-        let cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
-        assert_eq!(
-            cp.events().len(),
-            1,
-            "a repeated run must not duplicate records"
-        );
-        assert_eq!(cp.events()[0].text, "y");
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn checkpoint_without_identity_is_discarded() {
-        let d = tmpdir("legacy");
-        std::fs::write(
-            d.join("asr.jsonl"),
-            format!(
-                "{}\n",
-                serde_json::to_string(&TranscriptEvent {
-                    start: 0.0,
-                    end: 1.0,
-                    text: "no identity".into(),
-                    raw: None,
-                    below: Vec::new(),
-                })
-                .unwrap()
-            ),
-        )
-        .unwrap();
-        std::fs::write(d.join(".asr_done"), b"done\n").unwrap();
-
-        let cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
-        assert!(
-            cp.events().is_empty(),
-            "progress without an identity is discarded"
-        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -527,16 +360,15 @@ mod tests {
             })
             .unwrap()
         };
-        // Establish an identity with a normal open, then plant corrupt content.
         let d = tmpdir("mid");
-        Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        Checkpoint::open(&d).unwrap();
         std::fs::write(
             d.join("asr.jsonl"),
             format!("{}\n garbage \n{}\n", ev(0.0, "a"), ev(1.0, "b")),
         )
         .unwrap();
         // Corruption in the middle is an error (a half-written last line is recoverable; see the truncation test).
-        assert!(Checkpoint::open(&d, true, &identity("qwen3")).is_err());
+        assert!(Checkpoint::open(&d).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -555,21 +387,20 @@ mod tests {
             })
             .unwrap()
         };
-        Checkpoint::open(&d, true, &identity("qwen3")).unwrap(); // establish the identity
         std::fs::write(
             d.join("asr.jsonl"),
             format!("{}\n{{\"start\":1.", ev(0.0, "a")),
         )
         .unwrap();
 
-        let mut cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let mut cp = Checkpoint::open(&d).unwrap();
         assert_eq!(cp.events().len(), 1);
         assert!(!cp.is_done(1.0, 2.0), "a half-written line is not done");
         cp.record(2.0, 3.0, "new record").unwrap();
         drop(cp);
 
         // Reopen: both records read back and no corrupt middle line.
-        let cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let cp = Checkpoint::open(&d).unwrap();
         assert_eq!(
             cp.events().len(),
             2,
@@ -582,13 +413,12 @@ mod tests {
 
         // Variant: the fragment is the only line; it is truncated before appending too.
         let d = tmpdir("tailfirst");
-        Checkpoint::open(&d, true, &identity("qwen3")).unwrap(); // establish the identity
         std::fs::write(d.join("asr.jsonl"), b"{\"start\":").unwrap();
-        let mut cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let mut cp = Checkpoint::open(&d).unwrap();
         assert!(cp.events().is_empty());
         cp.record(1.0, 2.0, "recovered").unwrap();
         drop(cp);
-        let cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let cp = Checkpoint::open(&d).unwrap();
         assert_eq!(cp.events().len(), 1);
         assert_eq!(cp.events()[0].text, "recovered");
         let _ = std::fs::remove_dir_all(&d);
@@ -598,7 +428,7 @@ mod tests {
     fn truncated_utf8_tail_is_cut_before_resume_appends() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("asr.jsonl");
-        let mut cp = Checkpoint::open(dir.path(), true, &identity("qwen3")).unwrap();
+        let mut cp = Checkpoint::open(dir.path()).unwrap();
         cp.record(0.0, 1.0, "완료").unwrap();
         drop(cp);
         let intact = std::fs::read(&path).unwrap();
@@ -608,14 +438,14 @@ mod tests {
         bytes.extend_from_slice(&partial.as_bytes()[..cut]);
         std::fs::write(&path, bytes).unwrap();
 
-        let mut cp = Checkpoint::open(dir.path(), true, &identity("qwen3")).unwrap();
+        let mut cp = Checkpoint::open(dir.path()).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), intact);
         assert!(cp.is_done(0.0, 1.0));
         assert!(!cp.is_done(1.0, 2.0));
         cp.record(1.0, 2.0, "복구").unwrap();
         drop(cp);
 
-        let cp = Checkpoint::open(dir.path(), true, &identity("qwen3")).unwrap();
+        let cp = Checkpoint::open(dir.path()).unwrap();
         assert_eq!(cp.events().len(), 2);
         assert_eq!(cp.events()[0].text, "완료");
         assert_eq!(cp.events()[1].text, "복구");
@@ -633,15 +463,14 @@ mod tests {
             below: Vec::new(),
         })
         .unwrap();
-        Checkpoint::open(&d, true, &identity("qwen3")).unwrap(); // establish the identity
         std::fs::write(d.join("asr.jsonl"), &l).unwrap(); // no trailing newline
 
-        let mut cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let mut cp = Checkpoint::open(&d).unwrap();
         assert_eq!(cp.events().len(), 1, "a valid last line is kept");
         cp.record(2.0, 3.0, "appended").unwrap();
         drop(cp);
 
-        let cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let cp = Checkpoint::open(&d).unwrap();
         assert_eq!(cp.events().len(), 2);
         assert_eq!(cp.events()[1].text, "appended");
         let _ = std::fs::remove_dir_all(&d);
@@ -652,7 +481,7 @@ mod tests {
         // out_dir is a regular file, so the checkpoint is unusable and open must fail.
         let f = std::env::temp_dir().join(format!("notepipe-cp-file-{}", std::process::id()));
         std::fs::write(&f, b"x").unwrap();
-        assert!(Checkpoint::open(&f, false, &identity("qwen3")).is_err());
+        assert!(Checkpoint::open(&f).is_err());
         let _ = std::fs::remove_file(&f);
     }
 
@@ -661,7 +490,7 @@ mod tests {
         // Open normally, then break the write path: replace the directory with a file,
         // and check that a failed record does not mark the chunk done.
         let d = tmpdir("wfail");
-        let mut cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let mut cp = Checkpoint::open(&d).unwrap();
         std::fs::remove_dir_all(&d).unwrap();
         std::fs::write(&d, b"x").unwrap(); // the directory becomes a file
         assert!(
@@ -675,7 +504,6 @@ mod tests {
     #[test]
     fn duplicate_lines_keep_first() {
         let d = tmpdir("dup");
-        let _ = Checkpoint::open(&d, true, &identity("qwen3")).unwrap(); // establish the identity
         let l = serde_json::to_string(&TranscriptEvent {
             start: 0.0,
             end: 1.0,
@@ -693,7 +521,7 @@ mod tests {
         })
         .unwrap();
         std::fs::write(d.join("asr.jsonl"), format!("{l}\n{l2}\n")).unwrap();
-        let cp = Checkpoint::open(&d, true, &identity("qwen3")).unwrap();
+        let cp = Checkpoint::open(&d).unwrap();
         assert_eq!(cp.events().len(), 1);
         assert_eq!(cp.events()[0].text, "first");
         let _ = std::fs::remove_dir_all(&d);
@@ -728,17 +556,7 @@ mod identity_tests {
         for change in changes {
             let mut changed = asr.clone();
             change(&mut changed);
-            let dir = tempfile::tempdir().unwrap();
-            let mut cp = Checkpoint::open(dir.path(), true, &identity).unwrap();
-            cp.record(0.0, 1.0, "original").unwrap();
-            drop(cp);
-            let changed = AsrIdentity::new(&changed);
-            assert_ne!(identity, changed);
-            assert!(
-                !Checkpoint::open(dir.path(), true, &changed)
-                    .unwrap()
-                    .is_done(0.0, 1.0)
-            );
+            assert_ne!(identity, AsrIdentity::new(&changed));
         }
         let mut changed = asr.clone();
         changed.api_key = "secret".into();
@@ -751,23 +569,5 @@ mod identity_tests {
         assert_eq!(managed_id, AsrIdentity::new(&managed));
         managed.command = vec!["adapter --model".into(), "some model".into()];
         assert_ne!(managed_id, AsrIdentity::new(&managed));
-    }
-
-    #[test]
-    fn previous_schema_is_archived_without_reusing_its_chunks() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join(".asr_identity"),
-            br#"{"schema_version":2,"provider":"api","model":"old","max_speech":20.0}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("asr.jsonl"),
-            b"{\"start\":0,\"end\":1,\"text\":\"old\"}\n",
-        )
-        .unwrap();
-        let cp = Checkpoint::open(dir.path(), true, &AsrIdentity::new(&Asr::default())).unwrap();
-        assert!(!cp.is_done(0.0, 1.0));
-        assert!(dir.path().join(".previous-asr").is_dir());
     }
 }
