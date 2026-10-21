@@ -368,7 +368,7 @@ fn parse_callback_request(request_line: &str, expected_state: &str) -> Result<St
 fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let opened = std::process::Command::new("open").arg(url).spawn().is_ok();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let opened = std::process::Command::new("xdg-open")
         .arg(url)
         .spawn()
