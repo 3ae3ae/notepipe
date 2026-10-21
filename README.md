@@ -1,6 +1,9 @@
-<p align="center"><img src="docs/logo.svg" width="112" alt="notepipe logo"></p>
-
-<h1 align="center">notepipe</h1>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/wordmark-dark.svg">
+    <img src="docs/wordmark-light.svg" alt="notepipe" width="360">
+  </picture>
+</h1>
 
 <p align="center">
   <strong>Turn video and audio into Markdown notes.</strong><br>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="476" height="144" viewBox="0 0 476 144" role="img" aria-label="notepipe">
+  <g fill="none" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M15.0 47.0V93.0" stroke="#1e293b"/>
+  <path d="M15.0 70.0A22 22 0 0 1 59.0 70.0V93.0" stroke="#1e293b"/>
+  <path d="M80.0 70.0A22 22 0 1 1 124.0 70.0A22 22 0 1 1 80.0 70.0" stroke="#1e293b"/>
+  <path d="M158.0 30V80A12 12 0 0 0 170.0 93.0H174.0" stroke="#1e293b"/>
+  <path d="M144.0 47.0H174.0" stroke="#1e293b"/>
+  <path d="M195.0 70.0H239.0A22 22 0 1 0 233.85 84.14" stroke="#1e293b"/>
+  <path d="M262.0 47.0V124" stroke="#2563eb"/>
+  <path d="M262.0 70.0A22 22 0 1 1 306.0 70.0A22 22 0 1 1 262.0 70.0" stroke="#2563eb"/>
+  <path d="M329.0 47.0V93.0" stroke="#f59e0b"/>
+  <circle cx="329.0" cy="26" r="9" fill="#f59e0b"/>
+  <path d="M352.0 47.0V124" stroke="#2563eb"/>
+  <path d="M352.0 70.0A22 22 0 1 1 396.0 70.0A22 22 0 1 1 352.0 70.0" stroke="#2563eb"/>
+  <path d="M417.0 70.0H461.0A22 22 0 1 0 455.85 84.14" stroke="#2563eb"/>
+  </g>
+</svg>
