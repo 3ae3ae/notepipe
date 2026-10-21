@@ -161,6 +161,40 @@ class AdapterTests(unittest.TestCase):
             self.assertNotIn("_notepipe_automatic", track)
             self.assertEqual(Path(track["filepath"]).suffix, ".srt")
 
+    def test_fallback_subtitles_are_converted_to_srt(self):
+        self.info["subtitles"] = {"en": subtitles("json3"), "ko": subtitles("vtt", "ass")}
+        self.info["automatic_captions"] = {"ko-orig": subtitles("json3")}
+
+        def convert(processor, source, target, options):
+            self.assertEqual(Path(source).suffix, ".json3")
+            self.assertEqual(options, ["-f", "srt"])
+            Path(target).write_text("converted subtitles")
+
+        converter = adapter.yt_dlp.postprocessor.FFmpegSubtitlesConvertorPP
+        with patch.object(converter, "run_ffmpeg", convert):
+            result = self.run_adapter()[-1]
+        self.assertEqual(result["subtitles"], [
+            {"path": "media.en.srt", "language": "en", "automatic": False},
+            {"path": "media.ko.vtt", "language": "ko", "automatic": False},
+            {"path": "media.ko-auto.srt", "language": "ko", "automatic": True},
+        ])
+        for track in result["subtitles"]:
+            self.assertTrue((self.out / track["path"]).is_file())
+
+    def test_nonconvertible_subtitle_is_dropped(self):
+        converter = adapter.yt_dlp.postprocessor.FFmpegSubtitlesConvertorPP
+        for ext in ["srv3", "ttml"]:
+            with self.subTest(ext=ext):
+                self.out = Path(self.temp.name).resolve() / ext
+                self.info["subtitles"]["en"] = subtitles(ext)
+                with patch.object(converter, "run_ffmpeg", side_effect=adapter.yt_dlp.utils.PostProcessingError("cannot convert")):
+                    result = self.run_adapter()[-1]
+                self.assertEqual(result["subtitles"], [
+                    {"path": "media.ko.vtt", "language": "ko", "automatic": False},
+                    {"path": "media.ko-auto.vtt", "language": "ko", "automatic": True},
+                ])
+                self.assertIn("Skipping subtitle en:", self.diagnostics)
+
     def test_child_stdout_is_sent_to_diagnostics(self):
         extract = adapter.YoutubeDL.extract_info
 

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 from urllib.parse import parse_qs, urlparse
+from xml.etree.ElementTree import ParseError
 
 import yt_dlp
 
@@ -107,13 +108,28 @@ def download(url, out, extra_args, output):
         )
         with YoutubeDL(options) as downloader:
             info = downloader.extract_info(url, download=True)
-
-    if not info:
-        raise ValueError("yt-dlp did not return a media item")
-    downloads = info.get("requested_downloads") or [info]
-    if len(downloads) != 1:
-        raise ValueError("select a single merged media format")
-    downloaded = {**info, **downloads[0]}
+            if not info:
+                raise ValueError("yt-dlp did not return a media item")
+            downloads = info.get("requested_downloads") or [info]
+            if len(downloads) != 1:
+                raise ValueError("select a single merged media format")
+            downloaded = {**info, **downloads[0]}
+            tracks = downloaded.get("requested_subtitles") or {}
+            for key, track in list(tracks.items()):
+                if track.get("ext") in {"srt", "vtt"} or not track.get("filepath"):
+                    continue
+                subtitle_info = {
+                    "requested_subtitles": {key: track},
+                    "__files_to_move": {track["filepath"]: track["filepath"]},
+                }
+                try:
+                    converter = yt_dlp.postprocessor.FFmpegSubtitlesConvertorPP(downloader, format="srt")
+                    downloader.run_pp(converter, subtitle_info)
+                except (yt_dlp.utils.PostProcessingError, OSError, ValueError, ParseError) as error:
+                    downloader.report_warning(f"Skipping subtitle {key}: {error}")
+                    del tracks[key]
+                else:
+                    tracks[key] = subtitle_info["requested_subtitles"][key]
     filename = downloaded.get("filepath")
     if not filename:
         raise ValueError("yt-dlp did not produce a media file")
@@ -126,7 +142,7 @@ def download(url, out, extra_args, output):
                 **downloader.subtitle_tracks[key],
             }
             for key, track in (downloaded.get("requested_subtitles") or {}).items()
-            if track.get("filepath") and Path(track["filepath"]).is_file()
+            if track.get("ext") in {"srt", "vtt"} and track.get("filepath") and Path(track["filepath"]).is_file()
         ],
     }
     for source, target in [("title", "title"), ("uploader", "author"), ("duration", "duration"), ("language", "language")]:
