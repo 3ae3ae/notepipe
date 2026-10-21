@@ -125,7 +125,7 @@ where
         + Send
         + 'static,
 {
-    let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir, cfg.resume, identity)?;
+    let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir, true, identity)?;
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let _cancel_on_drop = crate::runtime::CancelOnDrop(cancelled.clone());
     tokio::task::spawn_blocking(move || {

@@ -350,6 +350,21 @@ pub fn sidecar_subtitle(video: &Path, preferred_language: &str) -> Option<PathBu
     tracks.into_iter().next().map(|track| track.path)
 }
 
+pub fn validate_events(events: &[TranscriptEvent]) -> Result<()> {
+    anyhow::ensure!(
+        events.iter().all(|e| e.start.is_finite()
+            && e.end.is_finite()
+            && e.start >= 0.0
+            && e.end >= e.start),
+        "Invalid subtitle timestamps"
+    );
+    anyhow::ensure!(
+        events.iter().any(|e| !e.text.trim().is_empty()),
+        "Selected subtitles contain no readable text"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

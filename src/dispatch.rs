@@ -1,6 +1,6 @@
 //! Validated HTTP requests and a success-only cache for LLM responses.
 
-use crate::{checkpoint::atomic_write, execution, runtime};
+use crate::{checkpoint::atomic_write, runtime};
 use anyhow::Result;
 use serde_json::Value;
 use std::{
@@ -18,7 +18,6 @@ pub struct Failure {
     pub retryable: bool,
     pub message: String,
     pub unsupported_response_format: bool,
-    pub kind: Option<crate::artifact::FailureKind>,
 }
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -33,7 +32,6 @@ impl Failure {
             retryable: false,
             message: error.to_string(),
             unsupported_response_format: false,
-            kind: Some(crate::artifact::FailureKind::Local),
         }
     }
     fn with_status(status: Option<u16>, retryable: bool, message: impl Into<String>) -> Self {
@@ -41,7 +39,6 @@ impl Failure {
             status,
             retryable,
             message: message.into(),
-            kind: Some(kind_for_status(status)),
             ..Self::local("")
         }
     }
@@ -50,19 +47,6 @@ struct Rejection {
     retryable: bool,
     unsupported_response_format: bool,
     message: String,
-    kind: crate::artifact::FailureKind,
-}
-
-fn kind_for_status(status: Option<u16>) -> crate::artifact::FailureKind {
-    match status {
-        Some(401 | 403) => crate::artifact::FailureKind::Authentication,
-        Some(404) => crate::artifact::FailureKind::Model,
-        Some(400 | 422) => crate::artifact::FailureKind::Parameters,
-        Some(429) => crate::artifact::FailureKind::RateLimit,
-        Some(500..=599) => crate::artifact::FailureKind::Service,
-        None => crate::artifact::FailureKind::Local,
-        _ => crate::artifact::FailureKind::Other,
-    }
 }
 
 fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
@@ -70,7 +54,6 @@ fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
         retryable: status == 429 || (500..=599).contains(&status),
         unsupported_response_format: rejects_response_format(status, value),
         message: rejection_message(status),
-        kind: kind_for_status(Some(status)),
     }
 }
 
@@ -170,7 +153,7 @@ pub(crate) fn cache_validated_response(endpoint: &str, body: &Value, value: &Val
     let cache = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None))).clone();
     if let Some(cache) = cache {
         runtime::check_cancelled()?;
-        let key = execution::digest(format!("{endpoint}\n{body}").as_bytes());
+        let key = runtime::digest(format!("{endpoint}\n{body}").as_bytes());
         atomic_write(
             &cache.dir.join(format!("{key}.json")),
             &serde_json::to_vec(value)?,
@@ -189,7 +172,7 @@ pub fn cached_json_request(
     let Some(cache) = cache else {
         return json_request(send, validate);
     };
-    let key = execution::digest(format!("{endpoint}\n{body}").as_bytes());
+    let key = runtime::digest(format!("{endpoint}\n{body}").as_bytes());
     let lock = runtime::lock_recover(&cache.locks)
         .entry(key.clone())
         .or_default()
@@ -237,7 +220,6 @@ pub fn json_request(
         );
         return Err(Failure {
             unsupported_response_format: rejection.unsupported_response_format,
-            kind: Some(rejection.kind),
             ..Failure::with_status(
                 Some(response.status),
                 rejection.retryable,
@@ -350,7 +332,7 @@ mod tests {
         cached_json_request("https://other.test/v1/chat/completions", &body, send, valid).unwrap();
         cached_json_request(url, &serde_json::json!({"model":"other"}), send, valid).unwrap();
         assert_eq!(calls.get(), 3);
-        let key = execution::digest(format!("{url}\n{body}").as_bytes());
+        let key = runtime::digest(format!("{url}\n{body}").as_bytes());
         let saved: Value = serde_json::from_slice(
             &std::fs::read(root.path().join("llm").join(format!("{key}.json"))).unwrap(),
         )

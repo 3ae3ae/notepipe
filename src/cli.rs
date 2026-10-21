@@ -14,7 +14,6 @@ Transcripts:
 Next steps:
   notepipe doctor              Check dependencies and settings
   notepipe config init         Create a configuration template
-  notepipe summarize ./notes   Summarize existing notes
 
 The first conversion in a terminal offers setup; scripts should pass options explicitly.
 Use <command> --help for details.
@@ -49,7 +48,7 @@ pub struct Cli {
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct RunOpts {
-    /// Output root (platform/title/ID)
+    /// Output root for note folders (default: current directory)
     #[arg(short, long)]
     #[arg(help_heading = "Input and output")]
     pub out: Option<PathBuf>,
@@ -118,15 +117,13 @@ pub struct RunOpts {
     #[arg(help_heading = "Speech recognition")]
     pub max_speech: Option<f32>,
 
-    /// Output formats, comma-separated: md,html,json
-    #[arg(long, value_delimiter = ',', value_enum)]
-    #[arg(help_heading = "Input and output")]
-    pub formats: Option<Vec<crate::config::OutputFormat>>,
+    /// Read TOML or JSON configuration from a file, or '-' for stdin
+    #[arg(long, value_name = "FILE", help_heading = "Input and output")]
+    pub config: Option<PathBuf>,
 
-    /// Reuse the previously downloaded video
-    #[arg(long)]
-    #[arg(help_heading = "Input and output")]
-    pub no_download: bool,
+    /// Use this SRT/VTT transcript; skip subtitle discovery and speech recognition
+    #[arg(long, value_name = "FILE", help_heading = "Input and output")]
+    pub subtitle: Option<PathBuf>,
 
     /// Enable AI proofreading for this run
     #[arg(long)]
@@ -193,14 +190,8 @@ pub struct RunOpts {
     #[arg(help_heading = "Terminal output")]
     pub verbose: u8,
 
-    /// Continue interrupted transcription (on by default)
-    #[arg(long)]
-    #[arg(help_heading = "Input and output")]
-    pub resume: bool,
-
-    /// Transcribe again from the start
-    #[arg(long, conflicts_with = "resume")]
-    #[arg(help_heading = "Input and output")]
+    /// Clear this source's cached work and start again
+    #[arg(long, help_heading = "Input and output")]
     pub no_resume: bool,
 
     /// Quiet mode: report errors only
@@ -216,9 +207,6 @@ pub struct RunOpts {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Execute a saved task from stdin JSON
-    #[command(hide = true)]
-    RunTask,
     /// Check tools, speech backends and settings
     Doctor,
     /// Manage the configuration file
@@ -226,24 +214,6 @@ pub enum Command {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// Add AI summaries to existing notes
-    Summarize(SummarizeArgs),
-}
-
-#[derive(Args)]
-pub struct SummarizeArgs {
-    /// A note directory or a folder of notes
-    #[arg(required = true)]
-    pub dirs: Vec<PathBuf>,
-    /// Regenerate existing summaries
-    #[arg(long)]
-    pub force: bool,
-    /// Also save each summary as Markdown in this directory
-    #[arg(short = 'o', long)]
-    pub out: Option<PathBuf>,
-    /// Quiet mode: report errors only
-    #[arg(short, long)]
-    pub quiet: bool,
 }
 
 #[derive(Subcommand)]

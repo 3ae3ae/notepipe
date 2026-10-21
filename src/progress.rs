@@ -1,14 +1,12 @@
 //! 机器可读进度协议（--json 模式）：stdout 每行一个 NDJSON 事件，供 GUI/脚本消费。
 //!
-//! 协议（GUI 已按此实现，勿改字段名）：
-//! - `{"type":"log","level":..,"message":..}`        — tracing 日志转发
-//! - `{"type":"stage","stage":..,"status":"start"|"done"}`
-//! - `{"type":"progress","stage":..,"current":n,"total":n,"message":?,"phase":?}`
-//! - `{"type":"tokens","stage":..,"prompt":n,"completion":n}` — LLM 累计 token 用量
-//! - `{"type":"done", ...}` / `{"type":"error","message":..}` — 由 pipeline/main 直接 emit
-//!
-//! human 模式下 [`emit`]/[`stage`] 全是 no-op，[`Bar`] 退化为普通可见进度条，
-//! 保证现有终端输出零变化。
+//! The only event types are `log`, `stage`, `progress`, `tokens`, `done`, `error`.
+//! - `log`: level, message
+//! - `stage`: stage, status (start/done)
+//! - `progress`: stage, current, total, optional message and phase
+//! - `tokens`: stage, prompt, completion
+//! - `done`: note_dir, markdown, json, warnings
+//! - `error`: message
 
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Mutex;
@@ -42,6 +40,12 @@ pub fn emit(ev: serde_json::Value) {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     let _ = emit_to(&mut lock, &ev);
+}
+
+pub fn done(note_dir: &std::path::Path, warnings: &[String]) {
+    emit(
+        serde_json::json!({"type":"done","note_dir":note_dir,"markdown":note_dir.join("note.md"),"json":note_dir.join("note.json"),"warnings":warnings}),
+    );
 }
 
 fn emit_to(mut w: impl std::io::Write, ev: &serde_json::Value) -> std::io::Result<()> {

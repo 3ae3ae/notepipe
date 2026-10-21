@@ -14,33 +14,17 @@ pub const ADAPTER_HINT: &str =
     "URLs need a source adapter; see the README, or set [source].command";
 const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
-/// Note metadata; field names are retained for existing note documents.
+/// Public, vendor-neutral note metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct VideoMeta {
+pub struct MediaMeta {
     pub title: String,
-    #[serde(default)]
-    pub uploader: String,
-    #[serde(default)]
+    pub author: String,
     pub duration: f64,
-    pub webpage_url: String,
-    #[serde(default)]
-    pub extractor: String,
-    #[serde(default)]
-    pub id: String,
-}
-
-impl VideoMeta {
-    pub fn is_local(&self) -> bool {
-        self.extractor == "local"
-    }
-
-    pub fn save(&self, path: &Path) -> Result<()> {
-        crate::checkpoint::atomic_write_shared(path, serde_json::to_string_pretty(self)?.as_bytes())
-    }
+    pub source: String,
 }
 
 #[derive(Serialize, Deserialize)]
-struct Output {
+pub(crate) struct Output {
     media: String,
     #[serde(default)]
     title: String,
@@ -64,7 +48,7 @@ struct Caption {
 
 pub struct Resolved {
     pub media: PathBuf,
-    pub meta: VideoMeta,
+    pub meta: MediaMeta,
     pub language: Option<String>,
     pub subtitles: Vec<subtitle::SubtitleTrack>,
 }
@@ -77,7 +61,18 @@ fn output_path(root: &Path, relative: &str) -> Result<PathBuf> {
 }
 
 impl Output {
-    fn resolve(&self, root: &Path, url: &str) -> Result<Resolved> {
+    pub(crate) fn read(cache: &Path) -> Result<Option<Self>> {
+        let path = cache.join("complete.json");
+        if !path.is_file() {
+            return Ok(None);
+        }
+        Ok(Some(
+            serde_json::from_slice(&std::fs::read(path)?)
+                .context("Invalid source adapter cache")?,
+        ))
+    }
+
+    pub(crate) fn metadata(&self, source: &str) -> Result<MediaMeta> {
         ensure!(
             self.duration.is_finite() && self.duration >= 0.,
             "Invalid source adapter duration"
@@ -85,9 +80,24 @@ impl Output {
         if let Some(url) = self.url.as_deref().filter(|url| !url.is_empty()) {
             crate::config::ensure_http_url(url).context("Invalid source adapter URL")?;
         }
-        let media = output_path(root, &self.media)?;
-        let subtitles = self
-            .subtitles
+        Ok(MediaMeta {
+            title: if self.title.trim().is_empty() {
+                Path::new(&self.media)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                self.title.clone()
+            },
+            author: self.author.clone(),
+            duration: self.duration,
+            source: source.into(),
+        })
+    }
+
+    pub(crate) fn tracks(&self, root: &Path) -> Result<Vec<subtitle::SubtitleTrack>> {
+        self.subtitles
             .iter()
             .enumerate()
             .map(|(index, caption)| {
@@ -102,32 +112,29 @@ impl Output {
                     },
                 })
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect()
+    }
+
+    pub(crate) fn media_path(&self, cache: &Path) -> Result<PathBuf> {
+        output_path(&cache.join("files"), &self.media)
+    }
+
+    pub(crate) fn preferred_subtitle(
+        &self,
+        cache: &Path,
+        language: &str,
+    ) -> Result<Option<PathBuf>> {
+        let mut tracks = self.tracks(&cache.join("files"))?;
+        subtitle::sort_tracks(&mut tracks, language, self.language.as_deref());
+        Ok(tracks.into_iter().next().map(|track| track.path))
+    }
+
+    fn resolve(&self, root: &Path, source: &str) -> Result<Resolved> {
         Ok(Resolved {
-            meta: VideoMeta {
-                title: if self.title.trim().is_empty() {
-                    media
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned()
-                } else {
-                    self.title.clone()
-                },
-                uploader: self.author.clone(),
-                duration: self.duration,
-                webpage_url: self
-                    .url
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or(url)
-                    .into(),
-                extractor: "web".into(),
-                id: crate::execution::digest(url.as_bytes()),
-            },
-            media,
+            media: output_path(root, &self.media)?,
+            meta: self.metadata(source)?,
             language: self.language.clone(),
-            subtitles,
+            subtitles: self.tracks(root)?,
         })
     }
 }
@@ -214,12 +221,7 @@ fn accept_line(line: &[u8], last: &mut Option<Output>) -> Result<()> {
 }
 
 /// Tokio reads stdout while the shared process guard retains ownership of the whole tree.
-pub async fn resolve(
-    url: &str,
-    source: &Source,
-    cache: &Path,
-    no_download: bool,
-) -> Result<Resolved> {
+pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolved> {
     runtime::check_cancelled()?;
     crate::config::ensure_http_url(url)?;
     std::fs::create_dir_all(cache)?;
@@ -238,10 +240,6 @@ pub async fn resolve(
             Err(error) => return Err(error),
         }
     }
-    ensure!(
-        !no_download,
-        "Cached source media is missing; allow downloading it again"
-    );
     let (executable, args) = command(source)?;
     runtime::check_cancelled()?;
     if marker.exists() {
@@ -348,7 +346,7 @@ mod tests {
             .resolve(root.path(), "https://example.test/media")
             .unwrap();
         assert_eq!(resolved.meta.title, "media");
-        assert_eq!(resolved.meta.webpage_url, "https://example.test/media");
+        assert_eq!(resolved.meta.source, "https://example.test/media");
         for path in [
             "",
             ".",
@@ -395,16 +393,16 @@ mod tests {
         runtime::block_on(async {
             let cache = root.path().join("cache");
             assert!(
-                resolve("https://example.test/media", &broken, &cache, false)
+                resolve("https://example.test/media", &broken, &cache)
                     .await
                     .is_err()
             );
             assert!(!cache.join("complete.json").exists());
             let source = command(&record, "files").unwrap();
-            let first = resolve("https://example.test/media", &source, &cache, false)
+            let first = resolve("https://example.test/media", &source, &cache)
                 .await
                 .unwrap();
-            let again = resolve("https://example.test/media", &source, &cache, true)
+            let again = resolve("https://example.test/media", &source, &cache)
                 .await
                 .unwrap();
             assert_eq!(first.media, again.media);
@@ -429,17 +427,12 @@ mod tests {
         };
         runtime::block_on(async {
             let cache = root.path().join("cache");
-            let first = resolve("https://example.test/media", &source, &cache, false)
+            let first = resolve("https://example.test/media", &source, &cache)
                 .await
                 .unwrap();
             for path in [&first.media, &first.subtitles[0].path] {
                 std::fs::remove_file(path).unwrap();
-                assert!(
-                    resolve("https://example.test/media", &source, &cache, true)
-                        .await
-                        .is_err()
-                );
-                let again = resolve("https://example.test/media", &source, &cache, false)
+                let again = resolve("https://example.test/media", &source, &cache)
                     .await
                     .unwrap();
                 assert!(again.media.is_file());
@@ -468,7 +461,6 @@ mod tests {
                     "https://example.test/media",
                     &source,
                     &root.path().join("cache"),
-                    false
                 )
                 .await
                 .is_ok()
@@ -478,7 +470,6 @@ mod tests {
                 "https://example.test/media",
                 &source,
                 &root.path().join("oversized-cache"),
-                false,
             )
             .await
             .err()
@@ -502,7 +493,6 @@ mod tests {
                     "https://example.test/media",
                     &source,
                     &root.path().join("cache"),
-                    false,
                 ),
             )
             .await
@@ -568,7 +558,7 @@ mod tests {
         runtime::block_on(async {
             let cache = root.path().join("cache");
             let task = tokio::spawn(async move {
-                resolve("https://example.test/media", &source, &cache, false).await
+                resolve("https://example.test/media", &source, &cache).await
             });
             let start = std::time::Instant::now();
             while !record.join("child-ready").exists() {

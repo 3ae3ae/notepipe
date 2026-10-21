@@ -18,9 +18,6 @@ pub struct Defaults {
     pub roi: Option<String>,
     /// 转写来源：auto（字幕优先）| subtitle | asr
     pub transcript_source: Option<crate::config::TranscriptSource>,
-    pub formats: Option<Vec<crate::config::OutputFormat>>,
-    pub no_download: Option<bool>,
-    pub resume: Option<bool>,
 }
 
 /// External program that resolves an online URL into local media and subtitles.
@@ -108,8 +105,33 @@ pub fn load() -> anyhow::Result<ConfigFile> {
     }
     let s = std::fs::read_to_string(&p)
         .with_context(|| format!("Cannot read configuration: {}", p.display()))?;
-    toml::from_str(&s)
-        .with_context(|| format!("Fix the configuration syntax and retry: {}", p.display()))
+    parse(&s).with_context(|| format!("Fix the configuration syntax and retry: {}", p.display()))
+}
+
+/// Explicit config replaces the default file; '-' reads stdin.
+pub fn load_from(path: Option<&std::path::Path>) -> Result<ConfigFile> {
+    let Some(path) = path else {
+        return load();
+    };
+    let text = if path == std::path::Path::new("-") {
+        use std::io::Read;
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text)?;
+        text
+    } else {
+        std::fs::read_to_string(path)
+            .with_context(|| format!("Cannot read configuration: {}", path.display()))?
+    };
+    parse(&text)
+}
+
+fn parse(text: &str) -> Result<ConfigFile> {
+    // Parse errors can quote credentials from the input; report only the format.
+    if text.trim_start().starts_with('{') {
+        serde_json::from_str(text).map_err(|_| anyhow::anyhow!("Invalid JSON configuration"))
+    } else {
+        toml::from_str(text).map_err(|_| anyhow::anyhow!("Invalid TOML configuration"))
+    }
 }
 
 pub fn save(cfg: &ConfigFile) -> Result<PathBuf> {
@@ -135,11 +157,6 @@ pub fn save(cfg: &ConfigFile) -> Result<PathBuf> {
 /// `config init` 写入的带注释模板。默认值占位符由内置默认渲染，注释不会与实际默认脱节。
 pub fn template() -> String {
     use crate::config as c;
-    let formats = crate::options::default_formats()
-        .iter()
-        .map(|f| format!("\"{f}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
     let asr = Asr::default();
     let llm = crate::llm::LlmSettings::default();
     [
@@ -155,9 +172,7 @@ pub fn template() -> String {
         ("{ASR_CONCURRENCY}", asr.concurrency.to_string()),
         ("{VAD_THRESHOLD}", asr.vad_threshold.to_string()),
         ("{MIN_SILENCE}", asr.min_silence.to_string()),
-        ("{FORMATS}", formats),
         ("{SLIDE_MODE}", c::SlideMode::default().to_string()),
-        ("{RESUME}", "true".to_string()),
         (
             "{TRANSCRIPT_SOURCE}",
             c::TranscriptSource::default().to_string(),
@@ -181,7 +196,7 @@ const TEMPLATE: &str = r#"# Configuration
 # View settings: notepipe config show
 
 [defaults]
-# Output root, organized by platform/title/ID
+# Output root; each note gets its own title folder
 #out = "{OUT}"
 # Similarity (0,1]; higher captures more slides
 #similarity = {SIMILARITY}
@@ -197,10 +212,6 @@ const TEMPLATE: &str = r#"# Configuration
 # auto: subtitles first, then speech recognition
 # subtitle: subtitles only; asr: speech recognition only
 #transcript_source = "{TRANSCRIPT_SOURCE}"
-# Output formats: md, html, json
-#formats = [{FORMATS}]
-# Continue interrupted transcription
-#resume = {RESUME}
 
 [source]
 # Source adapter argv; empty discovers a single notepipe-source-* executable
@@ -237,7 +248,7 @@ enabled = {LLM_ENABLED}
 #vision = {LLM_VISION}
 # Concurrent requests
 #concurrency = {LLM_CONCURRENCY}
-# Add AI summaries; requires enabled = true
+# Add AI summaries
 #summarize = {LLM_SUMMARIZE}
 # Bilingual notes: target language; skipped when the text is already in it
 #translate = "en"
@@ -259,16 +270,6 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         ("slide_mode", r.slide_mode.to_string()),
         ("stable_secs", r.stable_secs.to_string()),
         ("transcript_source", r.transcript_source.to_string()),
-        (
-            "formats",
-            r.formats
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-        ),
-        ("no_download", r.no_download.to_string()),
-        ("resume", r.resume.to_string()),
     ];
     println!("[defaults]");
     for (key, value) in rows {
@@ -355,13 +356,11 @@ mod tests {
         let built_in =
             crate::options::resolve(String::new(), &Default::default(), &Default::default())
                 .unwrap();
-        assert_eq!(from_template.resume, built_in.resume);
         assert_eq!(from_template.stable_secs, built_in.stable_secs);
         assert_eq!(from_template.similarity, built_in.similarity);
         assert_eq!(from_template.cooldown, built_in.cooldown);
         assert_eq!(from_template.source, built_in.source);
         assert_eq!(from_template.asr, built_in.asr);
-        assert_eq!(from_template.formats, built_in.formats);
         assert_eq!(file.asr, super::Asr::default());
     }
 }

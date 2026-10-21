@@ -45,7 +45,10 @@ media = out / 'media.mp4'
 if args.behavior in {'files', 'orphan', 'fragmented'}:
     media.write_bytes(b'cached media')
 else:
-    subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=64x32:d=3', '-c:v', 'mpeg4', str(media)], check=True)
+    command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=64x32:d=3']
+    if args.behavior == 'speech':
+        command += ['-i', str(Path(__file__).with_name('speech.wav')), '-shortest']
+    subprocess.run(command + ['-c:v', 'mpeg4', str(media)], check=True)
 tracks = []
 for language, automatic, text in [('fr', False, 'French captions.'), ('en', True, 'Automatic captions.'), ('en', False, 'Welcome to the source adapter.')]:
     name = f'caption-{language}-{automatic}.srt'

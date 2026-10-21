@@ -15,7 +15,7 @@ pub const DEFAULT_STABLE_SECS: f64 = 0.8;
 /// 单段语音最长秒数（过长会在静音点切分）
 pub const DEFAULT_MAX_SPEECH: f32 = 20.0;
 /// 默认输出根目录
-pub const DEFAULT_OUT_DIR: &str = "out";
+pub const DEFAULT_OUT_DIR: &str = ".";
 /// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr 共用同一判定）。
 pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
     let url =
@@ -70,7 +70,7 @@ pub fn asr_api_key_from_env() -> Option<String> {
         .filter(|k| !k.trim().is_empty())
 }
 
-/// CLI-only fallback for an empty LLM key; never read by saved-task execution.
+/// CLI fallback for an empty LLM key.
 pub fn llm_api_key_from_env() -> Option<String> {
     std::env::var("NOTEPIPE_LLM_API_KEY")
         .ok()
@@ -118,25 +118,6 @@ pub enum TranscriptSource {
     Asr,
 }
 
-/// 输出格式。非法值在配置解析期即报错，不再拖到渲染阶段。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OutputFormat {
-    Md,
-    Html,
-    Json,
-}
-
-impl fmt::Display for OutputFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Md => "md",
-            Self::Html => "html",
-            Self::Json => "json",
-        })
-    }
-}
-
 /// 运行期管线配置（由 CLI 参数归一而来）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
@@ -151,17 +132,16 @@ pub struct PipelineConfig {
     /// stable 模式下画面需保持不变的秒数
     pub stable_secs: f64,
     pub roi: Option<Roi>,
-    pub formats: Vec<OutputFormat>,
-    pub no_download: bool,
-    /// 断点续跑：跳过输出目录中已完成的 ASR chunk
-    pub resume: bool,
+    /// Clear this source's cache before starting.
+    pub no_resume: bool,
+    pub subtitle: Option<PathBuf>,
     /// LLM 字幕校对（已合并 CLI 覆盖后的生效配置）
     pub llm: crate::llm::LlmSettings,
     /// HTTP transcription settings with CLI overrides applied.
     pub asr: crate::settings::Asr,
     /// 转写来源：字幕优先 / 强制字幕 / 强制 ASR
     pub transcript_source: TranscriptSource,
-    /// `-o` 根目录（笔记库根），课程目录由 workspace/artifact 在其下布局
+    /// Root containing published note folders.
     pub out_root: PathBuf,
 }
 
@@ -232,18 +212,6 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
 }
 
 impl PipelineConfig {
-    /// 身份文件用的脱敏副本：clone 并清空 llm.api_key 与 asr.api_key。
-    ///
-    /// 安全不变量：身份/binding JSON 会落盘进输出目录，任何情况下不得携带
-    /// 凭据——两处手写清密钥（pipeline.rs / execution.rs）已合并为这一单一事实源，
-    /// 新增身份序列化路径必须走这里而不是再写一遍。
-    pub fn redacted_for_identity(&self) -> Self {
-        let mut cfg = self.clone();
-        cfg.llm.api_key.clear();
-        cfg.asr.api_key.clear();
-        cfg
-    }
-
     /// 全量预检：所有配置错误必须在任何昂贵操作（下载/抽帧/模型加载）之前暴露。
     /// 返回 Err 的送进 main 后直接退出，不会碰网络与模型。
     pub fn validate(&self) -> AnyhowResult<()> {
@@ -325,12 +293,6 @@ impl PipelineConfig {
     pub fn frames_dir(&self) -> PathBuf {
         self.out_dir.join("frames")
     }
-    pub fn timeline_path(&self) -> PathBuf {
-        self.out_dir.join("timeline.jsonl")
-    }
-    pub fn meta_path(&self) -> PathBuf {
-        self.out_dir.join("meta.json")
-    }
 }
 
 /// 用户主目录：HOME，Windows 上 HOME 可能缺席时退回 USERPROFILE。
@@ -356,6 +318,23 @@ pub fn config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
         .join("notepipe")
+}
+
+/// Platform cache root; XDG overrides the native location on every platform.
+pub fn cache_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("XDG_CACHE_HOME").filter(|p| !p.is_empty()) {
+        return PathBuf::from(path).join("notepipe");
+    }
+    #[cfg(windows)]
+    if let Some(path) = std::env::var_os("LOCALAPPDATA").filter(|p| !p.is_empty()) {
+        return PathBuf::from(path).join("notepipe/cache");
+    }
+    let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
+    if cfg!(target_os = "macos") {
+        home.join("Library/Caches/notepipe")
+    } else {
+        home.join(".cache/notepipe")
+    }
 }
 
 /// 展开 `~` / `~/...`（仅 Unix 主目录约定；无 HOME 时原样返回）。
@@ -410,21 +389,53 @@ pub fn sanitize_filename_with_fallback(s: &str, fallback: &str) -> String {
     }
     let out = out.trim_matches(['-', '.', ' ']).to_string();
     let out: String = out.chars().take(MAX_COMPONENT_CHARS).collect();
+    let out = out.trim_end_matches(['-', '.', ' ']);
     if out.is_empty() {
         fallback.to_string()
     } else {
-        out
+        let stem = out.split('.').next().unwrap_or(out).to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ["COM", "LPT"].iter().any(|prefix| {
+                stem.strip_prefix(prefix).is_some_and(|suffix| {
+                    suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9')
+                })
+            });
+        if reserved {
+            match out.split_once('.') {
+                Some((name, extension)) => format!("{name}_.{extension}"),
+                None => format!("{out}_"),
+            }
+        } else {
+            out.to_owned()
+        }
     }
-}
-
-/// 保留中文等标题字符，去掉路径非法符（= sanitize_filename_with_fallback(_, "untitled")）。
-pub fn sanitize_component(s: &str) -> String {
-    sanitize_filename_with_fallback(s, "untitled")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn note_names_trim_after_truncation_and_avoid_windows_reserved_names() {
+        assert_eq!(sanitize_filename_with_fallback("CON", "untitled"), "CON_");
+        assert_eq!(
+            sanitize_filename_with_fallback("con.txt", "untitled"),
+            "con_.txt"
+        );
+        assert_eq!(sanitize_filename_with_fallback("LPT9", "untitled"), "LPT9_");
+        assert_eq!(
+            sanitize_filename_with_fallback("COM10", "untitled"),
+            "COM10"
+        );
+        assert_eq!(
+            sanitize_filename_with_fallback(&format!("{} rest", "a".repeat(79)), "untitled"),
+            "a".repeat(79)
+        );
+        assert_eq!(
+            sanitize_filename_with_fallback(" ... ", "untitled"),
+            "untitled"
+        );
+    }
 
     #[test]
     fn expand_tilde_paths() {
@@ -448,9 +459,8 @@ mod tests {
             slide_mode: SlideMode::Stable,
             stable_secs: DEFAULT_STABLE_SECS,
             roi: None,
-            formats: vec![OutputFormat::Md],
-            no_download: false,
-            resume: false,
+            no_resume: false,
+            subtitle: None,
             llm: Default::default(),
             source: Default::default(),
             asr: Default::default(),
@@ -482,12 +492,6 @@ mod tests {
         c.sample_interval = 0.0;
         assert!(c.validate().is_err());
         c.sample_interval = DEFAULT_SAMPLE_INTERVAL;
-
-        c.formats = vec![];
-        assert!(
-            c.validate().is_ok(),
-            "Internal reading does not depend on optional exports"
-        );
     }
 
     #[test]

@@ -149,14 +149,3 @@ pub async fn probe_duration(media: &Path) -> Option<f64> {
     let out = probe_output(Command::new("ffprobe").args(duration_args()).arg(media)).await?;
     parse_duration(&out)
 }
-
-/// [`probe_duration`] 的同步版（供阻塞线程使用）。
-pub fn probe_duration_blocking(media: &Path) -> Option<f64> {
-    let mut cmd = std::process::Command::new("ffprobe");
-    cmd.args(duration_args()).arg(media);
-    let out = crate::runtime::run_bounded("ffprobe", &mut cmd, PROBE_TIMEOUT).ok()?;
-    out.status
-        .success()
-        .then(|| parse_duration_text(&out.stdout))
-        .flatten()
-}

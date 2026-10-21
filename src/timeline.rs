@@ -1,8 +1,6 @@
-//! 时间线：事件类型、frame/speech 合并成 Section、timeline.jsonl 读写。
+//! Timeline events, screenshot alignment, and paragraph assembly.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FrameEvent {
@@ -63,14 +61,6 @@ pub(crate) fn parse_timestamp(value: &str) -> Option<f64> {
         result = result * 60.0 + n;
     }
     Some(result)
-}
-
-/// timeline.jsonl 的一行。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum TimelineEvent {
-    Frame(FrameEvent),
-    Speech(TranscriptEvent),
 }
 
 /// 合并算法：
@@ -322,28 +312,6 @@ fn is_standalone_filler(text: &str) -> bool {
             | "えっと"
             | "ええと"
     )
-}
-
-/// 原子写入 timeline.jsonl（该文件会被复制进发布版本，不能留半截）。
-pub fn write_jsonl(path: &Path, frames: &[FrameEvent], speech: &[TranscriptEvent]) -> Result<()> {
-    let mut events: Vec<TimelineEvent> = vec![];
-    events.extend(frames.iter().cloned().map(TimelineEvent::Frame));
-    events.extend(speech.iter().cloned().map(TimelineEvent::Speech));
-    // total_cmp：对 NaN 也有全序定义，外部数据不会让排序 panic
-    events.sort_by(|a, b| time_of(a).total_cmp(&time_of(b)));
-    let mut bytes = Vec::new();
-    for ev in &events {
-        serde_json::to_writer(&mut bytes, ev)?;
-        bytes.push(b'\n');
-    }
-    crate::checkpoint::atomic_write(path, &bytes)
-}
-
-fn time_of(e: &TimelineEvent) -> f64 {
-    match e {
-        TimelineEvent::Frame(f) => f.t,
-        TimelineEvent::Speech(s) => s.start,
-    }
 }
 
 #[cfg(test)]

@@ -67,7 +67,7 @@ fn no_arguments_or_help_succeed_with_guidance() {
     let text = stdout(&help);
     assert!(text.contains("Quick start"), "{text}");
     assert!(text.contains("Speech recognition"), "{text}");
-    for cmd in ["config", "summarize", "doctor"] {
+    for cmd in ["config", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
     }
 }
@@ -197,7 +197,7 @@ fn config_show_reports_the_defaults_conversion_uses() {
             .unwrap_or_default()
             .to_owned()
     };
-    assert_eq!(value("resume "), "true");
+    assert_eq!(value("out "), ".");
     assert_eq!(value("stable_secs "), "0.8");
 }
 
@@ -355,8 +355,8 @@ fn source_adapter_generates_notes_and_reuses_its_completed_output() {
             url,
             "--transcript-source",
             "subtitle",
-            "--formats",
-            "md",
+            "--slide-mode",
+            "first",
             flag,
         ]);
         assert!(
@@ -381,13 +381,8 @@ fn source_adapter_generates_notes_and_reuses_its_completed_output() {
         );
         let done = events.last().unwrap();
         assert_eq!(done["type"], "done");
-        assert_eq!(done["title"], "Fixture source");
-        assert_eq!(done["partial"], false);
-        let note = cli
-            .dir
-            .path()
-            .join(done["out_dir"].as_str().unwrap())
-            .join("note.md");
+        assert_eq!(done["warnings"], serde_json::json!([]));
+        let note = cli.dir.path().join(done["markdown"].as_str().unwrap());
         let note = std::fs::read_to_string(note).unwrap();
         assert!(note.contains("Welcome to the source adapter."), "{note}");
         assert!(!note.contains("Automatic captions."));
@@ -498,4 +493,77 @@ fn unconfigured_sources_discover_a_single_adapter_and_report_ambiguity() {
             .count(),
         1
     );
+}
+
+#[test]
+fn removed_output_controls_and_commands_are_rejected() {
+    let cli = CliTest::new();
+    for args in [
+        vec!["run-task"],
+        vec!["summarize"],
+        vec!["source", "--resume"],
+        vec!["source", "--no-download"],
+        vec!["source", "--formats", "md"],
+    ] {
+        assert!(!cli.run(&args).status.success(), "{args:?}");
+    }
+    for key in ["formats = ['md']", "no_download = true", "resume = true"] {
+        cli.config(&format!("[defaults]\n{key}\n"));
+        assert!(!cli.run(&["config", "show"]).status.success(), "{key}");
+    }
+}
+
+#[test]
+fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_overrides() {
+    use std::io::Write;
+    let cli = CliTest::new();
+    cli.config("[invalid ambient configuration");
+    std::fs::write(cli.dir.path().join("media.mp4"), "placeholder").unwrap();
+    for text in [
+        "[defaults]\nsample_interval = 0.5\n",
+        "  {\"defaults\":{\"sample_interval\":0.5}}",
+    ] {
+        for input in ["settings.conf", "-"] {
+            std::fs::write(cli.dir.path().join("settings.conf"), text).unwrap();
+            let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+                .args([
+                    "./media.mp4",
+                    "--config",
+                    input,
+                    "--sample-interval",
+                    "0",
+                    "--json",
+                ])
+                .current_dir(cli.dir.path())
+                .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
+                .env("XDG_CACHE_HOME", cli.dir.path().join("cache"))
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(text.as_bytes())
+                .unwrap();
+            let error = json_error(&child.wait_with_output().unwrap());
+            assert!(
+                error["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("--sample-interval")
+            );
+        }
+    }
+    for invalid in [
+        "[llm]\napi_key = 'private-test-key",
+        "{\"llm\":{\"api_key\":\"private-test-key",
+    ] {
+        std::fs::write(cli.dir.path().join("invalid.conf"), invalid).unwrap();
+        let error = json_error(&cli.run(&["./media.mp4", "--config", "invalid.conf", "--json"]));
+        assert!(error["message"].as_str().unwrap().contains("configuration"));
+        assert!(!error.to_string().contains("private-test-key"));
+    }
 }

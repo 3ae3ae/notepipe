@@ -71,6 +71,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers['Content-Length']))
+        with (args.record / 'calls').open('a') as log:
+            log.write('request\n')
         (args.record / 'request').write_bytes(body)
         (args.record / 'authorization').write_text(self.headers.get('Authorization', ''))
         (args.record / 'endpoint').write_text(self.path)
@@ -82,7 +84,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             time.sleep(0.2)
             with Handler.lock:
                 Handler.active -= 1
-        if args.behavior == 'hang':
+        if args.behavior == 'hang' or (args.behavior == 'resume' and len((args.record / 'calls').read_text().splitlines()) > 1 and not (args.record / 'release').exists()):
             (args.record / 'transcribing').write_text('ready')
             time.sleep(30)
         elif args.behavior == 'error':

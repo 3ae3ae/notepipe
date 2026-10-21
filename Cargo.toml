@@ -12,10 +12,6 @@ categories = ["command-line-utilities", "multimedia::audio", "multimedia::video"
 
 [dependencies]
 earshot = "1.2.2"
-ratex-layout = "0.1.15"
-ratex-parser = "0.1.15"
-ratex-svg = { version = "0.1.15", features = ["embed-fonts"] }
-ratex-types = "0.1.15"
 anyhow = "1"
 tempfile = "3"
 url = "2"
@@ -24,7 +20,6 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-zip = { version = "8.6", default-features = false }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 ureq = { version = "2", features = ["json"] }
 base64 = "0.22"

@@ -1,11 +1,6 @@
-//! CLI 与任务协议共享的配置合并规则。
+//! Merge file settings with CLI overrides.
 use crate::cli::RunOpts;
 use crate::{config, llm, settings};
-
-/// 内置默认输出格式。settings 的展示与配置模板也由它渲染，避免第二份真相。
-pub fn default_formats() -> Vec<config::OutputFormat> {
-    vec![config::OutputFormat::Md, config::OutputFormat::Html]
-}
 
 /// 配置文件 + CLI 覆盖 -> 生效 LLM 设置。
 fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> llm::LlmSettings {
@@ -50,7 +45,7 @@ pub fn resolve(
     Ok(config::PipelineConfig {
         url: source,
         source: file.source.clone(),
-        // out_dir 此处只是初值；pipeline 里会改写为 {out_root}/{platform}/{title}/{id}/
+        // The pipeline assigns the per-source work directory before processing.
         out_dir: out_root.clone(),
         out_root,
         similarity: opts
@@ -80,13 +75,8 @@ pub fn resolve(
                 None => None,
             },
         },
-        formats: opts
-            .formats
-            .clone()
-            .or_else(|| d.formats.clone())
-            .unwrap_or_else(default_formats),
-        no_download: opts.no_download || d.no_download.unwrap_or(false),
-        resume: config::resolve_flag(opts.resume, opts.no_resume, d.resume, true),
+        no_resume: opts.no_resume,
+        subtitle: opts.subtitle.clone(),
         llm: resolve_llm(opts, file),
         asr: resolve_asr(opts, file),
         transcript_source: opts
@@ -163,15 +153,14 @@ mod tests {
 
     #[test]
     fn explicit_false_overrides_config_and_invalid_values_are_not_clamped() {
-        let mut file = settings::ConfigFile::default();
-        file.defaults.resume = Some(true);
+        let file = settings::ConfigFile::default();
         let opts = RunOpts {
             no_resume: true,
             stable_secs: Some(-1.0),
             ..Default::default()
         };
         let cfg = resolve("video".into(), &opts, &file).unwrap();
-        assert!(!cfg.resume);
+        assert!(cfg.no_resume);
         assert_eq!(cfg.stable_secs, -1.0);
         assert!(cfg.validate().is_err());
     }
