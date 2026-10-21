@@ -795,7 +795,7 @@ fn cancelling_completion_hooks_stops_their_process_trees() {
         cfg["defaults"]["on_complete"] = json!([
             "sh",
             "-c",
-            "trap 'wait; exit 0' TERM\nsleep 30 &\nprintf '%s' \"$!\" > \"$1\"\nwait",
+            "trap 'wait; exit 0' TERM\nsleep 30 &\nprintf '%s' \"$!\" > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\nwait",
             "hook",
             record,
         ]);
