@@ -151,21 +151,25 @@ pub fn command(source: &Source) -> Result<(PathBuf, &[String])> {
         return Ok((path, args));
     }
     let executable = std::env::current_exe()?.canonicalize()?;
-    let search_path = std::env::var_os("PATH").unwrap_or_default();
+    let search_path = std::env::var_os("PATH");
     let directories = std::iter::once(
         executable
             .parent()
             .context("Missing executable directory")?
             .to_path_buf(),
     )
-    .chain(std::env::split_paths(&search_path));
+    .chain(search_path.iter().flat_map(std::env::split_paths));
     Ok((discover(directories)?, &[]))
 }
 
 fn discover(directories: impl IntoIterator<Item = PathBuf>) -> Result<PathBuf> {
     let mut found = std::collections::BTreeMap::new();
     let cwd = std::env::current_dir()?;
-    for directory in directories {
+    let pathext = std::env::var("PATHEXT").ok();
+    for directory in directories
+        .into_iter()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
         let directory = cwd.join(directory);
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
@@ -175,6 +179,9 @@ fn discover(directories: impl IntoIterator<Item = PathBuf>) -> Result<PathBuf> {
             let Some(name) = name.to_str() else {
                 continue;
             };
+            if cfg!(windows) && !windows_executable(name, pathext.as_deref()) {
+                continue;
+            }
             let key = if cfg!(windows) {
                 Path::new(name)
                     .file_stem()
@@ -198,6 +205,20 @@ fn discover(directories: impl IntoIterator<Item = PathBuf>) -> Result<PathBuf> {
         found.keys().cloned().collect::<Vec<_>>().join(", ")
     );
     Ok(found.into_values().next().unwrap())
+}
+
+fn windows_executable(name: &str, pathext: Option<&str>) -> bool {
+    let Some(extension) = Path::new(name).extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    pathext
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        .any(|value| {
+            value
+                .strip_prefix('.')
+                .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+        })
 }
 
 fn accept_line(line: &[u8], last: &mut Option<Output>) -> Result<()> {
@@ -282,7 +303,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
     let mut exited = tokio::time::interval_at(tokio::time::Instant::now() + poll, poll);
     crate::progress::stage("download", "start");
     let result = async {
-        loop {
+        let status = loop {
             let mut bounded = (&mut stdout).take(MAX_LINE_BYTES + 1 - line.len() as u64);
             tokio::select! {
                 biased;
@@ -292,11 +313,26 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
                     else { accept_line(&line, &mut last)?; line.clear(); }
                 },
                 _ = exited.tick() => if let Some(status) = child.try_wait() {
-                    if !line.is_empty() { accept_line(&line, &mut last)?; }
-                    break Ok(status);
+                    break status;
                 },
             }
+        };
+        child.stop();
+        // An exited child can still have a final result buffered in its pipe.
+        while !eof {
+            runtime::check_cancelled()?;
+            let mut bounded = (&mut stdout).take(MAX_LINE_BYTES + 1 - line.len() as u64);
+            if bounded.read_until(b'\n', &mut line).await? == 0 {
+                eof = true;
+            } else {
+                accept_line(&line, &mut last)?;
+                line.clear();
+            }
         }
+        if !line.is_empty() {
+            accept_line(&line, &mut last)?;
+        }
+        Ok(status)
     }
     .await;
     child.stop();
@@ -501,6 +537,54 @@ mod tests {
             assert!(resolved.media.is_file());
         })
         .unwrap();
+    }
+
+    #[test]
+    fn an_immediate_exit_preserves_the_complete_final_unterminated_line() {
+        let root = tempfile::tempdir().unwrap();
+        let Some(source) = command(&root.path().join("record"), "instant") else {
+            return;
+        };
+        runtime::block_on(async {
+            for number in 0..3 {
+                let cache = root.path().join(format!("cache-{number}"));
+                let resolved = resolve("https://example.test/media", &source, &cache)
+                    .await
+                    .unwrap();
+                assert_eq!(resolved.meta.title.len(), 131072);
+                assert!(resolved.media.is_file());
+                assert_eq!(resolved.subtitles.len(), 3);
+                assert!(cache.join("complete.json").is_file());
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn windows_discovery_only_accepts_executable_extensions() {
+        for extension in ["com", "EXE", "Bat", "cMd"] {
+            assert!(windows_executable(
+                &format!("notepipe-source-test.{extension}"),
+                None
+            ));
+        }
+        for name in [
+            "notepipe-source-test",
+            "notepipe-source-test.txt",
+            "notepipe-source-test.pdb",
+            "notepipe-source-test.exe.manifest",
+        ] {
+            assert!(!windows_executable(name, None), "{name}");
+        }
+        assert!(windows_executable(
+            "notepipe-source-test.PY",
+            Some(".Py;.EXE")
+        ));
+        assert!(!windows_executable(
+            "notepipe-source-test.cmd",
+            Some(".Py;.EXE")
+        ));
+        assert!(!windows_executable("notepipe-source-test.exe", Some("")));
     }
 
     #[test]

@@ -514,6 +514,49 @@ fn removed_output_controls_and_commands_are_rejected() {
 }
 
 #[test]
+fn source_discovery_never_uses_unset_or_empty_path_entries_as_the_current_directory() {
+    let cli = CliTest::new();
+    cli.config("[source]\ncommand = []\n");
+    let adapter = cli.dir.path().join(if cfg!(windows) {
+        "notepipe-source-untrusted.cmd"
+    } else {
+        "notepipe-source-untrusted"
+    });
+    std::fs::write(&adapter, "fixture must never run").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let separator = if cfg!(windows) { ";" } else { ":" };
+    let empty_components = format!("{separator}{separator}");
+    for path in [None, Some(""), Some(empty_components.as_str())] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
+        command
+            .args(["https://example.test/media", "--json"])
+            .current_dir(cli.dir.path())
+            .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
+            .env("XDG_CACHE_HOME", cli.dir.path().join("cache"))
+            .env_remove("RUST_LOG")
+            .env_remove("NOTEPIPE_LLM_API_KEY")
+            .stdin(std::process::Stdio::null());
+        if let Some(path) = path {
+            command.env("PATH", path);
+        } else {
+            command.env_remove("PATH");
+        }
+        let error = source_json_error(&command.output().unwrap());
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains(notepipe::source::ADAPTER_HINT),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_overrides() {
     use std::io::Write;
     let cli = CliTest::new();

@@ -42,7 +42,7 @@ if args.behavior == 'oversized':
     sys.exit(0)
 print(json.dumps({'progress': 0.25}), flush=True)
 media = out / 'media.mp4'
-if args.behavior in {'files', 'orphan', 'fragmented'}:
+if args.behavior in {'files', 'orphan', 'fragmented', 'instant'}:
     media.write_bytes(b'cached media')
 else:
     command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=64x32:d=3']
@@ -56,6 +56,11 @@ for language, automatic, text in [('fr', False, 'French captions.'), ('en', True
     tracks.append({'path': name, 'language': language, 'automatic': automatic})
 print(json.dumps({'progress': 1.0}), flush=True)
 result = json.dumps({'media': media.name, 'title': 'Fixture source', 'author': 'Fixture author', 'duration': 3, 'language': 'en', 'url': url, 'subtitles': tracks})
+if args.behavior == 'instant':
+    result = json.dumps({'media': media.name, 'title': 'x' * 131072, 'subtitles': tracks})
+    sys.stdout.write(result)
+    sys.stdout.flush()
+    os._exit(0)
 if args.behavior == 'orphan':
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     (args.record / 'child-pid').write_text(str(child.pid))
