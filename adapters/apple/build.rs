@@ -9,26 +9,19 @@ fn main() {
     println!("cargo:rerun-if-changed=native/Package.resolved");
     println!("cargo:rerun-if-changed=native/Sources");
 
-    if target_os != "macos" || target_arch != "aarch64" {
-        return;
-    }
-    if !swiftc_available() {
-        println!(
-            "cargo:warning=未找到 swiftc（需要 Xcode Command Line Tools），跳过 Apple 原生模块；coreml 后端不可用"
-        );
-        return;
-    }
+    assert!(
+        target_os == "macos" && target_arch == "aarch64",
+        "The Apple adapter supports macOS arm64 only"
+    );
+    assert!(
+        tool_available("swiftc"),
+        "Swift compiler unavailable. Install Xcode and select it with xcode-select --switch /Applications/Xcode.app/Contents/Developer"
+    );
 
-    if !Command::new("xcrun")
-        .args(["--find", "metal"])
-        .output()
-        .is_ok_and(|output| output.status.success())
-    {
-        println!(
-            "cargo:warning=Metal compiler unavailable: xcrun --find metal failed. The Apple adapter will refuse startup; other ASR services and the core are unaffected."
-        );
-        return;
-    }
+    assert!(
+        tool_available("metal"),
+        "Metal compiler unavailable. Install Xcode, then run xcodebuild -downloadComponent MetalToolchain"
+    );
 
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let pkg = manifest.join("native");
@@ -77,13 +70,11 @@ fn main() {
                 println!("cargo:warning={line}");
             }
         }
-        println!(
-            "cargo:warning=Swift build failed; this adapter will refuse startup (the core and other ASR services are unaffected)"
+        panic!(
+            "Swift build failed. Install Xcode and its Metal compiler with xcodebuild -downloadComponent MetalToolchain; see the build output above"
         );
-        return;
     }
 
-    println!("cargo:rustc-cfg=apple_native");
     println!("cargo:rustc-link-search=native={}", build_dir.display());
     // libCAppleASR.a 已包含 speech-swift 及其依赖（MLX 等）的全部对象
     println!("cargo:rustc-link-lib=static=CAppleASR");
@@ -144,41 +135,20 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=objc");
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 
-    // MLX 运行时需要 metallib 与可执行文件同目录（mlx.metallib）。
-    // 默认取 SPM build 产物（mlx-swift_Cmlx.bundle 内的 default.metallib）；
-    // 仅当仓库根存在手动放置的 mlx.metallib 时才优先用它（便于 runner 固定版本）。
-    // 注意 .build 下的布局随构建系统不同（swiftbuild: out/Products/Release，
-    // native: <triple>/release），canonical 路径找不到就递归搜索兜底。
-    let vendored = pkg.join("mlx.metallib");
+    // MLX loads mlx.metallib colocated with the executable.
     let products = build_dir.canonicalize().unwrap_or(build_dir);
-    let bundle = if vendored.is_file() {
-        Some(vendored)
+    let expected = products.join("mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib");
+    let metallib = if expected.is_file() {
+        expected
     } else {
-        let expect = products.join("mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib");
-        if expect.is_file() {
-            Some(expect)
-        } else {
-            find_file_recursive(&pkg.join(".build"), "default.metallib", 8)
-        }
+        find_file_recursive(&pkg.join(".build"), "default.metallib", 8).expect(
+            "Swift build produced no MLX metallib. Install Xcode and run xcodebuild -downloadComponent MetalToolchain, then rebuild",
+        )
     };
-    if let Some(bundle) = bundle {
-        if let Ok(out_dir) = std::env::var("OUT_DIR") {
-            // OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out
-            let exe_dir = PathBuf::from(out_dir).join("../../../");
-            let dest = exe_dir.join("mlx.metallib");
-            if std::fs::copy(&bundle, &dest).is_err() {
-                println!(
-                    "cargo:warning=无法复制 mlx.metallib 到 {}",
-                    exe_dir.display()
-                );
-            }
-        }
-    } else {
-        println!(
-            "cargo:warning=未找到 mlx.metallib（{} 下递归搜索无果），CoreML 推理可能失败",
-            pkg.join(".build").display()
-        );
-    }
+    // OUT_DIR = <target>/<profile>/build/<package>-<hash>/out.
+    let exe_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("../../..");
+    std::fs::copy(metallib, exe_dir.join("mlx.metallib"))
+        .expect("Failed to copy mlx.metallib next to the built Apple adapter");
     // Swift 5 语言模式包的兼容钩子 + clang 运行时（___isPlatformVersionAtLeast 等）
     let devdir = xcode_devdir();
     if let Some(swift_lib) = devdir.as_deref().and_then(toolchain_swift_lib_dir) {
@@ -244,9 +214,9 @@ fn collect_a_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn swiftc_available() -> bool {
+fn tool_available(name: &str) -> bool {
     Command::new("xcrun")
-        .args(["--find", "swift"])
+        .args(["--find", name])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -262,7 +232,8 @@ fn run(cmd: &mut Command) -> Result<(), String> {
     match cmd.output() {
         Ok(out) if out.status.success() => Ok(()),
         Ok(out) => Err(format!(
-            "swift build 退出码 {:?}（stdout 尾部）:\n{}\n（stderr 尾部）:\n{}",
+            "{:?} exited with {:?} (stdout tail):\n{}\n(stderr tail):\n{}",
+            cmd.get_program(),
             out.status.code(),
             tail(&String::from_utf8_lossy(&out.stdout), 40),
             tail(&String::from_utf8_lossy(&out.stderr), 40),

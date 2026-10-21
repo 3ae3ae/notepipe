@@ -45,6 +45,7 @@ fn handle(
         .body_length()
         .is_some_and(|length| length as u64 > MAX_UPLOAD)
     {
+        // shortcut: tiny_http drains rejected bodies and can panic on a huge localhost Content-Length; replace it if exposed beyond trusted local clients.
         return error(413, "Audio upload exceeds 64 MiB");
     }
     let content_type = request
@@ -86,8 +87,19 @@ fn handle(
     }
 }
 
+fn check_metallib(executable: &Path) -> Result<()> {
+    let path = executable.with_file_name("mlx.metallib");
+    ensure!(
+        path.is_file(),
+        "Missing {}: mlx.metallib must sit next to the Apple adapter binary. Install via the wheel or release archive, which ships this file; plain cargo install does not.",
+        path.display()
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
+    check_metallib(&std::env::current_exe()?)?;
     let asr = apple::Asr::load(&args.model)?;
     let server = Server::http((args.host.as_str(), args.port))
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -110,6 +122,22 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
     use std::net::TcpStream;
+
+    #[test]
+    fn startup_requires_a_colocated_metallib() {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("notepipe-asr-apple");
+        let error = check_metallib(&executable).unwrap_err().to_string();
+        for guidance in [
+            "next to",
+            "wheel or release archive",
+            "plain cargo install does not",
+        ] {
+            assert!(error.contains(guidance), "{error}");
+        }
+        std::fs::write(dir.path().join("mlx.metallib"), b"test asset").unwrap();
+        check_metallib(&executable).unwrap();
+    }
 
     fn call(method: &str, path: &str, body: &[u8]) -> String {
         let server = Server::http("127.0.0.1:0").unwrap();

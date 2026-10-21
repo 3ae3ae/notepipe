@@ -50,19 +50,10 @@ public func notepipeLastError() -> UnsafePointer<CChar> {
 }
 
 @_silgen_name("notepipe_model_progress")
-private func reportModelProgress(
-    _ progress: Double, _ phase: UnsafePointer<CChar>, _ message: UnsafePointer<CChar>)
+private func reportModelProgress(_ progress: Double, _ message: UnsafePointer<CChar>)
 
-private func progressLog(_ p: Double, _ phase: String, _ msg: String) {
-    phase.withCString { phasePtr in
-        msg.withCString { reportModelProgress(p, phasePtr, $0) }
-    }
-}
-
-// Rust prepares missing files before loading, and loaders run offline, so every
-// progress report here is a local load whatever the library labels it.
-private func cachedLoadProgress(_ p: Double, _ msg: String) {
-    progressLog(p, "load", "正在加载本机模型… / Loading local model…")
+private func modelProgress(_ progress: Double, _ message: String) {
+    message.withCString { reportModelProgress(progress, $0) }
 }
 
 // MARK: - ASR：qwen3（CoreML 0.6B/ANE）| qwen3-1.7b（MLX/GPU）| whisper
@@ -78,63 +69,16 @@ final class AsrBox {
     init(_ m: AsrKind) { model = m }
 }
 
-// Cache-only preparation follows the same repositories and required files as the
-// actual loaders. It deliberately avoids constructing a second copy of ASR weights.
-@_cdecl("notepipe_asr_prepare_cache")
-public func notepipeAsrPrepareCache(
-    _ model: UnsafePointer<CChar>,
-    _ manifest: UnsafePointer<CChar>
-) -> Int32 {
-    let name = String(cString: model)
-    let manifestText = String(cString: manifest)
-    do {
-        try runSync {
-            let offline = ProcessInfo.processInfo.environment["HF_HUB_OFFLINE"]
-                .map { ["1", "true", "yes", "on"].contains($0.lowercased()) } ?? false
-            let data = manifestText.data(using: .utf8)!
-            guard let items = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-                throw NSError(domain: "notepipe", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: "模型清单无效 / Invalid model manifest",
-                ])
-            }
-            let downloads: [(String, [String])] = try items.map { item in
-                guard let repo = item["repo"] as? String,
-                      let files = item["files"] as? [String] else {
-                    throw NSError(domain: "notepipe", code: 1, userInfo: [
-                        NSLocalizedDescriptionKey: "模型清单无效 / Invalid model manifest",
-                    ])
-                }
-                return (repo, files)
-            }
-            for (index, item) in downloads.enumerated() {
-                let directory = try HuggingFaceDownloader.getCacheDirectory(for: item.0)
-                try await HuggingFaceDownloader.downloadWeights(
-                    modelId: item.0,
-                    to: directory,
-                    additionalFiles: item.1,
-                    offlineMode: offline,
-                    progressHandler: { fraction in
-                        progressLog(
-                            (Double(index) + fraction) / Double(downloads.count),
-                            "download", item.0)
-                    })
-            }
-        }
-        return 0
-    } catch {
-        setErr("Apple 模型下载失败 / Apple model download failed (\(name)): \(error)")
-        return -1
-    }
-}
-
 @_cdecl("notepipe_asr_create")
 public func notepipeAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRawPointer? {
     let name = String(cString: model)
+    let offline = ProcessInfo.processInfo.environment["HF_HUB_OFFLINE"]
+        .map { ["1", "true", "yes", "on"].contains($0.lowercased()) } ?? false
     do {
         let kind: AsrKind
         if name == "whisper" {
             let m = try runSync {
-                try await WhisperASRModel.fromPretrained(offlineMode: true, progressHandler: cachedLoadProgress)
+                try await WhisperASRModel.fromPretrained(offlineMode: offline, progressHandler: modelProgress)
             }
             kind = .whisper(m)
         } else if name == "qwen3-1.7b" {
@@ -143,13 +87,13 @@ public func notepipeAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRaw
             let m = try runSync {
                 try await Qwen3ASRModel.fromPretrained(
                     modelId: "aufklarer/Qwen3-ASR-1.7B-MLX-8bit",
-                    offlineMode: true,
-                    progressHandler: cachedLoadProgress)
+                    offlineMode: offline,
+                    progressHandler: modelProgress)
             }
             kind = .qwenMlx(m)
         } else if name == "qwen3-0.6b" {
             let m = try runSync {
-                try await CoreMLASRModel.fromPretrained(offlineMode: true, progressHandler: cachedLoadProgress)
+                try await CoreMLASRModel.fromPretrained(offlineMode: offline, progressHandler: modelProgress)
             }
             try m.warmUp()
             kind = .qwen(m)
