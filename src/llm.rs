@@ -5,10 +5,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use std::{path::Path, time::Duration};
 
-pub(crate) const PROOFREAD_PROMPT: &str = r#"You proofread transcripts of spoken recordings. Each input item is a stretch of continuous speech, already split at natural pauses. Fix obvious speech-recognition errors (misheard words, homophones, misspelled names and terms), remove filler that adds nothing, and repair awkward sentence breaks and punctuation so the text reads naturally. Do not summarize, expand, translate, add or remove substantive content, or change the meaning. Keep the original language. If an item contains only filler or meaningless fragments (such as a lone "um" or "you know"), return an empty text for it; never empty an item that has real content. Write mathematical formulas, symbols and expressions as LaTeX: wrap inline math in $...$ and put display math on its own line in $$...$$; rewrite spoken formulas, such as "x squared", as LaTeX too; do not add $ when there is no math."#;
-pub(crate) const PROOFREAD_CONTRACT: &str = r#"Output a JSON object {"segments":[{"id":number,"text":proofread text}]} with exactly one entry per input id; an item that contains only filler gets an empty text. Inside JSON strings, escape every backslash as \\."#;
-pub(crate) const PROOFREAD_VISION_NOTE: &str = r#" Each request includes the screenshot shown during this passage. Use it only to correct the spelling of terms and proper names; do not describe or comment on the image."#;
+pub(crate) const PROOFREAD_PROMPT: &str = r#"You proofread transcripts of spoken recordings. Each input item is a stretch of continuous speech, already split at natural pauses. Fix obvious speech-recognition errors (misheard words, homophones, misspelled names and terms), remove filler that adds nothing, and repair awkward sentence breaks and punctuation so the text reads naturally. Do not summarize, expand, translate, add or remove substantive content, or change the meaning. Keep the original language. If an item contains only filler or meaningless fragments (such as a lone "um" or "you know"), return an empty text for it; never empty an item that has real content. Write mathematical formulas, symbols and expressions as LaTeX: wrap inline math in $...$ and put display math on its own line in $$...$$; rewrite spoken formulas, such as "x squared", as LaTeX too; do not add $ when there is no math. If a screenshot is attached, use it only to correct the spelling of terms and proper names; do not describe or comment on it."#;
 pub(crate) const PARAGRAPHS_CONTRACT: &str = r#"Output a JSON object {"segments":[{"id":number,"text":result}]} with exactly one entry per input id. Inside JSON strings, escape every backslash as \\."#;
+pub(crate) const IMAGE_NOTE: &str =
+    r#" Each request includes the screenshot shown during this passage."#;
 
 const BATCH: usize = 20;
 const DEFAULT_CONCURRENCY: usize = 8;
@@ -143,6 +143,7 @@ pub struct LlmSettings {
     pub concurrency: usize,
     #[serde(deserialize_with = "deserialize_request")]
     pub request: Map<String, Value>,
+    #[serde(deserialize_with = "deserialize_stages")]
     pub stages: Vec<Stage>,
 }
 impl Default for LlmSettings {
@@ -198,6 +199,25 @@ fn deserialize_request<'de, D: Deserializer<'de>>(
     Ok(request)
 }
 
+fn validate_stage_names(stages: &[Stage]) -> Result<()> {
+    let mut names = std::collections::HashSet::new();
+    for stage in stages {
+        anyhow::ensure!(
+            names.insert(&stage.name),
+            "Duplicate LLM stage name: {}",
+            stage.name
+        );
+    }
+    Ok(())
+}
+fn deserialize_stages<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<Stage>, D::Error> {
+    let stages = Vec::deserialize(deserializer)?;
+    validate_stage_names(&stages).map_err(serde::de::Error::custom)?;
+    Ok(stages)
+}
+
 pub(crate) fn chat_body(
     settings: &LlmSettings,
     system: &str,
@@ -222,6 +242,7 @@ pub fn endpoint(base_url: &str) -> String {
 }
 pub fn validate(settings: &LlmSettings) -> Result<()> {
     validate_request(&settings.request)?;
+    validate_stage_names(&settings.stages)?;
     for stage in &settings.stages {
         let settings = settings.for_stage(stage)?;
         anyhow::ensure!(
@@ -259,6 +280,8 @@ pub struct StageReport {
     /// 首个失败原因（截断），用于结果消息可见性；无失败或纯跳过时为 None
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 pub fn paragraphs(
@@ -272,21 +295,20 @@ pub fn paragraphs(
         return Ok(StageReport::default());
     }
     let warned = std::sync::atomic::AtomicBool::new(false);
-    // Paths only: the image is read and encoded once per request batch, not all up front.
-    let mut image_paths: Vec<Option<std::path::PathBuf>> = Vec::with_capacity(sections.len());
-    for sec in sections.iter() {
-        crate::runtime::check_cancelled()?;
-        image_paths
-            .push((stage.images && !sec.speech.is_empty()).then(|| frames_root.join(&sec.image)));
-    }
-    let mut chunks: Vec<(Option<std::path::PathBuf>, Vec<&mut TranscriptEvent>)> = Vec::new();
+    let mut chunks: Vec<(Option<std::path::PathBuf>, usize, Vec<&mut TranscriptEvent>)> =
+        Vec::new();
     if stage.images {
-        for (sec, image) in sections.iter_mut().zip(&image_paths) {
-            let Some(image) = image else { continue };
+        for (index, sec) in sections.iter_mut().enumerate() {
+            crate::runtime::check_cancelled()?;
+            if sec.speech.is_empty() {
+                continue;
+            }
+            // Read and encode once per request batch, not all up front.
+            let image = (!sec.image.is_empty()).then(|| frames_root.join(&sec.image));
             let mut refs: Vec<_> = sec.speech.iter_mut().collect();
             while !refs.is_empty() {
                 let rest = refs.split_off(refs.len().min(BATCH));
-                chunks.push((Some(image.clone()), std::mem::replace(&mut refs, rest)));
+                chunks.push((image.clone(), index + 1, std::mem::replace(&mut refs, rest)));
             }
         }
     } else {
@@ -295,22 +317,33 @@ pub fn paragraphs(
             .flat_map(|sec| sec.speech.iter_mut())
             .collect();
         while !refs.is_empty() {
+            crate::runtime::check_cancelled()?;
             let rest = refs.split_off(refs.len().min(BATCH));
-            chunks.push((None, std::mem::replace(&mut refs, rest)));
+            chunks.push((None, 0, std::mem::replace(&mut refs, rest)));
         }
     }
     let pb = crate::progress::Bar::new(&stage.name, chunks.len() as u64)
         .with_template("{spinner:.green} llm {pos}/{len} [{bar:32.cyan/blue}] {msg}");
     let agent = chat_agent();
     let first_error = std::sync::Mutex::new(None::<String>);
+    let image_warnings = std::sync::Mutex::new(Vec::new());
     let completed = crate::runtime::map_pool(
         chunks,
         s.concurrency.clamp(1, MAX_CONCURRENCY),
-        |(image_path, mut chunk)| {
+        |(image_path, section, mut chunk)| {
             pb.inc(1);
-            let image = image_path
-                .as_deref()
-                .and_then(|path| section_image_b64(path, &warned));
+            let image = image_path.as_deref().and_then(|path| match section_image_b64(path) {
+                Ok(image) => Some(image),
+                Err(error) => {
+                    let warning = format!("{}: screenshot for section {section} could not be read; batch sent as text: {}: {error:#}", stage.name, path.display());
+                    let mut warnings = crate::runtime::lock_recover(&image_warnings);
+                    if !warnings.contains(&warning) {
+                        tracing::warn!("{warning}");
+                        warnings.push(warning);
+                    }
+                    None
+                }
+            });
             Ok(paragraph_chunk(
                 &agent,
                 s,
@@ -335,26 +368,13 @@ pub fn paragraphs(
         succeeded,
         failed: attempted.saturating_sub(succeeded),
         note: crate::runtime::lock_recover(&first_error).take(),
+        warnings: crate::runtime::lock_recover(&image_warnings).clone(),
     })
 }
 
-/// 读取本节校对截图的 base64；None = 截图不可用（已告警）。
-fn section_image_b64(path: &Path, warned: &std::sync::atomic::AtomicBool) -> Option<String> {
+fn section_image_b64(path: &Path) -> Result<String> {
     use base64::Engine as _;
-    let p = path;
-    match std::fs::read(p) {
-        Ok(bytes) => Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
-        Err(e) => {
-            warn_once(
-                warned,
-                &format!(
-                    "Required image could not be read; original text retained: {}: {e:#}",
-                    p.display()
-                ),
-            );
-            None
-        }
-    }
+    Ok(base64::engine::general_purpose::STANDARD.encode(std::fs::read(path)?))
 }
 
 /// 校对一个分块；返回成功条数（失败保留原文并记录首个错误）。
@@ -415,9 +435,8 @@ fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
 
 fn apply_results(chunk: &mut [&mut TranscriptEvent], results: &[(usize, String)], stage: &Stage) {
     for (id, text) in results {
-        let Some(event) = chunk.get_mut(*id) else {
-            continue;
-        };
+        // chat validates every id before applying a batch.
+        let event = &mut chunk[*id];
         match stage.output {
             Output::Replace if *text != event.text => {
                 event.raw.get_or_insert_with(|| event.text.clone());
@@ -426,7 +445,7 @@ fn apply_results(chunk: &mut [&mut TranscriptEvent], results: &[(usize, String)]
             Output::Below if !text.trim().is_empty() && text.trim() != event.text.trim() => {
                 event.below.push(StageText {
                     stage: stage.name.clone(),
-                    text: text.trim().into(),
+                    text: text.clone(),
                 });
             }
             _ => {}
@@ -472,14 +491,10 @@ fn build_chat_body(
         .enumerate()
         .map(|(id, text)| serde_json::json!({"id":id,"text":text}))
         .collect();
-    let contract = if stage.name == "proofread" {
-        PROOFREAD_CONTRACT
-    } else {
-        PARAGRAPHS_CONTRACT
-    };
-    let mut system = format!("{} {contract}", stage.prompt);
-    if image.is_some() && stage.name == "proofread" {
-        system.push_str(PROOFREAD_VISION_NOTE);
+    let image = image.filter(|_| stage.images);
+    let mut system = format!("{} {PARAGRAPHS_CONTRACT}", stage.prompt);
+    if image.is_some() {
+        system.push_str(IMAGE_NOTE);
     }
     let mut content =
         vec![serde_json::json!({"type":"text","text":serde_json::to_string(&payload)?})];
@@ -500,7 +515,7 @@ pub fn parse_segments(content: &str) -> Option<Vec<(usize, String)>> {
     {
         return Some(items);
     }
-    // 2) 兼容路径：顶层数组（含个别坏项的宽容扫描）
+    // 2) Compatibility with top-level arrays; malformed items fail the batch.
     parse_id_text_pairs(content)
 }
 
@@ -524,7 +539,7 @@ fn extract_json_object(content: &str) -> Option<serde_json::Value> {
     None
 }
 
-/// 从模型输出提取 [{"id":n,"text":"..."}]（容忍代码围栏、前后杂文、尾逗号与个别坏项）。
+/// Extract id/text pairs, tolerating fences, surrounding text and trailing commas.
 pub fn parse_id_text_pairs(content: &str) -> Option<Vec<(usize, String)>> {
     let start = content.find('[')?;
     let end = content.rfind(']')?;
@@ -532,8 +547,7 @@ pub fn parse_id_text_pairs(content: &str) -> Option<Vec<(usize, String)>> {
         return None;
     }
     let slice = &content[start..=end];
-    // 1) 严格解析；个别项 id/text 类型不对时 parse_items 返回 None，
-    //    必须继续降级而不是整批丢弃（落入第 2/3 级）
+    // 1) Parse every item strictly.
     if let Ok(v) = serde_json::from_str::<Vec<serde_json::Value>>(slice)
         && let Some(items) = parse_items(&v)
     {
@@ -547,8 +561,7 @@ pub fn parse_id_text_pairs(content: &str) -> Option<Vec<(usize, String)>> {
     {
         return Some(items);
     }
-    // 3) 宽容扫描：跳过坏项，收集合法 {"id":..,"text":".."}
-    lenient_scan(slice)
+    None
 }
 
 fn parse_items(v: &[serde_json::Value]) -> Option<Vec<(usize, String)>> {
@@ -587,57 +600,6 @@ pub(crate) fn clean_trailing_commas(s: &str) -> String {
         }
     }
     out
-}
-
-/// 逐个扫描顶层 {...} 对象，坏项跳过；能取到至少一项即返回。
-fn lenient_scan(s: &str) -> Option<Vec<(usize, String)>> {
-    let bytes = s.as_bytes();
-    let mut out: Vec<(usize, String)> = vec![];
-    let mut i = 0usize;
-    while i < s.len() {
-        let Some(rel) = s[i..].find('{') else { break };
-        let obj_start = i + rel;
-        // 找配对的 }（跳过字符串字面量内的花括号）
-        let mut depth = 0usize;
-        let mut in_str = false;
-        let mut esc = false;
-        let mut end = None;
-        for (k, &b) in bytes[obj_start..].iter().enumerate() {
-            if in_str {
-                if esc {
-                    esc = false;
-                } else if b == b'\\' {
-                    esc = true;
-                } else if b == b'"' {
-                    in_str = false;
-                }
-                continue;
-            }
-            match b {
-                b'"' => in_str = true,
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(obj_start + k + 1);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let Some(end) = end else { break };
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[obj_start..end])
-            && let (Some(id), Some(text)) = (
-                v.get("id").and_then(|x| x.as_u64()).map(|x| x as usize),
-                v.get("text").and_then(|x| x.as_str()).map(str::to_owned),
-            )
-        {
-            out.push((id, text));
-        }
-        i = end;
-    }
-    if out.is_empty() { None } else { Some(out) }
 }
 
 /// 发 chat/completions 请求并返回 message.content（校对与摘要共用）。
@@ -835,22 +797,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_pairs_tolerates_trailing_commas_and_bad_items() {
+    fn parse_pairs_tolerates_trailing_commas() {
         // 尾逗号（推理模型常见输出）
         let got = parse_id_text_pairs("[{\"id\":0,\"text\":\"a\",},{\"id\":1,\"text\":\"b\",},]")
             .unwrap();
         assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
-        // 个别坏项：跳过而不丢弃整批
-        let got = parse_id_text_pairs(
-            "[{\"id\":0,\"text\":\"a\"},{\"id\":\"oops\"},{\"id\":2,\"text\":\"c\"}]",
-        )
-        .unwrap();
-        assert_eq!(got, vec![(0, "a".into()), (2, "c".into())], "坏项应被跳过");
     }
 
     #[test]
     fn chat_body_text_vs_vision() {
-        let s = test_settings();
+        let mut s = test_settings();
         let items = ["hello"];
         let text_only = build_chat_body(&s, &s.stages[0], &items, None).unwrap();
         assert_eq!(text_only["response_format"]["type"], "json_object");
@@ -861,6 +817,9 @@ mod tests {
         assert_eq!(user.len(), 1);
         assert_eq!(user[0]["type"], "text");
 
+        let disabled = build_chat_body(&s, &s.stages[0], &items, Some("aGVsbG8=")).unwrap();
+        assert_eq!(disabled, text_only);
+        s.stages[0].images = true;
         let vision = build_chat_body(&s, &s.stages[0], &items, Some("aGVsbG8=")).unwrap();
         let user: &Vec<serde_json::Value> = vision["messages"][1]["content"].as_array().unwrap();
         assert_eq!(user.len(), 2, "带图时附 image_url 内容块");
@@ -872,7 +831,7 @@ mod tests {
         let sys = vision["messages"][0]["content"].as_str().unwrap();
         assert_eq!(
             sys,
-            format!("{PROOFREAD_PROMPT} {PROOFREAD_CONTRACT}{PROOFREAD_VISION_NOTE}")
+            format!("{PROOFREAD_PROMPT} {PARAGRAPHS_CONTRACT}{IMAGE_NOTE}")
         );
         assert!(
             sys.contains("\"segments\""),
@@ -896,7 +855,7 @@ mod tests {
             (settings.stages[1].input, settings.stages[1].output),
             (Input::Transcript, Output::Top)
         );
-        let custom: Stage = serde_json::from_value(serde_json::json!({"name":"annotate","input":"paragraphs","output":"below","prompt":"CUSTOM"})).unwrap();
+        let mut custom: Stage = serde_json::from_value(serde_json::json!({"name":"annotate","input":"paragraphs","output":"below","prompt":"CUSTOM"})).unwrap();
         let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
         assert_eq!(
             body["messages"][0]["content"],
@@ -913,6 +872,20 @@ mod tests {
             fields.as_object_mut().unwrap().remove(field);
             assert!(serde_json::from_value::<Stage>(fields).is_err());
         }
+        custom.images = true;
+        for name in ["proofread", "annotate"] {
+            custom.name = name.into();
+            let body = build_chat_body(&settings, &custom, &["Text"], Some("image")).unwrap();
+            assert_eq!(
+                body["messages"][0]["content"],
+                format!("CUSTOM {PARAGRAPHS_CONTRACT}{IMAGE_NOTE}")
+            );
+            let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
+            assert_eq!(
+                body["messages"][0]["content"],
+                format!("CUSTOM {PARAGRAPHS_CONTRACT}")
+            );
+        }
         for (input, output, images) in [
             ("paragraphs", "top", false),
             ("transcript", "below", false),
@@ -920,6 +893,25 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<Stage>(serde_json::json!({"name":"custom","input":input,"output":output,"prompt":"CUSTOM","images":images})).is_err());
         }
+    }
+
+    #[test]
+    fn duplicate_stage_names_are_rejected_at_load_and_runtime_validation() {
+        let config = "[llm]\n[[llm.stages]]\nname = 'summary'\n[[llm.stages]]\nname = 'summary'\n";
+        let error = toml::from_str::<crate::settings::ConfigFile>(config).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Duplicate LLM stage name: summary")
+        );
+        let mut settings = test_settings();
+        settings.stages.push(settings.stages[0].clone());
+        assert!(
+            validate(&settings)
+                .unwrap_err()
+                .to_string()
+                .contains("Duplicate LLM stage name: proofread")
+        );
     }
 
     #[test]
@@ -1019,7 +1011,7 @@ request = { temperature = 0.7, top_p = 0.8 }
             vec![
                 StageText {
                     stage: "notes".into(),
-                    text: "Different".into()
+                    text: " Different ".into()
                 },
                 StageText {
                     stage: "more".into(),
@@ -1045,6 +1037,12 @@ request = { temperature = 0.7, top_p = 0.8 }
         assert_eq!(got, vec![(0, "a".into())]);
         assert!(parse_segments("{\"segments\":[]}").is_none());
         assert!(parse_segments("没有 JSON").is_none());
+        for content in [
+            r#"{"segments":[{"id":0,"text":"a"},{"id":"oops"},{"id":2,"text":"c"}]}"#,
+            r#"[{"id":0,"text":"a"},{"id":"oops"},{"id":2,"text":"c"}]"#,
+        ] {
+            assert!(parse_segments(content).is_none());
+        }
     }
 
     #[test]

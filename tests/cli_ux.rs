@@ -638,3 +638,16 @@ fn llm_request_tables_are_validated_before_any_source_work() {
     }
     assert!(!cli.dir.path().join("cache").exists());
 }
+
+#[test]
+fn duplicate_stage_names_are_rejected_before_selection_or_source_work() {
+    let cli = CliTest::new();
+    cli.config("[[llm.stages]]\nname = 'summary'\n[[llm.stages]]\nname = 'summary'\n");
+    for selection in [vec![], vec!["--stages", "summary"], vec!["--no-stages"]] {
+        let mut args = vec!["https://example.test/media", "--json"];
+        args.extend(selection);
+        let error = json_error(&cli.run(&args));
+        assert!(error["message"].as_str().unwrap().contains("configuration"));
+    }
+    assert!(!cli.dir.path().join("cache").exists());
+}

@@ -414,6 +414,7 @@ fn remove_file(path: &Path, warnings: &mut Vec<String>) {
 }
 
 fn report_warning(warnings: &mut Vec<String>, stage: &str, report: &crate::llm::StageReport) {
+    warnings.extend(report.warnings.iter().cloned());
     if report.failed > 0 {
         warnings.push(format!(
             "{stage} incomplete ({}/{} failed); original text retained{}",

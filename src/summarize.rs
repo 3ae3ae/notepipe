@@ -6,26 +6,21 @@ use crate::{
 };
 use anyhow::{Context, Result};
 
-pub(crate) const SUMMARY_PROMPT: &str = r#"You summarize recordings from their timestamped transcript. Use only what the transcript says: never invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a one-sentence overview, a list of 3 to 6 key points, and an outline of 3 to 8 sections in time order that covers the whole recording; start each outline item with the section's start time as [mm:ss] and describe the section in one or two sentences. Write mathematical formulas as LaTeX in $...$ or $$...$$. Use Markdown with headings of level 2 or lower, and do not repeat the title."#;
-pub(crate) const SUMMARY_LANGUAGE: &str = r#"Write the summary in the language of the transcript."#;
-pub(crate) const SUMMARY_CONTRACT: &str =
+pub(crate) const SUMMARY_PROMPT: &str = r#"You summarize recordings from their timestamped transcript. Use only what the transcript says: never invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a one-sentence overview, a list of 3 to 6 key points, and an outline of 3 to 8 sections in time order that covers the whole recording; start each outline item with the section's start time as [mm:ss] and describe the section in one or two sentences. Write mathematical formulas as LaTeX in $...$ or $$...$$. Use Markdown with headings of level 2 or lower, and do not repeat the title. Write in the language of the transcript."#;
+pub(crate) const TRANSCRIPT_CONTRACT: &str =
     r#"Output only the Markdown, without code fences or any other text."#;
-pub(crate) const SUMMARY_USER: &str = r#"Transcript (each line starts with its start time as [mm:ss]):
+pub(crate) const TRANSCRIPT_USER: &str = r#"Transcript (each line starts with its start time as [mm:ss]):
 
 {}"#;
-pub(crate) const SUMMARY_MERGE_USER: &str = r#"Below are summaries of consecutive parts of one recording, in order. Their times are already measured from the start of the recording.
+pub(crate) const TRANSCRIPT_MERGE_USER: &str = r#"Below are results for consecutive parts of one recording, in order, each produced with the same instructions. Their times are already measured from the start of the recording.
 
 {}
 
-Merge them into one summary of the whole recording, following the same instructions."#;
+Combine them into one result for the whole recording, following the same instructions."#;
 const CHUNK_CHAR_LIMIT: usize = 25_000;
 
 fn system(stage: &Stage) -> String {
-    if stage.name == "summary" {
-        format!("{} {SUMMARY_LANGUAGE} {SUMMARY_CONTRACT}", stage.prompt)
-    } else {
-        format!("{} {SUMMARY_CONTRACT}", stage.prompt)
-    }
+    format!("{} {TRANSCRIPT_CONTRACT}", stage.prompt)
 }
 fn send(agent: &ureq::Agent, settings: &LlmSettings, stage: &Stage, user: &str) -> Result<String> {
     let body = llm::chat_body(settings, &system(stage), user, stage.input)?;
@@ -91,7 +86,7 @@ pub async fn run(
                 &agent,
                 &settings,
                 &stage,
-                &format!("{context}{}", SUMMARY_USER.replace("{}", &chunk)),
+                &format!("{context}{}", TRANSCRIPT_USER.replace("{}", &chunk)),
             )
         })?;
         if partials.len() == 1 {
@@ -105,7 +100,7 @@ pub async fn run(
             &agent,
             &settings,
             &stage,
-            &format!("{context}{}", SUMMARY_MERGE_USER.replace("{}", &parts)),
+            &format!("{context}{}", TRANSCRIPT_MERGE_USER.replace("{}", &parts)),
         )
     })
     .await
@@ -120,11 +115,12 @@ mod tests {
         let mut stage = Stage::builtin("summary").unwrap();
         assert_eq!(
             system(&stage),
-            format!("{SUMMARY_PROMPT} {SUMMARY_LANGUAGE} {SUMMARY_CONTRACT}")
+            format!("{SUMMARY_PROMPT} {TRANSCRIPT_CONTRACT}")
         );
-        stage.name = "outline".into();
         stage.prompt = "CUSTOM".into();
-        assert_eq!(system(&stage), format!("CUSTOM {SUMMARY_CONTRACT}"));
+        assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
+        stage.name = "outline".into();
+        assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
         let events = (0..3)
             .map(|index| TranscriptEvent {
                 start: f64::from(index * 60),

@@ -1068,7 +1068,7 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
         );
         Some((
             200,
-            json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"Des mots en français.\nMore detail."}]}"#}}]}),
+            json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"  Des mots en français.\n    More detail.  \n\n"}]}"#}}]}),
         ))
     });
     let mut cfg = config();
@@ -1095,11 +1095,15 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
     assert_eq!(event["text"], "Proofread words.");
     assert_eq!(event["raw"], "Original words.");
     assert_eq!(event["below"][0]["stage"], "gloss");
+    assert_eq!(
+        event["below"][0]["text"],
+        "  Des mots en français.\n    More detail.  \n\n"
+    );
     assert!(event.get("translation").is_none());
     let markdown = std::fs::read_to_string(done(&output)["markdown"].as_str().unwrap()).unwrap();
     assert!(markdown.find("## First block").unwrap() < markdown.find("## Second block").unwrap());
     assert!(markdown.find("## Second block").unwrap() < markdown.find("Proofread words.").unwrap());
-    assert!(markdown.contains("> Des mots en français.\n> More detail.\n"));
+    assert!(markdown.contains(">   Des mots en français.\n>     More detail.  \n> \n> \n"));
     assert!(below.headers.lock().unwrap()[0].contains("Authorization: Bearer stage-key"));
     assert!(
         main.headers
@@ -1192,16 +1196,87 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
 }
 
 #[test]
+fn paragraph_images_fall_back_to_text_and_warn_only_for_missing_assets() {
+    let mock = MockAi::respond_with(|_, body| {
+        let content = body["messages"][1]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        let system = body["messages"][0]["content"].as_str().unwrap();
+        assert!(!system.contains("Each request includes the screenshot"));
+        let items: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+        let segments = items.as_array().unwrap().iter().map(|item| json!({"id":item["id"],"text":format!("Processed {}",item["text"].as_str().unwrap())})).collect::<Vec<_>>();
+        Some((
+            200,
+            json!({"choices":[{"message":{"content":json!({"segments":segments}).to_string()}}]}),
+        ))
+    });
+    let root = tempfile::tempdir().unwrap();
+    let mut sections = ["", "missing.jpg"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, image)| notepipe::timeline::Section {
+            t: index as f64,
+            end: index as f64 + 1.,
+            image: image.into(),
+            speech: (0..21)
+                .map(|number| notepipe::timeline::TranscriptEvent {
+                    start: index as f64,
+                    end: index as f64 + 1.,
+                    text: format!("Original {number}."),
+                    raw: None,
+                    below: Vec::new(),
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let settings = notepipe::llm::LlmSettings {
+        base_url: mock.url.clone(),
+        model: "fixture".into(),
+        ..Default::default()
+    };
+    let mut stage = notepipe::llm::Stage::builtin("proofread").unwrap();
+    stage.name = "annotate".into();
+    stage.images = true;
+    let report = notepipe::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
+    assert_eq!(
+        (report.attempted, report.succeeded, report.failed),
+        (42, 42, 0)
+    );
+    assert!(report.note.is_none());
+    assert_eq!(
+        report.warnings.len(),
+        1,
+        "one warning per section, even across batches"
+    );
+    assert!(
+        report.warnings[0].contains("annotate")
+            && report.warnings[0].contains("section 2")
+            && report.warnings[0].contains("missing.jpg")
+    );
+    assert!(
+        sections
+            .iter()
+            .flat_map(|section| &section.speech)
+            .all(|event| event.text.starts_with("Processed Original"))
+    );
+    assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+}
+
+#[test]
 fn transcript_map_reduce_keeps_part_order_and_uses_the_fixed_merge_template() {
     let mock = MockAi::respond_with(|_, body| {
         assert!(body.get("temperature").is_none() && body.get("max_tokens").is_none());
+        assert_eq!(
+            body["messages"][0]["content"],
+            "EXTRACT ACTION ITEMS. Output only the Markdown, without code fences or any other text."
+        );
         let user = body["messages"][1]["content"].as_str().unwrap();
-        let content = if user.contains("Below are summaries of consecutive parts") {
+        let content = if user.contains("Below are results for consecutive parts") {
             assert!(
                 user.find("== Part 1 ==\nFirst part").unwrap()
                     < user.find("== Part 2 ==\nSecond part").unwrap()
             );
-            assert!(user.ends_with("Merge them into one summary of the whole recording, following the same instructions."));
+            assert!(user.contains("each produced with the same instructions"));
+            assert!(user.ends_with("Combine them into one result for the whole recording, following the same instructions."));
             "## Combined\n\nExact final Markdown."
         } else {
             assert!(user.starts_with("Title: Recording\nAuthor: Author\n\nTranscript (each line starts with its start time as [mm:ss]):\n\n"));
@@ -1213,7 +1288,8 @@ fn transcript_map_reduce_keeps_part_order_and_uses_the_fixed_merge_template() {
         };
         Some((200, json!({"choices":[{"message":{"content":content}}]})))
     });
-    let stage = notepipe::llm::Stage::builtin("summary").unwrap();
+    let mut stage = notepipe::llm::Stage::builtin("summary").unwrap();
+    stage.prompt = "EXTRACT ACTION ITEMS.".into();
     let settings = notepipe::llm::LlmSettings {
         base_url: mock.url.clone(),
         model: "fixture".into(),
@@ -1236,10 +1312,14 @@ fn transcript_map_reduce_keeps_part_order_and_uses_the_fixed_merge_template() {
         source: "https://example.test/media".into(),
         seek_url: None,
     };
-    let result =
-        notepipe::runtime::block_on(notepipe::summarize::run(&settings, &stage, &events, &meta))
-            .unwrap()
-            .unwrap();
-    assert_eq!(result, "## Combined\n\nExact final Markdown.");
-    assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    for name in ["summary", "actions"] {
+        stage.name = name.into();
+        let result = notepipe::runtime::block_on(notepipe::summarize::run(
+            &settings, &stage, &events, &meta,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(result, "## Combined\n\nExact final Markdown.");
+    }
+    assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 6);
 }
