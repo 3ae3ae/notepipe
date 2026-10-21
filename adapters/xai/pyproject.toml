@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notepipe-asr-xai"
+version = "0.1.0"
+description = "xAI HTTP transcription adapter for notepipe"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = []
+
+[project.scripts]
+notepipe-asr-xai = "notepipe_asr_xai:main"

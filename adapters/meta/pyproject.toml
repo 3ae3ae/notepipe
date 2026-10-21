@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notepipe-asr-meta"
+version = "0.1.0"
+description = "Meta HTTP transcription adapter for notepipe"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = []
+
+[project.scripts]
+notepipe-asr-meta = "notepipe_asr_meta:main"
