@@ -30,13 +30,13 @@ Each change is the smallest one that fully solves its problem.
 
 ```
 local file ─────────────────┐
-URL ──► source adapter ─────┴──► media file
+URL ──► download adapter ───┴──► media file
                                       │
             ┌─────────────────────────┴─────────────┐
             ▼                                       ▼
      frame sampling                               audio                 subtitles
             │                                       │                (sidecar file,
-            ▼                                       ▼                source adapter
+            ▼                                       ▼               download adapter
        screenshots                          speech detection         or --subtitle)
             │                                       │                       │
             │                                       ▼                       │
@@ -56,7 +56,7 @@ URL ──► source adapter ─────┴──► media file
                                  note folder ──► completion hook
 ```
 
-1. **Source.** A local file is used as is. A URL is handed to a source adapter, which returns a media file, metadata and
+1. **Source.** A local file is used as is. A URL is handed to a download adapter, which returns a media file, metadata and
    any subtitles.
 2. **Screenshots.** Frames are sampled with ffmpeg and compared; a screenshot is kept when the picture changes and then
    holds still. Audio-only input skips this step.
@@ -76,7 +76,7 @@ live instead:
 
 | Need | Place |
 |---|---|
-| Downloading from a website, sign-in, playlists | a source adapter |
+| Downloading from a website, sign-in, playlists | a download adapter |
 | A local speech model (llama.cpp, OpenVINO, Core ML …) | a speech adapter |
 | A vendor API that is not OpenAI-compatible | a speech adapter that translates the request |
 | Cleaning up one model's output quirks | that model's adapter |

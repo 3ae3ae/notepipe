@@ -13,13 +13,14 @@ The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizoreww
 - Audio files and audio-only online items as input.
 - Speech adapters: notepipe starts a local engine that serves an OpenAI-compatible transcription API for the run.
   Official adapters for llama.cpp, OpenVINO, speech-swift (Apple silicon), xAI and Meta.
-- Source adapters for URLs, with an official yt-dlp adapter; the core itself reads local files.
-- `[asr].language`, `concurrency`, `vad_threshold` and `min_silence`; API keys are optional.
-- Prompt-driven AI stages (`[[llm.stages]]`): built-in `proofread` and `summary`, plus custom stages that replace
+- Download adapters for URLs, with an official yt-dlp adapter; the core itself reads local files.
+- A configuration file whose sections follow the pipeline (`[output]`, `[transcript]`, `[speech]`, `[screenshots]`,
+  `[ai]`, `[download]`), with matching option names; `notepipe config path`; API keys are optional.
+- Prompt-driven AI stages (`[[ai.stages]]`): built-in `proofread` and `summary`, plus custom stages that replace
   paragraphs, add text below them or add Markdown at the top of the note; per-stage model, endpoint, key and extra request
   fields.
-- `--config FILE|-`, `--subtitle FILE`, `--stages`, `--no-stages`, `NOTEPIPE_LLM_API_KEY`.
-- `[defaults].on_complete`, a command run after each note is written.
+- `--config FILE|-`, `--subtitle FILE`, `--stages`, `--no-stages`, `NOTEPIPE_SPEECH_API_KEY`, `NOTEPIPE_AI_API_KEY`.
+- `[output].on_complete`, a command run after each note is written.
 - Packages for `uv tool install`, with the official adapters as extras (`notepipe[ytdlp]`), and a release workflow that
   publishes to PyPI.
 
@@ -39,7 +40,7 @@ The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizoreww
 
 - The desktop application.
 - Built-in local speech backends (now adapters) and model management commands.
-- Bilibili login and site-specific handling, cookie options and other website-specific code (now in source adapters).
+- Bilibili login and site-specific handling, cookie options and other website-specific code (now in download adapters).
 - ChatGPT-subscription and Ollama login; every language model is reached as an OpenAI-compatible endpoint.
 - Interface translations, `--lang` and `NOTEPIPE_LANG`.
 - HTML and ZIP exports, versioned note storage, `run-task` and the `summarize` subcommand.

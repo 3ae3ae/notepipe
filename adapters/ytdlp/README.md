@@ -16,8 +16,8 @@ subtitles.
 
 - Your yt-dlp configuration files apply. Extra yt-dlp options go after `--`:
   ```toml
-  [source]
-  command = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox", "-f", "bv*[height<=720]+ba/b"]
+  [download]
+  adapter = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox", "-f", "bv*[height<=720]+ba/b"]
   ```
 - Subtitles: manual subtitles in every language and automatic captions only in the media's original language, never
   machine-translated ones; all are delivered as SRT or VTT.

@@ -43,7 +43,7 @@ cargo test --manifest-path adapters/speech-swift/Cargo.toml # speech-swift adapt
 | Path | Contents |
 |---|---|
 | `src/` | The engine and the `notepipe` CLI |
-| `adapters/` | Official speech and source adapters, each a separate package |
+| `adapters/` | Official speech and download adapters, each a separate package |
 | `tests/` | Integration tests and fixtures |
 | `docs/` | [CLI contract](docs/cli.md) and [adapter contracts](docs/adapters.md) |
 

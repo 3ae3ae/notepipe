@@ -7,7 +7,7 @@ one, install it and name it in `config.toml`; to detach it, remove that line.
 There are two kinds:
 
 - **Speech adapters** serve an OpenAI-compatible transcription API on localhost for the duration of a run.
-- **Source adapters** turn a URL into a local media file plus metadata and subtitles.
+- **Download adapters** turn a URL into a local media file plus metadata and subtitles.
 
 Official adapters are extras of the `notepipe` package, for example `uv tool install "notepipe[llama]"`. Other adapters
 install next to notepipe with `uv tool install notepipe --with <package>`.
@@ -29,20 +29,20 @@ notepipe looks for adapter programs in its own directory first, then on `PATH`.
 ### Using one
 
 ```toml
-[asr]
-command = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+[speech]
+adapter = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
 concurrency = 1
 ```
 
-When `command` is set, notepipe:
+When `adapter` is set, notepipe:
 
 1. starts the program with `--host 127.0.0.1 --port <free port>` appended to the configured arguments;
 2. waits until `GET /health` answers `200` (up to 30 minutes, because a first run may download a model);
-3. sends every speech segment to `http://127.0.0.1:<port>/v1` using `[asr].mode` (`transcriptions` by default);
+3. sends every speech segment to `http://127.0.0.1:<port>/v1` using `[speech].api` (`transcriptions` by default);
 4. stops the program and its child processes when transcription ends, fails or is cancelled.
 
-`base_url` is ignored while `command` is set; `model`, `language` and `api_key` are sent as for any endpoint. Local engines
-usually handle one request at a time, so set `concurrency = 1`.
+`base_url` is ignored while `adapter` is set; `model`, `language` and `api_key` are sent as for any endpoint. Local
+engines usually handle one request at a time, so set `concurrency = 1`.
 
 A server you run yourself needs no adapter: point `base_url` at it.
 
@@ -55,7 +55,7 @@ An adapter is any executable that accepts these arguments and serves this API.
 | `--host HOST` | Address to listen on; bind only to it (notepipe passes `127.0.0.1`). |
 | `--port PORT` | Port to listen on. |
 
-Other arguments are the adapter's own; users write them in `command`.
+Other arguments are the adapter's own; users write them in `adapter`.
 
 `GET /health` returns `200` once the adapter can transcribe; before that, return `503` or refuse connections. If the
 process exits, notepipe reports its last output lines.
@@ -64,13 +64,13 @@ process exits, notepipe reports its last output lines.
 
 | Field | Required | Content |
 |---|---|---|
-| `model` | no | `[asr].model`, when set |
-| `language` | no | `[asr].language`, when set, as written in the configuration (for example `ko`) |
-| `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, about `[asr].max_speech` seconds or less (20 by default) plus up to half a second of padding; always the last part |
+| `model` | no | `[speech].model`, when set |
+| `language` | no | `[transcript].language`, when set, as written in the configuration (for example `ko`) |
+| `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, about `[speech.detection].max_segment` seconds or less (20 by default) plus up to half a second of padding; always the last part |
 
-Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. On failure respond with a non-2xx status
-and `{"error": {"message": "…"}}`. If `[asr].api_key` is set, requests carry `Authorization: Bearer <key>`; an adapter may
-check it or forward it.
+Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. On failure respond with a non-2xx
+status and `{"error": {"message": "…"}}`. If `[speech].api_key` is set, requests carry `Authorization: Bearer <key>`; an
+adapter may check it or forward it.
 
 Return clean text: model-specific markers or formatting are the adapter's job to remove.
 
@@ -132,17 +132,17 @@ args = parser.parse_args()
 HTTPServer((args.host, args.port), Handler).serve_forever()
 ```
 
-## Source adapters
+## Download adapters
 
 ### Using one
 
-For an `http(s)` source, notepipe runs `[source].command`. When it is not set, notepipe looks for executables whose names
-start with `notepipe-source-`: if it finds exactly one it uses it, and if it finds several it asks you to choose with
-`[source].command`.
+For an `http(s)` source, notepipe runs `[download].adapter`. When it is not set, notepipe looks for executables whose
+names start with `notepipe-source-`: if it finds exactly one it uses it, and if it finds several it asks you to choose
+with `[download].adapter`.
 
 ```toml
-[source]
-command = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
+[download]
+adapter = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
 ```
 
 Results are cached per URL and adapter. Media is deleted after a successful run, so a later run that only changes AI

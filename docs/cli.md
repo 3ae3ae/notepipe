@@ -9,7 +9,7 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 
 ## Input
 
-- `SOURCE` is a local video or audio file, or an `http(s)` URL (resolved by a [source adapter](adapters.md#source-adapters)).
+- `SOURCE` is a local video or audio file, or an `http(s)` URL (resolved by a [download adapter](adapters.md#download-adapters)).
 - `--config FILE` reads the configuration from `FILE` instead of the user's config file; `--config -` reads it from
   standard input. The content is TOML, or JSON when its first non-space character is `{`. It has the same structure as
   `config.toml` (see `notepipe config init`). Command-line options still override it.
@@ -18,7 +18,7 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 - `--stages a,b` / `--no-stages` choose the AI stages for this run.
 - With `--json` notepipe never prompts. Missing settings are errors.
 
-API keys can be part of the configuration. `NOTEPIPE_ASR_API_KEY` and `NOTEPIPE_LLM_API_KEY` fill keys that are empty,
+API keys can be part of the configuration. `NOTEPIPE_SPEECH_API_KEY` and `NOTEPIPE_AI_API_KEY` fill keys that are empty,
 also when the configuration comes from `--config`; clear them in the child environment if a run must not use them.
 
 ## Events
@@ -94,14 +94,14 @@ generator: "notepipe 0.1.0"
 ```
 
 `image` is empty for sections without a screenshot (for example audio-only input). `raw` is present when a stage replaced
-the text, `below` when stages added text under it, and `seek_url` when the source adapter provided a link template.
+the text, `below` when stages added text under it, and `seek_url` when the download adapter provided a link template.
 
 `note.json` lists the warnings known when the note was written. Warnings raised afterwards — cleaning up the previous
 note, or the completion hook — appear only in the `done` event, whose `warnings` list is final.
 
 ## Completion hook
 
-`[defaults].on_complete = ["program", "arg", …]` runs once after a note is written, without a shell, with the note folder
+`[output].on_complete = ["program", "arg", …]` runs once after a note is written, without a shell, with the note folder
 as its working directory and a 10-minute limit. A bare program name is looked up next to the notepipe executable, then on
 `PATH`; a relative path is resolved from the directory notepipe was started in. It receives:
 

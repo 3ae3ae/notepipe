@@ -21,10 +21,10 @@ its Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); a plain `c
 ## Use
 
 ```toml
-[asr]
-command = ["notepipe-asr-speech-swift"]
+[speech]
+adapter = ["notepipe-asr-speech-swift"]
 concurrency = 1
 ```
 
 `--model` selects `qwen3-1.7b` (default), `qwen3-0.6b` or `whisper`. The first run downloads the model.
-`[asr].language` is passed to the model.
+`[transcript].language` is passed to the model.

@@ -15,7 +15,7 @@ notepipe is a local command-line tool. Keep these properties in mind when you ev
 
 - **Configuration is trusted.** It names the programs notepipe runs (adapters and the completion hook) and the endpoints it
   sends audio and text to. Treat a configuration file, or configuration passed with `--config -`, like a script.
-- **Credentials** are read from the configuration or from `NOTEPIPE_ASR_API_KEY` / `NOTEPIPE_LLM_API_KEY` and sent only
+- **Credentials** are read from the configuration or from `NOTEPIPE_SPEECH_API_KEY` / `NOTEPIPE_AI_API_KEY` and sent only
   to the endpoints you configure. notepipe does not write API keys to notes, caches or logs. A credential written into a
   URL or into an adapter's arguments is part of that setting and can appear in the cache and in `notepipe doctor`
   output.

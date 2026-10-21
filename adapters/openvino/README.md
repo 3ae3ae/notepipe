@@ -12,8 +12,8 @@ uv tool install "notepipe[openvino]"
 ## Use
 
 ```toml
-[asr]
-command = ["notepipe-asr-openvino"]
+[speech]
+adapter = ["notepipe-asr-openvino"]
 concurrency = 1
 ```
 
@@ -22,4 +22,4 @@ concurrency = 1
 | `--model` | `dseditor/Qwen3-ASR-1.7B-INT8_OpenVINO` | Hugging Face repository or local directory of an OpenVINO Qwen3-ASR or Whisper model |
 | `--device` | `NPU` | `NPU`, `CPU` or `GPU` |
 
-The first run downloads the model. `[asr].language` is passed to the model.
+The first run downloads the model. `[transcript].language` is passed to the model.
