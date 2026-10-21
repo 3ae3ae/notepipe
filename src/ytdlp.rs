@@ -1,16 +1,4 @@
-//! yt-dlp 二进制定位：`NOTEPIPE_YTDLP` 覆盖 → 可执行文件旁（随包自带）→
-//! PATH → 常见安装目录兜底。CLI（fetch/pipeline/doctor）与桌面端（环境检测、
-//! 在线读取）共用同一份清单，保证「检测到可用」与「实际能启动」不互相矛盾。
-//!
-//! 各档位的来由：
-//! - `NOTEPIPE_YTDLP`：显式指向某个二进制（与 NOTEPIPE_BIN 同一约定），
-//!   打包测试、临时换版本时用；
-//! - 可执行文件同目录：install.sh 与桌面安装包把 yt-dlp 放在 notepipe 旁；
-//!   `.app` 布局额外检查 `../Resources`（codesign 把 Contents/MacOS 当代码区，
-//!   数据文件属于资源区）；Homebrew/pipx 装的 yt-dlp 也常与 notepipe 同在 bin/；
-//! - PATH：终端安装的标准位置；桌面端传入 tool_path() 的扩展版本；
-//! - 常见安装目录兜底：Finder/桌面会话启动的进程拿不到登录 shell 的 PATH，
-//!   mise/asdf/conda/Nix/Scoop/Python user-base 等位置只能逐个枚举。
+//! yt-dlp lookup: explicit override, executable directory, PATH, then common installation locations.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -40,19 +28,13 @@ fn is_exec(path: &Path) -> bool {
     }
 }
 
-/// 随包自带/同目录候选：exe 旁、`.app` 的 Contents/Resources[/bin]。
+/// 随程序安装的 yt-dlp：与可执行文件同目录。
 fn bundled_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        for base in [
-            dir.to_path_buf(),
-            dir.join("../Resources"),
-            dir.join("../Resources/bin"),
-        ] {
-            candidates.push(base.join(binary_name()));
-        }
+        candidates.push(dir.join(binary_name()));
     }
     candidates
 }
@@ -71,7 +53,7 @@ fn interpreter_dirs(base: &Path, leaf: &str, prefix: &str) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// PATH 之外的常见安装位置：覆盖「终端里有、桌面会话里没有」的安装方式。
+/// PATH 之外的常见安装位置。
 fn fallback_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let home = crate::config::home_dir();
@@ -159,7 +141,7 @@ fn candidates_in(path: Option<&OsStr>) -> Vec<PathBuf> {
 }
 
 /// 按优先级返回第一个存在、可执行且能运行 `--version` 的 yt-dlp。
-/// `path` 为 None 时用进程继承的 PATH；桌面端传入 `tool_path()` 的扩展版本。
+/// `path` 为 None 时用进程继承的 PATH。
 pub fn resolve_in(path: Option<&OsStr>) -> Option<PathBuf> {
     let mut seen = std::collections::BTreeSet::new();
     candidates_in(path)
