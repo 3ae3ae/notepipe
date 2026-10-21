@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish after every build passes (for example v2.0.0-alpha.1)'
+        description: 'Version to publish after every build passes (for example v0.1.0)'
         required: true
 
 permissions:
