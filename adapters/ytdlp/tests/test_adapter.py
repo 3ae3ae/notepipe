@@ -143,6 +143,11 @@ class AdapterTests(unittest.TestCase):
             self.assertTrue((self.out / name).is_file())
         self.assertIn("yt-dlp diagnostic", self.diagnostics)
 
+    def test_youtube_seek_url(self):
+        self.info.update(id="BaW_jenozKc", extractor_key="Youtube")
+        result = self.run_adapter()[-1]
+        self.assertEqual(result["seek_url"], "https://www.youtube.com/watch?v=BaW_jenozKc&t={t}s")
+
     def test_subtitle_identity_survives_conversion(self):
         converter = adapter.yt_dlp.postprocessor.FFmpegSubtitlesConvertorPP
 
