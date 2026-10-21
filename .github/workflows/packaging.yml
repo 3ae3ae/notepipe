@@ -16,4 +16,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shell scripts
-        run: shellcheck --severity=error install.sh packaging/bench-mac.sh
+        run: shellcheck --severity=error install.sh
