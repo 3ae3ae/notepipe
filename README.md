@@ -54,18 +54,20 @@ Each note is a folder with `note.md`, the screenshots in `images/`, and `note.js
 
 notepipe needs [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`.
 
-With [uv](https://docs.astral.sh/uv/):
+With [uv](https://docs.astral.sh/uv/), run one of these:
 
 ```sh
 uv tool install notepipe                  # local video and audio files
-uv tool install "notepipe[ytdlp]"         # also URLs, through yt-dlp
+uv tool install "notepipe[ytdlp]"         # the same, plus URLs through yt-dlp
+uv tool install "notepipe[ytdlp,llama]"   # the same, plus local speech recognition with llama.cpp
 ```
 
-[Adapters](#adapters) are extras: list the ones you want, as in `"notepipe[ytdlp,llama]"`. pip and pipx accept the same
-names. With Cargo: `cargo install notepipe`. Prebuilt binaries are
-attached to each [GitHub release](https://github.com/3ae3ae/notepipe/releases). On Android, install
-[Termux](https://termux.dev), run `pkg install rust ffmpeg python`, then `cargo install notepipe`, and add adapters with
-`pip install <package>`.
+[Adapters](#adapters) are extras. Running the command again replaces the installation, so list every extra you want each
+time. pip and pipx accept the same names.
+
+With Cargo: `cargo install notepipe`. Prebuilt binaries are attached to each
+[GitHub release](https://github.com/3ae3ae/notepipe/releases). On Android, install [Termux](https://termux.dev), run
+`pkg install rust ffmpeg python`, then `cargo install notepipe`, and add adapters with `pip install <package>`.
 
 ## Quick start
 
