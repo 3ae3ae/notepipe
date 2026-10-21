@@ -86,7 +86,7 @@ fn selected_transcript(path: &Path) -> Result<(String, Vec<timeline::TranscriptE
 }
 
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
-    artifact::recover(&cfg.out_root)?;
+    let mut warnings = artifact::recover(&cfg.out_root)?;
     let mut cfg = cfg.clone();
     cfg.validate().context("Invalid settings")?;
     if let Some(path) = &cfg.subtitle {
@@ -310,7 +310,6 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
     );
     runtime::check_cancelled()?;
-    let mut warnings = Vec::new();
     let frames = match frames {
         Ok(frames) if !frames.is_empty() => frames,
         Ok(_) => {

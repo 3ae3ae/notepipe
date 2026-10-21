@@ -720,8 +720,8 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
 }
 
 #[test]
-fn run_start_repairs_both_swap_renames_before_a_source_adapter_failure() {
-    for completed_swap in [false, true] {
+fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
+    for phase in ["staged", "old-moved", "published"] {
         let root = tempfile::tempdir().unwrap();
         let notes = root.path().join("notes");
         let record = root.path().join("source");
@@ -741,29 +741,44 @@ fn run_start_repairs_both_swap_renames_before_a_source_adapter_failure() {
             published.push((note, document));
         }
         assert_eq!(published[1].0.file_name().unwrap(), "Shared-title-2");
-        for (note, expected) in &mut published {
-            let name = note.file_name().unwrap().to_string_lossy();
-            let old = notes.join(format!(".{name}.notepipe-old"));
-            let new = notes.join(format!(".{name}.notepipe-new"));
+        let (note, expected) = &mut published[1];
+        let name = note.file_name().unwrap().to_string_lossy().into_owned();
+        let old_name = format!(".{name}.notepipe-old-recorded");
+        let new_name = format!(".{name}.notepipe-new-recorded");
+        let old = notes.join(&old_name);
+        let new = notes.join(&new_name);
+        let mut staged = expected.clone();
+        staged.sections[0].speech[0].text = "New body".into();
+        std::fs::create_dir(&new).unwrap();
+        std::fs::write(
+            new.join("note.md"),
+            notepipe::render::render_markdown(&staged.meta, &staged.sections, &staged.top).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(new.join("note.json"), serde_json::to_vec(&staged).unwrap()).unwrap();
+        if phase != "staged" {
             std::fs::rename(&*note, &old).unwrap();
-            let mut staged = expected.clone();
-            staged.sections[0].speech[0].text = "New body".into();
-            std::fs::create_dir(&new).unwrap();
-            std::fs::write(
-                new.join("note.md"),
-                notepipe::render::render_markdown(&staged.meta, &staged.sections, &staged.top)
-                    .unwrap(),
-            )
-            .unwrap();
-            std::fs::write(new.join("note.json"), serde_json::to_vec(&staged).unwrap()).unwrap();
-            if completed_swap {
-                std::fs::rename(new, &*note).unwrap();
-                *expected = staged;
-            }
         }
-        let stray = notes.join(".stray.notepipe-new");
-        std::fs::create_dir(&stray).unwrap();
-        std::fs::write(stray.join("note.json"), "{partial").unwrap();
+        if phase == "published" {
+            std::fs::rename(&new, &*note).unwrap();
+            *expected = staged;
+        }
+        let transaction = notes.join(".notepipe-transaction.json");
+        let lock = notepipe::runtime::lock_file(&notes.join(".notepipe.lock")).unwrap();
+        notepipe::checkpoint::atomic_write(
+            &transaction,
+            &serde_json::to_vec(
+                &json!({"name":name,"staging":new_name,"old":old_name,"phase":phase}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        drop(lock);
+        let unrelated = [notes.join(".x.notepipe-new"), notes.join(".x.notepipe-old")];
+        for path in &unrelated {
+            std::fs::create_dir(path).unwrap();
+            std::fs::write(path.join("user-file"), "unrelated content").unwrap();
+        }
         let mut cfg = config();
         cfg.defaults.out = Some(notes.clone());
         cfg.source.command = command;
@@ -771,7 +786,13 @@ fn run_start_repairs_both_swap_renames_before_a_source_adapter_failure() {
         assert!(!failed.status.success());
         assert_eq!(events(&failed).last().unwrap()["type"], "error");
         assert_eq!(calls(&record), 1);
-        assert!(!stray.exists());
+        assert!(!transaction.exists() && !new.exists() && !old.exists());
+        for path in &unrelated {
+            assert_eq!(
+                std::fs::read_to_string(path.join("user-file")).unwrap(),
+                "unrelated content"
+            );
+        }
         for (note, expected) in published {
             let actual: notepipe::artifact::Document =
                 serde_json::from_slice(&std::fs::read(note.join("note.json")).unwrap()).unwrap();
@@ -784,10 +805,6 @@ fn run_start_repairs_both_swap_renames_before_a_source_adapter_failure() {
                     .unwrap()
                     .contains(&expected.sections[0].speech[0].text)
             );
-            let name = note.file_name().unwrap().to_string_lossy();
-            for suffix in ["new", "old"] {
-                assert!(!notes.join(format!(".{name}.notepipe-{suffix}")).exists());
-            }
         }
     }
 }
@@ -820,8 +837,14 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
     let old_note = std::fs::read(note).unwrap();
     let old_json = std::fs::read(json).unwrap();
     let note_dir = Path::new(previous["note_dir"].as_str().unwrap());
-    let backup = note_dir.with_file_name(".speech.notepipe-old");
+    let backup = note_dir.with_file_name(".speech.notepipe-old-interrupted");
     std::fs::rename(note_dir, &backup).unwrap();
+    let transaction = root.path().join(".notepipe-transaction.json");
+    let lock = notepipe::runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
+    notepipe::checkpoint::atomic_write(&transaction, &serde_json::to_vec(&json!({
+        "name":"speech","staging":".speech.notepipe-new-interrupted","old":".speech.notepipe-old-interrupted","phase":"old-moved"
+    })).unwrap()).unwrap();
+    drop(lock);
     assert!(!note_dir.exists());
     cfg.asr.command = command;
     cfg.asr.concurrency = 1;
@@ -853,6 +876,61 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
         calls(&record),
         chunks + 1,
         "completed chunks must be reused"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn published_backup_cleanup_warning_reaches_stderr_and_done_without_blocking_publication() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let subtitle = video.with_extension("srt");
+    std::fs::write(
+        &subtitle,
+        "1\n00:00:00,000 --> 00:00:02,000\nComplete note.\n",
+    )
+    .unwrap();
+    let cfg = config();
+    let flags = ["--subtitle", subtitle.to_str().unwrap()];
+    let first = done(&run(root.path(), video.to_str().unwrap(), &cfg, &flags));
+    let old = root.path().join(".speech.notepipe-old-recorded");
+    std::fs::create_dir(&old).unwrap();
+    std::fs::write(old.join("content"), "Previous note").unwrap();
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let record = root.path().join(".notepipe-transaction.json");
+    let lock = notepipe::runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
+    notepipe::checkpoint::atomic_write(
+        &record,
+        &serde_json::to_vec(&json!({
+            "name":"speech", "staging":".speech.notepipe-new-recorded",
+            "old":".speech.notepipe-old-recorded", "phase":"published"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    drop(lock);
+    let output = run(root.path(), video.to_str().unwrap(), &cfg, &flags);
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let completed = done(&output);
+    assert_eq!(completed["note_dir"], first["note_dir"]);
+    let leftover = old.file_name().unwrap().to_str().unwrap();
+    assert!(
+        completed["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains(leftover)),
+        "{completed}"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains(leftover));
+    assert_eq!(document(&output)["warnings"], completed["warnings"]);
+    assert!(!record.exists());
+    assert_eq!(
+        std::fs::read_to_string(old.join("content")).unwrap(),
+        "Previous note"
     );
 }
 
