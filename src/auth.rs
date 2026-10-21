@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, ensure};
 use std::{io::Write, path::Path};
 
-pub fn validate(cookies: Option<&Path>, cookies_from_browser: Option<&str>) -> Result<()> {
+fn validate(cookies: Option<&Path>, cookies_from_browser: Option<&str>) -> Result<()> {
     if let Some(path) = cookies {
         ensure!(
             path.is_file(),
@@ -14,9 +14,9 @@ pub fn validate(cookies: Option<&Path>, cookies_from_browser: Option<&str>) -> R
     }
     if let Some(browser) = cookies_from_browser {
         ensure!(
-            !browser.is_empty() && !browser.chars().any(|c| c.is_whitespace() || c.is_control()),
+            !browser.is_empty() && !browser.chars().any(char::is_control),
             crate::tr!(
-                "浏览器 Cookie 来源不能为空或包含空白及控制字符 / Browser cookie spec must be non-empty and contain no whitespace or control characters"
+                "浏览器 Cookie 来源不能为空或包含控制字符 / Browser cookie spec must be non-empty and contain no control characters"
             )
         );
     }
@@ -91,23 +91,6 @@ mod tests {
     }
 
     #[test]
-    fn browser_spec_is_passed_unchanged_and_unset_cookies_add_no_arguments() {
-        let mut command = std::process::Command::new("yt-dlp");
-        assert!(configure_ytdlp(&mut command, None, None).unwrap().is_none());
-        assert_eq!(command.get_args().count(), 0);
-        let browser = "firefox:default-release";
-        assert!(
-            configure_ytdlp(&mut command, None, Some(browser))
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            ["--cookies-from-browser", browser]
-        );
-    }
-
-    #[test]
     fn invalid_inputs_are_rejected_before_adding_arguments() {
         let dir = tempfile::tempdir().unwrap();
         for path in [dir.path().to_path_buf(), dir.path().join("missing")] {
@@ -117,14 +100,7 @@ mod tests {
         }
         let path = dir.path().join("cookies.txt");
         std::fs::write(&path, "saved session").unwrap();
-        for browser in [
-            "",
-            " ",
-            "chrome profile",
-            "chrome\n",
-            "chrome\u{7f}",
-            "chrome\u{2003}",
-        ] {
+        for browser in ["", "chrome\n", "chrome\u{7f}", "chrome\t", "chrome\0"] {
             let mut command = std::process::Command::new("yt-dlp");
             assert!(configure_ytdlp(&mut command, Some(&path), Some(browser)).is_err());
             assert_eq!(command.get_args().count(), 0);

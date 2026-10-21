@@ -271,6 +271,7 @@ fn explicit_subtitles_zero_exports_and_confirmed_title_survive_real_conversion_a
         String::from_utf8_lossy(&make.stderr)
     );
     let mut request = request(root.path(), &video);
+    request.config.defaults.cookies = Some(root.path().join("missing-cookies.txt"));
     let first = run(root.path(), &request);
     let first_events = events(&first);
     assert!(first.status.success(), "{first_events:#?}");
@@ -872,6 +873,7 @@ fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gon
     export.version_id = "unused-new-body".into();
     export.work_dir = root.path().join("export-work");
     export.subtitle_events = None;
+    export.config.defaults.cookies = Some(root.path().join("missing-cookies.txt"));
     export.subtitle = Some(root.path().join("deleted-subtitles.srt"));
     export.operation = notepipe::execution::Operation::Reprocess {
         base_version_dir: base,

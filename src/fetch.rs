@@ -265,7 +265,7 @@ pub fn parse_online_probe(bytes: &[u8], input: &str, diagnostics: &str) -> Resul
         .context(crate::tr!("无法识别这个链接对应的视频，请粘贴具体视频的链接 / Cannot identify the video for this link; paste the link to a specific video"))?;
     let identity = online_identity(&extractor, id)
         .context(crate::tr!("无法识别这个链接对应的视频，请粘贴具体视频的链接 / Cannot identify the video for this link; paste the link to a specific video"))?;
-    let input = concrete_url(&info).unwrap_or_else(|| input.to_owned());
+    let input = input.to_owned();
     let subtitles = subtitle_evidence(&info, &identity, diagnostics);
     Ok(OnlineProbe::Video {
         video: OnlineVideo {
@@ -848,7 +848,10 @@ mod tests {
             panic!("expected video")
         };
         assert!(video.identity.ends_with("fixture-part-2"));
-        assert!(video.meta.webpage_url.ends_with("?episode=2"));
+        assert_eq!(
+            video.meta.webpage_url,
+            "https://example.invalid/watch?episode=2"
+        );
         let tracks = video.subtitles.tracks();
         assert_eq!(
             tracks

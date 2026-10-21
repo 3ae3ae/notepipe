@@ -85,24 +85,6 @@ fn no_arguments_or_help_succeed_with_localized_guidance() {
 }
 
 #[test]
-fn invalid_cookie_inputs_fail_before_tool_detection_or_network_access() {
-    let cli = CliTest::new();
-    for (flag, value) in [
-        ("--cookies", "missing.txt"),
-        ("--cookies", "."),
-        ("--cookies-from-browser", ""),
-        ("--cookies-from-browser", "chrome profile"),
-    ] {
-        let result = cli.run(&["https://example.invalid/video", flag, value, "--json"]);
-        let error = json_error(&result);
-        assert!(
-            error["message"].as_str().unwrap().contains("Cookie"),
-            "{error}"
-        );
-    }
-}
-
-#[test]
 fn missing_or_invalid_sources_fail_with_recovery() {
     let cli = CliTest::new();
     let missing = cli.run(&["--provider", "api"]);
@@ -289,6 +271,8 @@ fn remote_download_output_does_not_leak_into_json_or_quiet_mode() {
     let script = bin.join("yt-dlp");
     std::fs::write(&script, r#"#!/bin/sh
 if [ "$1" = "--version" ]; then echo fixture; exit 0; fi
+selected_url=''
+for argument; do selected_url="$argument"; done
 cookies=''
 browser=''
 output=''
@@ -307,9 +291,10 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+[ "$selected_url" = "$CLI_TEST_SOURCE" ] &&
 [ "$cookies" != "$CLI_TEST_COOKIES" ] &&
 [ "$(cat "$cookies")" = "saved session" ] &&
-[ "$browser" = "firefox:default-release" ] || exit 1
+[ "$browser" = "chrome:Profile 1" ] || exit 1
 if [ "$simulate" -eq 1 ]; then
   phase=probe
 elif [ "$subtitles" -eq 1 ]; then
@@ -334,7 +319,7 @@ printf 'raw downloader stderr\n' >&2
         let result = Command::new(env!("CARGO_BIN_EXE_notepipe"))
             .env("NOTEPIPE_LANG", "zh-Hans")
             .args([
-                "https://example.test/video",
+                "https://example.test/video?episode=2",
                 "--transcript-source",
                 "subtitle",
                 flag,
@@ -343,9 +328,10 @@ printf 'raw downloader stderr\n' >&2
             .arg(&output_dir)
             .arg("--cookies")
             .arg(&cookies)
-            .args(["--cookies-from-browser", "firefox:default-release"])
+            .args(["--cookies-from-browser", "chrome:Profile 1"])
             .env("CLI_TEST_COOKIES", &cookies)
             .env("CLI_TEST_CALLS", &calls)
+            .env("CLI_TEST_SOURCE", "https://example.test/video?episode=2")
             .env(
                 "PATH",
                 format!(
@@ -378,11 +364,9 @@ printf 'raw downloader stderr\n' >&2
             let done = events.last().unwrap();
             assert_eq!(done["type"], "done");
             let notes = std::path::Path::new(done["out_dir"].as_str().unwrap()).join("note.md");
-            assert!(
-                std::fs::read_to_string(notes)
-                    .unwrap()
-                    .contains("Welcome to the lecture.")
-            );
+            let notes = std::fs::read_to_string(notes).unwrap();
+            assert!(notes.contains("Welcome to the lecture."));
+            assert!(notes.contains("https://example.test/video?episode=2"));
         }
     }
     assert!(video.is_file());

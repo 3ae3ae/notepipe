@@ -424,10 +424,6 @@ impl PipelineConfig {
     /// 全量预检：所有配置错误必须在任何昂贵操作（下载/抽帧/模型加载）之前暴露。
     /// 返回 Err 的送进 main 后直接退出，不会碰网络与模型。
     pub fn validate(&self) -> AnyhowResult<()> {
-        crate::auth::validate(
-            self.cookies.as_deref(),
-            self.cookies_from_browser.as_deref(),
-        )?;
         let finite = |name: &str, v: f64| -> AnyhowResult<()> {
             anyhow::ensure!(
                 v.is_finite(),
