@@ -842,6 +842,10 @@ fn update_input_form(
         ),
         (draft.options.vision != options.vision, Override::Vision),
         (
+            draft.options.translate != options.translate,
+            Override::Translate,
+        ),
+        (
             draft.options.keep_video != options.keep_video,
             Override::KeepVideo,
         ),
@@ -4793,6 +4797,7 @@ impl ConversionOptions {
         config.llm.enabled = self.llm;
         config.llm.summarize = self.summarize;
         config.llm.vision = self.llm && self.vision;
+        config.llm.translate = self.translate.clone();
         config.llm.disable_hint = true;
     }
 }
@@ -5378,6 +5383,29 @@ mod tests {
                 .contains(&crate::workspace::Override::Formats)
         );
         assert_ne!(input.updated, 123);
+
+        let input_text = input.input.clone();
+        let title = input.title.clone();
+        let source_value = input.source.clone();
+        let folder = input.folder;
+        let scroll = input.scroll;
+        let mut translated = input.options.clone();
+        translated.translate = Some("en".into());
+        assert!(update_input_form(
+            &mut input,
+            input_text,
+            title,
+            source_value,
+            translated,
+            folder,
+            scroll,
+        ));
+        assert_eq!(input.options.translate.as_deref(), Some("en"));
+        assert!(
+            input
+                .overrides
+                .contains(&crate::workspace::Override::Translate)
+        );
     }
 
     #[test]

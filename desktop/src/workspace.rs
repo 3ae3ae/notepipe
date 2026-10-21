@@ -93,6 +93,7 @@ pub enum Override {
     Proofread,
     Summary,
     Vision,
+    Translate,
     KeepVideo,
     Formats,
 }
@@ -196,6 +197,9 @@ impl Draft {
         if !self.overrides.contains(&Override::Vision) {
             v.vision = defaults.vision;
         }
+        if !self.overrides.contains(&Override::Translate) {
+            v.translate = defaults.translate.clone();
+        }
         if !self.overrides.contains(&Override::KeepVideo) {
             v.keep_video = defaults.keep_video;
         }
@@ -209,7 +213,13 @@ impl Draft {
         self.options.llm = defaults.llm;
         self.options.summarize = defaults.summarize;
         self.options.vision = defaults.vision;
-        for field in [Override::Proofread, Override::Summary, Override::Vision] {
+        self.options.translate = defaults.translate.clone();
+        for field in [
+            Override::Proofread,
+            Override::Summary,
+            Override::Vision,
+            Override::Translate,
+        ] {
             self.overrides.remove(&field);
         }
     }
@@ -2017,7 +2027,7 @@ impl Workspace {
                 }
             }
         } else {
-            let mut initial = State::initial(root.clone(), options);
+            let mut initial = State::initial(root.clone(), options.clone());
             match std::fs::create_dir_all(&root) {
                 Ok(()) => {
                     let marker = root.join(".course2md-library-id");
@@ -2049,6 +2059,13 @@ impl Workspace {
             initial
         };
         state.recover();
+        // Defaults may have changed while the app was closed, and drafts saved
+        // before an option existed carry no choice of their own for it.
+        for draft in &mut state.drafts {
+            if draft.submitted_task.is_none() {
+                draft.inherit(&options);
+            }
+        }
         hydrate_draft_subtitles(&mut state, &path);
         store_task_subtitles(&mut state);
         for task in &mut state.tasks {
@@ -2580,6 +2597,44 @@ mod tests {
     }
 
     #[test]
+    fn reopened_drafts_follow_defaults_for_options_they_never_chose() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state.json");
+        let mut ws =
+            Workspace::open_at(file.clone(), dir.path().join("library"), Default::default())
+                .unwrap();
+        ws.transaction(|state| {
+            state
+                .draft_mut()
+                .unwrap()
+                .overrides
+                .insert(Override::Summary);
+            state.draft_mut().unwrap().options.summarize = true;
+            Ok(())
+        })
+        .unwrap();
+        // A draft saved before per-task translation existed has no such field.
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        legacy["drafts"][0]["options"]
+            .as_object_mut()
+            .unwrap()
+            .remove("translate");
+        std::fs::write(&file, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let _ = std::fs::remove_file(file.with_extension("json.bak"));
+
+        let defaults = ConversionOptions {
+            summarize: false,
+            translate: Some("en".into()),
+            ..Default::default()
+        };
+        let reopened = Workspace::open_at(file, dir.path().join("library"), defaults).unwrap();
+        let options = &reopened.state.draft().unwrap().options;
+        assert_eq!(options.translate.as_deref(), Some("en"));
+        assert!(options.summarize);
+    }
+
+    #[test]
     fn only_recent_cancelled_attempts_without_notes_are_kept() {
         let mut state = State::initial("/library".into(), Default::default());
         let library = state.default_library.clone();
@@ -2632,6 +2687,7 @@ mod tests {
         draft.options.llm = true;
         draft.options.summarize = false;
         draft.options.vision = true;
+        draft.options.translate = Some("ja".into());
         draft.asr_service = Some("fixed-speech-service".into());
         draft.ai_service = Some("fixed-ai-service".into());
         draft.overrides = [
@@ -2640,6 +2696,7 @@ mod tests {
             Override::Proofread,
             Override::Summary,
             Override::Vision,
+            Override::Translate,
             Override::KeepVideo,
             Override::Formats,
         ]
@@ -2649,12 +2706,14 @@ mod tests {
             llm: false,
             summarize: true,
             vision: false,
+            translate: Some("de".into()),
             ..Default::default()
         };
         let mut expected = draft.clone();
         expected.options.llm = false;
         expected.options.summarize = true;
         expected.options.vision = false;
+        expected.options.translate = Some("de".into());
         expected.overrides = [
             Override::Provider,
             Override::TextSource,
@@ -2670,12 +2729,14 @@ mod tests {
             llm: true,
             summarize: false,
             vision: true,
+            translate: Some("fr".into()),
             ..Default::default()
         };
         draft.inherit(&later_defaults);
         expected.options.llm = true;
         expected.options.summarize = false;
         expected.options.vision = true;
+        expected.options.translate = Some("fr".into());
         assert_eq!(draft, expected);
     }
 

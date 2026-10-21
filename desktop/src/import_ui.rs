@@ -2337,6 +2337,28 @@ impl Desktop {
         {
             choices = choices.child(help(course2md::tr!("使用自定义校对规则")));
         }
+        // Bilingual translation is a per-task choice; the global default is only
+        // the starting value inherited by this input.
+        let translated = self
+            .task_options
+            .translate
+            .as_deref()
+            .and_then(course2md::language::target);
+        let mut translate = self.translation_select(
+            "import-ai-translate",
+            translated,
+            |this, code, cx| {
+                this.task_options.translate = code.map(str::to_owned);
+                this.persist_task_options(cx);
+            },
+            cx,
+        );
+        if translated.is_some() {
+            translate = translate.detail(course2md::tr!(
+                "每段文字下方附上译文；已是该语言的视频不翻译"
+            ));
+        }
+        choices = choices.child(translate);
         let mut view = v_flex()
             .w_full()
             .min_w_0()
@@ -2404,6 +2426,7 @@ impl Desktop {
         self.task_options.llm = defaults.llm;
         self.task_options.summarize = defaults.summarize;
         self.task_options.vision = defaults.vision;
+        self.task_options.translate = defaults.translate.clone();
         self.advance_conversion_when_ready(cx);
         cx.notify();
     }
@@ -2587,7 +2610,12 @@ impl Desktop {
     fn task_uses_ai(&self) -> bool {
         self.task_options.llm
             || self.task_options.summarize
-            || self.import_base_config().llm.translation_target().is_some()
+            || self
+                .task_options
+                .translate
+                .as_deref()
+                .and_then(course2md::language::target)
+                .is_some()
     }
 
     fn missing_import_service(&self) -> Option<ServicePurpose> {
@@ -3070,7 +3098,6 @@ impl Desktop {
         let wide = column >= 960. * scale;
         let show_options = self.generation_options_open
             && self.preview_cancel.is_none()
-            && self.source_candidates.is_empty()
             && self
                 .current_input_task(cx)
                 .is_none_or(|task| task.state.finished());
