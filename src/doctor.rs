@@ -43,7 +43,7 @@ pub fn run() -> Result<()> {
         std::env::consts::ARCH
     )];
     let mut failures = 0;
-    out.push(crate::tr!("\n必需工具").into());
+    out.push(crate::tr!("\nRequired tools").into());
     for tool in ["ffmpeg", "ffprobe"] {
         match tool_version(tool, &["-version", "-hide_banner"]) {
             Some(version) => check(&mut out, true, tool, &format!("  {version}")),
@@ -55,13 +55,13 @@ pub fn run() -> Result<()> {
                     tool,
                     &format!(
                         "  {}",
-                        crate::tr!("缺失：{}", crate::error::install_hint(tool))
+                        crate::tr!("Missing: {}", crate::error::install_hint(tool))
                     ),
                 );
             }
         }
     }
-    out.push(crate::tr!("\n按用途选装").into());
+    out.push(crate::tr!("\nOptional tools by use").into());
     match crate::ytdlp::resolve() {
         Some(path) => match tool_version(&path, &["--version"]) {
             Some(version) => check(
@@ -74,13 +74,16 @@ pub fn run() -> Result<()> {
                 &mut out,
                 false,
                 "yt-dlp",
-                &format!("  {}", crate::tr!("找到但无法运行：{}", path.display())),
+                &format!(
+                    "  {}",
+                    crate::tr!("found but failed to run: {}", path.display())
+                ),
             ),
         },
         None => out.push(format!(
             "- yt-dlp  {}；{}",
             crate::error::install_hint("yt-dlp"),
-            crate::tr!("重跑 install.sh 可安装随包版本")
+            crate::tr!("Rerun install.sh for the bundled build")
         )),
     }
     out.push(crate::tr!("\nConfiguration").into());
@@ -91,10 +94,13 @@ pub fn run() -> Result<()> {
             if path.is_file() {
                 check(&mut out, true, "config", &format!("  {}", path.display()));
             } else {
-                out.push(crate::tr!("- config  使用内置默认值：{}", path.display()));
+                out.push(crate::tr!(
+                    "- config  Using built-in defaults: {}",
+                    path.display()
+                ));
                 out.push(format!(
                     "  {}",
-                    crate::tr!("可选配置：notepipe config init")
+                    crate::tr!("Optional setup: notepipe config init")
                 ));
             }
             // Validate the same merged defaults as conversion, without requiring a source or network.
@@ -107,7 +113,7 @@ pub fn run() -> Result<()> {
                     check(
                         &mut out,
                         false,
-                        crate::tr!("配置值"),
+                        crate::tr!("Settings values"),
                         &format!("  {error:#}"),
                     );
                 }
@@ -153,16 +159,19 @@ pub fn run() -> Result<()> {
             check(&mut out, false, "config", &format!("  {error:#}"));
         }
     }
-    out.push(crate::tr!("\n✓ 可用 · - 可选或未设置 · ! 需要检查 · ✗ 必须修复").into());
+    out.push(
+        crate::tr!("\n✓ available · - optional or unset · ! needs attention · ✗ must fix").into(),
+    );
     for line in out {
         println!("{line}");
     }
     anyhow::ensure!(
         failures == 0,
-        crate::tr!("发现 {} 项必需依赖或配置问题；请按上方提示修复", failures)
+        crate::tr!(
+            "Fix the {} required-tool or configuration issues listed above",
+            failures
+        )
     );
-    crate::println_tr!(
-        "基础检查通过；可选服务未进行联网测试 / Basic checks passed; optional services were not tested online."
-    );
+    crate::println_tr!("Basic checks passed; optional services were not tested online.");
     Ok(())
 }

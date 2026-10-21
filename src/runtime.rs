@@ -35,7 +35,7 @@ impl ManagedChild {
     pub fn spawn(name: &'static str, cmd: &mut Command) -> Result<Self> {
         let child = cmd
             .spawn()
-            .with_context(|| crate::tr!("无法启动 {} / Could not start {}", name, name))?;
+            .with_context(|| crate::tr!("Could not start {}", name, name))?;
         Ok(Self { child, name })
     }
 
@@ -70,7 +70,7 @@ impl ManagedChild {
             }
             anyhow::ensure!(
                 t0.elapsed() < timeout,
-                "{} 未在 {:.1}s 内退出 / did not exit within the time limit",
+                "{} did not exit within the time limit ({:.1}s)",
                 self.name,
                 timeout.as_secs_f64()
             );
@@ -174,7 +174,7 @@ pub fn run_bounded(
     let mut child = ManagedChild::spawn(name, cmd)?;
     let status = child.wait_within(timeout).map_err(|_| {
         anyhow::anyhow!(
-            "{name} 超过 {0:.0} 秒未完成，已终止 / {name} did not finish within {0:.0}s and was stopped",
+            "{name} did not finish within {0:.0}s and was stopped",
             timeout.as_secs_f64()
         )
     })?;
@@ -208,17 +208,11 @@ pub fn wait_ready(
             check()?;
         }
         if let Some(st) = child.try_wait() {
-            anyhow::bail!(
-                "{} 启动失败（{st}） / {} exited during startup ({st})",
-                child.name(),
-                child.name()
-            );
+            anyhow::bail!("{} exited during startup ({st})", child.name());
         }
         if t0.elapsed() > timeout {
             anyhow::bail!(
-                "{} 启动超时（{:.0} 秒） / {} startup timed out after {:.0}s",
-                child.name(),
-                timeout.as_secs_f64(),
+                "{} startup timed out after {:.0}s",
                 child.name(),
                 timeout.as_secs_f64()
             );
@@ -305,7 +299,11 @@ pub fn lock_file(path: &Path) -> Result<FileLock> {
         .truncate(false)
         .open(path)?;
     file.try_lock().with_context(|| {
-        crate::tr!("目录正被另一任务使用：{}。请等待任务结束", path.display()).to_string()
+        crate::tr!(
+            "Directory is in use: {}. Wait for the task to finish.",
+            path.display()
+        )
+        .to_string()
     })?;
     Ok(FileLock { file })
 }
@@ -328,9 +326,7 @@ impl TempWorkDir {
         let dir = tempfile::Builder::new()
             .prefix(&format!("notepipe-{tag}-"))
             .tempdir()
-            .context(crate::tr!(
-                "无法创建临时工作目录 / Could not create a temporary working directory"
-            ))?;
+            .context(crate::tr!("Could not create a temporary working directory"))?;
         Ok(Self { dir })
     }
 

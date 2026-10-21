@@ -57,7 +57,7 @@ async fn extract_frame(media: &Path, t: f64, dest: &Path) -> Result<()> {
     .await?;
     anyhow::ensure!(
         dest.is_file(),
-        "ffmpeg 未生成截图 {0} / ffmpeg did not produce screenshot {0}",
+        "ffmpeg did not produce screenshot {0}",
         dest.display()
     );
     Ok(())
@@ -70,9 +70,9 @@ fn slide_name(n: usize) -> String {
 
 /// 1fps（或 sample_interval）灰度流 + SSIM，得到新幻灯片时间点。
 async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f64, f64)>> {
-    let info = media::probe_video(media)
-        .await
-        .context(crate::tr!("无法读取视频尺寸，请检查文件是否可播放 / Could not read video dimensions; check that the file plays correctly"))?;
+    let info = media::probe_video(media).await.context(crate::tr!(
+        "Could not read video dimensions; check that the file plays correctly"
+    ))?;
     let interval = cfg.sample_interval;
     let (tw, th) = scaled_wh(info.width, info.height, SAMPLE_WIDTH);
     let fps = 1.0 / interval;
@@ -97,9 +97,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .context(crate::tr!(
-            "无法读取视频画面 / Could not start ffmpeg frame sampling"
-        ))?;
+        .context(crate::tr!("Could not start ffmpeg frame sampling"))?;
     let mut stdout = child.stdout.take().context("ffmpeg stdout")?;
     // stderr 必须全程 drain：piped 而不读的话，写满 64KB 管道缓冲会死锁。
     // 缓存尾部供失败诊断，debug 时逐行转发。
@@ -153,9 +151,8 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
         pb.inc(1);
         // 帧缓冲复用：move 进 GrayImage 计算，结束时 into_raw 收回供下一帧
         // （取消每帧 230KB 的 buf.clone()；仅物化 candidate 时才产生拥有所有权的拷贝）
-        let gray = GrayImage::from_raw(tw, th, std::mem::take(&mut buf)).ok_or_else(|| {
-            anyhow::anyhow!("灰度帧尺寸不匹配 {tw}x{th} / Grayscale frame size mismatch {tw}x{th}")
-        })?;
+        let gray = GrayImage::from_raw(tw, th, std::mem::take(&mut buf))
+            .ok_or_else(|| anyhow::anyhow!("Grayscale frame size mismatch {tw}x{th}"))?;
         {
             let cmp = crop_roi(&gray, cfg.roi);
 
@@ -197,7 +194,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
                     candidate_last_t = None;
                     last_emit_t = t;
                     pb.set_message(crate::tr!(
-                        "已找到 {} 张候选截图 / Found {} candidate slides",
+                        "Found {} candidate slides",
                         times.len(),
                         times.len()
                     ));
@@ -218,7 +215,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
     let stderr_bytes = stderr_task.await.unwrap_or_default();
     if !status.success() {
         let tail = crate::error::tail_lines(&String::from_utf8_lossy(&stderr_bytes), 5);
-        anyhow::bail!("读取视频画面失败 / Frame sampling failed ({status}): {tail}");
+        anyhow::bail!("Frame sampling failed ({status}): {tail}");
     }
     pb.finish();
     tracing::info!(slides = times.len(), frames = i, mode = %cfg.slide_mode, "ssim scan done");
@@ -233,10 +230,7 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     crate::progress::stage("scenes/scan", "start");
     let times = sample_timestamps(cfg, media).await?;
     crate::progress::stage("scenes/scan", "done");
-    anyhow::ensure!(
-        !times.is_empty(),
-        crate::tr!("未采样到任何帧 / No frames sampled")
-    );
+    anyhow::ensure!(!times.is_empty(), crate::tr!("No frames sampled"));
 
     crate::progress::stage("scenes/extract", "start");
     let pb = crate::progress::Bar::new("scenes/extract", times.len() as u64)
@@ -268,20 +262,11 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
                 set.abort_all();
                 let (onset_t, _) = times[i];
                 return Err(error).with_context(|| {
-                    // 中文只写具体原因：界面已用「截图未生成」命名这项失败
-                    let secs = onset_t.max(0.) as u64;
-                    format!(
-                        "第 {n} 张截图（{}:{:02}）提取失败 / Could not extract slide {n} (t={onset_t:.1}s)",
-                        secs / 60,
-                        secs % 60,
-                        n = i + 1
-                    )
+                    format!("Could not extract slide {n} (t={onset_t:.1}s)", n = i + 1)
                 });
             }
             Some(Err(e)) => {
-                return Err(e).context(crate::tr!(
-                    "截图任务异常终止 / Slide extraction stopped unexpectedly"
-                ));
+                return Err(e).context(crate::tr!("Screenshot extraction stopped unexpectedly"));
             }
             None => break,
         }
@@ -290,16 +275,7 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     let mut frames = Vec::with_capacity(results.len());
     for (i, r) in results {
         let (onset_t, _) = times[i];
-        r.with_context(|| {
-            // 中文只写具体原因：界面已用「截图未生成」命名这项失败
-            let secs = onset_t.max(0.) as u64;
-            format!(
-                "第 {n} 张截图（{}:{:02}）提取失败 / Could not extract slide {n} (t={onset_t:.1}s)",
-                secs / 60,
-                secs % 60,
-                n = i + 1
-            )
-        })?;
+        r.with_context(|| format!("Could not extract slide {n} (t={onset_t:.1}s)", n = i + 1))?;
         let name = slide_name(i + 1);
         frames.push(FrameEvent {
             t: onset_t,

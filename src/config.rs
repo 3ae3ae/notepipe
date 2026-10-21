@@ -20,14 +20,12 @@ pub const DEFAULT_MAX_SPEECH: f32 = 20.0;
 pub const DEFAULT_OUT_DIR: &str = "out";
 /// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr 共用同一判定）。
 pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
-    let url = url::Url::parse(raw.trim()).context(
-        crate::tr!("服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL."),
-    )?;
+    let url = url::Url::parse(raw.trim()).context(crate::tr!(
+        "Invalid service URL; use a complete HTTP(S) URL."
+    ))?;
     anyhow::ensure!(
         matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-        crate::tr!(
-            "服务地址无效，请使用完整的 HTTP(S) URL。 / Invalid service URL; use a complete HTTP(S) URL."
-        )
+        crate::tr!("Invalid service URL; use a complete HTTP(S) URL.")
     );
     Ok(url)
 }
@@ -70,7 +68,7 @@ pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
                 "/asr/transcribe"
             ]
         ),
-        crate::tr!("服务地址与所选服务类型不一致 / Service endpoint and protocol do not match")
+        crate::tr!("Service endpoint and protocol do not match")
     );
     Ok(append_endpoint_suffix(base, suffix))
 }
@@ -188,13 +186,13 @@ impl Roi {
     pub fn parse(s: &str) -> anyhow::Result<Self> {
         let (a, b) = s
             .split_once('-')
-            .ok_or_else(|| anyhow::anyhow!("ROI 格式应为 / ROI must use x1,y1-x2,y2: {s:?}"))?;
+            .ok_or_else(|| anyhow::anyhow!("ROI must use x1,y1-x2,y2: {s:?}"))?;
         let (x1, y1) = parse_xy(a)?;
         let (x2, y2) = parse_xy(b)?;
         let (x1, x2) = (x1.min(x2), x1.max(x2));
         let (y1, y2) = (y1.min(y2), y1.max(y2));
         if x2 <= x1 || y2 <= y1 {
-            anyhow::bail!("ROI 区域不能为空 / ROI must have a positive width and height: {s:?}");
+            anyhow::bail!("ROI must have a positive width and height: {s:?}");
         }
         Ok(Self { x1, y1, x2, y2 })
     }
@@ -216,28 +214,26 @@ impl Roi {
 }
 
 fn parse_xy(pair: &str) -> anyhow::Result<(f64, f64)> {
-    let (a, b) = pair.split_once(',').ok_or_else(|| {
-        anyhow::anyhow!("ROI 坐标格式应为 / ROI coordinates must use x,y: {pair:?}")
-    })?;
+    let (a, b) = pair
+        .split_once(',')
+        .ok_or_else(|| anyhow::anyhow!("ROI coordinates must use x,y: {pair:?}"))?;
     Ok((parse_coord(a)?, parse_coord(b)?))
 }
 
 fn parse_coord(s: &str) -> anyhow::Result<f64> {
     let s = s.trim();
-    let p = s.strip_suffix('%').ok_or_else(|| {
-        anyhow::anyhow!("ROI 坐标必须使用百分比 / ROI coordinates must use percentages: {s:?}")
-    })?;
+    let p = s
+        .strip_suffix('%')
+        .ok_or_else(|| anyhow::anyhow!("ROI coordinates must use percentages: {s:?}"))?;
     let percent: f64 = p.trim().parse()?;
     anyhow::ensure!(
         (0.0..=100.0).contains(&percent),
-        crate::tr!("ROI 百分比必须在 0–100 / ROI percentages must be between 0 and 100")
+        crate::tr!("ROI percentages must be between 0 and 100")
     );
     let v = percent / 100.0;
     anyhow::ensure!(
         v.is_finite() && v >= 0.0,
-        crate::tr!(
-            "ROI 坐标必须为非负有限数值 / ROI coordinates must be finite, non-negative numbers"
-        )
+        crate::tr!("ROI coordinates must be finite, non-negative numbers")
     );
     Ok(v)
 }
@@ -261,7 +257,7 @@ impl PipelineConfig {
         let finite = |name: &str, v: f64| -> AnyhowResult<()> {
             anyhow::ensure!(
                 v.is_finite(),
-                "{name} 必须是有限数值 / must be a finite number (received {v})"
+                "{name} must be a finite number (received {v})"
             );
             Ok(())
         };
@@ -275,22 +271,22 @@ impl PipelineConfig {
 
         anyhow::ensure!(
             self.similarity > 0.0 && self.similarity <= 1.0,
-            "--similarity 必须大于 0 且不超过 1 / must be greater than 0 and at most 1 (received {})",
+            "--similarity must be greater than 0 and at most 1 (received {})",
             self.similarity
         );
         anyhow::ensure!(
             self.sample_interval >= 0.2,
-            "--sample-interval 必须 >= 0.2 秒 / must be at least 0.2 seconds (received {})",
+            "--sample-interval must be at least 0.2 seconds (received {})",
             self.sample_interval
         );
         anyhow::ensure!(
             self.cooldown >= 0.0,
-            "--cooldown 必须 >= 0 秒 / must be at least 0 seconds (received {})",
+            "--cooldown must be at least 0 seconds (received {})",
             self.cooldown
         );
         anyhow::ensure!(
             self.stable_secs >= 0.0,
-            "--stable-secs 必须 >= 0 秒 / must be at least 0 seconds (received {})",
+            "--stable-secs must be at least 0 seconds (received {})",
             self.stable_secs
         );
         anyhow::ensure!(
@@ -304,12 +300,12 @@ impl PipelineConfig {
         // 上限防御 split_smart 的 clamp panic（0 会让 clamp(min>max) abort）
         anyhow::ensure!(
             self.asr.max_speech >= 1.0 && self.asr.max_speech <= 600.0,
-            "--max-speech 必须在 1–600 秒 / must be between 1 and 600 seconds (received {})",
+            "--max-speech must be between 1 and 600 seconds (received {})",
             self.asr.max_speech
         );
         anyhow::ensure!(
             self.max_height >= 144,
-            "--max-height 必须 >= 144 / must be at least 144 (received {})",
+            "--max-height must be at least 144 (received {})",
             self.max_height
         );
 

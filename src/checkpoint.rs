@@ -119,10 +119,10 @@ impl Checkpoint {
                 match stored {
                     Some(old) => tracing::info!(
                         old = ?old, new = ?identity,
-                        "asr checkpoint 身份不匹配（模型/后端/版本已变化），旧进度作废重算 / asr checkpoint identity mismatch (model/backend/version changed); old progress discarded and recomputed"
+                        "asr checkpoint identity mismatch (model/backend/version changed); old progress discarded and recomputed"
                     ),
                     None => tracing::info!(
-                        "asr checkpoint 无身份标记，旧进度作废重算 / asr checkpoint has no identity marker; old progress discarded and recomputed"
+                        "asr checkpoint has no identity marker; old progress discarded and recomputed"
                     ),
                 }
             }
@@ -160,7 +160,7 @@ impl Checkpoint {
                     .open(&path)
                     .with_context(|| {
                         crate::tr!(
-                            "打开 checkpoint {} / Failed to open checkpoint {}",
+                            "Failed to open checkpoint {}",
                             path.display(),
                             path.display()
                         )
@@ -172,15 +172,20 @@ impl Checkpoint {
                     // 下次 resume 直接硬错误（自我污染）。
                     // 注意：不能用 append-only 句柄做 set_len——Windows 上
                     // FILE_APPEND_DATA 不含写长度权限，会 Access denied。
-                    f.set_len(loaded.valid_len)
-                        .with_context(|| crate::tr!("截断 checkpoint 残行 {} / Failed to truncate checkpoint partial line {}", path.display(), path.display()))?;
+                    f.set_len(loaded.valid_len).with_context(|| {
+                        crate::tr!(
+                            "Failed to truncate checkpoint partial line {}",
+                            path.display(),
+                            path.display()
+                        )
+                    })?;
                 } else if loaded.needs_newline {
                     // 末行是合法 JSON 但缺尾换行（手改文件）：先补换行再追加
                     use std::io::Seek as _;
                     f.seek(std::io::SeekFrom::End(0))?;
                     f.write_all(b"\n").with_context(|| {
                         crate::tr!(
-                            "补换行 {} / Failed to append newline to {}",
+                            "Failed to append newline to {}",
                             path.display(),
                             path.display()
                         )
@@ -204,16 +209,10 @@ impl Checkpoint {
         if !path.is_file() {
             return Ok(None);
         }
-        let s = std::fs::read_to_string(path).with_context(|| {
-            crate::tr!(
-                "读取 {} / Failed to read {}",
-                path.display(),
-                path.display()
-            )
-        })?;
-        let header: serde_json::Value = serde_json::from_str(&s).context(crate::tr!(
-            "识别进度记录已损坏 / The transcription progress record is damaged"
-        ))?;
+        let s = std::fs::read_to_string(path)
+            .with_context(|| crate::tr!("Failed to read {}", path.display(), path.display()))?;
+        let header: serde_json::Value = serde_json::from_str(&s)
+            .context(crate::tr!("The transcription progress record is damaged"))?;
         if header["schema_version"]
             .as_u64()
             .is_some_and(|version| version != u64::from(CHECKPOINT_SCHEMA_VERSION))
@@ -221,7 +220,7 @@ impl Checkpoint {
             return Ok(None);
         }
         Ok(Some(serde_json::from_str(&s).context(crate::tr!(
-            "识别进度记录已损坏 / The transcription progress record is damaged"
+            "The transcription progress record is damaged"
         ))?))
     }
 
@@ -245,7 +244,7 @@ impl Checkpoint {
         for file in old {
             std::fs::rename(file, archive.join(file.file_name().unwrap())).with_context(|| {
                 crate::tr!(
-                    "无法保留旧识别进度 {} / Cannot preserve previous transcription progress {}",
+                    "Cannot preserve previous transcription progress {}",
                     file.display(),
                     file.display()
                 )
@@ -264,13 +263,8 @@ impl Checkpoint {
                 needs_newline: false,
             });
         }
-        let content = std::fs::read_to_string(path).with_context(|| {
-            crate::tr!(
-                "读取 {} / Failed to read {}",
-                path.display(),
-                path.display()
-            )
-        })?;
+        let content = std::fs::read_to_string(path)
+            .with_context(|| crate::tr!("Failed to read {}", path.display(), path.display()))?;
         let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
         let last_idx = lines.len().saturating_sub(1);
         let mut out: Vec<TranscriptEvent> = vec![];
@@ -282,19 +276,19 @@ impl Checkpoint {
                     if seen.insert(k) {
                         out.push(ev);
                     } else if i != last_idx {
-                        tracing::warn!(
-                            line = i + 1,
-                            "重复的识别检查点已忽略 / Ignored duplicate transcription checkpoint"
-                        );
+                        tracing::warn!(line = i + 1, "Ignored duplicate transcription checkpoint");
                     }
                 }
                 Err(e) => {
                     if i == last_idx && !content.ends_with('\n') {
                         // 崩溃时最后一行可能只写了一半：容忍
-                        tracing::debug!("checkpoint 末行解析失败（按崩溃残留忽略）：{e}");
+                        tracing::debug!(
+                            "{}",
+                            crate::tr!("Ignored an incomplete checkpoint tail: {}", e)
+                        );
                     } else {
                         anyhow::bail!(
-                            "识别进度文件第 {1} 行已损坏，请重新识别 / Line {1} of the transcription progress file is damaged; transcribe again ({0}): {e}",
+                            "Line {1} of the transcription progress file is damaged; transcribe again ({0}): {e}",
                             path.display(),
                             i + 1
                         );
@@ -352,7 +346,7 @@ impl Checkpoint {
             if let Some(dir) = self.path.parent() {
                 std::fs::create_dir_all(dir).with_context(|| {
                     crate::tr!(
-                        "创建 checkpoint 目录 {} / Failed to create checkpoint directory {}",
+                        "Failed to create checkpoint directory {}",
                         dir.display(),
                         dir.display()
                     )
@@ -365,7 +359,7 @@ impl Checkpoint {
                     .open(&self.path)
                     .with_context(|| {
                         crate::tr!(
-                            "打开 checkpoint {} / Failed to open checkpoint {}",
+                            "Failed to open checkpoint {}",
                             self.path.display(),
                             self.path.display()
                         )
@@ -376,7 +370,7 @@ impl Checkpoint {
         if let Some(f) = &mut self.file {
             writeln!(f, "{line}").with_context(|| {
                 crate::tr!(
-                    "写 checkpoint {} / Failed to write checkpoint {}",
+                    "Failed to write checkpoint {}",
                     self.path.display(),
                     self.path.display()
                 )
@@ -432,26 +426,20 @@ fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir).with_context(|| {
         crate::tr!(
-            "创建目录 {} / Failed to create directory {}",
+            "Failed to create directory {}",
             dir.display(),
             dir.display()
         )
     })?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
-    tmp.write_all(bytes).with_context(|| {
-        crate::tr!("写 {} / Failed to write {}", path.display(), path.display())
-    })?;
+    tmp.write_all(bytes)
+        .with_context(|| crate::tr!("Failed to write {}", path.display(), path.display()))?;
     if shared {
         make_shared(tmp.as_file())?;
     }
     tmp.as_file().sync_all()?;
-    tmp.persist(path).with_context(|| {
-        crate::tr!(
-            "替换 {} / Failed to replace {}",
-            path.display(),
-            path.display()
-        )
-    })?;
+    tmp.persist(path)
+        .with_context(|| crate::tr!("Failed to replace {}", path.display(), path.display()))?;
     Ok(())
 }
 

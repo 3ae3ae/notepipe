@@ -56,10 +56,19 @@ fn main() -> std::process::ExitCode {
         .skip(1)
         .take_while(|a| *a != "--")
         .any(|a| a == "--json" || a == "run-task");
-    let requested = lang_arg
-        .as_deref()
-        .and_then(notepipe::i18n::Lang::from_code)
-        .unwrap_or_else(notepipe::i18n::Lang::detect);
+    let env_lang = std::env::var("NOTEPIPE_LANG").ok();
+    let requested = match lang_arg.as_deref().or(env_lang.as_deref()) {
+        Some("auto") => notepipe::i18n::Lang::detect(),
+        Some(value) => notepipe::i18n::Lang::from_code(value).unwrap_or_else(|| {
+            if json_requested {
+                notepipe::i18n::Lang::source()
+            } else {
+                notepipe::i18n::Lang::detect()
+            }
+        }),
+        None if json_requested => notepipe::i18n::Lang::source(),
+        None => notepipe::i18n::Lang::detect(),
+    };
     notepipe::i18n::set_lang(requested);
     let command = notepipe::cli::localize_command(Cli::command());
     let cli = match command.try_get_matches_from(&args) {
@@ -78,9 +87,9 @@ fn main() -> std::process::ExitCode {
             if error.use_stderr() && json_requested {
                 progress::set_json_mode();
                 progress::emit(
-                    serde_json::json!({"type": "error", "message": notepipe::tr!("参数无效：{}", error)}),
+                    serde_json::json!({"type": "error", "message": notepipe::tr!("Invalid arguments: {}", error)}),
                 );
-            } else if notepipe::i18n::lang() == notepipe::i18n::Lang::En {
+            } else if notepipe::i18n::lang() == notepipe::i18n::Lang::source() {
                 let _ = error.print();
             } else {
                 let rendered = notepipe::cli::localize_rendered(&error.render().to_string());
@@ -89,10 +98,7 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(error.exit_code() as u8);
         }
     };
-    // Machine protocol messages stay in Simplified Chinese for stable consumers.
-    if matches!(cli.command, Some(Command::RunTask)) {
-        notepipe::i18n::set_lang(notepipe::i18n::Lang::ZhHans);
-    } else if let Some(value) = &cli.lang {
+    if let Some(value) = &cli.lang {
         match notepipe::i18n::Lang::from_code(value) {
             Some(lang) => notepipe::i18n::set_lang(lang),
             None if value == "auto" => {
@@ -102,8 +108,9 @@ fn main() -> std::process::ExitCode {
                 eprintln!(
                     "{}",
                     notepipe::tr!(
-                        "未知的语言：{}。可用：auto、en、zh-Hans、zh-Hant、ja",
-                        value
+                        "Unknown language: {}. Available: {}",
+                        value,
+                        notepipe::cli::language_choices()
                     )
                 );
                 return std::process::ExitCode::FAILURE;
@@ -113,10 +120,6 @@ fn main() -> std::process::ExitCode {
     let json = cli.opts.json || matches!(&cli.command, Some(Command::RunTask));
     let quiet =
         cli.opts.quiet || matches!(&cli.command, Some(Command::Summarize(args)) if args.quiet);
-    if json || matches!(cli.command, Some(Command::RunTask)) {
-        // Machine consumers parse message text; keep the protocol's source language.
-        notepipe::i18n::set_lang(notepipe::i18n::Lang::ZhHans);
-    }
     if json {
         progress::set_json_mode();
     }
@@ -129,7 +132,7 @@ fn main() -> std::process::ExitCode {
             if json {
                 progress::emit(serde_json::json!({"type": "error", "message": message}));
             } else {
-                notepipe::eprintln_tr!("错误：{}", message);
+                notepipe::eprintln_tr!("Error: {}", message);
             }
             std::process::ExitCode::FAILURE
         }
@@ -143,9 +146,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
     if let Some(platform) = cli.login {
         anyhow::ensure!(
             cli.source.as_deref().is_none_or(config::looks_like_source),
-            notepipe::tr!(
-                "--login 后只能跟视频链接或本地视频路径 / After --login, provide only a video URL or local file path"
-            )
+            notepipe::tr!("After --login, provide only a video URL or local file path")
         );
         notepipe::login::login(platform)?;
         if cli.source.is_none() {
@@ -176,11 +177,11 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                         disable_hint,
                     )?;
                     let path = settings::save(&cfg)?;
-                    println!("已保存并启用 / Saved and enabled: {}", path.display());
+                    println!("Saved and enabled: {}", path.display());
                     match llm::test_connection(&cfg.llm) {
-                        Ok(()) => notepipe::println_tr!("连接测试通过 / Connection test passed."),
+                        Ok(()) => notepipe::println_tr!("Connection test passed."),
                         Err(e) => anyhow::bail!(
-                            "配置已保存，但连接测试失败；请检查服务地址、密钥和模型 / Settings saved, but connection test failed; check endpoint, key and model: {e:#}"
+                            "Settings saved, but connection test failed; check endpoint, key and model: {e:#}"
                         ),
                     }
                 }
@@ -190,7 +191,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     cfg.llm.enabled = false;
                     let path = settings::save(&cfg)?;
                     println!(
-                        "已关闭 AI 校对，凭据保留 / AI proofreading disabled; credentials kept: {}",
+                        "AI proofreading disabled; credentials kept: {}",
                         path.display()
                     );
                 }
@@ -205,17 +206,17 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     if path.is_file() && !force {
                         anyhow::bail!(
                             "{}",
-                            notepipe::tr!("配置已存在：{}。使用 --force 替换", path.display())
+                            notepipe::tr!(
+                                "Configuration already exists: {}. Use --force instead",
+                                path.display()
+                            )
                         );
                     }
                     if let Some(dir) = path.parent() {
                         std::fs::create_dir_all(dir)?;
                     }
                     std::fs::write(&path, settings::template())?;
-                    println!(
-                        "已生成配置模板 / Configuration template created: {}",
-                        path.display()
-                    );
+                    println!("Configuration template created: {}", path.display());
                 }
                 ConfigCmd::Show => settings::print_effective(&settings::load()?)?,
             }
@@ -230,7 +231,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             }
             if targets.is_empty() {
                 anyhow::bail!(
-                    "未找到笔记：{0} / No notes found in: {0}",
+                    "No notes found in: {0}",
                     args.dirs
                         .iter()
                         .map(|d| d.display().to_string())
@@ -268,21 +269,16 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             }
             let path = settings::save(&cfg)?;
             if cleared.is_empty() {
-                println!(
-                    "没有需要清除的 API 配置 / No saved API settings to clear: {}",
-                    path.display()
-                );
+                println!("No saved API settings to clear: {}", path.display());
             } else {
                 println!(
-                    "已清除 API 配置 / Cleared API settings ({}): {}",
+                    "Cleared API settings ({}): {}",
                     cleared.join(", "),
                     path.display()
                 );
             }
             if !args.asr {
-                notepipe::println_tr!(
-                    "云端语音识别密钥未清除；如需清除：notepipe remove --asr / Cloud speech key kept; to clear it: notepipe remove --asr"
-                );
+                notepipe::println_tr!("Cloud speech key kept; to clear it: notepipe remove --asr");
             }
             Ok(())
         }
@@ -292,11 +288,14 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 None => {
                     anyhow::ensure!(
                         no_args,
-                        notepipe::tr!("缺少视频来源。示例：notepipe ./lecture.mp4")
+                        notepipe::tr!("Missing video source. Example: notepipe ./lecture.mp4")
                     );
-                    println!("{}\n", notepipe::tr!("notepipe — 将视频转换为图文笔记"));
+                    println!(
+                        "{}\n",
+                        notepipe::tr!("notepipe — Turn videos into illustrated notes")
+                    );
                     println!("{}", notepipe::tr!(notepipe::cli::QUICK_START));
-                    notepipe::println_tr!("全部参数 / All options: notepipe --help");
+                    notepipe::println_tr!("All options: notepipe --help");
                     return Ok(());
                 }
             };
@@ -322,9 +321,9 @@ fn note_version_dir(dir: &std::path::Path) -> anyhow::Result<Option<std::path::P
         let current: notepipe::artifact::CurrentVersion =
             serde_json::from_slice(&std::fs::read(dir.join("current.json"))?)?;
         let manifest = notepipe::artifact::safe_asset_path(dir, &current.manifest)?;
-        let version = manifest.parent().context(notepipe::tr!(
-            "笔记清单位置无效 / Invalid note manifest location"
-        ))?;
+        let version = manifest
+            .parent()
+            .context(notepipe::tr!("Invalid note manifest location"))?;
         return Ok(Some(version.to_path_buf()));
     }
     Ok(dir
@@ -339,10 +338,7 @@ fn collect_targets(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>, dep
         Ok(Some(version)) => return out.push(version),
         Ok(None) => {}
         Err(error) => {
-            tracing::warn!(
-                "跳过无法读取的笔记 / Skipped unreadable note {}: {error:#}",
-                dir.display()
-            );
+            tracing::warn!("Skipped unreadable note {}: {error:#}", dir.display());
             return;
         }
     }
@@ -374,10 +370,7 @@ fn summarize_note(
         serde_json::from_slice(&std::fs::read(dir.join(&base.document))?)?;
     if document.summary.is_some() && !force {
         if !progress::is_quiet() {
-            println!(
-                "已有摘要，笔记保持不变 / Summary already exists: {}",
-                dir.display()
-            );
+            println!("Summary already exists: {}", dir.display());
         }
         return Ok(());
     }
@@ -400,9 +393,7 @@ fn summarize_note(
     let note_dir = dir
         .parent()
         .and_then(|p| p.parent())
-        .context(notepipe::tr!(
-            "笔记版本位置无效 / Invalid note version location"
-        ))?
+        .context(notepipe::tr!("Invalid note version location"))?
         .to_path_buf();
     let work = note_dir.join(".work").join(&task_id);
     execution::bind_work_dir(
@@ -420,10 +411,7 @@ fn summarize_note(
     };
     if artifact::published(&target)?.is_some() {
         if !progress::is_quiet() {
-            println!(
-                "摘要已保存 / Summary already saved: {}",
-                target.version_dir().display()
-            );
+            println!("Summary already saved: {}", target.version_dir().display());
         }
         return Ok(());
     }
@@ -453,12 +441,12 @@ fn summarize_note(
         let text = notepipe::summarize::render_standalone_md(&document.meta.title, &summary);
         notepipe::checkpoint::atomic_write(&file, text.as_bytes())?;
         if !progress::is_quiet() {
-            println!("已导出摘要 / Summary exported: {}", file.display());
+            println!("Summary exported: {}", file.display());
         }
     }
     if !progress::is_quiet() {
         println!(
-            "摘要已作为新版笔记保存 / Summary saved as a new note version: {}",
+            "Summary saved as a new note version: {}",
             target.version_dir().display()
         );
     }
@@ -473,13 +461,11 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
     let source = source.trim();
     if source.starts_with("http://") || source.starts_with("https://") {
         let url = url::Url::parse(source).map_err(|_| {
-            anyhow::anyhow!(notepipe::tr!(
-                "链接无效；请提供完整的视频链接 / Invalid URL; provide a complete video URL"
-            ))
+            anyhow::anyhow!(notepipe::tr!("Invalid URL; provide a complete video URL"))
         })?;
         anyhow::ensure!(
             url.host_str().is_some(),
-            notepipe::tr!("链接缺少主机名 / URL is missing a host")
+            notepipe::tr!("URL is missing a host")
         );
         return Ok(source.to_owned());
     }
@@ -488,7 +474,7 @@ fn normalize_source(source: &str) -> anyhow::Result<String> {
     }
     anyhow::bail!(
         "{}\n{}",
-        notepipe::tr!("找不到视频文件或无法识别链接：{}", source),
-        notepipe::tr!("请检查路径；含空格的路径需加引号")
+        notepipe::tr!("Video file not found or URL not recognized: {}", source),
+        notepipe::tr!("Check the path and quote paths containing spaces.")
     )
 }

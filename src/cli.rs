@@ -1,51 +1,49 @@
-use crate::i18n::{Lang, t};
+use crate::i18n::t;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-pub const QUICK_START: &str = "快速开始 / Quick start:
+pub const QUICK_START: &str = r#"Quick start:
   notepipe ./lecture.mp4
   notepipe https://www.youtube.com/watch?v=VIDEO_ID
   notepipe ./lecture.mp4 -o ./notes
 
-转写方式 / Transcripts:
-  默认优先使用平台字幕，无字幕时使用语音识别。
-  Uses platform subtitles first, then speech recognition when needed.
-  --transcript-source subtitle  仅使用字幕 / Subtitles only
-  --transcript-source asr       强制语音识别 / Speech recognition only
+Transcripts:
+  Platform subtitles are used first; speech recognition runs when none exist.
+  --transcript-source subtitle  Use subtitles only
+  --transcript-source asr       Force speech recognition
 
-下一步 / Next steps:
-  notepipe doctor              检查依赖与配置 / Check dependencies and settings
-  notepipe config init         生成配置模板 / Create a configuration template
-  notepipe llm setup           配置可选的 AI 校对 / Set up optional AI proofreading
-  notepipe summarize ./notes   为已有笔记生成摘要 / Summarize existing notes
+Next steps:
+  notepipe doctor              Check dependencies and settings
+  notepipe config init         Create a configuration template
+  notepipe llm setup           Set up optional AI proofreading
+  notepipe summarize ./notes   Summarize existing notes
 
-交互终端首次转换会引导配置；脚本请显式传入所需参数。
-First conversion in a terminal offers setup; scripts should pass options explicitly.
-使用 <command> --help 查看子命令帮助 / Use <command> --help for details.
-";
+The first conversion in a terminal offers setup; scripts should pass options explicitly.
+Use <command> --help for details.
+"#;
 
 #[derive(Parser)]
 #[command(
     name = "notepipe",
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("NOTEPIPE_COMMIT_HASH"), ")"),
-    about = crate::tr!("将视频和音频转换为 Markdown 笔记 / Turn video and audio into Markdown notes"),
+    about = crate::tr!("Turn video and audio into Markdown notes"),
     args_conflicts_with_subcommands = true,
     after_help = QUICK_START
 )]
 pub struct Cli {
-    /// 界面语言：auto、en、zh-Hans、zh-Hant、ja / Interface language: auto, en, zh-Hans, zh-Hant, ja
-    #[arg(long, global = true, value_name = "LANG")]
+    /// Interface language.
+    #[arg(long, global = true, value_name = "LANG", help = crate::tr!("Interface language: {}", language_choices()))]
     pub lang: Option<String>,
 
-    /// 登录（ollama 本地服务；codex 订阅），可接视频地址继续转换 / Log in (ollama local, codex subscription), optionally then process a video
+    /// Log in (ollama local, codex subscription), optionally then process a video
     #[arg(long, value_enum, conflicts_with_all = ["logout", "json"])]
     pub login: Option<LoginPlatform>,
 
-    /// 清除保存的登录凭据 / Remove saved login credentials
+    /// Remove saved login credentials
     #[arg(long, value_enum, conflicts_with_all = ["login", "source", "json"])]
     pub logout: Option<LoginPlatform>,
 
-    /// 视频链接或本地文件 / Video URL or local file
+    /// Video URL or local file
     pub source: Option<String>,
 
     #[command(flatten)]
@@ -63,256 +61,248 @@ pub enum LoginPlatform {
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct RunOpts {
-    /// 输出根目录（按平台/标题/ID 建目录）/ Output root (platform/title/ID)
+    /// Output root (platform/title/ID)
     #[arg(short, long)]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub out: Option<PathBuf>,
 
-    /// Cookie 文件（Netscape 格式，使用私有副本）/ Cookie file (Netscape format; uses a private copy)
-    #[arg(
-        long,
-        value_name = "FILE",
-        help_heading = "输入与输出 / Input and output"
-    )]
+    /// Cookie file (Netscape format; uses a private copy)
+    #[arg(long, value_name = "FILE", help_heading = "Input and output")]
     pub cookies: Option<PathBuf>,
 
-    /// 浏览器 Cookie 来源（如 chrome、firefox:default-release）/ Browser cookies (e.g. chrome, firefox:default-release)
-    #[arg(
-        long,
-        value_name = "BROWSER",
-        help_heading = "输入与输出 / Input and output"
-    )]
+    /// Browser cookies (e.g. chrome, firefox:default-release)
+    #[arg(long, value_name = "BROWSER", help_heading = "Input and output")]
     pub cookies_from_browser: Option<String>,
 
-    /// 画面相似度阈值 (0,1]，越高截图越多 / Similarity threshold; higher captures more slides
+    /// Similarity threshold; higher captures more slides
     #[arg(long)]
-    #[arg(help_heading = "截图 / Slides")]
+    #[arg(help_heading = "Slides")]
     pub similarity: Option<f64>,
 
-    /// 画面采样间隔（秒）/ Frame sampling interval in seconds
+    /// Frame sampling interval in seconds
     #[arg(long)]
-    #[arg(help_heading = "截图 / Slides")]
+    #[arg(help_heading = "Slides")]
     pub sample_interval: Option<f64>,
 
-    /// 截图最短间隔（秒）/ Minimum seconds between screenshots
+    /// Minimum seconds between screenshots
     #[arg(long)]
-    #[arg(help_heading = "截图 / Slides")]
+    #[arg(help_heading = "Slides")]
     pub cooldown: Option<f64>,
 
-    /// 下载视频最大高度（推荐 1080）/ Maximum download height (1080 recommended)
+    /// Maximum download height (1080 recommended)
     #[arg(long)]
-    #[arg(help_heading = "截图 / Slides")]
+    #[arg(help_heading = "Slides")]
     pub max_height: Option<u32>,
 
-    /// 截图时机：first 立即，stable 等画面稳定 / Capture immediately or wait for stable slides
+    /// Capture immediately or wait for stable slides
     #[arg(long, value_enum)]
-    #[arg(help_heading = "截图 / Slides")]
+    #[arg(help_heading = "Slides")]
     pub slide_mode: Option<crate::config::SlideMode>,
 
-    /// stable 模式的画面稳定时间（秒）/ Seconds to wait for a stable frame
+    /// Seconds to wait for a stable frame
     #[arg(long)]
-    #[arg(help_heading = "截图 / Slides")]
+    #[arg(help_heading = "Slides")]
     pub stable_secs: Option<f64>,
 
-    /// 只看画面的某块区域判断翻页，格式：左%,上%-右%,下% / Detect slide changes in a region: left%,top%-right%,bottom%
+    /// Detect slide changes in a region: left%,top%-right%,bottom%
     #[arg(long)]
-    #[arg(help_heading = "截图 / Slides")]
+    #[arg(help_heading = "Slides")]
     pub roi: Option<String>,
 
     /// Speech service base URL or full endpoint
     #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
+    #[arg(help_heading = "Speech recognition")]
     pub asr_base_url: Option<String>,
 
-    /// 云端识别密钥；建议改用 NOTEPIPE_ASR_API_KEY 环境变量，避免留在命令历史 / Cloud API key; prefer NOTEPIPE_ASR_API_KEY to keep it out of shell history
+    /// Cloud API key; prefer NOTEPIPE_ASR_API_KEY to keep it out of shell history
     #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
+    #[arg(help_heading = "Speech recognition")]
     pub asr_api_key: Option<String>,
 
     /// Speech service model; omitted when empty
     #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
+    #[arg(help_heading = "Speech recognition")]
     pub asr_model: Option<String>,
 
     /// HTTP dialect: transcriptions, chat, xai, meta
     #[arg(long, value_enum)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
+    #[arg(help_heading = "Speech recognition")]
     pub asr_mode: Option<crate::settings::AsrMode>,
 
     /// Speech language code; empty means automatic detection
-    #[arg(long, help_heading = "语音识别 / Speech recognition")]
+    #[arg(long, help_heading = "Speech recognition")]
     pub asr_language: Option<String>,
 
-    /// 文字来源：auto 优先字幕，subtitle 仅字幕，asr 语音识别 / Transcript source: auto, subtitle, asr
+    /// Transcript source: auto, subtitle, asr
     #[arg(long, value_enum)]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub transcript_source: Option<crate::config::TranscriptSource>,
 
-    /// 每段语音最长秒数 (1–600) / Maximum speech segment length in seconds
+    /// Maximum speech segment length in seconds
     #[arg(long)]
-    #[arg(help_heading = "语音识别 / Speech recognition")]
+    #[arg(help_heading = "Speech recognition")]
     pub max_speech: Option<f32>,
 
-    /// 输出格式，逗号分隔 / Output formats, comma-separated: md,html,json
+    /// Output formats, comma-separated: md,html,json
     #[arg(long, value_delimiter = ',', value_enum)]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub formats: Option<Vec<crate::config::OutputFormat>>,
 
-    /// 保留下载的视频 / Keep the downloaded video
+    /// Keep the downloaded video
     #[arg(long)]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub keep_video: bool,
 
-    /// 成功后删除本次下载的视频 / Delete newly downloaded video after success
+    /// Delete newly downloaded video after success
     #[arg(long, conflicts_with = "keep_video")]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub no_keep_video: bool,
 
-    /// 不重新下载，使用上次下载的视频 / Reuse the previously downloaded video
+    /// Reuse the previously downloaded video
     #[arg(long)]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub no_download: bool,
 
-    /// 本次启用 AI 校对 / Enable AI proofreading for this run
+    /// Enable AI proofreading for this run
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub llm: bool,
 
-    /// 本次禁用 AI 校对 / Disable AI proofreading for this run
+    /// Disable AI proofreading for this run
     #[arg(long, conflicts_with = "llm")]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub no_llm: bool,
 
-    /// AI 校对服务地址 / AI proofreading base URL (OpenAI-compatible)
+    /// AI proofreading base URL (OpenAI-compatible)
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub llm_base_url: Option<String>,
 
-    /// AI 校对密钥（建议用 llm setup 设置，避免留在命令历史）/ AI proofreading key (prefer llm setup to keep it out of shell history)
+    /// AI proofreading key (prefer llm setup to keep it out of shell history)
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub llm_api_key: Option<String>,
 
-    /// AI 校对模型名称 / AI proofreading model name
+    /// AI proofreading model name
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub llm_model: Option<String>,
 
-    /// AI 校对提示词 / AI proofreading instructions
+    /// AI proofreading instructions
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub llm_prompt: Option<String>,
 
-    /// 附截图辅助校对（需要视觉模型）/ Attach slides for proofreading (requires image support)
+    /// Attach slides for proofreading (requires image support)
     #[arg(long, conflicts_with = "no_llm_vision")]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub llm_vision: bool,
 
-    /// 本次禁用截图辅助校对 / Disable image-assisted proofreading
+    /// Disable image-assisted proofreading
     #[arg(long, conflicts_with = "llm_vision")]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub no_llm_vision: bool,
 
-    /// 隐藏完成后的 AI 校对提示 / Hide the optional AI proofreading tip
+    /// Hide the optional AI proofreading tip
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub no_llm_hint: bool,
 
-    /// 本次生成视频摘要并写入笔记 / Generate a video summary and add it to the notes
+    /// Generate a video summary and add it to the notes
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub summarize: bool,
 
-    /// 本次禁用视频摘要 / Disable video summary for this run
+    /// Disable video summary for this run
     #[arg(long, conflicts_with = "summarize")]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub no_summarize: bool,
 
-    /// 双语笔记：把文字翻译为该语言（zh-Hans、zh-Hant、en、ja、ko、fr、de、es） / Bilingual notes: translate the text into this language (zh-Hans, zh-Hant, en, ja, ko, fr, de, es)
+    /// Bilingual notes: translate the text into this language (zh-Hans, zh-Hant, en, ja, ko, fr, de, es)
     #[arg(long, value_name = "LANG", conflicts_with = "no_translate", value_parser = parse_translation_target)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub translate: Option<String>,
 
-    /// 本次不翻译 / Do not translate this run
+    /// Do not translate this run
     #[arg(long)]
-    #[arg(help_heading = "AI 校对 / AI proofreading")]
+    #[arg(help_heading = "AI proofreading")]
     pub no_translate: bool,
 
-    /// 显示诊断日志；-vv 显示调试细节 / Diagnostic logs; -vv for debug details
+    /// Diagnostic logs; -vv for debug details
     #[arg(short, long, action = clap::ArgAction::Count)]
-    #[arg(help_heading = "终端输出 / Terminal output")]
+    #[arg(help_heading = "Terminal output")]
     pub verbose: u8,
 
-    /// 继续上次中断的识别（默认开启）/ Continue interrupted transcription (on by default)
+    /// Continue interrupted transcription (on by default)
     #[arg(long)]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub resume: bool,
 
-    /// 从头重新识别 / Transcribe again from the start
+    /// Transcribe again from the start
     #[arg(long, conflicts_with = "resume")]
-    #[arg(help_heading = "输入与输出 / Input and output")]
+    #[arg(help_heading = "Input and output")]
     pub no_resume: bool,
 
-    /// 静默模式，仅报告错误 / Quiet mode: report errors only
+    /// Quiet mode: report errors only
     #[arg(short, long)]
-    #[arg(help_heading = "终端输出 / Terminal output")]
+    #[arg(help_heading = "Terminal output")]
     pub quiet: bool,
 
-    /// 以 NDJSON 输出进度，禁用交互 / Stream NDJSON progress without prompts
+    /// Stream NDJSON progress without prompts
     #[arg(long)]
-    #[arg(help_heading = "终端输出 / Terminal output")]
+    #[arg(help_heading = "Terminal output")]
     pub json: bool,
 }
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// 执行已保存的任务；从标准输入读取完整 JSON 参数 / Execute a saved task from stdin JSON
+    /// Execute a saved task from stdin JSON
     #[command(hide = true)]
     RunTask,
-    /// 配置可选的 AI 校对 / Configure optional AI proofreading
+    /// Configure optional AI proofreading
     Llm {
         #[command(subcommand)]
         cmd: LlmCmd,
     },
-    /// 检查依赖、识别后端和配置 / Check tools, speech backends and settings
+    /// Check tools, speech backends and settings
     Doctor,
-    /// 管理配置文件 / Manage the configuration file
+    /// Manage the configuration file
     Config {
         #[command(subcommand)]
         cmd: ConfigCmd,
     },
-    /// 为已有笔记生成 AI 摘要 / Add AI summaries to existing notes
+    /// Add AI summaries to existing notes
     Summarize(SummarizeArgs),
-    /// 清除 AI 校对的地址、密钥、模型和 Codex 登录 / Clear the AI proofreading endpoint, key, model and Codex login
+    /// Clear the AI proofreading endpoint, key, model and Codex login
     Remove(RemoveArgs),
 }
 
 #[derive(Args)]
 pub struct RemoveArgs {
-    /// 同时清除云端语音识别密钥 / Also clear the cloud speech API key
+    /// Also clear the cloud speech API key
     #[arg(long)]
     pub asr: bool,
 }
 
 #[derive(Args)]
 pub struct SummarizeArgs {
-    /// 笔记目录，或存放多份笔记的上级目录 / A note directory or a folder of notes
+    /// A note directory or a folder of notes
     #[arg(required = true)]
     pub dirs: Vec<PathBuf>,
-    /// 重新生成已有摘要 / Regenerate existing summaries
+    /// Regenerate existing summaries
     #[arg(long)]
     pub force: bool,
-    /// 另存一份摘要（Markdown）到此目录 / Also save each summary as Markdown in this directory
+    /// Also save each summary as Markdown in this directory
     #[arg(short = 'o', long)]
     pub out: Option<PathBuf>,
-    /// 静默模式，仅报告错误 / Quiet mode: report errors only
+    /// Quiet mode: report errors only
     #[arg(short, long)]
     pub quiet: bool,
 }
 
 #[derive(Subcommand)]
 pub enum LlmCmd {
-    /// 配置并启用 AI 校对（终端内询问缺失项）/ Set up AI proofreading; prompts in a terminal
+    /// Set up AI proofreading; prompts in a terminal
     Setup {
         #[arg(long)]
         base_url: Option<String>,
@@ -320,25 +310,32 @@ pub enum LlmCmd {
         api_key: Option<String>,
         #[arg(long)]
         model: Option<String>,
-        /// 关闭完成后的校对提示 / Hide the completion tip
+        /// Hide the completion tip
         #[arg(long)]
         disable_hint: bool,
     },
-    /// 显示当前配置（隐藏密钥）/ Show settings with keys hidden
+    /// Show settings with keys hidden
     Status,
-    /// 关闭 AI 校对并保留凭据 / Disable AI proofreading and keep credentials
+    /// Disable AI proofreading and keep credentials
     Disable,
 }
 
 #[derive(Subcommand)]
 pub enum ConfigCmd {
-    /// 生成配置模板（--force 覆盖已有配置）/ Create a template; --force replaces existing settings
+    /// Create a template; --force replaces existing settings
     Init {
         #[arg(long)]
         force: bool,
     },
-    /// 显示配置路径和文件设置 / Show the config path and file settings
+    /// Show the config path and file settings
     Show,
+}
+
+pub fn language_choices() -> String {
+    std::iter::once("auto")
+        .chain(crate::i18n::languages().map(|lang| lang.code()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Removes `--lang` from the argument list before clap parses it.
@@ -447,33 +444,16 @@ pub fn localize_command(command: clap::Command) -> clap::Command {
 /// keeps the argument help itself (already localized) untouched.
 pub fn localize_rendered(text: &str) -> String {
     let lang = crate::i18n::lang();
-    if lang == Lang::En {
+    if lang == crate::i18n::Lang::source() {
         return text.to_owned();
     }
-    let (usage, options, commands, arguments, more) = match lang {
-        Lang::ZhHans => (
-            crate::tr!("用法："),
-            crate::tr!("选项："),
-            crate::tr!("命令："),
-            crate::tr!("参数："),
-            crate::tr!("更多信息请运行 --help。"),
-        ),
-        Lang::ZhHant => (
-            crate::tr!("用法："),
-            crate::tr!("選項："),
-            crate::tr!("命令："),
-            crate::tr!("參數："),
-            crate::tr!("更多資訊請執行 --help。"),
-        ),
-        Lang::Ja => (
-            crate::tr!("使用法："),
-            crate::tr!("オプション："),
-            crate::tr!("コマンド："),
-            crate::tr!("引数："),
-            crate::tr!("詳細は --help を参照してください。"),
-        ),
-        Lang::En => unreachable!(),
-    };
+    let (usage, options, commands, arguments, more) = (
+        crate::tr!("Usage:"),
+        crate::tr!("Options:"),
+        crate::tr!("Command:"),
+        crate::tr!("Parameters:"),
+        crate::tr!("For more information, run --help."),
+    );
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
         let trimmed = line.trim_start();
@@ -488,13 +468,13 @@ pub fn localize_rendered(text: &str) -> String {
         } else if trimmed.starts_with("For more information, try '--help'.") {
             Some(line.replacen("For more information, try '--help'.", more, 1))
         } else if line.contains("Print help") {
-            Some(line.replacen("Print help", more_help(lang), 1))
+            Some(line.replacen("Print help", crate::tr!("show help"), 1))
         } else if line.contains("Print version") {
-            Some(line.replacen("Print version", more_version(lang), 1))
+            Some(line.replacen("Print version", crate::tr!("show version"), 1))
         } else if line.contains("Print this message or the help of the given subcommand(s)") {
             Some(line.replacen(
                 "Print this message or the help of the given subcommand(s)",
-                more_help_command(lang),
+                crate::tr!("Show help for this message or subcommand"),
                 1,
             ))
         } else {
@@ -509,61 +489,13 @@ pub fn localize_rendered(text: &str) -> String {
     out
 }
 
-fn more_help(lang: Lang) -> &'static str {
-    match lang {
-        Lang::ZhHans => crate::tr!("显示帮助"),
-        Lang::ZhHant => crate::tr!("顯示說明"),
-        Lang::Ja => crate::tr!("ヘルプを表示"),
-        Lang::En => "Print help",
-    }
-}
-
-fn more_help_command(lang: Lang) -> &'static str {
-    match lang {
-        Lang::ZhHans => crate::tr!("显示此消息或子命令的帮助"),
-        Lang::ZhHant => crate::tr!("顯示此訊息或子命令的說明"),
-        Lang::Ja => crate::tr!("このメッセージまたはサブコマンドのヘルプを表示"),
-        Lang::En => "Print this message or the help of the given subcommand(s)",
-    }
-}
-
-fn more_version(lang: Lang) -> &'static str {
-    match lang {
-        Lang::ZhHans => crate::tr!("显示版本"),
-        Lang::ZhHant => crate::tr!("顯示版本"),
-        Lang::Ja => crate::tr!("バージョンを表示"),
-        Lang::En => "Print version",
-    }
-}
-
 fn parse_translation_target(value: &str) -> Result<String, String> {
     crate::language::target(value)
         .map(str::to_owned)
-        .ok_or_else(|| crate::tr!("支持的语言：{}", crate::language::TARGETS.join(", ")))
-}
-
-#[cfg(test)]
-mod i18n_tests {
-    use super::*;
-    use clap::CommandFactory;
-
-    #[test]
-    fn rendered_headings_follow_the_language() {
-        crate::i18n::set_lang(Lang::ZhHans);
-        let rendered = "Usage: notepipe [OPTIONS]\n\nOptions:\n  -h, --help  Print help\n";
-        let localized = localize_rendered(rendered);
-        assert!(localized.contains("用法："));
-        assert!(localized.contains("选项："));
-        assert!(localized.contains("显示帮助"));
-        crate::i18n::set_lang(Lang::ZhHans);
-    }
-
-    #[test]
-    fn command_help_uses_the_catalog() {
-        crate::i18n::set_lang(Lang::ZhHans);
-        let mut command = localize_command(Cli::command());
-        let rendered = command.render_help().to_string();
-        assert!(rendered.contains("用法") || rendered.contains("Usage"));
-        crate::i18n::set_lang(Lang::ZhHans);
-    }
+        .ok_or_else(|| {
+            crate::tr!(
+                "Supported languages: {}",
+                crate::language::TARGETS.join(", ")
+            )
+        })
 }

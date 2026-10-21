@@ -106,18 +106,10 @@ pub fn load() -> anyhow::Result<ConfigFile> {
     if !p.is_file() {
         return Ok(ConfigFile::default());
     }
-    let s = std::fs::read_to_string(&p).with_context(|| {
-        format!(
-            "无法读取配置文件 / Cannot read configuration: {}",
-            p.display()
-        )
-    })?;
-    toml::from_str(&s).with_context(|| {
-        format!(
-            "配置格式有误，请修正后重试 / Fix the configuration syntax and retry: {}",
-            p.display()
-        )
-    })
+    let s = std::fs::read_to_string(&p)
+        .with_context(|| format!("Cannot read configuration: {}", p.display()))?;
+    toml::from_str(&s)
+        .with_context(|| format!("Fix the configuration syntax and retry: {}", p.display()))
 }
 
 pub fn save(cfg: &ConfigFile) -> Result<PathBuf> {
@@ -132,10 +124,7 @@ pub fn save(cfg: &ConfigFile) -> Result<PathBuf> {
             .map_err(anyhow::Error::from)
             .and_then(|bytes| crate::checkpoint::atomic_write(&bak, &bytes))
         {
-            tracing::warn!(
-                "无法备份旧配置 / Could not back up configuration to {}: {e}",
-                bak.display()
-            );
+            tracing::warn!("Could not back up configuration to {}: {e}", bak.display());
         }
     }
     let bytes = toml::to_string_pretty(cfg)?;
@@ -184,43 +173,44 @@ pub fn template() -> String {
         ("{LLM_CONCURRENCY}", llm.concurrency.to_string()),
     ]
     .into_iter()
-    .fold(TEMPLATE.to_string(), |text, (key, value)| {
-        text.replace(key, &value)
-    })
+    .fold(
+        crate::i18n::t(TEMPLATE).to_string(),
+        |text, (key, value)| text.replace(key, &value),
+    )
 }
 
-const TEMPLATE: &str = r#"# notepipe 配置 / Configuration
-# 优先级：命令行 > 本文件 > 内置默认 / Priority: CLI > this file > built-in defaults
-# 取消注释以设置默认值 / Uncomment values to set defaults
-# 查看当前设置：notepipe config show / View settings: notepipe config show
+const TEMPLATE: &str = r#"# Configuration
+# Priority: CLI > this file > built-in defaults
+# Uncomment values to set defaults
+# View settings: notepipe config show
 
 [defaults]
-# 可选的 yt-dlp Cookie 来源，可同时设置两项 / Optional yt-dlp cookie sources; both may be set
+# Optional yt-dlp cookie sources; both may be set
 #cookies = "/path/to/cookies.txt"
 #cookies_from_browser = "firefox:default-release"
-# 输出根目录，按平台/标题/ID 分类 / Output root, organized by platform/title/ID
+# Output root, organized by platform/title/ID
 #out = "{OUT}"
-# 截图相似度 (0,1]，越高截图越多 / Similarity (0,1]; higher captures more slides
+# Similarity (0,1]; higher captures more slides
 #similarity = {SIMILARITY}
-# 画面采样间隔（秒）/ Frame sampling interval (seconds)
+# Frame sampling interval (seconds)
 #sample_interval = {SAMPLE_INTERVAL}
-# 截图最短间隔（秒）/ Minimum interval between slides (seconds)
+# Minimum interval between slides (seconds)
 #cooldown = {COOLDOWN}
-# 下载视频最大高度 / Maximum downloaded video height
+# Maximum downloaded video height
 #max_height = {MAX_HEIGHT}
-# first 立即截图，stable 等动画结束 / first: immediate; stable: wait for animations
+# first: immediate; stable: wait for animations
 #slide_mode = "{SLIDE_MODE}"
 #stable_secs = {STABLE_SECS}
-# 仅比较指定画面区域 / Compare only this region
+# Compare only this region
 #roi = "40%,0%-100%,100%"
-# auto 优先字幕，无字幕再识别 / auto: subtitles first, then speech recognition
-# subtitle 仅字幕；asr 仅识别 / subtitle: subtitles only; asr: speech recognition only
+# auto: subtitles first, then speech recognition
+# subtitle: subtitles only; asr: speech recognition only
 #transcript_source = "{TRANSCRIPT_SOURCE}"
-# 输出格式 / Output formats: md, html, json
+# Output formats: md, html, json
 #formats = [{FORMATS}]
-# 成功后保留下载的视频 / Keep downloaded video after success
+# Keep downloaded video after success
 #keep_video = {KEEP_VIDEO}
-# 继续上次中断的识别 / Continue interrupted transcription
+# Continue interrupted transcription
 #resume = {RESUME}
 
 [asr]
@@ -242,22 +232,21 @@ const TEMPLATE: &str = r#"# notepipe 配置 / Configuration
 #min_silence = {MIN_SILENCE}
 
 [llm]
-# 可选 AI 校对；运行 notepipe llm setup 配置 / Optional AI proofreading; configure with notepipe llm setup
+# Optional AI proofreading; configure with notepipe llm setup
 enabled = {LLM_ENABLED}
 #base_url = "{LLM_BASE_URL}"
 #api_key = ""
 #model = "{LLM_MODEL}"
-# 自定义校对要求 / Custom proofreading instructions
+# Custom proofreading instructions
 #prompt = ""
-# 隐藏完成后的提示 / Hide the completion tip
+# Hide the completion tip
 #disable_hint = {LLM_DISABLE_HINT}
-# 附截图辅助校对，需要视觉模型 / Attach slides; requires an image-capable model
+# Attach slides; requires an image-capable model
 #vision = {LLM_VISION}
-# 并发请求数 / Concurrent requests
+# Concurrent requests
 #concurrency = {LLM_CONCURRENCY}
-# 在笔记中加入 AI 摘要，需要 enabled = true / Add AI summaries; requires enabled = true
+# Add AI summaries; requires enabled = true
 #summarize = {LLM_SUMMARIZE}
-# 双语笔记的目标语言（zh-Hans、zh-Hant、en、ja、ko、fr、de、es）；已是该语言时不翻译
 # Bilingual notes: target language; skipped when the text is already in it
 #translate = "en"
 "#;
@@ -267,10 +256,8 @@ enabled = {LLM_ENABLED}
 pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     let d = &cfg.defaults;
     let r = crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)?;
-    println!("配置文件 / Configuration: {}", config_path().display());
-    crate::println_tr!(
-        "文件设置与内置默认值；不含本次命令行或环境变量覆盖 / File settings and built-in defaults, before CLI and environment overrides"
-    );
+    println!("Configuration: {}", config_path().display());
+    crate::println_tr!("File settings and built-in defaults, before CLI and environment overrides");
     let rows: Vec<(&str, String)> = vec![
         ("out", r.out_root.display().to_string()),
         (
@@ -311,7 +298,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         if key.is_empty() {
             "-"
         } else {
-            crate::tr!("(已设置，隐藏 / set, hidden)")
+            crate::tr!("set, hidden)")
         }
     };
     println!("[asr]");
@@ -348,6 +335,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 mod tests {
     #[test]
     fn template_parses_to_built_in_defaults_when_uncommented() {
+        assert!(crate::i18n::has_translation(super::TEMPLATE));
         let text: String = super::template()
             .lines()
             .map(|line| {

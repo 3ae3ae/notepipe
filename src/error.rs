@@ -15,7 +15,7 @@ pub fn tail_lines(s: &str, n: usize) -> String {
 /// 子进程失败时附带 stderr 摘要的便捷构造。
 pub fn cmd_error(program: &str, code: Option<i32>, stderr: &str) -> anyhow::Error {
     let tail = tail_lines(stderr, 5);
-    anyhow::anyhow!("{program} 运行失败 / failed (code={code:?}):\n{tail}")
+    anyhow::anyhow!("{program} failed (code={code:?}):\n{tail}")
 }
 
 /// 校验 PATH 上的外部工具存在（yt-dlp 请用 [`require_ytdlp`]）。
@@ -35,10 +35,7 @@ pub fn require_ytdlp() -> Result<()> {
 }
 
 fn missing_tool(cmd: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "未找到 {cmd}，请先安装 / {cmd} is not installed. {}",
-        install_hint(cmd)
-    )
+    anyhow::anyhow!("{cmd} is not installed. {}", install_hint(cmd))
 }
 
 /// 按平台给一行安装命令（常见包管理器；ffprobe 随 ffmpeg 包提供）。
@@ -55,7 +52,7 @@ pub fn install_hint(cmd: &str) -> String {
         format!("Windows: winget install {pkg}")
     } else {
         crate::tr!(
-            "Debian/Ubuntu: sudo apt install {}；Arch: sudo pacman -S {}",
+            "Debian/Ubuntu: sudo apt install {}; Arch: sudo pacman -S {}",
             pkg,
             pkg
         )

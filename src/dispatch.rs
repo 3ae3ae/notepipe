@@ -144,14 +144,14 @@ fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
 
 fn rejection_message(status: u16) -> String {
     match status {
-        401 => crate::tr!("服务未接受此任务保存的凭据，请检查对应服务的 API Key。 / The service rejected the saved credentials; check the API key for that service.").into(),
-        403 => crate::tr!("此任务使用的凭据没有访问该服务或模型的权限。 / The credentials used by this task cannot access that service or model.").into(),
-        404 => crate::tr!("服务未找到此任务指定的接口或模型，请检查服务地址和模型。 / The service does not have the endpoint or model this task names; check the base URL and model.").into(),
-        429 => crate::tr!("服务请求次数达到限制，请稍后重试。 / The service rate limit was reached; try again later.").into(),
+        401 => crate::tr!("The service rejected the saved credentials; check the API key for that service.").into(),
+        403 => crate::tr!("The credentials used by this task cannot access that service or model.").into(),
+        404 => crate::tr!("The service does not have the endpoint or model this task names; check the base URL and model.").into(),
+        429 => crate::tr!("The service rate limit was reached; try again later.").into(),
         400 | 422 => {
-            crate::tr!("服务拒绝了请求参数（HTTP {}），请检查此任务使用的模型与服务设置。 / The service rejected the request parameters (HTTP {}); check the model and service settings for this task.", status, status)
+            crate::tr!("The service rejected the request parameters (HTTP {}); check the model and service settings for this task.", status, status)
         }
-        _ => crate::tr!("服务未完成此请求（HTTP {}）。 / The service did not complete this request (HTTP {}).", status, status),
+        _ => crate::tr!("The service did not complete this request (HTTP {}).", status, status),
     }
 }
 
@@ -190,7 +190,7 @@ fn rejects_response_format(status: u16, value: Option<&Value>) -> bool {
             "unrecognized",
             "not recognized",
             "does not support",
-            crate::tr!("不支持"),
+            "不支持",
         ]
         .iter()
         .any(|term| message.contains(term)))
@@ -282,14 +282,10 @@ pub fn install(
     let mut current = ACTIVE
         .get_or_init(|| Mutex::new(None))
         .lock()
-        .map_err(|_| {
-            anyhow::anyhow!(crate::tr!(
-                "任务状态异常，请重启应用 / Task state is unavailable; restart the app"
-            ))
-        })?;
+        .map_err(|_| anyhow::anyhow!(crate::tr!("Task state is unavailable; restart the app")))?;
     anyhow::ensure!(
         current.is_none(),
-        crate::tr!("同一进程不能同时执行两个任务 / Another task is already active")
+        crate::tr!("Another task is already active")
     );
     *current = Some(ledger.clone());
     Ok(Guard(ledger))
@@ -330,7 +326,7 @@ fn read_receipts(dir: &Path) -> Result<Vec<Receipt>> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         if path.extension().is_some_and(|e| e == "json") {
-            result.push(serde_json::from_slice(&std::fs::read(path)?).context(crate::tr!("已保存的服务请求记录已损坏；为避免重复扣费，没有重新发送 / A saved service request record is damaged; nothing was resent to avoid duplicate charges"))?);
+            result.push(serde_json::from_slice(&std::fs::read(path)?).context(crate::tr!("A saved service request record is damaged; nothing was resent to avoid duplicate charges"))?);
         }
     }
     Ok(result)
@@ -355,9 +351,8 @@ impl Ledger {
     }
     fn control(&self) -> Result<Control> {
         match &self.control_path {
-            Some(path) if path.exists() => serde_json::from_slice(&std::fs::read(path)?).context(
-                crate::tr!("任务状态无法识别，已暂停 / Task state is unreadable; paused"),
-            ),
+            Some(path) if path.exists() => serde_json::from_slice(&std::fs::read(path)?)
+                .context(crate::tr!("Task state is unreadable; paused")),
             _ => Ok(Control::default()),
         }
     }
@@ -365,7 +360,7 @@ impl Ledger {
         let request_id = request.map(|r| r.request_id.clone());
         let message = request.filter(|r| !r.description.is_empty()).map_or_else(
             || message.to_string(),
-            |r| crate::tr!("{}：{}", r.description, message),
+            |r| crate::tr!("{}: {}", r.description, message),
         );
         let signature = format!("{reason}:{request_id:?}:{message}");
         if self
@@ -397,18 +392,12 @@ impl Ledger {
         };
         let reason = match intent {
             Intent::Run => None,
-            Intent::Pause => Some((
-                "paused",
-                crate::tr!("生成已暂停，进度已保留 / Generation paused; progress retained"),
-            )),
+            Intent::Pause => Some(("paused", crate::tr!("Generation paused; progress retained"))),
             Intent::Cancel => Some((
                 "cancelled",
-                crate::tr!("任务已取消，已有成果已保留 / Task cancelled; saved results retained"),
+                crate::tr!("Task cancelled; saved results retained"),
             )),
-            Intent::Quit => Some((
-                "quit",
-                crate::tr!("已保存进度，等待下次继续 / Progress saved; waiting to continue"),
-            )),
+            Intent::Quit => Some(("quit", crate::tr!("Progress saved; waiting to continue"))),
         };
         if let Some((reason, message)) = reason {
             return Err(self.block(reason, None, message));
@@ -419,7 +408,7 @@ impl Ledger {
             return Err(self.block(
                 "service_stopped",
                 None,
-                crate::tr!("此服务已删除，没有发送新请求 / Service deleted; no new request sent"),
+                crate::tr!("Service deleted; no new request sent"),
             ));
         }
         Ok(control)
@@ -514,11 +503,10 @@ impl Ledger {
         if let Some(old) = &old
             && old.state == State::Completed
         {
-            let response = old.response.clone().ok_or_else(|| {
-                Failure::local(crate::tr!(
-                    "已完成请求缺少保存结果；没有重新发送 / Saved request result is missing"
-                ))
-            })?;
+            let response = old
+                .response
+                .clone()
+                .ok_or_else(|| Failure::local(crate::tr!("Saved request result is missing")))?;
             validate(&response).map_err(Failure::local)?;
             // A replayed result was received in an earlier run; callers that
             // report live usage skip it.
@@ -540,13 +528,19 @@ impl Ledger {
                 let mut uncertain = old.clone();
                 uncertain.state = State::Uncertain;
                 self.save(&uncertain)?;
-                return Err(self.block(REASON_UNCERTAIN, Some(old), crate::tr!("未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges")));
+                return Err(self.block(
+                    REASON_UNCERTAIN,
+                    Some(old),
+                    crate::tr!(
+                        "Service result is uncertain; resending may incur additional charges"
+                    ),
+                ));
             }
             let settled = match old.state {
-                State::Failed => Some(crate::tr!("此请求未完成 / Request failed")),
-                State::Rejected if old.http_status != Some(429) => Some(crate::tr!(
-                    "服务拒绝了此请求 / Service rejected this request"
-                )),
+                State::Failed => Some(crate::tr!("Request failed")),
+                State::Rejected if old.http_status != Some(429) => {
+                    Some(crate::tr!("Service rejected this request"))
+                }
                 _ => None,
             };
             if let Some(fallback) = settled
@@ -582,7 +576,11 @@ impl Ledger {
                     .cloned()
                     .is_some_and(|lock| lock.try_lock().is_err());
                 if unresolved.state == State::Uncertain || !live {
-                    return Err(self.block(REASON_UNCERTAIN, Some(&unresolved), crate::tr!("前一步请求结果尚不确定；已保留进度，没有继续发送 / A previous request is unresolved; progress retained")));
+                    return Err(self.block(
+                        REASON_UNCERTAIN,
+                        Some(&unresolved),
+                        crate::tr!("A previous request is unresolved; progress retained"),
+                    ));
                 }
             }
         }
@@ -616,7 +614,13 @@ impl Ledger {
                 receipt.state = State::Uncertain;
                 receipt.message = Some(error.message);
                 self.save(&receipt)?;
-                return Err(self.block(REASON_UNCERTAIN, Some(&receipt), crate::tr!("未收到服务的确定结果。服务可能已处理这部分，再次提交可能产生额外费用 / Service result is uncertain; resending may incur additional charges")));
+                return Err(self.block(
+                    REASON_UNCERTAIN,
+                    Some(&receipt),
+                    crate::tr!(
+                        "Service result is uncertain; resending may incur additional charges"
+                    ),
+                ));
             }
         };
         receipt.http_status = Some(response.status);
@@ -643,16 +647,17 @@ impl Ledger {
         if !(200..300).contains(&response.status) {
             receipt.state = State::Uncertain;
             self.save(&receipt)?;
-            return Err(self.block(REASON_UNCERTAIN, Some(&receipt), crate::tr!("服务返回错误，无法确认是否已处理。再次提交可能产生额外费用 / Service processing is uncertain")));
+            return Err(self.block(
+                REASON_UNCERTAIN,
+                Some(&receipt),
+                crate::tr!("Service processing is uncertain"),
+            ));
         }
         let value = match value {
             Ok(value) => value,
             Err(_) => {
                 receipt.state = State::Failed;
-                receipt.message = Some(
-                    crate::tr!("服务返回的内容无法读取 / The service response could not be read")
-                        .into(),
-                );
+                receipt.message = Some(crate::tr!("The service response could not be read").into());
                 self.save(&receipt)?;
                 return Err(Failure::local(receipt.message.unwrap()));
             }
@@ -737,9 +742,9 @@ pub fn receive(
             );
             return Err(NetworkFailure {
                 message: if definitely_unsent {
-                    crate::tr!("无法连接服务，尚未提交内容 / Could not connect; request content was not submitted")
+                    crate::tr!("Could not connect; request content was not submitted")
                 } else {
-                    crate::tr!("未完整收到服务响应 / Did not receive a complete service response")
+                    crate::tr!("Did not receive a complete service response")
                 }
                 .into(),
                 definitely_unsent,
@@ -754,15 +759,12 @@ pub fn receive(
         .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut body)
         .map_err(|_| NetworkFailure {
-            message: crate::tr!("服务响应接收中断 / Service response was interrupted").into(),
+            message: crate::tr!("Service response was interrupted").into(),
             definitely_unsent: false,
         })?;
     if body.len() as u64 > MAX_RESPONSE_BYTES {
         return Err(NetworkFailure {
-            message: crate::tr!(
-                "服务响应超过接收上限 / Service response exceeds the receiving limit"
-            )
-            .into(),
+            message: crate::tr!("Service response exceeds the receiving limit").into(),
             definitely_unsent: false,
         });
     }

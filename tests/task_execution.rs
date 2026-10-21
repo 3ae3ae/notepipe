@@ -52,7 +52,7 @@ fn run(root: &Path, request: &Request) -> Output {
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("config.toml"), "[broken").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-        .env("NOTEPIPE_LANG", "zh-Hans")
+        .env("NOTEPIPE_LANG", "en")
         .arg("run-task")
         .current_dir(root)
         .env("XDG_CONFIG_HOME", root.join("config"))
@@ -142,7 +142,7 @@ fn scanning_finishes_before_a_slow_screenshot_reports_progress_with_estimated_to
     request.duration = 18.;
     request.config.defaults.sample_interval = Some(1.);
     let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-        .env("NOTEPIPE_LANG", "zh-Hans")
+        .env("NOTEPIPE_LANG", "en")
         .arg("run-task")
         .env("PATH", std::env::join_paths(paths).unwrap())
         .env("XDG_CONFIG_HOME", root.path().join("config"))
@@ -379,7 +379,7 @@ fn changed_local_source_is_rejected_before_using_the_confirmed_subtitles() {
     assert!(observed.iter().any(|event| {
         event["message"]
             .as_str()
-            .is_some_and(|s| s.contains("视频文件已在读取后发生变化"))
+            .is_some_and(|s| s.contains("Source content changed after confirmation"))
     }));
     assert!(!request.note_dir.join("current.json").exists());
 }

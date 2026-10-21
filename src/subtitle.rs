@@ -189,7 +189,7 @@ pub fn read_subtitle_text(path: &Path) -> Result<String> {
     const MAX_BYTES: usize = 32 * 1024 * 1024;
     let file = std::fs::File::open(path).with_context(|| {
         crate::tr!(
-            "无法读取字幕文件 {} / Cannot read subtitle file {}",
+            "Cannot read subtitle file {}",
             path.display(),
             path.display()
         )
@@ -198,9 +198,7 @@ pub fn read_subtitle_text(path: &Path) -> Result<String> {
     file.take((MAX_BYTES + 1) as u64).read_to_end(&mut bytes)?;
     ensure!(
         bytes.len() <= MAX_BYTES,
-        crate::tr!(
-            "字幕文件超过 32 MB，请选择较小的 SRT 或 VTT 文件 / Subtitle file exceeds 32 MB; choose a smaller SRT or VTT file"
-        )
+        crate::tr!("Subtitle file exceeds 32 MB; choose a smaller SRT or VTT file")
     );
     decode_text_with_bom(&bytes)
 }
@@ -211,9 +209,7 @@ pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         ensure!(
             (bytes.len() - 2).is_multiple_of(2),
-            crate::tr!(
-                "文件的 UTF-16 编码不完整，请重新导出为 UTF-8 / The file's UTF-16 encoding is incomplete; re-export as UTF-8"
-            )
+            crate::tr!("The file's UTF-16 encoding is incomplete; re-export as UTF-8")
         );
         let little = bytes[0] == 0xff;
         let words: Vec<u16> = bytes[2..]
@@ -228,10 +224,14 @@ pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
                 }
             })
             .collect();
-        return String::from_utf16(&words).context(crate::tr!("文件的字符编码无法读取，请重新导出为 UTF-8 / The file's character encoding is unreadable; re-export as UTF-8"));
+        return String::from_utf16(&words).context(crate::tr!(
+            "The file's character encoding is unreadable; re-export as UTF-8"
+        ));
     }
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
-    String::from_utf8(bytes.to_vec()).context(crate::tr!("文件的字符编码无法读取，请重新导出为 UTF-8 / The file's character encoding is unreadable; re-export as UTF-8"))
+    String::from_utf8(bytes.to_vec()).context(crate::tr!(
+        "The file's character encoding is unreadable; re-export as UTF-8"
+    ))
 }
 
 pub fn to_srt(events: &[TranscriptEvent]) -> String {
@@ -339,10 +339,7 @@ pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
             // 外部数据不信任：非有限时间戳的 cue 直接丢弃，
             // 避免 NaN/inf 污染下游排序与二分查找
             if !start.is_finite() || !end.is_finite() || end <= start {
-                tracing::warn!(
-                    line,
-                    "字幕时间区间无效，已跳过 / Skipped subtitle with invalid timestamps"
-                );
+                tracing::warn!(line, "Skipped subtitle with invalid timestamps");
                 continue;
             }
             let mut text_parts: Vec<String> = vec![];

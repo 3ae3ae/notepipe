@@ -48,12 +48,12 @@ fn login_is_standalone_or_precedes_video_processing() {
 #[test]
 fn invalid_source_does_not_start_login() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_notepipe"))
-        .env("NOTEPIPE_LANG", "zh-Hans")
+        .env("NOTEPIPE_LANG", "en")
         .args(["--login", "codex", "doctor"])
         .output()
         .unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("只能跟视频链接"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("video URL"));
     assert!(out.stdout.is_empty());
 }
 
@@ -62,7 +62,7 @@ fn initial_config_does_not_create_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_notepipe"))
         .env("XDG_CONFIG_HOME", dir.path())
-        .env("NOTEPIPE_LANG", "zh-Hans")
+        .env("NOTEPIPE_LANG", "en")
         .args(["config", "init"])
         .output()
         .unwrap();

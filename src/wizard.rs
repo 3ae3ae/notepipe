@@ -81,7 +81,11 @@ pub fn is_first_run(asr: &Asr) -> bool {
 }
 
 fn selected_or_cancelled(choice: Option<usize>) -> Result<usize> {
-    choice.ok_or_else(|| anyhow::anyhow!(crate::tr!("已取消设置，未保存配置。重新运行视频命令可再次设置。 / Setup cancelled; no configuration saved. Run your video command again to restart.")))
+    choice.ok_or_else(|| {
+        anyhow::anyhow!(crate::tr!(
+            "Setup cancelled; no configuration saved. Run your video command again to restart."
+        ))
+    })
 }
 
 fn apply_preset(asr: &Asr, preset: &Preset) -> Asr {
@@ -117,7 +121,7 @@ pub fn run(asr: &Asr) -> Result<Asr> {
         if asr.base_url.is_empty() {
             asr.base_url = dialoguer::Input::<String>::new()
                 .with_prompt(crate::tr!(
-                    "服务地址（兼容 OpenAI 接口）/ Service URL (OpenAI-compatible)"
+                    "Service address (compatible with OpenAI interface) / Service URL (OpenAI-compatible)"
                 ))
                 .interact_text()?
                 .trim()
@@ -132,7 +136,7 @@ pub fn run(asr: &Asr) -> Result<Asr> {
         }
         if asr.model.is_empty() {
             asr.model = dialoguer::Input::<String>::new()
-                .with_prompt(crate::tr!("模型名 / Model name"))
+                .with_prompt(crate::tr!("Model name"))
                 .allow_empty(true)
                 .interact_text()?
                 .trim()

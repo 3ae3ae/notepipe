@@ -1,73 +1,32 @@
-//! Interface languages and the shared message catalog.
+//! Header-driven interface languages and the English-source message catalog.
 //!
-//! The catalog is keyed by the Simplified Chinese source text, so existing call
-//! sites stay readable and a missing translation degrades to the source instead
-//! of hiding the message. Bilingual engine strings are catalogued as a whole:
-//! the `zh` and `en` columns split them into their two halves, while
-//! Traditional Chinese and Japanese get their own translations.
-//!
-//! Machine-readable output (`--json`, `run-task`) stays in Simplified Chinese
-//! so field meanings and messages stay stable.
-//! Human output (help, progress, errors) follows the selected language.
-//!
-//! Call sites use the [`tr!`] macro: a bare literal becomes a translated
-//! `&str`, and extra arguments fill `{}` placeholders in the translated text.
+//! Empty translations fall back to English; Traditional Chinese first tries
+//! Simplified Chinese. Missing messages keep their English source text.
+//! Call sites use [`tr!`] and its existing `{}` placeholder syntax.
 
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU8, Ordering};
-
-pub const LANGUAGES: [Lang; 4] = [Lang::En, Lang::ZhHans, Lang::ZhHant, Lang::Ja];
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Lang {
-    En,
-    ZhHans,
-    ZhHant,
-    Ja,
-}
+pub struct Lang(usize);
 
 impl Lang {
-    /// Stable BCP-47 language code.
+    pub fn source() -> Self {
+        Self(0)
+    }
+
+    /// Stable language code from the catalog header.
     pub fn code(self) -> &'static str {
-        match self {
-            Self::En => "en",
-            Self::ZhHans => "zh-Hans",
-            Self::ZhHant => "zh-Hant",
-            Self::Ja => "ja",
-        }
+        catalog().languages[self.0]
     }
 
     pub fn from_code(value: &str) -> Option<Self> {
-        let value = value.trim().replace('_', "-").to_ascii_lowercase();
-        if value.is_empty() || value == "auto" {
-            return None;
-        }
-        let value = value.split(['.', '@']).next().unwrap_or_default();
-        if value.starts_with("zh") || value.starts_with("cmn") || value.starts_with("yue") {
-            return Some(
-                if value.contains("hant")
-                    || value.contains("tw")
-                    || value.contains("hk")
-                    || value.contains("mo")
-                {
-                    Self::ZhHant
-                } else {
-                    Self::ZhHans
-                },
-            );
-        }
-        if value.starts_with("ja") {
-            return Some(Self::Ja);
-        }
-        if value.starts_with("en") {
-            return Some(Self::En);
-        }
-        None
+        catalog().language(value)
     }
 
-    /// `NOTEPIPE_LANG`, then the POSIX locale variables, then the platform locale.
+    /// `NOTEPIPE_LANG`, then POSIX locale variables, then the platform locale.
     pub fn detect() -> Self {
         for name in ["NOTEPIPE_LANG", "LC_ALL", "LC_MESSAGES", "LANG"] {
             if let Ok(value) = std::env::var(name)
@@ -79,42 +38,25 @@ impl Lang {
         sys_locale::get_locale()
             .as_deref()
             .and_then(Self::from_code)
-            .unwrap_or(Self::En)
-    }
-
-    fn index(self) -> u8 {
-        match self {
-            Self::En => 0,
-            Self::ZhHans => 1,
-            Self::ZhHant => 2,
-            Self::Ja => 3,
-        }
-    }
-
-    fn from_index(index: u8) -> Self {
-        match index {
-            0 => Self::En,
-            2 => Self::ZhHant,
-            3 => Self::Ja,
-            _ => Self::ZhHans,
-        }
+            .unwrap_or(Self::source())
     }
 }
 
-// Library callers (tests, embedded use) keep the source language until an
-// application boundary selects the user's language.
-static CURRENT: AtomicU8 = AtomicU8::new(1);
+pub fn languages() -> impl Iterator<Item = Lang> {
+    (0..catalog().languages.len()).map(Lang)
+}
 
-/// Selects the language for subsequent [`t`] lookups.
+// Library callers keep the source language until an application selects one.
+static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
 pub fn set_lang(lang: Lang) {
-    CURRENT.store(lang.index(), Ordering::Relaxed);
+    CURRENT.store(lang.0, Ordering::Relaxed);
 }
 
 pub fn lang() -> Lang {
-    Lang::from_index(CURRENT.load(Ordering::Relaxed))
+    Lang(CURRENT.load(Ordering::Relaxed))
 }
 
-/// Selects the language from `NOTEPIPE_LANG` or the operating system locale.
 pub fn init_from_env() -> Lang {
     let lang = Lang::detect();
     set_lang(lang);
@@ -123,26 +65,64 @@ pub fn init_from_env() -> Lang {
 
 const CATALOG: &str = include_str!("../i18n/catalog.tsv");
 
-struct Entry {
-    zh: &'static str,
-    en: &'static str,
-    zh_hant: &'static str,
-    ja: &'static str,
+struct Catalog {
+    languages: Vec<&'static str>,
+    entries: HashMap<&'static str, Vec<&'static str>>,
 }
 
-impl Entry {
-    fn text(&self, lang: Lang) -> &'static str {
-        match lang {
-            Lang::En => self.en,
-            Lang::ZhHans => self.zh,
-            Lang::ZhHant => self.zh_hant,
-            Lang::Ja => self.ja,
+impl Catalog {
+    fn language(&self, value: &str) -> Option<Lang> {
+        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
+        let value = normalized.split(['.', '@']).next().unwrap_or_default();
+        let mut candidate = value;
+        loop {
+            if let Some(index) = self
+                .languages
+                .iter()
+                .position(|code| code.eq_ignore_ascii_case(candidate))
+            {
+                return Some(Lang(index));
+            }
+            let Some((parent, _)) = candidate.rsplit_once('-') else {
+                break;
+            };
+            candidate = parent;
         }
+        if matches!(candidate, "zh" | "cmn" | "yue") {
+            let traditional = value
+                .split('-')
+                .any(|part| matches!(part, "hant" | "tw" | "hk" | "mo"));
+            let code = if traditional { "zh-Hant" } else { "zh-Hans" };
+            return self
+                .languages
+                .iter()
+                .position(|header| *header == code)
+                .map(Lang);
+        }
+        None
+    }
+
+    fn text<'a>(&self, source: &'a str, lang: Lang) -> &'a str {
+        let Some(entry) = self.entries.get(source) else {
+            return source;
+        };
+        let translated = |index: usize| entry.get(index).copied().filter(|text| !text.is_empty());
+        translated(lang.0)
+            .or_else(|| {
+                if self.languages[lang.0] != "zh-Hant" {
+                    return None;
+                }
+                self.languages
+                    .iter()
+                    .position(|code| *code == "zh-Hans")
+                    .and_then(translated)
+            })
+            .unwrap_or(source)
     }
 }
 
-fn catalog() -> &'static HashMap<&'static str, Entry> {
-    static CATALOG_INDEX: OnceLock<HashMap<&'static str, Entry>> = OnceLock::new();
+fn catalog() -> &'static Catalog {
+    static CATALOG_INDEX: OnceLock<Catalog> = OnceLock::new();
     CATALOG_INDEX.get_or_init(|| parse_catalog(CATALOG))
 }
 
@@ -150,29 +130,43 @@ fn leak(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
 
-fn parse_catalog(source: &'static str) -> HashMap<&'static str, Entry> {
+fn parse_catalog(source: &'static str) -> Catalog {
+    let mut lines = source.lines();
+    let languages = split_fields(lines.next().expect("Catalog needs a header"));
+    assert_eq!(
+        languages.first(),
+        Some(&"en"),
+        "Catalog source language must be English"
+    );
+    assert!(
+        languages
+            .iter()
+            .enumerate()
+            .all(|(index, code)| !code.is_empty() && !languages[..index].contains(code)),
+        "Duplicate or empty language code"
+    );
     let mut entries = HashMap::new();
-    // The first line is the column header; every other line has five columns.
-    for line in source.lines().skip(1) {
-        if line.is_empty() || line.starts_with('#') {
+    for line in lines {
+        if line.is_empty() {
             continue;
         }
         let fields = split_fields(line);
-        if fields.len() != 5 {
-            continue;
-        }
-        let key = leak(unescape(fields[0]));
-        entries.insert(
-            key,
-            Entry {
-                zh: leak(unescape(fields[1])),
-                en: leak(unescape(fields[2])),
-                zh_hant: leak(unescape(fields[3])),
-                ja: leak(unescape(fields[4])),
-            },
+        assert!(
+            fields.len() <= languages.len(),
+            "Too many catalog cells: {line}"
+        );
+        let fields: Vec<_> = fields
+            .into_iter()
+            .map(|field| leak(unescape(field)))
+            .collect();
+        let key = fields[0];
+        assert!(!key.is_empty(), "Empty catalog key");
+        assert!(
+            entries.insert(key, fields).is_none(),
+            "Duplicate catalog key: {key}"
         );
     }
-    entries
+    Catalog { languages, entries }
 }
 
 fn split_fields(line: &str) -> Vec<&str> {
@@ -227,31 +221,8 @@ fn escape(value: &str) -> String {
     out
 }
 
-/// Left and right halves of the historical bilingual engine messages.
-fn bilingual_halves(source: &str) -> Option<(&str, &str)> {
-    for index in source.match_indices(" / ").map(|(index, _)| index) {
-        let (left, right) = (&source[..index], &source[index + 3..]);
-        if contains_cjk(left) && !contains_cjk(right) {
-            return Some((left.trim(), right.trim()));
-        }
-    }
-    None
-}
-
-fn contains_cjk(value: &str) -> bool {
-    value
-        .chars()
-        .any(|c| matches!(c as u32, 0x3400..=0x9fff | 0xf900..=0xfaff))
-}
-
 fn t_in(source: &str, lang: Lang) -> &str {
-    if let Some(entry) = catalog().get(source) {
-        return entry.text(lang);
-    }
-    match lang {
-        Lang::ZhHans | Lang::ZhHant => bilingual_halves(source).map_or(source, |(zh, _)| zh),
-        Lang::En | Lang::Ja => bilingual_halves(source).map_or(source, |(_, en)| en),
-    }
+    catalog().text(source, lang)
 }
 
 /// Translates a source message into the current interface language.
@@ -265,7 +236,7 @@ pub fn t(source: &str) -> &str {
 /// Translates a message and fills its `{}` placeholders.
 ///
 /// ```ignore
-/// tr!("共 {} 项", count)
+/// tr!("Speech transcription failed for segment {}.", count)
 /// ```
 #[macro_export]
 macro_rules! tr {
@@ -352,12 +323,12 @@ pub fn t_for(source: &str, lang: Lang) -> &str {
 
 /// Catalog coverage for a source string (diagnostics and tests).
 pub fn has_translation(source: &str) -> bool {
-    catalog().contains_key(source)
+    catalog().entries.contains_key(source)
 }
 
 /// Rendered translation table used by tooling that audits coverage.
 pub fn catalog_len() -> usize {
-    catalog().len()
+    catalog().entries.len()
 }
 
 #[cfg(test)]
@@ -366,73 +337,208 @@ mod tests {
 
     #[test]
     fn language_codes_round_trip() {
-        for lang in LANGUAGES {
+        for lang in languages() {
             assert_eq!(Lang::from_code(lang.code()), Some(lang));
         }
-        assert_eq!(Lang::from_code("zh_CN.UTF-8"), Some(Lang::ZhHans));
-        assert_eq!(Lang::from_code("zh_TW.UTF-8"), Some(Lang::ZhHant));
-        assert_eq!(Lang::from_code("zh-HK"), Some(Lang::ZhHant));
-        assert_eq!(Lang::from_code("ja_JP"), Some(Lang::Ja));
-        assert_eq!(Lang::from_code("en_US.UTF-8"), Some(Lang::En));
+        for (locale, code) in [
+            ("zh_CN.UTF-8", "zh-Hans"),
+            ("zh_TW.UTF-8", "zh-Hant"),
+            ("zh-HK", "zh-Hant"),
+            ("ja_JP", "ja"),
+            ("en_US.UTF-8", "en"),
+        ] {
+            assert_eq!(Lang::from_code(locale), Lang::from_code(code));
+        }
         assert_eq!(Lang::from_code("C"), None);
         assert_eq!(Lang::from_code("auto"), None);
     }
 
     #[test]
-    fn bilingual_messages_split_into_halves() {
-        let source = "读取失败 / Failed to read";
-        assert_eq!(t_for(source, Lang::ZhHans), "读取失败");
-        assert_eq!(t_for(source, Lang::En), "Failed to read");
-        // A plain slash-separated list is not a bilingual message.
-        let list = "YouTube / Vimeo";
-        assert_eq!(t_for(list, Lang::ZhHans), list);
-        assert_eq!(t_for(list, Lang::En), list);
+    fn headers_define_languages_and_fallbacks() {
+        let catalog = parse_catalog(
+            "en\tja\tzh-Hant\tko\tzh-Hans\nMessage\t\t\tMessage in Korean\tMessage in Simplified Chinese\nSource only\n",
+        );
+        let korean = catalog.language("ko_KR.UTF-8").unwrap();
+        assert_eq!(catalog.languages[korean.0], "ko");
+        assert_eq!(catalog.text("Message", korean), "Message in Korean");
+        assert_eq!(
+            catalog.text("Message", catalog.language("zh-Hant").unwrap()),
+            "Message in Simplified Chinese"
+        );
+        assert_eq!(
+            catalog.text("Message", catalog.language("ja").unwrap()),
+            "Message"
+        );
+        assert_eq!(catalog.text("Source only", korean), "Source only");
+        assert_eq!(catalog.text("Unknown", korean), "Unknown");
+        let without_simplified = parse_catalog("en\tzh-Hant\nMessage\n");
+        assert_eq!(without_simplified.text("Message", Lang(1)), "Message");
+    }
+
+    #[test]
+    #[should_panic(expected = "Too many catalog cells")]
+    fn extra_catalog_cells_are_rejected() {
+        parse_catalog("en\tja\nMessage\tJapanese\textra");
     }
 
     #[test]
     fn template_fills_placeholders() {
-        // Uses the source language so the assertion is independent of the environment.
-        set_lang(Lang::ZhHans);
         assert_eq!(
-            template("共 {} 项，{} 项完成", &[&3, &2]),
-            "共 3 项，2 项完成"
+            template("Speech transcription failed for segment {}.", &[&3]),
+            "Speech transcription failed for segment 3."
         );
-        assert_eq!(template("花括号 {{}} 保留", &[]), "花括号 {} 保留");
+        // Synthetic templates are intentionally untranslated.
+        assert_eq!(template("Braces {{}} stay", &[]), "Braces {} stay");
+    }
+
+    // Test fixtures intentionally use untranslated text; audit production lookups.
+    fn lookup_literals() -> Vec<(std::path::PathBuf, String)> {
+        let mut directories =
+            vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut literals = Vec::new();
+        while let Some(directory) = directories.pop() {
+            for file in std::fs::read_dir(directory).unwrap() {
+                let path = file.unwrap().path();
+                if path.is_dir() {
+                    directories.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|extension| extension != "rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let source = source.split("#[cfg(test)]\nmod ").next().unwrap();
+                for call in ["tr!(", "t(", "t_for(", "template("] {
+                    for (offset, _) in source.match_indices(call) {
+                        if call != "tr!("
+                            && source[..offset]
+                                .chars()
+                                .next_back()
+                                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+                        {
+                            continue;
+                        }
+                        let tail = source[offset + call.len()..].trim_start();
+                        let key = if let Some(body) = tail.strip_prefix('"') {
+                            let mut escaped = false;
+                            let end = body
+                                .char_indices()
+                                .find_map(|(index, c)| {
+                                    if escaped {
+                                        escaped = false;
+                                        return None;
+                                    }
+                                    if c == '\\' {
+                                        escaped = true;
+                                        return None;
+                                    }
+                                    (c == '"').then_some(index)
+                                })
+                                .unwrap();
+                            unescape(&body[..end].replace("\\\"", "\""))
+                        } else if let Some(raw) = tail.strip_prefix('r') {
+                            let Some((marks, body)) = raw.split_once('"') else {
+                                continue;
+                            };
+                            if !marks.chars().all(|c| c == '#') {
+                                continue;
+                            }
+                            body.split_once(&format!("\"{marks}")).unwrap().0.to_owned()
+                        } else {
+                            continue;
+                        };
+                        literals.push((path.clone(), key));
+                    }
+                }
+            }
+        }
+        literals
     }
 
     #[test]
-    fn catalog_entries_are_complete_and_consistent() {
-        for line in CATALOG.lines().skip(1) {
-            if line.is_empty() {
-                continue;
+    fn every_lookup_literal_has_a_catalog_row() {
+        for (path, key) in lookup_literals() {
+            assert!(
+                has_translation(&key),
+                "{}: missing catalog key {key:?}",
+                path.display()
+            );
+        }
+        assert!(has_translation(crate::cli::QUICK_START));
+        assert!(has_translation(crate::pipeline::NO_SCREENSHOTS));
+    }
+
+    #[test]
+    fn clap_help_source_text_has_catalog_rows() {
+        use clap::CommandFactory;
+        let mut commands = vec![crate::cli::Cli::command()];
+        while let Some(command) = commands.pop() {
+            for text in [
+                command.get_about(),
+                command.get_long_about(),
+                command.get_before_help(),
+                command.get_after_help(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                assert!(
+                    has_translation(&text.to_string()),
+                    "missing clap text: {text}"
+                );
             }
-            let fields = split_fields(line);
-            assert_eq!(fields.len(), 5, "malformed catalog row: {line}");
-            let placeholders: Vec<usize> = (1..5)
-                .map(|column| fields[column].matches("{}").count())
-                .collect();
-            assert!(
-                placeholders.iter().all(|count| *count == placeholders[0]),
-                "placeholder count differs across languages: {line}"
-            );
-            assert!(
-                fields.iter().skip(1).all(|field| !field.is_empty()),
-                "empty translation: {line}"
-            );
+            for argument in command.get_arguments() {
+                if argument.get_id() == "lang" {
+                    continue;
+                } // Its help is formatted from a catalog template.
+                for text in [argument.get_help(), argument.get_long_help()]
+                    .into_iter()
+                    .flatten()
+                {
+                    assert!(
+                        has_translation(&text.to_string()),
+                        "missing clap text: {text}"
+                    );
+                }
+                if let Some(heading) = argument.get_help_heading() {
+                    assert!(has_translation(heading), "missing clap heading: {heading}");
+                }
+            }
+            commands.extend(command.get_subcommands().cloned());
         }
     }
 
     #[test]
-    fn known_messages_have_all_languages() {
-        // A small sentinel set keeps the catalog from silently losing entries.
-        for source in ["笔记库", "设置", "取消"] {
+    fn translated_templates_keep_their_placeholders() {
+        let catalog = catalog();
+        // Raw Rust diagnostics retain their own formatting; check tr!/t/template lookups.
+        for (_, key) in lookup_literals() {
+            if let Some(fields) = catalog.entries.get(key.as_str()) {
+                for text in fields.iter().filter(|text| !text.is_empty()) {
+                    assert_eq!(
+                        text.matches("{}").count(),
+                        key.matches("{}").count(),
+                        "placeholder count differs: {key}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn known_cli_messages_have_translations() {
+        for source in [
+            "Error: {}",
+            "Missing video source. Example: notepipe ./lecture.mp4",
+            "Speech transcription failed for segment {}.",
+        ] {
             assert!(has_translation(source), "missing catalog entry: {source}");
         }
     }
 
     #[test]
     fn escaping_round_trips() {
-        let value = "第一行\n第二行\tTab \\ \"引号\"";
+        let value = "First line\nSecond line\tTab \\ \"quotes\"";
         assert_eq!(unescape(&escape(value)), value);
     }
 }

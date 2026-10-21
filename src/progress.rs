@@ -61,22 +61,22 @@ pub fn stage(name: &str, status: &str) {
         let label = match name {
             "model/load" | "model/apple" => {
                 crate::tr!(
-                    "加载识别模型（首次可能需要下载）/ Loading speech model (first use may download files)"
+                    "Loading recognition model (first use may need to download files) / Loading speech model (first use may download files)"
                 )
             }
-            "fetch" => crate::tr!("读取视频信息 / Reading video information"),
-            "subtitle" => crate::tr!("查找字幕 / Looking for subtitles"),
-            "download" => crate::tr!("下载视频 / Downloading video"),
-            "scenes/scan" => crate::tr!("扫描画面 / Scanning video frames"),
-            "scenes/extract" => crate::tr!("生成截图 / Saving screenshots"),
-            "audio" => crate::tr!("提取音频 / Extracting audio"),
-            "transcribe" => crate::tr!("识别语音 / Transcribing speech"),
-            "llm" => crate::tr!("校对文字 / Proofreading transcript"),
-            "summary" => crate::tr!("生成摘要 / Generating summary"),
-            "render" => crate::tr!("生成笔记 / Writing notes"),
-            "model/prepare" => crate::tr!("检查识别模型 / Checking speech model"),
+            "fetch" => crate::tr!("Reading video information"),
+            "subtitle" => crate::tr!("Looking for subtitles"),
+            "download" => crate::tr!("Downloading video"),
+            "scenes/scan" => crate::tr!("Scanning video frames"),
+            "scenes/extract" => crate::tr!("Saving screenshots"),
+            "audio" => crate::tr!("Extracting audio"),
+            "transcribe" => crate::tr!("Transcribing speech"),
+            "llm" => crate::tr!("Proofreading transcript"),
+            "summary" => crate::tr!("Generating summary"),
+            "render" => crate::tr!("Writing notes"),
+            "model/prepare" => crate::tr!("Checking speech model"),
             name if name.starts_with("model/") => {
-                crate::tr!("下载识别模型 / Downloading speech model")
+                crate::tr!("Downloading speech model")
             }
             _ => return,
         };
@@ -153,7 +153,7 @@ pub fn download_progress(current: u64, total: u64) {
 /// 共享进度条样式：模板均为静态字符串，解析失败是编程错误。
 fn progress_style(template: &str) -> ProgressStyle {
     ProgressStyle::with_template(template)
-        .expect(crate::tr!("静态进度条模板"))
+        .expect(crate::tr!("Static progress bar template"))
         .progress_chars("##-")
 }
 

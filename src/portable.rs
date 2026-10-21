@@ -99,7 +99,9 @@ fn images(root: &Path, document: &Document) -> Result<BTreeMap<String, ImageAsse
         let bytes = std::fs::read(artifact::safe_asset_path(root, &section.image)?)?;
         let sha256 = execution::digest(&bytes);
         let id = format!("image-{}", &sha256[..24]);
-        let (mime, ext) = image_mime(&bytes).context(crate::tr!("截图不是可识别的图片，原文件已保留 / Screenshot is not a recognized image; original file kept"))?;
+        let (mime, ext) = image_mime(&bytes).context(crate::tr!(
+            "Screenshot is not a recognized image; original file kept"
+        ))?;
         images.insert(
             section.image.clone(),
             ImageAsset {
@@ -122,7 +124,7 @@ pub(crate) fn write_document(
 ) -> Result<PathBuf> {
     anyhow::ensure!(
         !destination.exists(),
-        "导出位置已有文件，未覆盖：{} / Export destination already exists",
+        "Export destination already exists: {}",
         destination.display()
     );
     let parent = destination
@@ -165,7 +167,10 @@ pub(crate) fn write_document(
                 text = crate::summarize::insert_into_md(&text, summary);
             }
             if let Some(name) = &local_file {
-                text.push_str(&format!("\n源文件：{}\n", name.replace(['\r', '\n'], " ")));
+                text.push_str(&format!(
+                    "\n{}\n",
+                    crate::tr!("Source file: {}", name.replace(['\r', '\n'], " ")).trim()
+                ));
             }
             let mut zip = zip::ZipWriter::new(file.as_file_mut());
             let options = zip::write::SimpleFileOptions::default()
@@ -226,12 +231,8 @@ pub(crate) fn write_document(
         }
     }
     file.as_file().sync_all()?;
-    file.persist_noclobber(destination).with_context(|| {
-        format!(
-            "无法保存导出文件；原文件未覆盖 / Could not save export: {}",
-            destination.display()
-        )
-    })?;
+    file.persist_noclobber(destination)
+        .with_context(|| format!("Could not save export: {}", destination.display()))?;
     artifact::sync_dir(parent)?;
     Ok(destination.to_path_buf())
 }

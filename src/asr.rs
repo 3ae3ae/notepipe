@@ -43,8 +43,7 @@ impl EmptyTripwire {
 
     fn tripped_error(&self) -> anyhow::Error {
         anyhow::anyhow!(
-            "语音服务连续 {} 个分片返回空文本；请检查语音服务地址与模型是否支持音频输入 / The speech service returned empty text for {} consecutive segments; check that the endpoint and model support audio input",
-            self.pending_empty,
+            "The speech service returned empty text for {} consecutive segments; check that the endpoint and model support audio input",
             self.pending_empty
         )
     }
@@ -145,9 +144,7 @@ where
         r
     })
     .await
-    .context(crate::tr!(
-        "语音识别任务未能完成 / Speech recognition task did not complete"
-    ))?
+    .context(crate::tr!("Speech recognition task did not complete"))?
 }
 
 pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent>> {
@@ -163,9 +160,7 @@ pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent
 
 /// 所有后端共用的「VAD 后没有语音」收尾：只保留截图，并记录空结果。
 pub(crate) fn no_speech_events() -> Vec<TranscriptEvent> {
-    tracing::warn!(
-        "未检测到语音，将仅保留截图 / No speech detected; keeping slides without a transcript"
-    );
+    tracing::warn!("No speech detected; keeping slides without a transcript");
     Vec::new()
 }
 
@@ -369,9 +364,7 @@ fn post_cloud(
     identity: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     let description = crate::tr!(
-        "识别视频 {}–{} 的声音 / Transcribe video audio {}–{}",
-        crate::render::fmt_ts(seg.start),
-        crate::render::fmt_ts(seg.end),
+        "Transcribe video audio {}–{}",
         crate::render::fmt_ts(seg.start),
         crate::render::fmt_ts(seg.end)
     );
@@ -400,7 +393,7 @@ fn post_cloud(
             |value| {
                 anyhow::ensure!(
                     value.get("error").is_none_or(serde_json::Value::is_null),
-                    crate::tr!("语音服务返回了错误 / The speech service returned an error")
+                    crate::tr!("The speech service returned an error")
                 );
                 let has_text = match t.mode {
                     crate::settings::AsrMode::Transcriptions | crate::settings::AsrMode::Xai => {
@@ -409,10 +402,7 @@ fn post_cloud(
                     crate::settings::AsrMode::Meta => value["transcript"].is_string(),
                     crate::settings::AsrMode::Chat => chat_content_has_text(value),
                 };
-                anyhow::ensure!(
-                    has_text,
-                    crate::tr!("语音服务没有返回文字 / The speech service returned no text")
-                );
+                anyhow::ensure!(has_text, crate::tr!("The speech service returned no text"));
                 Ok(())
             },
         )
@@ -435,8 +425,7 @@ struct ApiTarget<'a> {
 
 /// 转写单个 chunk；Ok(None) = 无语音内容。
 fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<Option<String>> {
-    cut_wav(wav, seg.cut_start, seg.cut_end, chunk)
-        .context(crate::tr!("无法切分音频 / Could not split audio"))?;
+    cut_wav(wav, seg.cut_start, seg.cut_end, chunk).context(crate::tr!("Could not split audio"))?;
     let bytes = std::fs::read(chunk)
         .with_context(|| crate::tr!("Reading audio segment: {}", chunk.display()))?;
     let identity = serde_json::json!({"model":t.model,"mode":t.mode,"language":t.language,"audio_sha256":crate::execution::digest(&bytes),"segment_start":seg.start,"segment_end":seg.end,"cut_start":seg.cut_start,"cut_end":seg.cut_end});
@@ -601,7 +590,7 @@ pub struct Seg {
 fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16) -> Result<()>) -> Result<u64> {
     use std::io::{BufReader, Read, Seek};
     let file = std::fs::File::open(wav)
-        .with_context(|| format!("无法读取音频 / Could not read audio: {}", wav.display()))?;
+        .with_context(|| format!("Could not read audio: {}", wav.display()))?;
     let mut reader = BufReader::new(file);
     // RIFF 头 + 逐 chunk 头扫描，流式定位 PCM data 块。
     let mut header = [0u8; 12];
@@ -609,17 +598,11 @@ fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16) -> Result<()>) ->
         .read_exact(&mut header)
         .ok()
         .filter(|_| &header[0..4] == b"RIFF" && &header[8..12] == b"WAVE")
-        .ok_or_else(|| {
-            anyhow::anyhow!(crate::tr!(
-                "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
-            ))
-        })?;
+        .ok_or_else(|| anyhow::anyhow!(crate::tr!("Cannot parse wav PCM data")))?;
     let data_size = loop {
         let mut ch = [0u8; 8];
         if reader.read_exact(&mut ch).is_err() {
-            anyhow::bail!(crate::tr!(
-                "无法解析 wav PCM 数据 / Cannot parse wav PCM data"
-            ));
+            anyhow::bail!(crate::tr!("Cannot parse wav PCM data"));
         }
         let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as u64;
         if &ch[0..4] == b"data" {
@@ -742,7 +725,7 @@ pub fn normalize_segments(
         Energy::load(wav)
             .inspect_err(|e| {
                 tracing::warn!(
-                    "无法读取音频能量，长段将按固定长度切分 / Could not read audio energy; long segments are split at fixed lengths: {e:#}"
+                    "Could not read audio energy; long segments are split at fixed lengths: {e:#}"
                 )
             })
             .ok()
@@ -842,7 +825,7 @@ pub fn cut_wav(src: &Path, start: f64, end: f64, dest: &Path) -> Result<()> {
     .arg(dest);
     let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, CUT_TIMEOUT)?;
     if !out.status.success() {
-        anyhow::bail!(crate::tr!("无法切分音频 / ffmpeg could not split audio"));
+        anyhow::bail!(crate::tr!("ffmpeg could not split audio"));
     }
     Ok(())
 }
@@ -858,7 +841,7 @@ mod tests {
             assert!(!t.record(true));
         }
         assert!(t.record(true), "连续空结果达到阈值必须熔断");
-        assert!(t.tripped_error().to_string().contains("空文本"));
+        assert!(t.tripped_error().to_string().contains("empty text"));
 
         // 一旦出现非空结果（端点其实正常），静音属实，不再熔断
         let mut t = EmptyTripwire::default();
