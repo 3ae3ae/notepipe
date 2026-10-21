@@ -20,7 +20,8 @@ The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizoreww
   fields.
 - `--config FILE|-`, `--subtitle FILE`, `--stages`, `--no-stages`, `NOTEPIPE_LLM_API_KEY`.
 - `[defaults].on_complete`, a command run after each note is written.
-- Packages for `uv tool install` and a release workflow that publishes to PyPI.
+- Packages for `uv tool install`, with the official adapters as extras (`notepipe[ytdlp]`), and a release workflow that
+  publishes to PyPI.
 
 ### Changed
 

@@ -26,7 +26,8 @@ configuration or in documentation — not in the core:
 ## Layout
 
 - `src/` — the engine library and CLI.
-- `adapters/` — official adapters (speech recognition and media sources), each a separate package.
+- `adapters/` — official adapters (speech recognition and media sources), each a separate package and an extra of
+  `notepipe` in `pyproject.toml`.
 - `tests/` — integration tests and fixtures.
 - `docs/` — adapter contracts and the CLI protocol.
 

@@ -57,11 +57,12 @@ notepipe needs [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`.
 With [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uv tool install notepipe                                  # local video and audio files
-uv tool install notepipe --with notepipe-source-ytdlp     # also URLs, through yt-dlp
+uv tool install notepipe                  # local video and audio files
+uv tool install "notepipe[ytdlp]"         # also URLs, through yt-dlp
 ```
 
-Add more [adapters](#adapters) with further `--with` options. With Cargo: `cargo install notepipe`. Prebuilt binaries are
+[Adapters](#adapters) are extras: list the ones you want, as in `"notepipe[ytdlp,llama]"`. pip and pipx accept the same
+names. With Cargo: `cargo install notepipe`. Prebuilt binaries are
 attached to each [GitHub release](https://github.com/3ae3ae/notepipe/releases). On Android, install
 [Termux](https://termux.dev), run `pkg install rust ffmpeg python`, then `cargo install notepipe`, and add adapters with
 `pip install <package>`.
@@ -134,17 +135,18 @@ Any OpenAI-compatible chat endpoint works, including OpenAI, Anthropic (`https:/
 
 ## Adapters
 
-Adapters are separate programs that notepipe starts when needed. Install them next to notepipe with `uv tool install
-notepipe --with <package>`.
+Adapters are separate packages with programs that notepipe starts when needed. The official ones are extras of
+`notepipe`, for example `uv tool install "notepipe[llama]"`; any other adapter installs next to notepipe with
+`uv tool install notepipe --with <package>`.
 
-| Package | Kind | Purpose |
-|---|---|---|
-| [`notepipe-source-ytdlp`](adapters/ytdlp) | source | URLs from any site yt-dlp supports |
-| [`notepipe-asr-llama`](adapters/llama) | speech | llama.cpp on CPU or GPU |
-| [`notepipe-asr-openvino`](adapters/openvino) | speech | Intel NPU (or CPU/GPU) with OpenVINO |
-| [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon, macOS 15 or later; built in CI, not yet verified on hardware |
-| [`notepipe-asr-xai`](adapters/xai) | speech | xAI speech-to-text |
-| [`notepipe-asr-meta`](adapters/meta) | speech | Meta speech-to-text |
+| Extra | Package | Kind | Purpose |
+|---|---|---|---|
+| `ytdlp` | [`notepipe-source-ytdlp`](adapters/ytdlp) | source | URLs from any site yt-dlp supports |
+| `llama` | [`notepipe-asr-llama`](adapters/llama) | speech | llama.cpp on CPU or GPU |
+| `openvino` | [`notepipe-asr-openvino`](adapters/openvino) | speech | Intel NPU (or CPU/GPU) with OpenVINO |
+| `apple` | [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon, macOS 15 or later; built in CI, not yet verified on hardware |
+| `xai` | [`notepipe-asr-xai`](adapters/xai) | speech | xAI speech-to-text |
+| `meta` | [`notepipe-asr-meta`](adapters/meta) | speech | Meta speech-to-text |
 
 Writing your own takes a few dozen lines; see [docs/adapters.md](docs/adapters.md).
 

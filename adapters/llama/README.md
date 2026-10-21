@@ -11,7 +11,7 @@ it, and removes Qwen3-ASR's output markers (`language …<asr_text>`) so notepip
 Install `llama-server` (for example from your package manager or the llama.cpp releases), then:
 
 ```sh
-uv tool install notepipe --with notepipe-asr-llama
+uv tool install "notepipe[llama]"
 ```
 
 ## Use

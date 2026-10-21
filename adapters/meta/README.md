@@ -6,7 +6,7 @@ A [notepipe](https://github.com/3ae3ae/notepipe) speech adapter that forwards tr
 ## Install
 
 ```sh
-uv tool install notepipe --with notepipe-asr-meta
+uv tool install "notepipe[meta]"
 ```
 
 ## Use

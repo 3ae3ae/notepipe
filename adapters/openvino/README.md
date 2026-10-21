@@ -6,7 +6,7 @@ A [notepipe](https://github.com/3ae3ae/notepipe) speech adapter that runs speech
 ## Install
 
 ```sh
-uv tool install notepipe --with notepipe-asr-openvino
+uv tool install "notepipe[openvino]"
 ```
 
 ## Use

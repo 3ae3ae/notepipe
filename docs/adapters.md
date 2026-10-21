@@ -9,19 +9,20 @@ There are two kinds:
 - **Speech adapters** serve an OpenAI-compatible transcription API on localhost for the duration of a run.
 - **Source adapters** turn a URL into a local media file plus metadata and subtitles.
 
-Install official adapters next to notepipe with uv, for example `uv tool install notepipe --with notepipe-asr-llama`.
+Official adapters are extras of the `notepipe` package, for example `uv tool install "notepipe[llama]"`. Other adapters
+install next to notepipe with `uv tool install notepipe --with <package>`.
 notepipe looks for adapter programs in its own directory first, then on `PATH`.
 
 ## Official adapters
 
-| Package | Kind | Notes |
-|---|---|---|
-| [`notepipe-source-ytdlp`](../adapters/ytdlp) | source | Any site yt-dlp supports; honors your yt-dlp configuration files |
-| [`notepipe-asr-llama`](../adapters/llama) | speech | Runs `llama-server`; strips Qwen3-ASR output markers |
-| [`notepipe-asr-openvino`](../adapters/openvino) | speech | Intel NPU by default; `--device CPU` or `GPU` also work |
-| [`notepipe-asr-apple`](../adapters/apple) | speech | Apple silicon (macOS 15 or later), Core ML / MLX; built in CI, not yet verified on hardware |
-| [`notepipe-asr-xai`](../adapters/xai) | speech | Forwards to xAI's speech-to-text API |
-| [`notepipe-asr-meta`](../adapters/meta) | speech | Forwards to Meta's speech-to-text API |
+| Extra | Package | Kind | Notes |
+|---|---|---|---|
+| `ytdlp` | [`notepipe-source-ytdlp`](../adapters/ytdlp) | source | Any site yt-dlp supports; honors your yt-dlp configuration files |
+| `llama` | [`notepipe-asr-llama`](../adapters/llama) | speech | Runs `llama-server`; strips Qwen3-ASR output markers |
+| `openvino` | [`notepipe-asr-openvino`](../adapters/openvino) | speech | Intel NPU by default; `--device CPU` or `GPU` also work |
+| `apple` | [`notepipe-asr-apple`](../adapters/apple) | speech | Apple silicon (macOS 15 or later), Core ML / MLX; built in CI, not yet verified on hardware |
+| `xai` | [`notepipe-asr-xai`](../adapters/xai) | speech | Forwards to xAI's speech-to-text API |
+| `meta` | [`notepipe-asr-meta`](../adapters/meta) | speech | Forwards to Meta's speech-to-text API |
 
 ## Speech adapters
 

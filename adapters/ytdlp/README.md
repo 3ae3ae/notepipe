@@ -6,7 +6,7 @@ A [notepipe](https://github.com/3ae3ae/notepipe) source adapter that downloads m
 ## Install
 
 ```sh
-uv tool install notepipe --with notepipe-source-ytdlp
+uv tool install "notepipe[ytdlp]"
 ```
 
 notepipe finds the adapter by its name; no configuration is needed. ffmpeg is required to merge formats and convert

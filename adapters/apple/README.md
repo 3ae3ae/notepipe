@@ -10,7 +10,7 @@ This adapter is built in CI but has not yet been verified on hardware.
 macOS 15 or later on Apple silicon:
 
 ```sh
-uv tool install notepipe --with notepipe-asr-apple
+uv tool install "notepipe[apple]"
 ```
 
 The package installs `mlx.metallib` next to the executable, where MLX looks for it. Building from source needs Xcode with
