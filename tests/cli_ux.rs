@@ -156,6 +156,33 @@ fn config_show_reports_the_defaults_conversion_uses() {
     };
     assert_eq!(value("out "), ".");
     assert_eq!(value("stable_secs "), "0.8");
+    assert_eq!(value("screenshot_mode "), "stable");
+}
+
+#[test]
+fn screenshot_mode_replaces_the_old_public_flag_and_config_key() {
+    let cli = CliTest::new();
+    let help = stdout(&cli.run(&["--help"]));
+    assert!(help.contains("--screenshot-mode") && help.contains("Screenshots"));
+    assert!(!help.contains("--slide-mode"));
+    cli.config("[defaults]\nscreenshot_mode = 'first'\n");
+    let shown = cli.run(&["config", "show"]);
+    assert!(shown.status.success());
+    assert!(
+        stdout(&shown)
+            .lines()
+            .any(|line| line.contains("screenshot_mode") && line.ends_with("first"))
+    );
+    assert!(!stdout(&shown).contains("slide_mode"));
+    std::fs::write(cli.dir.path().join("media.mp4"), "placeholder").unwrap();
+    assert!(
+        !cli.run(&["media.mp4", "--slide-mode", "first", "--json"])
+            .status
+            .success()
+    );
+    cli.config("[defaults]\nslide_mode = 'first'\n");
+    let error = json_error(&cli.run(&["media.mp4", "--json"]));
+    assert!(error["message"].as_str().unwrap().contains("configuration"));
 }
 
 #[test]
@@ -190,6 +217,18 @@ fn doctor_reports_required_failures_with_nonzero_exit() {
         .output()
         .unwrap();
     assert!(!result.status.success());
+    let text = stdout(&result);
+    assert!(text.contains("https://ffmpeg.org/download.html"));
+    for removed in [
+        "brew install",
+        "winget install",
+        "apt install",
+        "apt-get",
+        "pacman",
+        "install.sh",
+    ] {
+        assert!(!text.contains(removed), "{text}");
+    }
     assert!(
         stdout(&result).contains("Required tools"),
         "{}",
@@ -312,7 +351,7 @@ fn source_adapter_generates_notes_and_reuses_its_completed_output() {
             url,
             "--transcript-source",
             "subtitle",
-            "--slide-mode",
+            "--screenshot-mode",
             "first",
             flag,
         ]);

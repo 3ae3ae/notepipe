@@ -80,7 +80,7 @@ pub fn llm_api_key_from_env() -> Option<String> {
 /// 截图发射模式：first（首个不同帧）| stable（等待画面稳定，适合动画课件）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum SlideMode {
+pub enum ScreenshotMode {
     First,
     #[default]
     Stable,
@@ -96,7 +96,7 @@ impl fmt::Display for TranscriptSource {
     }
 }
 
-impl fmt::Display for SlideMode {
+impl fmt::Display for ScreenshotMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::First => "first",
@@ -128,7 +128,7 @@ pub struct PipelineConfig {
     pub sample_interval: f64,
     pub cooldown: f64,
     /// 截图发射模式：first（首个不同帧）| stable（等待画面稳定，适合动画课件）
-    pub slide_mode: SlideMode,
+    pub screenshot_mode: ScreenshotMode,
     /// stable 模式下画面需保持不变的秒数
     pub stable_secs: f64,
     pub roi: Option<Roi>,
@@ -476,7 +476,7 @@ mod tests {
             similarity: DEFAULT_SIMILARITY,
             sample_interval: DEFAULT_SAMPLE_INTERVAL,
             cooldown: DEFAULT_COOLDOWN,
-            slide_mode: SlideMode::Stable,
+            screenshot_mode: ScreenshotMode::Stable,
             stable_secs: DEFAULT_STABLE_SECS,
             roi: None,
             no_resume: false,

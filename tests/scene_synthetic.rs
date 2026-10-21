@@ -49,7 +49,7 @@ fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config:
         similarity: 0.9,
         sample_interval: 0.5,
         cooldown: 10.0,
-        slide_mode: notepipe::config::SlideMode::First,
+        screenshot_mode: notepipe::config::ScreenshotMode::First,
         stable_secs: 0.0,
         roi: None,
         no_resume: false,
@@ -124,7 +124,7 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
 
     let cfg = notepipe::config::PipelineConfig {
         cooldown: 2.0,
-        slide_mode: notepipe::config::SlideMode::Stable,
+        screenshot_mode: notepipe::config::ScreenshotMode::Stable,
         stable_secs: 1.2,
         ..test_cfg(&video, &dir)
     };

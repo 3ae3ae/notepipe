@@ -13,7 +13,7 @@ pub struct Defaults {
     pub similarity: Option<f64>,
     pub sample_interval: Option<f64>,
     pub cooldown: Option<f64>,
-    pub slide_mode: Option<crate::config::SlideMode>,
+    pub screenshot_mode: Option<crate::config::ScreenshotMode>,
     pub stable_secs: Option<f64>,
     pub roi: Option<String>,
     /// 转写来源：auto（字幕优先）| subtitle | asr
@@ -172,7 +172,10 @@ pub fn template() -> String {
         ("{ASR_CONCURRENCY}", asr.concurrency.to_string()),
         ("{VAD_THRESHOLD}", asr.vad_threshold.to_string()),
         ("{MIN_SILENCE}", asr.min_silence.to_string()),
-        ("{SLIDE_MODE}", c::SlideMode::default().to_string()),
+        (
+            "{SCREENSHOT_MODE}",
+            c::ScreenshotMode::default().to_string(),
+        ),
         (
             "{TRANSCRIPT_SOURCE}",
             c::TranscriptSource::default().to_string(),
@@ -195,14 +198,14 @@ const TEMPLATE: &str = r#"# Configuration
 [defaults]
 # Output root; each note gets its own title folder
 #out = "{OUT}"
-# Similarity (0,1]; higher captures more slides
+# Similarity (0,1]; higher captures more screenshots
 #similarity = {SIMILARITY}
 # Frame sampling interval (seconds)
 #sample_interval = {SAMPLE_INTERVAL}
-# Minimum interval between slides (seconds)
+# Minimum interval between screenshots (seconds)
 #cooldown = {COOLDOWN}
 # first: immediate; stable: wait for animations
-#slide_mode = "{SLIDE_MODE}"
+#screenshot_mode = "{SCREENSHOT_MODE}"
 #stable_secs = {STABLE_SECS}
 # Compare only this region
 #roi = "40%,0%-100%,100%"
@@ -266,7 +269,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         ("sample_interval", r.sample_interval.to_string()),
         ("cooldown", r.cooldown.to_string()),
         ("roi", d.roi.clone().unwrap_or_else(|| "-".into())),
-        ("slide_mode", r.slide_mode.to_string()),
+        ("screenshot_mode", r.screenshot_mode.to_string()),
         ("stable_secs", r.stable_secs.to_string()),
         ("transcript_source", r.transcript_source.to_string()),
     ];

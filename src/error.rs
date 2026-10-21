@@ -27,20 +27,8 @@ pub fn require_cmd(cmd: &str) -> Result<()> {
 }
 
 fn missing_tool(cmd: &str) -> anyhow::Error {
-    anyhow::anyhow!("{cmd} is not installed. {}", install_hint(cmd))
+    anyhow::anyhow!("{cmd} is not installed. {FFMPEG_INSTALL_HINT}")
 }
 
-/// 按平台给一行安装命令（常见包管理器；ffprobe 随 ffmpeg 包提供）。
-pub fn install_hint(cmd: &str) -> String {
-    let pkg = if cmd == "ffprobe" { "ffmpeg" } else { cmd };
-    if cfg!(target_os = "macos") {
-        format!("macOS: brew install {pkg}")
-    } else if cfg!(target_os = "windows") {
-        format!("Windows: winget install {pkg}")
-    } else {
-        format!(
-            "Debian/Ubuntu: sudo apt install {}; Arch: sudo pacman -S {}",
-            pkg, pkg
-        )
-    }
-}
+pub const FFMPEG_INSTALL_HINT: &str =
+    "Install FFmpeg from https://ffmpeg.org/download.html and add its executables to PATH.";

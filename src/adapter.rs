@@ -55,7 +55,7 @@ impl Adapter {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        crate::progress::stage("model/load", "start");
+        crate::progress::stage("adapter/start", "start");
         let mut child = crate::runtime::ManagedChild::spawn_adapter("ASR adapter", &mut command)?;
         let stderr = crate::runtime::StderrTail::default();
         let mut drains = Vec::new();
@@ -88,7 +88,7 @@ impl Adapter {
                 .attach(error, "Could not start the ASR adapter"));
         }
         tracing::info!(secs = started.elapsed().as_secs_f64(), "ASR adapter ready");
-        crate::progress::stage("model/load", "done");
+        crate::progress::stage("adapter/start", "done");
         Ok(adapter)
     }
 

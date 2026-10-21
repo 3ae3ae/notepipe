@@ -53,34 +53,34 @@ pub struct RunOpts {
     #[arg(help_heading = "Input and output")]
     pub out: Option<PathBuf>,
 
-    /// Similarity threshold; higher captures more slides
+    /// Similarity threshold; higher captures more screenshots
     #[arg(long)]
-    #[arg(help_heading = "Slides")]
+    #[arg(help_heading = "Screenshots")]
     pub similarity: Option<f64>,
 
     /// Frame sampling interval in seconds
     #[arg(long)]
-    #[arg(help_heading = "Slides")]
+    #[arg(help_heading = "Screenshots")]
     pub sample_interval: Option<f64>,
 
     /// Minimum seconds between screenshots
     #[arg(long)]
-    #[arg(help_heading = "Slides")]
+    #[arg(help_heading = "Screenshots")]
     pub cooldown: Option<f64>,
 
-    /// Capture immediately or wait for stable slides
+    /// Capture immediately or wait for a stable frame
     #[arg(long, value_enum)]
-    #[arg(help_heading = "Slides")]
-    pub slide_mode: Option<crate::config::SlideMode>,
+    #[arg(help_heading = "Screenshots")]
+    pub screenshot_mode: Option<crate::config::ScreenshotMode>,
 
     /// Seconds to wait for a stable frame
     #[arg(long)]
-    #[arg(help_heading = "Slides")]
+    #[arg(help_heading = "Screenshots")]
     pub stable_secs: Option<f64>,
 
-    /// Detect slide changes in a region: left%,top%-right%,bottom%
+    /// Detect screenshot changes in a region: left%,top%-right%,bottom%
     #[arg(long)]
-    #[arg(help_heading = "Slides")]
+    #[arg(help_heading = "Screenshots")]
     pub roi: Option<String>,
 
     /// Speech service base URL or full endpoint

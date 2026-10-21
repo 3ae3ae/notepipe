@@ -99,18 +99,6 @@ impl EmptyResultTracker {
     }
 }
 
-/// 清洗 Qwen3 转写中的提示词残留。
-pub fn sanitize_qwen_text(s: &str) -> String {
-    let mut t = s.trim();
-    if let Some(p) = t.find("</asr_text>") {
-        t = t[..p].trim();
-    }
-    if let Some(p) = t.rfind("<asr_text>") {
-        t = t[p + "<asr_text>".len()..].trim();
-    }
-    t.to_string()
-}
-
 /// Open the checkpoint and mark it complete only after successful transcription.
 async fn run_with_cp<F>(
     cfg: &PipelineConfig,
@@ -152,7 +140,7 @@ pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent
 
 /// 所有后端共用的「VAD 后没有语音」收尾：只保留截图，并记录空结果。
 pub(crate) fn no_speech_events() -> Vec<TranscriptEvent> {
-    tracing::warn!("No speech detected; keeping slides without a transcript");
+    tracing::warn!("No speech detected");
     Vec::new()
 }
 
@@ -405,8 +393,7 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
         }
         crate::settings::AsrMode::Chat => parse_chat_content(&value),
     };
-    let text = sanitize_qwen_text(&text);
-    Ok((!text.is_empty()).then_some(text))
+    Ok((!text.trim().is_empty()).then_some(text))
 }
 
 /// Options precede the binary audio part in transcription requests.
@@ -1049,22 +1036,6 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_markers() {
-        assert_eq!(
-            sanitize_qwen_text("**language Chinese<asr_text>你好世界。"),
-            "你好世界。"
-        );
-        assert_eq!(sanitize_qwen_text("内容</asr_text>尾巴"), "内容");
-        for text in ["Language models help.", "language Chinese\u{3000}你好"] {
-            assert_eq!(sanitize_qwen_text(text), text);
-        }
-        assert_eq!(
-            sanitize_qwen_text("language English<asr_text>Language models help.</asr_text>"),
-            "Language models help."
-        );
-    }
-
-    #[test]
     fn chat_content_parsing() {
         // 字符串形式（主流 OpenAI 兼容端点）
         let v = serde_json::json!({"choices":[{"message":{"content":"你好世界"}}]});
@@ -1197,7 +1168,7 @@ mod http_tests {
     }
 
     #[test]
-    fn dialects_send_optional_fields_before_audio_and_sanitize_responses() {
+    fn dialects_send_optional_fields_before_audio_and_preserve_responses() {
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         if crate::runtime::which("ffmpeg").is_none() {
             return;
@@ -1237,7 +1208,7 @@ mod http_tests {
                         assert_ne!(read, 0);
                         request.extend_from_slice(&buffer[..read]);
                     }
-                    let text = "language English<asr_text>Recognized.</asr_text>";
+                    let text = " language English<asr_text>Recognized.</asr_text> ";
                     let response = if mode == AsrMode::Chat {
                         serde_json::json!({"choices":[{"message":{field:text}}]})
                     } else {
@@ -1278,7 +1249,10 @@ mod http_tests {
                     )),
                 )
                 .unwrap();
-                assert_eq!(text.as_deref(), Some("Recognized."));
+                assert_eq!(
+                    text.as_deref(),
+                    Some(" language English<asr_text>Recognized.</asr_text> ")
+                );
                 let (head, body) = server.join().unwrap();
                 assert!(head.starts_with(&format!("post /v1{suffix} ")), "{head}");
                 assert_eq!(head.contains("authorization:"), with_options);

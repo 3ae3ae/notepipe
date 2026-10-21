@@ -36,8 +36,9 @@ fn source_key(source: &str, adapter: &crate::settings::Source) -> Result<String>
 }
 
 fn screenshot_key(cfg: &PipelineConfig) -> Result<String> {
+    // Keep the internal key label so the public rename does not invalidate cached screenshots.
     Ok(runtime::digest(&serde_json::to_vec(
-        &serde_json::json!({"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.slide_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi}),
+        &serde_json::json!({"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi}),
     )?))
 }
 
@@ -117,11 +118,6 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     cfg.out_dir = work.clone();
     let audio = cfg.audio_path();
     let _dispatch = crate::dispatch::install(&work)?;
-    if cfg.asr.api_key.trim().is_empty()
-        && let Some(key) = config::asr_api_key_from_env()
-    {
-        cfg.asr.api_key = key;
-    }
     if cfg.llm.api_key.trim().is_empty()
         && let Some(key) = config::llm_api_key_from_env()
     {
@@ -220,6 +216,11 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             cfg.asr = crate::wizard::run(&cfg.asr)?;
         }
         cfg.validate_asr()?;
+    }
+    if cfg.asr.api_key.trim().is_empty()
+        && let Some(key) = config::asr_api_key_from_env()
+    {
+        cfg.asr.api_key = key;
     }
     let selected = selected.as_deref().map(selected_transcript).transpose()?;
     let transcript_key = if let Some((key, _)) = &selected {

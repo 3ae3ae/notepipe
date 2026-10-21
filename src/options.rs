@@ -49,7 +49,7 @@ pub fn resolve(
     file: &settings::ConfigFile,
 ) -> anyhow::Result<config::PipelineConfig> {
     let d = &file.defaults;
-    use config::SlideMode;
+    use config::ScreenshotMode;
     let out_root = opts
         .out
         .clone()
@@ -74,10 +74,10 @@ pub fn resolve(
             .cooldown
             .or(d.cooldown)
             .unwrap_or(config::DEFAULT_COOLDOWN),
-        slide_mode: opts
-            .slide_mode
-            .or(d.slide_mode)
-            .unwrap_or(SlideMode::Stable),
+        screenshot_mode: opts
+            .screenshot_mode
+            .or(d.screenshot_mode)
+            .unwrap_or(ScreenshotMode::Stable),
         stable_secs: opts
             .stable_secs
             .or(d.stable_secs)

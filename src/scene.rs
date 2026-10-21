@@ -85,7 +85,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
         interval,
         similarity = cfg.similarity,
         cooldown = cfg.cooldown,
-        "slide sample"
+        "screenshot sample"
     );
 
     let mut child = Command::new("ffmpeg")
@@ -124,7 +124,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
     //   last_emitted  已输出的视觉状态
     //   candidate     正在观察的候选画面（含首次出现时间，用于真实时间戳）
     // 发射条件：候选与上一输出差异显著 + 稳定时长足够 + 距上次发射 >= cooldown。
-    let stable_for = if matches!(cfg.slide_mode, crate::config::SlideMode::Stable) {
+    let stable_for = if matches!(cfg.screenshot_mode, crate::config::ScreenshotMode::Stable) {
         cfg.stable_secs
     } else {
         0.0
@@ -193,7 +193,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
                     candidate_first_t = None;
                     candidate_last_t = None;
                     last_emit_t = t;
-                    pb.set_message(format!("Found {} candidate slides", times.len()));
+                    pb.set_message(format!("Found {} candidate screenshots", times.len()));
                 }
             }
         }
@@ -214,7 +214,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
         anyhow::bail!("Frame sampling failed ({status}): {tail}");
     }
     pb.finish();
-    tracing::info!(slides = times.len(), frames = i, mode = %cfg.slide_mode, "ssim scan done");
+    tracing::info!(screenshots = times.len(), frames = i, mode = %cfg.screenshot_mode, "ssim scan done");
     Ok(times)
 }
 
@@ -258,7 +258,10 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
                 set.abort_all();
                 let (onset_t, _) = times[i];
                 return Err(error).with_context(|| {
-                    format!("Could not extract slide {n} (t={onset_t:.1}s)", n = i + 1)
+                    format!(
+                        "Could not extract screenshot {n} (t={onset_t:.1}s)",
+                        n = i + 1
+                    )
                 });
             }
             Some(Err(e)) => {
@@ -271,7 +274,12 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     let mut frames = Vec::with_capacity(results.len());
     for (i, r) in results {
         let (onset_t, _) = times[i];
-        r.with_context(|| format!("Could not extract slide {n} (t={onset_t:.1}s)", n = i + 1))?;
+        r.with_context(|| {
+            format!(
+                "Could not extract screenshot {n} (t={onset_t:.1}s)",
+                n = i + 1
+            )
+        })?;
         let name = slide_name(i + 1);
         frames.push(FrameEvent {
             t: onset_t,
@@ -281,7 +289,7 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     tracing::info!(
         frames = frames.len(),
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
-        "slides extracted"
+        "screenshots extracted"
     );
     pb.finish();
     crate::progress::stage("scenes/extract", "done");

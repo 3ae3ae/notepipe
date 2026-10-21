@@ -1,6 +1,6 @@
 //! End-to-end CLI contract with stdin configuration and offline service fixtures.
 use notepipe::{
-    config::{SlideMode, TranscriptSource},
+    config::{ScreenshotMode, TranscriptSource},
     settings::ConfigFile,
 };
 use serde_json::{Value, json};
@@ -12,7 +12,7 @@ use std::{
 
 fn config() -> ConfigFile {
     let mut config = ConfigFile::default();
-    config.defaults.slide_mode = Some(SlideMode::First);
+    config.defaults.screenshot_mode = Some(ScreenshotMode::First);
     config
 }
 fn spawn(root: &Path, source: &str, config: &ConfigFile, flags: &[&str]) -> std::process::Child {
@@ -643,6 +643,12 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
             std::fs::read_to_string(record.join("endpoint")).unwrap(),
             "/v1/audio/transcriptions"
         );
+        let stages = events(&output);
+        assert!(stages.iter().any(|event| event["type"] == "stage"
+            && event["stage"] == "adapter/start"
+            && event["status"] == "start"));
+        assert!(!stages.iter().any(|event| event["type"] == "stage"
+            && event["stage"].as_str().unwrap().starts_with("model/")));
         if behavior == "healthy" {
             assert!(
                 document(&output)

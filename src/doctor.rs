@@ -53,7 +53,7 @@ pub fn run() -> Result<()> {
                     &mut out,
                     false,
                     tool,
-                    &format!("  Missing: {}", crate::error::install_hint(tool)),
+                    &format!("  Missing: {}", crate::error::FFMPEG_INSTALL_HINT),
                 );
             }
         }

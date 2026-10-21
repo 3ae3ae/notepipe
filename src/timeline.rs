@@ -188,7 +188,6 @@ fn snap_to_natural_break(chars: &[char], ideal: usize, lo: usize, hi: usize) -> 
 ///
 /// 只作用于供渲染与可选 LLM 校对使用的 Section；调用方应在此之前把细粒度
 /// ASR 事件写入 timeline.jsonl，保留原始时间线与可追溯性。
-/// 独立的无语义填充词不单独成段；嵌在有效语句中的文本不会被删除。
 pub fn coalesce_sections(sections: &mut [Section]) {
     for section in sections {
         let mut paragraphs: Vec<TranscriptEvent> = Vec::new();
@@ -196,7 +195,7 @@ pub fn coalesce_sections(sections: &mut [Section]) {
 
         for event in std::mem::take(&mut section.speech) {
             let text = event.text.trim();
-            if text.is_empty() || is_standalone_filler(text) {
+            if text.is_empty() {
                 continue;
             }
 
@@ -288,35 +287,6 @@ fn append_text(paragraph: &mut String, next: &str) {
         paragraph.push(' ');
     }
     paragraph.push_str(next);
-}
-
-/// 独立成条的纯语气词（剥掉标点后整条只剩这些字）。
-fn is_standalone_filler(text: &str) -> bool {
-    let normalized = text.trim_matches(|c: char| {
-        c.is_whitespace() || " ，。！？、,.!?：:；;“”‘’'\"（）()【】[]".contains(c)
-    });
-    matches!(
-        normalized.to_ascii_lowercase().as_str(),
-        "嗯" | "呃"
-            | "额"
-            | "啊"
-            | "哦"
-            | "唔"
-            | "唉"
-            | "诶"
-            | "噢"
-            | "umm"
-            | "uh"
-            | "uhm"
-            | "hmm"
-            | "mm"
-            | "erm"
-            | "음"
-            | "엄"
-            | "えー"
-            | "えっと"
-            | "ええと"
-    )
 }
 
 #[cfg(test)]
@@ -507,101 +477,20 @@ mod tests {
     }
 
     #[test]
-    fn fillers_are_case_insensitive_whole_segments_in_each_language() {
-        for filler in [
-            "嗯",
-            "呃",
-            "额",
-            "啊",
-            "哦",
-            "唔",
-            "唉",
-            "诶",
-            "噢",
-            "umm",
-            "Uh",
-            "uhm",
-            "HMM",
-            "mm",
-            "erm",
-            "음",
-            "엄",
-            "えー",
-            "えっと",
-            "ええと",
-        ] {
-            assert!(
-                is_standalone_filler(&format!(" （{filler}?!） ")),
-                "{filler}"
-            );
-        }
-        for text in [
-            "summer",
-            "um well",
-            "음 오늘은",
-            "어떤",
-            "えっと、今日は",
-            "嗯，今天",
-        ] {
-            assert!(!is_standalone_filler(text), "{text}");
-        }
-    }
-
-    #[test]
-    fn coalesce_keeps_ambiguous_standalone_answers() {
-        for text in ["um", "UM!", "er", "Er?", "어", "어."] {
+    fn coalesce_preserves_all_nonempty_speech() {
+        for text in ["um", "HMM!", "음", "嗯，", "えっと", "Ordinary words."] {
             let mut sections = vec![Section {
-                t: 0.0,
-                end: 1.0,
+                t: 0.,
+                end: 1.,
                 image: String::new(),
                 speech: vec![TranscriptEvent {
                     text: text.into(),
-                    ..sp(0.0, 1.0)
+                    ..sp(0., 1.)
                 }],
             }];
             coalesce_sections(&mut sections);
-            assert_eq!(sections[0].speech.len(), 1, "{text}");
             assert_eq!(sections[0].speech[0].text, text);
         }
-    }
-
-    #[test]
-    fn coalesce_drops_standalone_fillers_but_keeps_embedded() {
-        let speech = vec![
-            TranscriptEvent {
-                start: 0.0,
-                end: 1.0,
-                text: "嗯，".into(),
-                raw: None,
-                below: Vec::new(),
-            },
-            TranscriptEvent {
-                start: 1.1,
-                end: 2.0,
-                text: "啊".into(),
-                raw: None,
-                below: Vec::new(),
-            },
-            TranscriptEvent {
-                start: 2.1,
-                end: 4.0,
-                text: "我们今天讲啊这个问题".into(),
-                raw: None,
-                below: Vec::new(),
-            },
-        ];
-        let mut sections = vec![Section {
-            t: 0.0,
-            end: 10.0,
-            image: "f.jpg".into(),
-            speech,
-        }];
-        coalesce_sections(&mut sections);
-        assert_eq!(sections[0].speech.len(), 1, "独立语气词被过滤");
-        assert_eq!(
-            sections[0].speech[0].text, "我们今天讲啊这个问题",
-            "嵌在句中的「啊」保留"
-        );
     }
 
     #[test]

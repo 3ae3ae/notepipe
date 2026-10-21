@@ -62,9 +62,7 @@ pub fn stage(name: &str, status: &str) {
     emit(stage_event(name, status));
     if !is_json() && !is_quiet() && status == "start" {
         let label = match name {
-            "model/load" | "model/apple" => {
-                "Loading recognition model (first use may need to download files) / Loading speech model (first use may download files)"
-            }
+            "adapter/start" => "Starting adapter",
             "fetch" => "Reading video information",
             "subtitle" => "Looking for subtitles",
             "download" => "Downloading video",
@@ -72,11 +70,8 @@ pub fn stage(name: &str, status: &str) {
             "scenes/extract" => "Saving screenshots",
             "audio" => "Extracting audio",
             "transcribe" => "Transcribing speech",
-            "llm" => "Proofreading transcript",
             "summary" => "Generating summary",
             "render" => "Writing notes",
-            "model/prepare" => "Checking speech model",
-            name if name.starts_with("model/") => "Downloading speech model",
             _ => name,
         };
         eprintln!("{label}…");
