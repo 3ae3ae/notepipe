@@ -54,19 +54,12 @@ pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
     let suffix = match api.mode {
         crate::settings::AsrMode::Transcriptions => "/audio/transcriptions",
         crate::settings::AsrMode::Chat => "/chat/completions",
-        crate::settings::AsrMode::Xai => "/stt",
-        crate::settings::AsrMode::Meta => "/asr/transcribe",
     };
     anyhow::ensure!(
         !conflicting_endpoint_suffix(
             base,
             suffix,
-            &[
-                "/audio/transcriptions",
-                "/chat/completions",
-                "/stt",
-                "/asr/transcribe"
-            ]
+            &["/audio/transcriptions", "/chat/completions"]
         ),
         crate::tr!("Service endpoint and protocol do not match")
     );
@@ -627,8 +620,6 @@ mod asr_tests {
         for (mode, suffix) in [
             (AsrMode::Transcriptions, "/audio/transcriptions"),
             (AsrMode::Chat, "/chat/completions"),
-            (AsrMode::Xai, "/stt"),
-            (AsrMode::Meta, "/asr/transcribe"),
         ] {
             let mut asr = Asr {
                 mode,
@@ -642,7 +633,7 @@ mod asr_tests {
             asr.base_url = format!(
                 "https://example.test/v1{}",
                 if mode == AsrMode::Chat {
-                    "/stt"
+                    "/audio/transcriptions"
                 } else {
                     "/chat/completions"
                 }

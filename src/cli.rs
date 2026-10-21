@@ -117,7 +117,7 @@ pub struct RunOpts {
     #[arg(help_heading = "Speech recognition")]
     pub asr_model: Option<String>,
 
-    /// HTTP dialect: transcriptions, chat, xai, meta
+    /// HTTP dialect: transcriptions, chat
     #[arg(long, value_enum)]
     #[arg(help_heading = "Speech recognition")]
     pub asr_mode: Option<crate::settings::AsrMode>,

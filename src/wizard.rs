@@ -11,17 +11,10 @@ struct Preset {
     model: &'static str,
     command: &'static [&'static str],
     concurrency: usize,
+    ask_api_key: bool,
 }
 
 const PRESETS: &[Preset] = &[
-    Preset {
-        label: "OpenAI",
-        mode: AsrMode::Transcriptions,
-        base_url: "https://api.openai.com/v1",
-        model: "gpt-4o-mini-transcribe",
-        command: &[],
-        concurrency: 4,
-    },
     Preset {
         label: "Groq",
         mode: AsrMode::Transcriptions,
@@ -29,30 +22,7 @@ const PRESETS: &[Preset] = &[
         model: "whisper-large-v3-turbo",
         command: &[],
         concurrency: 4,
-    },
-    Preset {
-        label: "Mistral",
-        mode: AsrMode::Transcriptions,
-        base_url: "https://api.mistral.ai/v1",
-        model: "voxtral-mini-latest",
-        command: &[],
-        concurrency: 4,
-    },
-    Preset {
-        label: "xAI",
-        mode: AsrMode::Xai,
-        base_url: "https://api.x.ai/v1",
-        model: "grok-voice-transcribe-2.0",
-        command: &[],
-        concurrency: 4,
-    },
-    Preset {
-        label: "Meta",
-        mode: AsrMode::Meta,
-        base_url: "https://api.meta.ai/v1",
-        model: "muse-voice-transcribe-1.0",
-        command: &[],
-        concurrency: 4,
+        ask_api_key: true,
     },
     Preset {
         label: "llama.cpp on this computer",
@@ -61,6 +31,34 @@ const PRESETS: &[Preset] = &[
         model: "",
         command: &["llama-server", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"],
         concurrency: 1,
+        ask_api_key: false,
+    },
+    Preset {
+        label: "Meta (requires notepipe-asr-meta to be installed)",
+        mode: AsrMode::Transcriptions,
+        base_url: "",
+        model: "muse-voice-transcribe-1.0",
+        command: &["notepipe-asr-meta"],
+        concurrency: 4,
+        ask_api_key: true,
+    },
+    Preset {
+        label: "Mistral",
+        mode: AsrMode::Transcriptions,
+        base_url: "https://api.mistral.ai/v1",
+        model: "voxtral-mini-latest",
+        command: &[],
+        concurrency: 4,
+        ask_api_key: true,
+    },
+    Preset {
+        label: "OpenAI",
+        mode: AsrMode::Transcriptions,
+        base_url: "https://api.openai.com/v1",
+        model: "gpt-4o-mini-transcribe",
+        command: &[],
+        concurrency: 4,
+        ask_api_key: true,
     },
     Preset {
         label: "Other OpenAI-compatible service",
@@ -69,6 +67,16 @@ const PRESETS: &[Preset] = &[
         model: "",
         command: &[],
         concurrency: 4,
+        ask_api_key: true,
+    },
+    Preset {
+        label: "xAI (requires notepipe-asr-xai to be installed)",
+        mode: AsrMode::Transcriptions,
+        base_url: "",
+        model: "grok-voice-transcribe-2.0",
+        command: &["notepipe-asr-xai"],
+        concurrency: 4,
+        ask_api_key: true,
     },
 ];
 
@@ -113,35 +121,36 @@ pub fn run(asr: &Asr) -> Result<Asr> {
         dialoguer::Select::new()
             .with_prompt(crate::tr!("Choose a transcription service"))
             .items(&labels)
-            .default(0)
             .interact_opt()?,
     )?;
-    let mut asr = apply_preset(asr, &PRESETS[index]);
-    if asr.command.is_empty() {
-        if asr.base_url.is_empty() {
-            asr.base_url = dialoguer::Input::<String>::new()
-                .with_prompt(crate::tr!(
-                    "Service address (compatible with OpenAI interface) / Service URL (OpenAI-compatible)"
-                ))
-                .interact_text()?
-                .trim()
-                .to_owned();
-            crate::config::ensure_http_url(&asr.base_url)?;
-        }
-        if asr.api_key.trim().is_empty() && crate::config::asr_api_key_from_env().is_none() {
-            asr.api_key = dialoguer::Password::new()
-                .with_prompt(crate::tr!("API key (optional; hidden)"))
-                .allow_empty_password(true)
-                .interact()?;
-        }
-        if asr.model.is_empty() {
-            asr.model = dialoguer::Input::<String>::new()
-                .with_prompt(crate::tr!("Model name"))
-                .allow_empty(true)
-                .interact_text()?
-                .trim()
-                .to_owned();
-        }
+    let preset = &PRESETS[index];
+    let mut asr = apply_preset(asr, preset);
+    if asr.command.is_empty() && asr.base_url.is_empty() {
+        asr.base_url = dialoguer::Input::<String>::new()
+            .with_prompt(crate::tr!(
+                "Service address (compatible with OpenAI interface) / Service URL (OpenAI-compatible)"
+            ))
+            .interact_text()?
+            .trim()
+            .to_owned();
+        crate::config::ensure_http_url(&asr.base_url)?;
+    }
+    if preset.ask_api_key
+        && asr.api_key.trim().is_empty()
+        && crate::config::asr_api_key_from_env().is_none()
+    {
+        asr.api_key = dialoguer::Password::new()
+            .with_prompt(crate::tr!("API key (optional; hidden)"))
+            .allow_empty_password(true)
+            .interact()?;
+    }
+    if asr.command.is_empty() && asr.model.is_empty() {
+        asr.model = dialoguer::Input::<String>::new()
+            .with_prompt(crate::tr!("Model name"))
+            .allow_empty(true)
+            .interact_text()?
+            .trim()
+            .to_owned();
     }
     let mut file = crate::settings::load()?;
     file.asr = asr.clone();
@@ -155,14 +164,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn escape_does_not_accept_the_default() {
+    fn escape_cancels_setup() {
         assert!(selected_or_cancelled(None).is_err());
         assert_eq!(selected_or_cancelled(Some(0)).unwrap(), 0);
     }
 
     #[test]
-    fn presets_supply_their_dialect_and_only_llama_is_managed() {
+    fn presets_are_alphabetical_and_supply_their_service_settings() {
         assert_eq!(PRESETS.len(), 7);
+        for pair in PRESETS.windows(2) {
+            assert!(pair[0].label.to_ascii_lowercase() < pair[1].label.to_ascii_lowercase());
+        }
         for (index, preset) in PRESETS.iter().enumerate() {
             let asr = apply_preset(
                 &Asr {
@@ -174,14 +186,30 @@ mod tests {
             );
             assert_eq!(asr.language, "ko");
             assert_eq!(asr.api_key, "saved");
-            if index == 5 {
+            if index == 1 {
                 assert_eq!(asr.mode, AsrMode::Chat);
                 assert_eq!(
                     asr.command,
                     ["llama-server", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
                 );
                 assert_eq!(asr.concurrency, 1);
-            } else if index < 5 {
+                assert!(!preset.ask_api_key);
+            } else if index == 2 || index == 6 {
+                assert_eq!(asr.mode, AsrMode::Transcriptions);
+                assert_eq!(
+                    asr.command,
+                    [if index == 2 {
+                        "notepipe-asr-meta"
+                    } else {
+                        "notepipe-asr-xai"
+                    }]
+                );
+                assert_eq!(asr.concurrency, 4);
+                assert!(asr.base_url.is_empty());
+                assert!(!asr.model.is_empty());
+                assert!(preset.ask_api_key);
+                assert!(preset.label.contains("to be installed"));
+            } else if index != 5 {
                 assert!(asr.command.is_empty());
                 assert!(!asr.model.is_empty());
                 crate::config::ensure_http_url(&crate::config::asr_endpoint(&asr).unwrap())
@@ -190,7 +218,5 @@ mod tests {
                 assert!(!asr.is_configured());
             }
         }
-        assert_eq!(PRESETS[3].mode, AsrMode::Xai);
-        assert_eq!(PRESETS[4].mode, AsrMode::Meta);
     }
 }

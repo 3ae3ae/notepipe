@@ -403,10 +403,7 @@ fn post_cloud(
                     crate::tr!("The speech service returned an error")
                 );
                 let has_text = match t.mode {
-                    crate::settings::AsrMode::Transcriptions | crate::settings::AsrMode::Xai => {
-                        value["text"].is_string()
-                    }
-                    crate::settings::AsrMode::Meta => value["transcript"].is_string(),
+                    crate::settings::AsrMode::Transcriptions => value["text"].is_string(),
                     crate::settings::AsrMode::Chat => chat_content_has_text(value),
                 };
                 anyhow::ensure!(has_text, crate::tr!("The speech service returned no text"));
@@ -443,11 +440,8 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
     let _ = std::fs::remove_file(chunk);
     let value = result?;
     let text = match t.mode {
-        crate::settings::AsrMode::Transcriptions | crate::settings::AsrMode::Xai => {
+        crate::settings::AsrMode::Transcriptions => {
             value["text"].as_str().unwrap_or_default().to_owned()
-        }
-        crate::settings::AsrMode::Meta => {
-            value["transcript"].as_str().unwrap_or_default().to_owned()
         }
         crate::settings::AsrMode::Chat => parse_chat_content(&value),
     };
@@ -455,7 +449,7 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
     Ok((!text.is_empty()).then_some(text))
 }
 
-/// Options precede the binary audio part in every multipart dialect.
+/// Options precede the binary audio part in transcription requests.
 fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>)> {
     use crate::settings::AsrMode;
     use base64::Engine as _;
@@ -481,26 +475,14 @@ fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>
     }
     let boundary = format!("notepipe-{}", crate::random_b64url(24)?);
     let mut options = String::new();
-    let audio_part = if t.mode == AsrMode::Meta {
-        let mut request = serde_json::json!({"audioEncoding":"WAV"});
-        if !t.model.is_empty() {
-            request["model"] = t.model.into();
+    for (name, value) in [("model", t.model), ("language", t.language)] {
+        if !value.is_empty() {
+            options.push_str(&format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            ));
         }
-        if !t.language.is_empty() {
-            request["languageBias"] =
-                serde_json::json!([crate::language::english_name(t.language)]);
-        }
-        options.push_str(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"request\"\r\nContent-Type: application/json\r\n\r\n{request}\r\n"));
-        "audio"
-    } else {
-        for (name, value) in [("model", t.model), ("language", t.language)] {
-            if !value.is_empty() {
-                options.push_str(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"));
-            }
-        }
-        "file"
-    };
-    let mut body = format!("{options}--{boundary}\r\nContent-Disposition: form-data; name=\"{audio_part}\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n").into_bytes();
+    }
+    let mut body = format!("{options}--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n").into_bytes();
     body.extend_from_slice(audio);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     Ok((format!("multipart/form-data; boundary={boundary}"), body))
@@ -1288,8 +1270,6 @@ mod http_tests {
         }
         for (mode, suffix, field) in [
             (AsrMode::Transcriptions, "/audio/transcriptions", "text"),
-            (AsrMode::Xai, "/stt", "text"),
-            (AsrMode::Meta, "/asr/transcribe", "transcript"),
             (AsrMode::Chat, "/chat/completions", "content"),
         ] {
             for with_options in [false, true] {
@@ -1392,31 +1372,14 @@ mod http_tests {
                 } else {
                     let text = String::from_utf8_lossy(&body);
                     let audio = text.find("filename=\"audio.wav\"").unwrap();
-                    if mode == AsrMode::Meta {
-                        let option = text.find("name=\"request\"").unwrap();
-                        assert!(option < audio);
-                        assert!(text.contains("Content-Type: application/json\r\n"));
-                        let json_start = text[option..].find("\r\n\r\n").unwrap() + option + 4;
-                        let json_end = text[json_start..].find("\r\n").unwrap() + json_start;
-                        let json: serde_json::Value =
-                            serde_json::from_str(&text[json_start..json_end]).unwrap();
-                        assert_eq!(json["audioEncoding"], "WAV");
-                        assert_eq!(json.get("model").is_some(), with_options);
-                        assert_eq!(json.get("languageBias").is_some(), with_options);
-                        if with_options {
-                            assert_eq!(json["languageBias"], serde_json::json!(["Korean"]));
+                    for name in ["model", "language"] {
+                        let position = text.find(&format!("name=\"{name}\""));
+                        assert_eq!(position.is_some(), with_options);
+                        if let Some(position) = position {
+                            assert!(position < audio);
                         }
-                        assert!(text.contains("name=\"audio\";"));
-                    } else {
-                        for name in ["model", "language"] {
-                            let position = text.find(&format!("name=\"{name}\""));
-                            assert_eq!(position.is_some(), with_options);
-                            if let Some(position) = position {
-                                assert!(position < audio);
-                            }
-                        }
-                        assert!(text.contains("name=\"file\";"));
                     }
+                    assert!(text.contains("name=\"file\";"));
                     assert!(body.windows(4).any(|part| part == b"RIFF"));
                 }
             }
@@ -1424,7 +1387,7 @@ mod http_tests {
     }
 
     #[test]
-    fn language_names_are_shared_by_chat_and_meta_requests() {
+    fn chat_requests_use_language_names() {
         let client = ureq::agent();
         for (code, name) in [
             ("zh", "Chinese"),
@@ -1433,7 +1396,7 @@ mod http_tests {
             ("zh-Hant", "Traditional Chinese"),
             ("xx-custom", "xx-custom"),
         ] {
-            let mut target = ApiTarget {
+            let target = ApiTarget {
                 client: &client,
                 url: "",
                 model: "",
@@ -1450,13 +1413,6 @@ mod http_tests {
                     .as_str()
                     .unwrap()
                     .ends_with(&format!(" The speech is in {name}."))
-            );
-            target.mode = AsrMode::Meta;
-            let (_, body) = transcription_request(&target, b"audio").unwrap();
-            assert!(
-                String::from_utf8(body)
-                    .unwrap()
-                    .contains(&format!("\"languageBias\":[\"{name}\"]"))
             );
         }
     }

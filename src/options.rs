@@ -272,7 +272,7 @@ mod asr_tests {
             "--asr-model",
             "model",
             "--asr-mode",
-            "xai",
+            "chat",
             "--asr-language",
             "ko",
             "--max-speech",
@@ -289,7 +289,7 @@ mod asr_tests {
             assert_eq!(cfg.asr.base_url, "http://localhost:1234/v1");
             assert_eq!(cfg.asr.api_key, "key");
             assert_eq!(cfg.asr.model, "model");
-            assert_eq!(cfg.asr.mode, settings::AsrMode::Xai);
+            assert_eq!(cfg.asr.mode, settings::AsrMode::Chat);
             assert_eq!(cfg.asr.language, "ko");
             assert_eq!(cfg.asr.max_speech, 12.0);
         }

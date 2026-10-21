@@ -34,8 +34,6 @@ pub enum AsrMode {
     #[default]
     Transcriptions,
     Chat,
-    Xai,
-    Meta,
 }
 
 impl std::fmt::Display for AsrMode {
@@ -43,8 +41,6 @@ impl std::fmt::Display for AsrMode {
         f.write_str(match self {
             Self::Transcriptions => "transcriptions",
             Self::Chat => "chat",
-            Self::Xai => "xai",
-            Self::Meta => "meta",
         })
     }
 }
@@ -213,7 +209,7 @@ const TEMPLATE: &str = r#"# Configuration
 #resume = {RESUME}
 
 [asr]
-# HTTP dialect: transcriptions, chat, xai, meta
+# HTTP dialect: transcriptions, chat
 #mode = "transcriptions"
 # Service root or full endpoint; ignored when command is set
 #base_url = ""
@@ -331,6 +327,24 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn vendor_asr_modes_are_rejected() {
+        for mode in ["xai", "meta"] {
+            assert!(
+                toml::from_str::<super::ConfigFile>(&format!("[asr]\nmode = '{mode}'")).is_err()
+            );
+            assert!(
+                <crate::cli::Cli as clap::Parser>::try_parse_from([
+                    "notepipe",
+                    "video",
+                    "--asr-mode",
+                    mode,
+                ])
+                .is_err()
+            );
+        }
+    }
+
     #[test]
     fn removed_llm_fields_are_rejected() {
         for setting in ["provider = 'codex'", "disable_hint = true"] {
