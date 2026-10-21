@@ -73,6 +73,8 @@ See [docs/adapters.md](docs/adapters.md). Third-party adapters do not need to li
 
 Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`: it builds the CLI binaries and wheels and every adapter,
 attaches them with checksums to a GitHub release and publishes the packages to PyPI through trusted publishing. Versions
-of adapters that are already on PyPI are skipped, so bump an adapter's version when it changes.
+of adapters that are already on PyPI are skipped, so bump an adapter's version when it changes. Each PyPI project
+publishes from its own GitHub environment, `pypi` for notepipe and `pypi-<package>` for an adapter, and its trusted
+publisher on PyPI names that environment.
 
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).

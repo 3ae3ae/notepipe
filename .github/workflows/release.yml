@@ -255,13 +255,25 @@ jobs:
   pypi:
     needs: release
     runs-on: ubuntu-latest
-    environment: pypi
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { artifacts: package-core-*, environment: pypi }
+          - { artifacts: package-apple-*, environment: pypi-notepipe-asr-apple }
+          - { artifacts: package-llama, environment: pypi-notepipe-asr-llama }
+          - { artifacts: package-meta, environment: pypi-notepipe-asr-meta }
+          - { artifacts: package-openvino, environment: pypi-notepipe-asr-openvino }
+          - { artifacts: package-xai, environment: pypi-notepipe-asr-xai }
+          - { artifacts: package-ytdlp, environment: pypi-notepipe-source-ytdlp }
+    # PyPI allows one pending trusted publisher per environment, so each project publishes from its own.
+    environment: ${{ matrix.environment }}
     permissions:
       id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: package-*
+          pattern: ${{ matrix.artifacts }}
           path: dist
           merge-multiple: true
       - name: Publish Python packages
