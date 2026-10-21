@@ -302,6 +302,8 @@ impl fmt::Display for OutputFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub url: String,
+    pub cookies: Option<PathBuf>,
+    pub cookies_from_browser: Option<String>,
     pub out_dir: PathBuf,
     pub similarity: f64,
     pub sample_interval: f64,
@@ -422,6 +424,10 @@ impl PipelineConfig {
     /// 全量预检：所有配置错误必须在任何昂贵操作（下载/抽帧/模型加载）之前暴露。
     /// 返回 Err 的送进 main 后直接退出，不会碰网络与模型。
     pub fn validate(&self) -> AnyhowResult<()> {
+        crate::auth::validate(
+            self.cookies.as_deref(),
+            self.cookies_from_browser.as_deref(),
+        )?;
         let finite = |name: &str, v: f64| -> AnyhowResult<()> {
             anyhow::ensure!(
                 v.is_finite(),
@@ -648,9 +654,7 @@ pub fn known_video_site(input: &str) -> Option<&'static str> {
         .or_else(|| url::Url::parse(&format!("https://{input}")).ok())?;
     let host = url.host_str()?;
     let under = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
-    if under("bilibili.com") || host == "b23.tv" {
-        Some("bilibili")
-    } else if under("youtube.com") || host == "youtu.be" {
+    if under("youtube.com") || host == "youtu.be" {
         Some("youtube")
     } else {
         None
@@ -670,8 +674,6 @@ pub fn platform_from(source: &str, extractor: &str) -> String {
     let e = extractor.to_ascii_lowercase();
     if Path::new(source).is_file() || e == "local" {
         "local".into()
-    } else if e.contains("bili") || known_video_site(source) == Some("bilibili") {
-        "bilibili".into()
     } else if e.contains("youtube") || known_video_site(source) == Some("youtube") {
         "youtube".into()
     } else if !e.is_empty() {
@@ -686,29 +688,10 @@ pub fn infer_slug(source: &str) -> String {
     if p.is_file() {
         return sanitize_component(p.file_stem().and_then(|s| s.to_str()).unwrap_or("local"));
     }
-    if let Some(id) = bilibili_bvid(source) {
-        return id;
-    }
     if let Some(id) = youtube_id(source) {
         return id;
     }
     sanitize_component(source)
-}
-
-/// B 站链接 `/video/BVxxxxxxxxxx` 路径段中的 BV 号（"BV" + 10 位）。
-pub fn bilibili_bvid(source: &str) -> Option<String> {
-    let url = url::Url::parse(source)
-        .or_else(|_| url::Url::parse(&format!("https://{}", source.trim())))
-        .ok()?;
-    if known_video_site(url.as_str()) != Some("bilibili") {
-        return None;
-    }
-    url.path_segments()?.find_map(|segment| {
-        (segment.len() == 12
-            && segment.starts_with("BV")
-            && segment.chars().all(|c| c.is_ascii_alphanumeric()))
-        .then(|| segment.to_string())
-    })
 }
 
 fn youtube_id(s: &str) -> Option<String> {
@@ -775,17 +758,15 @@ mod tests {
     #[test]
     fn source_gate() {
         assert!(!looks_like_source("notepipe"));
-        assert!(looks_like_source(
-            "https://www.bilibili.com/video/BV1pb8o6yE8f"
-        ));
+        assert!(looks_like_source("https://example.invalid/watch/video"));
         assert!(looks_like_source("https://youtu.be/dQw4w9WgXcQ"));
     }
 
     #[test]
     fn slug_from_source() {
         assert_eq!(
-            infer_slug("https://www.bilibili.com/video/BV1pb8o6yE8f/?spm=1"),
-            "BV1pb8o6yE8f"
+            infer_slug("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            "dQw4w9WgXcQ"
         );
         assert_eq!(infer_slug("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
     }
@@ -804,6 +785,8 @@ mod tests {
     fn valid_cfg() -> PipelineConfig {
         PipelineConfig {
             url: "https://youtu.be/x".into(),
+            cookies: None,
+            cookies_from_browser: None,
             out_dir: "out".into(),
             out_root: "out".into(),
             similarity: DEFAULT_SIMILARITY,
@@ -912,18 +895,13 @@ mod tests {
 
     #[test]
     fn known_video_site_covers_short_links_and_rejects_lookalikes() {
-        assert_eq!(known_video_site("b23.tv/abc"), Some("bilibili"));
-        assert_eq!(
-            known_video_site("m.bilibili.com/video/BV1"),
-            Some("bilibili")
-        );
         assert_eq!(known_video_site("https://youtu.be/x"), Some("youtube"));
-        assert_eq!(known_video_site("https://bilibili.com.evil.test/"), None);
+        assert_eq!(known_video_site("https://example.invalid.evil.test/"), None);
         assert_eq!(
-            known_video_site("https://youtube.com/?bilibili.com"),
+            known_video_site("https://youtube.com/?example.invalid"),
             Some("youtube")
         );
-        assert_eq!(known_video_site("file:///bilibili.com"), None);
+        assert_eq!(known_video_site("file:///example.invalid"), None);
     }
 
     #[test]

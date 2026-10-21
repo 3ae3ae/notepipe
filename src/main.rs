@@ -283,7 +283,6 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                         "已生成配置模板 / Configuration template created: {}",
                         path.display()
                     );
-                    println!("{}", notepipe::auth::BILIBILI_SETUP_TIP);
                 }
                 ConfigCmd::Show => settings::print_effective(&settings::load()?)?,
             }

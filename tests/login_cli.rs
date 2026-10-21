@@ -3,18 +3,18 @@ use notepipe::cli::Cli;
 
 #[test]
 fn login_is_standalone_or_precedes_video_processing() {
-    let login = Cli::try_parse_from(["notepipe", "--login", "bilibili"]).unwrap();
+    let login = Cli::try_parse_from(["notepipe", "--login", "codex"]).unwrap();
     assert!(login.login.is_some());
     assert!(login.source.is_none());
     let login = Cli::try_parse_from([
         "notepipe",
         "--login",
-        "bilibili",
-        "https://www.bilibili.com/video/BV1",
+        "codex",
+        "https://example.invalid/video/one",
     ])
     .unwrap();
     assert!(login.source.is_some());
-    for platform in ["bilibili", "ollama", "codex"] {
+    for platform in ["ollama", "codex"] {
         assert!(
             Cli::try_parse_from(["notepipe", "--login", platform])
                 .unwrap()
@@ -32,9 +32,14 @@ fn login_is_standalone_or_precedes_video_processing() {
     }
     for args in [
         vec!["notepipe", "--login", "youtube"],
-        vec!["notepipe", "--login", "bilibili", "--logout", "bilibili"],
-        vec!["notepipe", "--login", "bilibili", "--json"],
-        vec!["notepipe", "--logout", "bilibili", "https://b23.tv/test"],
+        vec!["notepipe", "--login", "codex", "--logout", "codex"],
+        vec!["notepipe", "--login", "codex", "--json"],
+        vec![
+            "notepipe",
+            "--logout",
+            "codex",
+            "https://example.invalid/video/one",
+        ],
     ] {
         assert!(Cli::try_parse_from(&args).is_err(), "accepted {args:?}");
     }
@@ -44,7 +49,7 @@ fn login_is_standalone_or_precedes_video_processing() {
 fn invalid_source_does_not_start_login() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_notepipe"))
         .env("NOTEPIPE_LANG", "zh-Hans")
-        .args(["--login", "bilibili", "doctor"])
+        .args(["--login", "codex", "doctor"])
         .output()
         .unwrap();
     assert!(!out.status.success());
@@ -53,7 +58,7 @@ fn invalid_source_does_not_start_login() {
 }
 
 #[test]
-fn initial_config_recommends_bilibili_login_without_creating_credentials() {
+fn initial_config_does_not_create_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_notepipe"))
         .env("XDG_CONFIG_HOME", dir.path())
@@ -63,8 +68,7 @@ fn initial_config_recommends_bilibili_login_without_creating_credentials() {
         .unwrap();
     assert!(out.status.success());
     let message = String::from_utf8_lossy(&out.stdout);
-    assert!(message.contains("notepipe --login bilibili"));
-    assert!(message.contains("账号权限范围内更高清晰度"));
+    assert!(message.contains("config.toml"));
     assert!(dir.path().join("notepipe/config.toml").is_file());
     assert!(!dir.path().join("notepipe/auth").exists());
 }

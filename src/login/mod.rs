@@ -9,7 +9,6 @@ use crate::cli::LoginPlatform;
 
 pub fn login(platform: LoginPlatform) -> Result<()> {
     match platform {
-        LoginPlatform::Bilibili => crate::auth::login_bilibili(),
         LoginPlatform::Ollama => ollama::login(),
         LoginPlatform::Codex => codex::login(),
     }
@@ -17,7 +16,6 @@ pub fn login(platform: LoginPlatform) -> Result<()> {
 
 pub fn logout(platform: LoginPlatform) -> Result<()> {
     match platform {
-        LoginPlatform::Bilibili => crate::auth::logout_bilibili(),
         LoginPlatform::Ollama => ollama::logout(),
         LoginPlatform::Codex => codex::logout(),
     }

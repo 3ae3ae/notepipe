@@ -234,15 +234,15 @@ mod tests {
             title: "测试<课>".into(),
             uploader: "up".into(),
             duration: 3725.0,
-            webpage_url: "https://www.bilibili.com/video/BV1xx".into(),
-            extractor: "bilibili".into(),
-            id: "BV1xx".into(),
+            webpage_url: "https://example.invalid/video/one".into(),
+            extractor: "example".into(),
+            id: "one".into(),
         };
         assert_eq!(fmt_ts(65.4), "01:05");
         assert_eq!(fmt_ts(3725.0), "1:02:05");
         assert_eq!(
             ts_url_from(&source_url(&m), 61.9),
-            "https://www.bilibili.com/video/BV1xx?t=61"
+            "https://example.invalid/video/one?t=61"
         );
         let s = [Section {
             t: 10.0,

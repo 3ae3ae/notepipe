@@ -60,17 +60,6 @@ Apple 和 NPU 模型由各自后端管理 / Apple and NPU models are managed by 
 Apple 芯片	Apple 芯片	Apple chip	Apple 晶片	アップルチップ
 Apple 芯片本机识别	Apple 芯片本机识别	Apple chip native identification	Apple 晶片本機識別	Apple チップのネイティブ識別
 Apple 识别结果过长，部分文字被截断 / Apple transcript exceeded the size limit; some text was truncated	Apple 识别结果过长，部分文字被截断	Apple transcript exceeded the size limit; some text was truncated	Apple 識別結果過長，部分文字被截斷	Apple の認識結果が長すぎてテキストの一部が切り詰められます
-B 站暂时限制了访问。请稍后重试；若持续失败，运行 notepipe --login bilibili 重新登录，或导入本地视频。 / Bilibili is temporarily limiting access. Retry later; if it keeps failing, run notepipe --login bilibili to log in again, or import a local video.	B 站暂时限制了访问。请稍后重试；若持续失败，运行 notepipe --login bilibili 重新登录，或导入本地视频。	Bilibili is temporarily limiting access. Retry later; if it keeps failing, run notepipe --login bilibili to log in again, or import a local video.	B 站暫時限制了訪問。請稍後重試；若持續失敗，執行 notepipe --login bilibili 重新登入，或匯入本地影片。	Bilibiliは一時的にアクセスが制限されています。後でもう一度試してください。引き続き失敗する場合は、 notepipe --login bilibili を実行して再度ログインするか、ローカル動画をインポートしてください。
-B 站暂时限制了访问，稍后重试 / Bilibili is limiting requests; retrying shortly	B 站暂时限制了访问，稍后重试	Bilibili is limiting requests; retrying shortly	B 站暫時限制了訪問，稍後重試	ステーション B は一時的にアクセスが制限されています。後でもう一度お試しください。
-Bilibili 未确认登录，请重新扫码 / Bilibili did not confirm the login; scan the QR code again	Bilibili 未确认登录，请重新扫码	Bilibili did not confirm the login; scan the QR code again	Bilibili 未確認登入，請重新掃碼	Bilibili ログインが確認されていません。コードをもう一度スキャンしてください
-Bilibili 用户	Bilibili 用户	Bilibili users	Bilibili 使用者	Bilibiliユーザー
-Bilibili 登录响应缺少 data / Bilibili login response is missing data	Bilibili 登录响应缺少 data	Bilibili login response is missing data	Bilibili 登入響應缺少 data	Bilibili ログイン応答にデータがありません
-Bilibili 登录成功。预览、字幕和视频下载将自动使用此登录状态。/ Bilibili login successful. Previews, subtitles and video downloads will use it automatically.	Bilibili 登录成功。预览、字幕和视频下载将自动使用此登录状态。/ Bilibili login successful. Previews, subtitles and video downloads will use it automatically.	Bilibili login successful. Previews, subtitles, and video downloads will automatically use this login status. / Bilibili login successful. Previews, subtitles and video downloads will use it automatically.	Bilibili 登入成功。預覽、字幕和影片下載將自動使用此登入狀態。/ Bilibili login successful. Previews, subtitles and video downloads will use it automatically.	Bilibiliログインに成功しました。プレビュー、字幕、動画のダウンロードでは、このログイン ステータスが自動的に使用されます。 / Bilibiliログインに成功しました。プレビュー、字幕、動画のダウンロードでは自動的に使用されます。
-Bilibili 登录接口返回错误 / Bilibili login API returned an error	Bilibili 登录接口返回错误	Bilibili login API returned an error	Bilibili 登入介面返回錯誤	Bilibili ログイン インターフェイスがエラーを返す
-Bilibili 登录请求失败，请检查网络后重试 / Bilibili login request failed; check the network and retry	Bilibili 登录请求失败，请检查网络后重试	Bilibili login request failed; check the network and retry	Bilibili 登入請求失敗，請檢查網路後重試	Bilibili ログイン要求に失敗しました。ネットワークを確認してもう一度お試しください。
-Bilibili 登录跳转地址不受支持 / Unsupported Bilibili login redirect URL	Bilibili 登录跳转地址不受支持	Unsupported Bilibili login redirect URL	Bilibili 登入跳轉地址不受支援	Bilibili ログイン リダイレクト アドレスはサポートされていません
-Bilibili 登录跳转地址无效 / Invalid Bilibili login redirect URL	Bilibili 登录跳转地址无效	Invalid Bilibili login redirect URL	Bilibili 登入跳轉地址無效	Bilibili ログインのリダイレクト アドレスが無効です
-Bilibili 返回未知扫码状态，请重试 / Bilibili returned an unknown QR scan status; retry	Bilibili 返回未知扫码状态，请重试	Bilibili returned an unknown QR scan status; retry	Bilibili 返回未知掃碼狀態，請重試	Bilibili が不明なコード スキャン ステータスに戻ります。もう一度お試しください。
 CPU（较慢）	CPU（较慢）	CPU (slower)	CPU（較慢）	CPU (低速)
 Codex 模型目录无法解析 / Cannot parse the Codex model catalog	Codex 模型目录无法解析	Cannot parse the Codex model catalog	Codex 模型目錄無法解析	Codex モデル ディレクトリを解析できません
 Codex 模型目录缺少 models / Codex model catalog is missing models	Codex 模型目录缺少 models	Codex model catalog is missing models	Codex 模型目錄缺少 models	Codex モデル ディレクトリにモデルがありません
@@ -137,10 +126,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 不支持 / Unsupported	不支持	Unsupported	不支援	サポートされていません
 不支持此任务格式 / Unsupported task schema	不支持此任务格式	Unsupported task schema	不支援此任務格式	このタスク形式はサポートされていません
 中文	中文	Chinese	中文	中国語
-二维码响应缺少 key / QR code response is missing key	二维码响应缺少 key	QR code response is missing key	二維碼響應缺少 key	QR コード応答のキーがありません
-二维码响应缺少 url / QR code response is missing url	二维码响应缺少 url	QR code response is missing url	二維碼響應缺少 url	QR コード応答に URL がありません
-二维码已过期	二维码已过期	QR code has expired	二維碼已過期	QRコードの有効期限が切れています
-二维码已过期，请重新运行 notepipe --login bilibili / QR code expired; run notepipe --login bilibili again	二维码已过期，请重新运行 notepipe --login bilibili	QR code expired; run notepipe --login bilibili again	二維碼已過期，請重新執行 notepipe --login bilibili	QR コードの有効期限が切れています。 notepipe --login bilibili を再実行してください。
 云端 API（需服务端点和 API Key，可能收费） / Cloud API (endpoint and API key required; charges may apply)	云端 API（需服务端点和 API Key，可能收费）	Cloud API (endpoint and API key required; charges may apply)	雲端 API（需服務端點和 API Key，可能收費）	クラウド API (サービス エンドポイントと API キーが必要、料金が適用される場合があります)
 云端语音识别	云端语音识别	Cloud speech recognition	雲端語音識別	クラウド音声認識
 云端语音识别失败：{}	云端语音识别失败：{}	Cloud speech recognition failed: {}	雲端語音識別失敗：{}	クラウド音声認識が失敗しました: {}
@@ -168,10 +153,8 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 任务进度身份损坏，原文件已保留 / Task identity is damaged	任务进度身份损坏，原文件已保留	Task identity is damaged	任務進度身份損壞，原檔案已保留	タスク進行中の ID は破損していますが、元のファイルは保持されています。
 作者	作者	Creator	作者	作成者
 作者 {}	作者 {}	Author {}	作者 {}	著者 {}
-使用 Bilibili 视频时，推荐先运行 notepipe --login bilibili 扫码登录，可下载账号权限范围内更高清晰度的视频。 / For Bilibili videos, run notepipe --login bilibili first to scan a QR code; downloads can then use higher resolutions available to your account.	使用 Bilibili 视频时，推荐先运行 notepipe --login bilibili 扫码登录，可下载账号权限范围内更高清晰度的视频。	For Bilibili videos, run notepipe --login bilibili first to scan a QR code; downloads can then use higher resolutions available to your account.	使用 Bilibili 影片時，推薦先執行 notepipe --login bilibili 掃碼登入，可下載賬號許可權範圍內更高畫質晰度的影片。	Bilibili 動画を使用する場合は、notepipe --login bilibili を実行し、QR コードをスキャンしてログインすることをお勧めします。アカウント権限の範囲内で、より高解像度の動画をダウンロードできます。
 使用法：	使用法：	Usage:	使用法：	使用法:
 保存	保存	Save	儲存	保存
-保存 Bilibili 登录状态失败 / Failed to save Bilibili login state	保存 Bilibili 登录状态失败	Failed to save Bilibili login state	儲存 Bilibili 登入狀態失敗	Bilibili のログイン状態を保存できませんでした
 保存 Codex 登录状态失败 / Failed to save Codex login state	保存 Codex 登录状态失败	Failed to save Codex login state	儲存 Codex 登入狀態失敗	Codex のログイン状態を保存できませんでした
 保留下载的视频	保留下载的视频	Keep downloaded videos	保留下載的影片	ダウンロードした動画を保存しておく
 保留下载的视频 / Keep the downloaded video	保留下载的视频	Keep the downloaded video	保留下載的影片	ダウンロードした動画を保存しておく
@@ -246,7 +229,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 将全部分段摘要合并为整篇摘要 / Merge all partial summaries into the full summary	将全部分段摘要合并为整篇摘要	Merge all partial summaries into the full summary	將全部分段摘要合併為整篇摘要	すべてのセグメント化されたサマリーを完全なサマリーに結合します
 将视频和音频转换为 Markdown 笔记 / Turn video and audio into Markdown notes	将视频和音频转换为 Markdown 笔记	Turn video and audio into Markdown notes	將影片與音訊轉換為 Markdown 筆記	動画と音声を Markdown ノートに変換
 尚未检查字幕，请重新读取视频信息 / Subtitles not checked yet; probe the video info again	尚未检查字幕，请重新读取视频信息	Subtitles not checked yet; probe the video info again	尚未檢查字幕，請重新讀取影片資訊	字幕はまだチェックされていません。動画情報をもう一度読んでください。
-尚未登录 Bilibili。/ No Bilibili login saved.	尚未登录 Bilibili。/ No Bilibili login saved.	Not logged into Bilibili yet. / No Bilibili login saved.	尚未登入 Bilibili。/ No Bilibili login saved.	まだBilibiliにログインしていません。 / Bilibili ログインは保存されません。
 尚未登录 Codex。/ No Codex login saved.	尚未登录 Codex。/ No Codex login saved.	Not logged into Codex yet. / No Codex login saved.	尚未登入 Codex。/ No Codex login saved.	まだ Codex にログインしていません。 / Codex ログインは保存されません。
 就绪 / Ready	就绪	Ready	就緒	準備完了
 工作目录不能位于已发布版本内 / Work directory overlaps published versions	工作目录不能位于已发布版本内	Work directory overlaps published versions	工作目錄不能位於已釋出版本內	作業ディレクトリを公開されたビルド内に置くことはできません
@@ -266,22 +248,17 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 已取消登录，未保存配置。 / Login cancelled; no configuration saved.	已取消登录，未保存配置。	Login cancelled; no configuration saved.	已取消登入，未儲存配置。	ログインがキャンセルされ、設定は保存されませんでした。
 已取消设置，未保存配置。 / Setup cancelled; no configuration saved.	已取消设置，未保存配置。	Setup cancelled; no configuration saved.	已取消設定，未儲存配置。	設定がキャンセルされ、構成が保存されていません。
 已取消设置，未保存配置。重新运行视频命令可再次设置。 / Setup cancelled; no configuration saved. Run your video command again to restart.	已取消设置，未保存配置。重新运行视频命令可再次设置。	Setup cancelled; no configuration saved. Run your video command again to restart.	已取消設定，未儲存配置。重新執行影片命令可再次設定。	設定がキャンセルされ、構成が保存されていません。動画 コマンドを再実行して再度設定します。
-已取消读取	已取消读取	Read cancelled	已取消讀取	読み取りがキャンセルされました
-已取消读取文件 / File reading cancelled	已取消读取文件	File reading cancelled	已取消讀取檔案	ファイルの読み込みがキャンセルされました
 已安装	已安装	Installed	已安裝	インストール済み
 已完成	已完成	Completed	已完成	完了
 已完成请求缺少保存结果；没有重新发送 / Saved request result is missing	已完成请求缺少保存结果；没有重新发送	Saved request result is missing	已完成請求缺少儲存結果；沒有重新傳送	完了したリクエストに保存結果がありません。再送信されていない
 已导入 Codex 登录态并启用 AI 校对（模型 {}）。	已导入 Codex 登录态并启用 AI 校对（模型 {}）。	Codex login imported and AI proofreading enabled (model {}).	已匯入 Codex 登入狀態並啟用 AI 校對（模型 {}）。	Codex のログインをインポートし、AI 校正を有効にしました（モデル {}）。
 已就绪	已就绪	Ready	已就緒	準備完了
 已就绪 / Ready	已就绪	Ready	已就緒	準備完了
-已扫码，请在手机上确认登录	已扫码，请在手机上确认登录	The code has been scanned, please confirm login on your mobile phone	已掃碼，請在手機上確認登入	コードがスキャンされました。携帯電話でのログインを確認してください。
-已扫码，请在手机上确认登录。/ Code scanned; confirm the login on your phone.	已扫码，请在手机上确认登录。/ Code scanned; confirm the login on your phone.	The code has been scanned, please confirm login on your mobile phone. / Code scanned; confirm the login on your phone.	已掃碼，請在手機上確認登入。/ Code scanned; confirm the login on your phone.	コードがスキャンされました。携帯電話でのログインを確認してください。 / コードがスキャンされました。携帯電話でログインを確認します。
 已找到	已找到	Found	已找到	見つかりました
 已找到 {} 张候选截图 / Found {} candidate slides	已找到 {} 张候选截图	Found {} candidate slides	已找到 {} 張候選截圖	{} 候補のスクリーンショットが見つかりました
 已暂停	已暂停	Paused	已暫停	一時停止中
 已有摘要的格式不完整，保留原文 / Existing summary markup is incomplete; original text kept	已有摘要的格式不完整，保留原文	Existing summary markup is incomplete; original text kept	已有摘要的格式不完整，保留原文	既存の抄録の形式が不完全です。元のテキストを保存してください。
 已有笔记	已有笔记	Already have notes	已有筆記	すでにノートがある
-已清除 Bilibili 本地登录状态。/ Bilibili login removed.	已清除 Bilibili 本地登录状态。/ Bilibili login removed.	Bilibili local login status has been cleared. /Bilibili login removed.	已清除 Bilibili 本地登入狀態。/ Bilibili login removed.	Bilibili ローカル ログイン ステータスがクリアされました。 /Bilibili ログインが削除されました。
 已清除 Codex 登录状态。/ Codex login removed.	已清除 Codex 登录状态。/ Codex login removed.	Codex login status cleared. / Codex login removed.	已清除 Codex 登入狀態。/ Codex login removed.	Codexのログインステータスがクリアされました。 / Codex ログインが削除されました。
 已清除 Ollama 登录配置并关闭 AI 校对。/ Ollama login removed and AI proofreading disabled.	已清除 Ollama 登录配置并关闭 AI 校对。/ Ollama login removed and AI proofreading disabled.	Cleared Ollama login configuration and turned off AI proofing. / Ollama login removed and AI proofreading disabled.	已清除 Ollama 登入配置並關閉 AI 校對。/ Ollama login removed and AI proofreading disabled.	Ollama のログイン構成をクリアし、AI 校正をオフにしました。 / Ollama ログインが削除され、AI 校正が無効になりました。
 已登录	已登录	Signed in	已登入	ログイン済み
@@ -300,7 +277,7 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 当前 LLM 配置不是 Ollama，未做改动。/ The current LLM configuration is not Ollama; nothing changed.	当前 LLM 配置不是 Ollama，未做改动。/ The current LLM configuration is not Ollama; nothing changed.	The current LLM configuration is not Ollama and has not been changed. / The current LLM configuration is not Ollama; nothing changed.	當前 LLM 配置不是 Ollama，未做改動。/ The current LLM configuration is not Ollama; nothing changed.	現在の LLM 構成は Ollama ではなく、変更されていません。 / 現在の LLM 構成は Ollama ではありません。何も変わりませんでした。
 当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试 / This llama.cpp is too old for this GPU setting; upgrade and retry	当前 llama.cpp 版本过旧，不支持此显卡设置，请升级后重试	This llama.cpp is too old for this GPU setting; upgrade and retry	當前 llama.cpp 版本過舊，不支援此顯示卡設定，請升級後重試	llama.cpp の現在のバージョンは古すぎるため、このグラフィック カード設定をサポートしていません。アップグレードしてもう一度お試しください。
 当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试 / This llama.cpp is too old to transcribe on CPU only; upgrade and retry	当前 llama.cpp 版本过旧，无法只用 CPU 识别，请升级后重试	This llama.cpp is too old to transcribe on CPU only; upgrade and retry	當前 llama.cpp 版本過舊，無法只用 CPU 識別，請升級後重試	llama.cpp の現在のバージョンは古すぎるため、CPU だけでは認識できません。アップグレードしてもう一度お試しください。
-快速开始 / Quick start:\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n转写方式 / Transcripts:\n  默认优先使用平台字幕，无字幕时使用语音识别。\n  Uses platform subtitles first, then speech recognition when needed.\n  --transcript-source subtitle  仅使用字幕 / Subtitles only\n  --transcript-source asr       强制语音识别 / Speech recognition only\n\n下一步 / Next steps:\n  notepipe --login bilibili    扫码登录 / Log in with a QR code\n  notepipe --logout bilibili   清除登录 / Remove saved login\n  notepipe doctor              检查依赖与配置 / Check dependencies and settings\n  notepipe config init         生成配置模板 / Create a configuration template\n  notepipe llm setup           配置可选的 AI 校对 / Set up optional AI proofreading\n  notepipe summarize ./notes   为已有笔记生成摘要 / Summarize existing notes\n\n交互终端首次转换会引导配置；脚本请显式传入所需参数。\nFirst conversion in a terminal offers setup; scripts should pass options explicitly.\n使用 <command> --help 查看子命令帮助 / Use <command> --help for details.\n	快速开始：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n转写方式：\n  默认优先使用平台字幕，无字幕时使用语音识别。\n  --transcript-source subtitle  仅使用字幕\n  --transcript-source asr       强制语音识别\n\n下一步：\n  notepipe --login bilibili    扫码登录\n  notepipe --logout bilibili   清除登录\n  notepipe doctor              检查依赖与配置\n  notepipe config init         生成配置模板\n  notepipe llm setup           配置可选的 AI 校对\n  notepipe summarize ./notes   为已有笔记生成摘要\n\n交互终端首次转换会引导配置；脚本请显式传入所需参数。\n使用 <command> --help 查看子命令帮助。\n	Quick start:\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\nTranscripts:\n  Platform subtitles are used first; speech recognition runs when none exist.\n  --transcript-source subtitle  Use subtitles only\n  --transcript-source asr       Force speech recognition\n\nNext steps:\n  notepipe --login bilibili    Sign in with a QR code\n  notepipe --logout bilibili   Remove the saved login\n  notepipe doctor              Check dependencies and settings\n  notepipe config init         Create a configuration template\n  notepipe llm setup           Set up optional AI proofreading\n  notepipe summarize ./notes   Summarize existing notes\n\nThe first conversion in a terminal offers setup; scripts should pass options explicitly.\nUse <command> --help for details.\n	快速開始：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n轉寫方式：\n  預設優先使用平台字幕，無字幕時使用語音辨識。\n  --transcript-source subtitle  僅使用字幕\n  --transcript-source asr       強制語音辨識\n\n下一步：\n  notepipe --login bilibili    掃碼登入\n  notepipe --logout bilibili   清除登入\n  notepipe doctor              檢查依賴與設定\n  notepipe config init         產生設定範本\n  notepipe llm setup           設定可選的 AI 校對\n  notepipe summarize ./notes   為已有筆記產生摘要\n\n互動式終端首次轉換會引導設定；指令碼請明確傳入所需參數。\n使用 <command> --help 查看子命令說明。\n	クイックスタート：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n文字起こし：\n  プラットフォームの字幕を優先し、ない場合は音声認識を使います。\n  --transcript-source subtitle  字幕のみ\n  --transcript-source asr       音声認識を強制\n\n次のステップ：\n  notepipe --login bilibili    QR コードでログイン\n  notepipe --logout bilibili   保存したログインを削除\n  notepipe doctor              依存関係と設定を確認\n  notepipe config init         設定テンプレートを作成\n  notepipe llm setup           任意の AI 校正を設定\n  notepipe summarize ./notes   既存のノートに要約を追加\n\nターミナルでの初回変換では設定を案内します。スクリプトでは必要な引数を明示してください。\n詳細は <command> --help を参照してください。\n
+快速开始 / Quick start:\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n转写方式 / Transcripts:\n  默认优先使用平台字幕，无字幕时使用语音识别。\n  Uses platform subtitles first, then speech recognition when needed.\n  --transcript-source subtitle  仅使用字幕 / Subtitles only\n  --transcript-source asr       强制语音识别 / Speech recognition only\n\n下一步 / Next steps:\n  notepipe doctor              检查依赖与配置 / Check dependencies and settings\n  notepipe config init         生成配置模板 / Create a configuration template\n  notepipe llm setup           配置可选的 AI 校对 / Set up optional AI proofreading\n  notepipe summarize ./notes   为已有笔记生成摘要 / Summarize existing notes\n\n交互终端首次转换会引导配置；脚本请显式传入所需参数。\nFirst conversion in a terminal offers setup; scripts should pass options explicitly.\n使用 <command> --help 查看子命令帮助 / Use <command> --help for details.\n	快速开始：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n转写方式：\n  默认优先使用平台字幕，无字幕时使用语音识别。\n  --transcript-source subtitle  仅使用字幕\n  --transcript-source asr       强制语音识别\n\n下一步：\n  notepipe doctor              检查依赖与配置\n  notepipe config init         生成配置模板\n  notepipe llm setup           配置可选的 AI 校对\n  notepipe summarize ./notes   为已有笔记生成摘要\n\n交互终端首次转换会引导配置；脚本请显式传入所需参数。\n使用 <command> --help 查看子命令帮助。\n	Quick start:\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\nTranscripts:\n  Platform subtitles are used first; speech recognition runs when none exist.\n  --transcript-source subtitle  Use subtitles only\n  --transcript-source asr       Force speech recognition\n\nNext steps:\n  notepipe doctor              Check dependencies and settings\n  notepipe config init         Create a configuration template\n  notepipe llm setup           Set up optional AI proofreading\n  notepipe summarize ./notes   Summarize existing notes\n\nThe first conversion in a terminal offers setup; scripts should pass options explicitly.\nUse <command> --help for details.\n	快速開始：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n轉寫方式：\n  預設優先使用平台字幕，無字幕時使用語音辨識。\n  --transcript-source subtitle  僅使用字幕\n  --transcript-source asr       強制語音辨識\n\n下一步：\n  notepipe doctor              檢查依賴與設定\n  notepipe config init         產生設定範本\n  notepipe llm setup           設定可選的 AI 校對\n  notepipe summarize ./notes   為已有筆記產生摘要\n\n互動式終端首次轉換會引導設定；指令碼請明確傳入所需參數。\n使用 <command> --help 查看子命令說明。\n	クイックスタート：\n  notepipe ./lecture.mp4\n  notepipe https://www.youtube.com/watch?v=VIDEO_ID\n  notepipe ./lecture.mp4 -o ./notes\n\n文字起こし：\n  プラットフォームの字幕を優先し、ない場合は音声認識を使います。\n  --transcript-source subtitle  字幕のみ\n  --transcript-source asr       音声認識を強制\n\n次のステップ：\n  notepipe doctor              依存関係と設定を確認\n  notepipe config init         設定テンプレートを作成\n  notepipe llm setup           任意の AI 校正を設定\n  notepipe summarize ./notes   既存のノートに要約を追加\n\nターミナルでの初回変換では設定を案内します。スクリプトでは必要な引数を明示してください。\n詳細は <command> --help を参照してください。\n
 截图	截图	Screenshots	截圖	スクリーンショット
 截图 / Slides	截图	Slides	截圖	スクリーンショット
 截图不是可识别的图片，原文件已保留 / Screenshot is not a recognized image; original file kept	截图不是可识别的图片，原文件已保留	Screenshot is not a recognized image; original file kept	截圖不是可識別的圖片，原檔案已保留	スクリーンショットは認識可能な画像ではなく、元のファイルは保持されています
@@ -362,13 +339,11 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 无法确认字幕对应的视频，请重新读取 / Cannot confirm the video for the subtitle; probe again	无法确认字幕对应的视频，请重新读取	Cannot confirm the video for the subtitle; probe again	無法確認字幕對應的影片，請重新讀取	字幕に該当する動画が確認できませんでした、もう一度お読みください
 无法获取 Codex 模型目录 / Cannot fetch the Codex model catalog	无法获取 Codex 模型目录	Cannot fetch the Codex model catalog	無法獲取 Codex 模型目錄	Codex モデル ディレクトリを取得できません
 无法获取账号可用的模型列表，已使用默认模型 {}。	无法获取账号可用的模型列表，已使用默认模型 {}。	Could not fetch the account's models; using {}.	無法取得帳號可用的模型清單，已使用預設模型 {}。	アカウントで利用可能なモデル一覧を取得できません。デフォルトモデル {} を使用します。
-无法解析 Bilibili 登录响应 / Cannot parse Bilibili login response	无法解析 Bilibili 登录响应	Cannot parse Bilibili login response	無法解析 Bilibili 登入響應	Bilibili のログイン応答を解析できません
 无法解析 wav PCM 数据 / Cannot parse wav PCM data	无法解析 wav PCM 数据	Cannot parse wav PCM data	無法解析 wav PCM 資料	wav PCM データを解析できません
 无法解析令牌响应 / Cannot parse the token response	无法解析令牌响应	Cannot parse the token response	無法解析令牌響應	トークン応答を解析できません
 无法解析刷新响应 / Cannot parse the token refresh response	无法解析刷新响应	Cannot parse the token refresh response	無法解析重新整理響應	リフレッシュ応答を解析できません
 无法解析响应 / Cannot parse response	无法解析响应	Cannot parse response	無法解析響應	応答を解析できません
 无法识别这个链接对应的视频，请粘贴具体视频的链接 / Cannot identify the video for this link; paste the link to a specific video	无法识别这个链接对应的视频，请粘贴具体视频的链接	Cannot identify the video for this link; paste the link to a specific video	無法識別這個連結對應的影片，請貼上具體影片的連結	このリンクに対応する動画を認識できません。特定の動画へのリンクを貼り付けてください。
-无法读取 Bilibili 登录状态，请重新运行 notepipe --login bilibili / Cannot read Bilibili login state; run notepipe --login bilibili again	无法读取 Bilibili 登录状态，请重新运行 notepipe --login bilibili	Cannot read Bilibili login state; run notepipe --login bilibili again	無法讀取 Bilibili 登入狀態，請重新執行 notepipe --login bilibili	Bilibili のログイン ステータスを読み取ることができません。 notepipe --login bilibili を再実行してください。
 无法读取 Codex 登录状态 / Cannot read Codex login state	无法读取 Codex 登录状态	Cannot read Codex login state	無法讀取 Codex 登入狀態	Codex のログイン ステータスを読み取ることができません
 无法读取 {}	无法读取 {}	Unable to read {}	無法讀取 {}	{} を読み取れません
 无法读取 {} / Cannot read {}	无法读取 {}	Cannot read {}	無法讀取 {}	{} を読み取れません
@@ -383,7 +358,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 无法读取音频时长 / Could not read the audio duration	无法读取音频时长	Could not read the audio duration	無法讀取音訊時長	音声の長さを読み取れません
 无法连接 OpenAI 认证服务，稍后重试 / Cannot reach the OpenAI auth service; retry later	无法连接 OpenAI 认证服务，稍后重试	Cannot reach the OpenAI auth service; retry later	無法連線 OpenAI 認證服務，稍後重試	OpenAI 認証サービスに接続できません。後でもう一度試してください。
 无法连接服务，尚未提交内容 / Could not connect; request content was not submitted	无法连接服务，尚未提交内容	Could not connect; request content was not submitted	無法連線服務，尚未提交內容	サービスに接続できません。コンテンツはまだ送信されていません
-无法验证账号状态，请稍后重试 / Cannot verify account status; retry later	无法验证账号状态，请稍后重试	Cannot verify account status; retry later	無法驗證賬號狀態，請稍後重試	アカウントのステータスを確認できません。後でもう一度お試しください。
 无错误时所有槽位均已写入	无错误时所有槽位均已写入	All slots have been written when there are no errors	無錯誤時所有槽位均已寫入	エラーがない場合はすべてのスロットが書き込まれています
 旧进度与原笔记任务不符 / Prior work belongs to another task	旧进度与原笔记任务不符	Prior work belongs to another task	舊進度與原筆記任務不符	古い進行状況は元のノートタスクと一致しません
 旧进度与此视频来源不符 / Prior work belongs to another source	旧进度与此视频来源不符	Prior work belongs to another source	舊進度與此影片來源不符	古い進行状況はこの動画のソースと一致しません
@@ -517,12 +491,10 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 没有获得可读文字；已保留可用截图 / No readable transcript; available screenshots were retained	没有获得可读文字；已保留可用截图	No readable transcript; available screenshots were retained	沒有獲得可讀文字；已保留可用截圖	判読可能なテキストは得られませんでした。使用可能なスクリーンショットが保持される
 浏览器授权超时，请重试 / Browser authorization timed out; please retry	浏览器授权超时，请重试	Browser authorization timed out; please retry	瀏覽器授權超時，請重試	ブラウザの認証がタイムアウトしました。もう一度お試しください。
 添加	添加	Add	新增	追加
-清除 Bilibili 登录状态失败 / Could not remove Bilibili login	清除 Bilibili 登录状态失败	Could not remove Bilibili login	清除 Bilibili 登入狀態失敗	Bilibiliのログインステータスをクリアできませんでした
 清除 Codex 登录状态失败 / Could not remove Codex login	清除 Codex 登录状态失败	Could not remove Codex login	清除 Codex 登入狀態失敗	Codex ログイン ステータスのクリアに失敗しました
 源码构建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 复制为 {}	源码构建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 复制为 {}	Source code build: Copy mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib under native/apple-asr/.build to {}	原始碼構建：把 native/apple-asr/.build 下的 mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib 複製為 {}	ソースコードのビルド:native/apple-asr/.build の下にある mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib を {} にコピーします。
 版本	版本	version	版本	バージョン
 现在下载 / Download now	现在下载	Download now	現在下載	今すぐダウンロード
-生成二维码失败 / Failed to generate QR code	生成二维码失败	Failed to generate QR code	生成二維碼失敗	QRコードの生成に失敗しました
 生成已暂停，进度已保留 / Generation paused; progress retained	生成已暂停，进度已保留	Generation paused; progress retained	生成已暫停，進度已保留	ビルドは一時停止され、進行状況は維持されます
 生成截图	生成截图	Generate screenshot	生成截圖	スクリーンショットの生成
 生成截图 / Saving screenshots	生成截图	Saving screenshots	生成截圖	スクリーンショットの生成
@@ -537,15 +509,9 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 生成第 {}/{} 部分摘要（{}–{}） / Generate summary part {}/{} ({}–{})	生成第 {}/{} 部分摘要（{}–{}）	Generate summary part {}/{} ({}–{})	生成第 {}/{} 部分摘要（{}–{}）	セクション {}/{} ({}–{}) の概要を生成します
 用法：	用法：	Usage:	用法：	使用法:
 画面采样间隔	画面采样间隔	Frame sampling interval	畫面取樣間隔	フレームサンプリング間隔
-登录 Bilibili	登录 Bilibili	Sign in to Bilibili	登入 Bilibili	Bilibili にログイン
-登录响应未包含完整凭据，请重新扫码 / Login response did not include complete credentials; scan the QR code again	登录响应未包含完整凭据，请重新扫码	Login response did not include complete credentials; scan the QR code again	登入響應未包含完整憑據，請重新掃碼	ログイン応答には完全な認証情報が含まれていません。コードをもう一度スキャンしてください。
-登录响应缺少凭据，请重新运行 notepipe --login bilibili / Login response is missing credentials; run notepipe --login bilibili again	登录响应缺少凭据，请重新运行 notepipe --login bilibili	Login response is missing credentials; run notepipe --login bilibili again	登入響應缺少憑據，請重新執行 notepipe --login bilibili	ログイン応答に資格情報がありません。 notepipe --login bilibili を再実行してください。
-登录回调地址无效 / Invalid login callback URL	登录回调地址无效	Invalid login callback URL	登入回撥地址無效	ログインコールバックアドレスが無効です
 登录失败，请回终端重试。/ Login failed; return to the terminal and retry.	登录失败，请回终端重试。/ Login failed; return to the terminal and retry.	Login failed, please go back to the terminal and try again. / Login failed; return to the terminal and retry.	登入失敗，請回終端重試。/ Login failed; return to the terminal and retry.	ログインに失敗しました。ターミナルに戻って再試行してください。 / ログインに失敗しました;ターミナルに戻って再試行してください。
 登录已失效	登录已失效	Login expired	登入已失效	ログインの有効期限切れ
 登录状态	登录状态	Login status	登入狀態	ログイン状態
-登录跳转地址无效 / Invalid login redirect URL	登录跳转地址无效	Invalid login redirect URL	登入跳轉地址無效	ログインリダイレクトアドレスが無効です
-登录跳转缺少地址 / Login redirect is missing an address	登录跳转缺少地址	Login redirect is missing an address	登入跳轉缺少地址	ログインジャンプにアドレスがありません
 目录	目录	Directory	目錄	ディレクトリ
 目录正被另一任务使用：{}。请等待任务结束	目录正被另一任务使用：{}。请等待任务结束	Directory is in use: {}. Wait for the task to finish.	目錄正被另一項任務使用：{}。請等待任務結束	ディレクトリは別のタスク {} によって使用されています。タスクが終了するまでお待ちください
 稍后下载模型，再重新运行视频命令： / Download the model, then rerun your video command: notepipe models download	稍后下载模型，再重新运行视频命令：	Download the model, then rerun your video command: notepipe models download	稍後下載模型，再重新執行影片命令：	後でモデルをダウンロードし、動画 コマンドを再実行します。
@@ -620,7 +586,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 诶	诶	Hey	誒	ねえ
 请安装支持显卡的 llama.cpp 和驱动，或改用 CPU 识别。 / Install a GPU-capable llama.cpp and driver, or use CPU transcription.	请安装支持显卡的 llama.cpp 和驱动，或改用 CPU 识别。	Install a GPU-capable llama.cpp and driver, or use CPU transcription.	請安裝支援顯示卡的 llama.cpp 和驅動，或改用 CPU 識別。	llama.cpp とグラフィックス カードをサポートするドライバーをインストールするか、代わりに CPU ID を使用してください。
 请检查路径；含空格的路径需加引号	请检查路径；含空格的路径需加引号	Check the path and quote paths containing spaces.	請檢查路徑；包含空格的路徑需加上引號	パスを確認してください。スペースを含むパスは引用符で囲む必要があります。
-请用哔哩哔哩 App 扫描二维码，并在手机上确认登录（Ctrl+C 取消）：/ Scan with the Bilibili app and confirm the login on your phone (Ctrl+C to cancel):	请用哔哩哔哩 App 扫描二维码，并在手机上确认登录（Ctrl+C 取消）：/ Scan with the Bilibili app and confirm the login on your phone (Ctrl+C to cancel):	Scan with the Bilibili app and confirm the login on your phone (Ctrl+C to cancel):	請用嗶哩嗶哩 App 掃描二維碼，並在手機上確認登入（Ctrl+C 取消）：/ Scan with the Bilibili app and confirm the login on your phone (Ctrl+C to cancel):	Bilibili アプリでスキャンし、携帯電話でログインを確認します (キャンセルするには Ctrl+C):
 请输入语音服务提供的模型 ID / Speech model ID is required	请输入语音服务提供的模型 ID	Speech model ID is required	請輸入語音服務提供的模型 ID	音声サービスから提供されたモデルIDを入力してください
 请选择需要导出的文件格式 / Select an export format	请选择需要导出的文件格式	Select an export format	請選擇需要匯出的檔案格式	エクスポートするファイル形式を選択してください
 读取 {}	读取 {}	Read {}	讀取 {}	{} を読む
@@ -630,8 +595,6 @@ stdout 管道已配置	stdout 管道已配置	The stdout pipe is configured	stdo
 读取视频字幕失败 / Could not read video subtitles	读取视频字幕失败	Could not read video subtitles	讀取影片字幕失敗	動画の字幕を読み取れませんでした
 课件截图	课件截图	Courseware screenshots	課件截圖	コースウェアのスクリーンショット
 笔记位置已被其他笔记使用 / Note identity conflict	笔记位置已被其他笔记使用	Note identity conflict	筆記位置已被其他筆記使用	ノートの場所はすでに別のノートで使用されています
-账号状态	账号状态	Account status	賬號狀態	アカウントのステータス
-账号状态响应不完整，请稍后重试 / Account status response is incomplete; retry later	账号状态响应不完整，请稍后重试	Account status response is incomplete; retry later	賬號狀態響應不完整，請稍後重試	アカウントステータスの応答が不完全です。後でもう一度試してください。
 资源位置超出此笔记 / Asset escapes note directory	资源位置超出此笔记	Asset escapes note directory	資源位置超出此筆記	リソースの場所がこのノートを超えています
 转写为空，无法摘要 / Transcript is empty; cannot summarize	转写为空，无法摘要	Transcript is empty; cannot summarize	轉寫為空，無法摘要	文字起こしが空のため要約できません
 输入与输出 / Input and output	输入与输出	Input and output	輸入與輸出	入力と出力
@@ -709,3 +672,9 @@ AI 翻译工作进程中断 / Translation worker interrupted	AI 翻译工作进�
 AI 翻译	AI 翻译	AI translation	AI 翻譯	AI 翻訳
 不翻译	不翻译	Off	不翻譯	翻訳しない
 {} 项	{} 项	{} items	{} 項	{} 項目
+登录（ollama 本地服务；codex 订阅），可接视频地址继续转换 / Log in (ollama local, codex subscription), optionally then process a video	登录（ollama 本地服务；codex 订阅），可接视频地址继续转换	Log in (ollama local, codex subscription), optionally then process a video	登入（ollama 本機服務；codex 訂閱），可接影片網址繼續轉換	ログイン（Ollama ローカルサービス、Codex サブスクリプション）。動画 URL を指定して変換を続行できます
+Cookie 文件必须存在且为普通文件 / Cookie file must exist and be a regular file	Cookie 文件必须存在且为普通文件	Cookie file must exist and be a regular file	Cookie 檔案必須存在且為一般檔案	Cookie ファイルは存在する通常のファイルである必要があります
+浏览器 Cookie 来源不能为空或包含空白及控制字符 / Browser cookie spec must be non-empty and contain no whitespace or control characters	浏览器 Cookie 来源不能为空或包含空白及控制字符	Browser cookie spec must be non-empty and contain no whitespace or control characters	瀏覽器 Cookie 來源不可為空或包含空白及控制字元	ブラウザーの Cookie 指定は空欄にできず、空白や制御文字を含めることはできません
+无法读取 Cookie 文件 / Cannot read cookie file	无法读取 Cookie 文件	Cannot read cookie file	無法讀取 Cookie 檔案	Cookie ファイルを読み取れません
+Cookie 文件（Netscape 格式，使用私有副本）/ Cookie file (Netscape format; uses a private copy)	Cookie 文件（Netscape 格式，使用私有副本）	Cookie file (Netscape format; uses a private copy)	Cookie 檔案（Netscape 格式，使用私有副本）	Cookie ファイル（Netscape 形式、非公開のコピーを使用）
+浏览器 Cookie 来源（如 chrome、firefox:default-release）/ Browser cookies (e.g. chrome, firefox:default-release)	浏览器 Cookie 来源（如 chrome、firefox:default-release）	Browser cookies (e.g. chrome, firefox:default-release)	瀏覽器 Cookie 來源（如 chrome、firefox:default-release）	ブラウザーの Cookie（例：chrome、firefox:default-release）

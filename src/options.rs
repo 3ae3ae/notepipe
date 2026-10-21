@@ -1,4 +1,4 @@
-//! CLI 与桌面端共享的配置合并规则。
+//! CLI 与任务协议共享的配置合并规则。
 use crate::cli::RunOpts;
 use crate::{config, llm, settings};
 
@@ -52,6 +52,15 @@ pub fn resolve(
         .unwrap_or_else(|| config::DEFAULT_OUT_DIR.into());
     Ok(config::PipelineConfig {
         url: source,
+        cookies: opts
+            .cookies
+            .clone()
+            .or_else(|| d.cookies.clone())
+            .map(config::expand_tilde),
+        cookies_from_browser: opts
+            .cookies_from_browser
+            .clone()
+            .or_else(|| d.cookies_from_browser.clone()),
         // out_dir 此处只是初值；pipeline 里会改写为 {out_root}/{platform}/{title}/{id}/
         out_dir: out_root.clone(),
         out_root,
@@ -147,6 +156,36 @@ fn resolve_asr_api(opts: &RunOpts, file: &settings::ConfigFile) -> crate::settin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cookie_inputs_merge_independently_with_cli_precedence() {
+        let dir = tempfile::tempdir().unwrap();
+        let saved = dir.path().join("saved.txt");
+        let selected = dir.path().join("selected.txt");
+        std::fs::write(&saved, "saved").unwrap();
+        std::fs::write(&selected, "selected").unwrap();
+        let mut file = crate::settings::ConfigFile::default();
+        file.defaults.cookies = Some(saved.clone());
+        file.defaults.cookies_from_browser = Some("firefox:default-release".into());
+        let opts = crate::cli::RunOpts {
+            cookies: Some(selected.clone()),
+            ..Default::default()
+        };
+        let cfg = super::resolve("video".into(), &opts, &file).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.cookies, Some(selected));
+        assert_eq!(
+            cfg.cookies_from_browser.as_deref(),
+            Some("firefox:default-release")
+        );
+        let opts = crate::cli::RunOpts {
+            cookies_from_browser: Some("chrome".into()),
+            ..Default::default()
+        };
+        let cfg = super::resolve("video".into(), &opts, &file).unwrap();
+        assert_eq!(cfg.cookies, Some(saved));
+        assert_eq!(cfg.cookies_from_browser.as_deref(), Some("chrome"));
+    }
+
     #[test]
     fn offload_settings_reach_shared_pipeline_and_cli_overrides_config() {
         let mut file = crate::settings::ConfigFile::default();

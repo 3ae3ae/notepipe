@@ -72,12 +72,33 @@ fn no_arguments_or_help_succeed_with_localized_guidance() {
     assert!(english.status.success());
     let text = stdout(&english);
     assert!(text.contains("Quick start"), "{text}");
+    assert!(text.contains("Netscape format;"), "{text}");
+    assert!(text.contains("Browser cookies"), "{text}");
+    assert!(!text.contains("Cookie 文件"), "{text}");
     assert!(text.contains("Speech recognition"), "{text}");
     let traditional = cli.run_with_lang(&["--help"], "zh-Hant");
     assert!(traditional.status.success());
-    assert!(!stdout(&traditional).is_empty());
+    assert!(stdout(&traditional).contains("Cookie 檔案"));
     for cmd in ["models", "llm", "config", "summarize", "remove", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
+    }
+}
+
+#[test]
+fn invalid_cookie_inputs_fail_before_tool_detection_or_network_access() {
+    let cli = CliTest::new();
+    for (flag, value) in [
+        ("--cookies", "missing.txt"),
+        ("--cookies", "."),
+        ("--cookies-from-browser", ""),
+        ("--cookies-from-browser", "chrome profile"),
+    ] {
+        let result = cli.run(&["https://example.invalid/video", flag, value, "--json"]);
+        let error = json_error(&result);
+        assert!(
+            error["message"].as_str().unwrap().contains("Cookie"),
+            "{error}"
+        );
     }
 }
 
@@ -262,8 +283,14 @@ fn remote_download_output_does_not_leak_into_json_or_quiet_mode() {
     assert!(generated.status.success(), "{}", stderr(&generated));
     let bin = cli.dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
+    let cookies = cli.dir.path().join("cookies with spaces.txt");
+    std::fs::write(&cookies, "saved session").unwrap();
+    let calls = cli.dir.path().join("cookie-calls");
     let script = bin.join("yt-dlp");
     std::fs::write(&script, r#"#!/bin/sh
+if [ "$1" = "--version" ]; then echo fixture; exit 0; fi
+cookies=''
+browser=''
 output=''
 subtitles=0
 simulate=0
@@ -275,16 +302,25 @@ while [ "$#" -gt 0 ]; do
     --no-simulate) simulate=0 ;;
     -o) shift; output="$1" ;;
     --skip-download) subtitles=1 ;;
+    --cookies) shift; cookies="$1" ;;
+    --cookies-from-browser) shift; browser="$1" ;;
   esac
   shift
 done
+[ "$cookies" != "$CLI_TEST_COOKIES" ] &&
+[ "$(cat "$cookies")" = "saved session" ] &&
+[ "$browser" = "firefox:default-release" ] || exit 1
 if [ "$simulate" -eq 1 ]; then
-  :
+  phase=probe
 elif [ "$subtitles" -eq 1 ]; then
+  phase=subtitle
   printf '1\n00:00:00,000 --> 00:00:02,500\nWelcome to the lecture.\n' > "$output.en.srt"
 else
+  phase=download
   /bin/cp "$CLI_TEST_VIDEO" "$output"
 fi
+printf '%s|%s\n' "$phase" "$cookies" >> "$CLI_TEST_CALLS"
+printf 'rewritten' > "$cookies"
 if [ "$json" -eq 1 ]; then
   printf '%s\n' '{"title":"Test lecture","id":"test","webpage_url":"https://example.test/video","duration":3,"extractor":"test","subtitles":{"en":[{"ext":"srt","url":"https://example.test/en.srt"}]},"automatic_captions":{}}'
 else
@@ -305,6 +341,11 @@ printf 'raw downloader stderr\n' >&2
                 "-o",
             ])
             .arg(&output_dir)
+            .arg("--cookies")
+            .arg(&cookies)
+            .args(["--cookies-from-browser", "firefox:default-release"])
+            .env("CLI_TEST_COOKIES", &cookies)
+            .env("CLI_TEST_CALLS", &calls)
             .env(
                 "PATH",
                 format!(
@@ -345,6 +386,26 @@ printf 'raw downloader stderr\n' >&2
         }
     }
     assert!(video.is_file());
+    assert_eq!(std::fs::read_to_string(&cookies).unwrap(), "saved session");
+    let calls = std::fs::read_to_string(calls).unwrap();
+    let calls: Vec<_> = calls
+        .lines()
+        .map(|line| line.split_once('|').unwrap())
+        .collect();
+    assert_eq!(
+        calls.iter().map(|(phase, _)| *phase).collect::<Vec<_>>(),
+        [
+            "probe", "subtitle", "download", "probe", "subtitle", "download"
+        ]
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .map(|(_, path)| path)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        6
+    );
 }
 
 #[test]

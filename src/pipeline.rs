@@ -40,7 +40,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let probed = if is_local {
         None
     } else {
-        Some(Box::new(fetch::probe_video(&cfg.url).await?))
+        Some(Box::new(fetch::probe_video(cfg).await?))
     };
     // 本地视频先探时长：成功进 meta；失败不当 0 静默（merge 会失真），
     // 延迟到诊断作用域内返回，失败同样写 run.json
@@ -224,7 +224,7 @@ async fn run_task_inner(
     // 字幕，语义与 CLI 一致。探测补齐笔记所需的 UP 主与时长，标题保持入队时的候选标题。
     let subtitle_input = if discovers_subtitles_at_runtime(&subtitle, cfg, is_local) {
         progress::stage("fetch", "start");
-        let video = fetch::probe_video(&request.source).await?;
+        let video = fetch::probe_video(cfg).await?;
         progress::stage("fetch", "done");
         if meta.uploader.trim().is_empty() {
             meta.uploader = video.meta.uploader.clone();
@@ -411,7 +411,7 @@ async fn reprocess(
                 // 此处只会真正下载新内容，不会把未校验文件标记为已校验
                 crate::error::require_ytdlp()?;
                 progress::stage("download", "start");
-                fetch::download(&cfg.url, &cfg.media_path(), cfg.max_height, false).await?;
+                fetch::download(cfg, &cfg.media_path(), false).await?;
                 save_file_digest_async(cfg.media_path(), cfg.out_dir.join("media.sha256")).await?;
                 progress::stage("download", "done");
             }
@@ -647,7 +647,7 @@ async fn subtitles(
         let video = probed.context(crate::tr!(
             "缺少视频信息，请重新读取 / Missing video info; please probe again"
         ))?;
-        fetch::fetch_subtitle(&video, &cfg.out_dir)
+        fetch::fetch_subtitle(&video, cfg)
             .await
             .context(crate::tr!(
                 "读取视频字幕失败 / Could not read video subtitles"
@@ -774,13 +774,7 @@ async fn run_prepared(
             )
         );
         progress::stage("download", "start");
-        fetch::download(
-            &cfg.url,
-            &media_path,
-            cfg.max_height,
-            tracing::enabled!(tracing::Level::DEBUG),
-        )
-        .await?;
+        fetch::download(cfg, &media_path, tracing::enabled!(tracing::Level::DEBUG)).await?;
         save_file_digest_async(media_path.clone(), cfg.out_dir.join("media.sha256")).await?;
         progress::stage("download", "done");
     }
@@ -1499,6 +1493,8 @@ mod tests {
         use crate::config as c;
         let cfg = c::PipelineConfig {
             url: video.display().to_string(),
+            cookies: None,
+            cookies_from_browser: None,
             out_dir: dir.clone(),
             out_root: dir.clone(),
             similarity: 0.9,

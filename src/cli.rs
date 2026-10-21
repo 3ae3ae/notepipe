@@ -14,8 +14,6 @@ pub const QUICK_START: &str = "快速开始 / Quick start:
   --transcript-source asr       强制语音识别 / Speech recognition only
 
 下一步 / Next steps:
-  notepipe --login bilibili    扫码登录 / Log in with a QR code
-  notepipe --logout bilibili   清除登录 / Remove saved login
   notepipe doctor              检查依赖与配置 / Check dependencies and settings
   notepipe config init         生成配置模板 / Create a configuration template
   notepipe llm setup           配置可选的 AI 校对 / Set up optional AI proofreading
@@ -39,7 +37,7 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "LANG")]
     pub lang: Option<String>,
 
-    /// 登录（bilibili 扫码；ollama 本地服务；codex 订阅），可接视频地址继续转换 / Log in (bilibili QR, ollama local, codex subscription), optionally then process a video
+    /// 登录（ollama 本地服务；codex 订阅），可接视频地址继续转换 / Log in (ollama local, codex subscription), optionally then process a video
     #[arg(long, value_enum, conflicts_with_all = ["logout", "json"])]
     pub login: Option<LoginPlatform>,
 
@@ -59,7 +57,6 @@ pub struct Cli {
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
 pub enum LoginPlatform {
-    Bilibili,
     Ollama,
     Codex,
 }
@@ -70,6 +67,22 @@ pub struct RunOpts {
     #[arg(short, long)]
     #[arg(help_heading = "输入与输出 / Input and output")]
     pub out: Option<PathBuf>,
+
+    /// Cookie 文件（Netscape 格式，使用私有副本）/ Cookie file (Netscape format; uses a private copy)
+    #[arg(
+        long,
+        value_name = "FILE",
+        help_heading = "输入与输出 / Input and output"
+    )]
+    pub cookies: Option<PathBuf>,
+
+    /// 浏览器 Cookie 来源（如 chrome、firefox:default-release）/ Browser cookies (e.g. chrome, firefox:default-release)
+    #[arg(
+        long,
+        value_name = "BROWSER",
+        help_heading = "输入与输出 / Input and output"
+    )]
+    pub cookies_from_browser: Option<String>,
 
     /// 画面相似度阈值 (0,1]，越高截图越多 / Similarity threshold; higher captures more slides
     #[arg(long)]

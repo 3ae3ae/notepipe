@@ -1,5 +1,6 @@
 //! yt-dlp 子进程封装：元数据抓取 + 视频下载。
 
+use crate::config::PipelineConfig;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -171,7 +172,7 @@ fn extractor_name(info: &ExtractorInfo) -> &str {
         .unwrap_or_default()
 }
 
-/// Including the complete extractor ID preserves Bilibili `_pN` and interactive
+/// Including the complete extractor ID preserves multi-part and interactive
 /// segment IDs. Display titles and URL tracking parameters are not identity.
 pub fn online_identity(extractor: &str, id: &str) -> Option<String> {
     let extractor = extractor.trim().to_ascii_lowercase();
@@ -265,30 +266,6 @@ pub fn parse_online_probe(bytes: &[u8], input: &str, diagnostics: &str) -> Resul
     let identity = online_identity(&extractor, id)
         .context(crate::tr!("无法识别这个链接对应的视频，请粘贴具体视频的链接 / Cannot identify the video for this link; paste the link to a specific video"))?;
     let input = concrete_url(&info).unwrap_or_else(|| input.to_owned());
-    // The original concrete part link is authoritative if the extractor returns a
-    // canonical base URL: do not erase an explicitly selected Bilibili part.
-    let input = if extractor.to_ascii_lowercase().starts_with("bilibili") {
-        if let Some((_, part)) = id
-            .rsplit_once("_p")
-            .filter(|(_, part)| part.parse::<u32>().is_ok())
-        {
-            let mut url = url::Url::parse(&input)?;
-            let pairs: Vec<_> = url
-                .query_pairs()
-                .filter(|(key, _)| key != "p")
-                .map(|(key, value)| (key.into_owned(), value.into_owned()))
-                .collect();
-            url.set_query(None);
-            url.query_pairs_mut()
-                .extend_pairs(pairs)
-                .append_pair("p", part);
-            url.to_string()
-        } else {
-            input
-        }
-    } else {
-        input
-    };
     let subtitles = subtitle_evidence(&info, &identity, diagnostics);
     Ok(OnlineProbe::Video {
         video: OnlineVideo {
@@ -337,17 +314,14 @@ fn subtitle_evidence(
         .join("\n");
     let warning = (!warning.is_empty()).then_some(warning);
     let mut tracks = Vec::new();
-    let bilibili = extractor_name(info)
-        .to_ascii_lowercase()
-        .starts_with("bilibili");
     for (automatic, channel) in [(false, &info.subtitles), (true, &info.automatic_captions)] {
         for (language_key, formats) in channel
             .as_ref()
             .map(|channel| channel.0.as_slice())
             .unwrap_or_default()
         {
-            // Danmaku/chat are timed comments, not a transcript of the video.
-            if matches!(language_key.as_str(), "danmaku" | "live_chat") {
+            // Timed chat is not a transcript of the video.
+            if language_key == "live_chat" {
                 continue;
             }
             let readable: Vec<_> = formats
@@ -372,16 +346,8 @@ fn subtitle_evidence(
             if readable.is_empty() {
                 continue;
             }
-            let bilibili_auto = bilibili && language_key.starts_with("ai-");
-            let language = if bilibili_auto {
-                language_key.trim_start_matches("ai-").to_owned()
-            } else {
-                language_key.clone()
-            };
-            let kind = if automatic || bilibili_auto {
+            let kind = if automatic {
                 SubtitleKind::Automatic
-            } else if bilibili {
-                SubtitleKind::Unknown
             } else {
                 SubtitleKind::Manual
             };
@@ -400,7 +366,7 @@ fn subtitle_evidence(
                     "{identity}:subtitle:{}:{language_key}",
                     if automatic { "auto" } else { "provided" }
                 ),
-                language: Some(language),
+                language: Some(language_key.clone()),
                 name,
                 kind,
                 origin: SubtitleOrigin::Online {
@@ -432,8 +398,8 @@ impl VideoMeta {
 }
 
 /// Probe once and return the single video; collection/unresolved links are errors.
-pub async fn probe_video(url: &str) -> Result<OnlineVideo> {
-    match probe_online(url).await? {
+pub async fn probe_video(cfg: &PipelineConfig) -> Result<OnlineVideo> {
+    match probe_online(cfg).await? {
         OnlineProbe::Video { video } => Ok(video),
         OnlineProbe::Collection { .. } => {
             anyhow::bail!(crate::tr!(
@@ -445,9 +411,14 @@ pub async fn probe_video(url: &str) -> Result<OnlineVideo> {
 }
 
 /// Metadata and all available subtitle channels only; no media/AI requests.
-pub async fn probe_online(url: &str) -> Result<OnlineProbe> {
+pub async fn probe_online(cfg: &PipelineConfig) -> Result<OnlineProbe> {
+    let url = &cfg.url;
     let mut cmd = Command::new(crate::ytdlp::program());
-    let _cookies = crate::auth::configure_ytdlp(cmd.as_std_mut(), url)?;
+    let _cookies = crate::auth::configure_ytdlp(
+        cmd.as_std_mut(),
+        cfg.cookies.as_deref(),
+        cfg.cookies_from_browser.as_deref(),
+    )?;
     ytdlp_base(&mut cmd).args([
         "--simulate",
         "--dump-single-json",
@@ -459,9 +430,7 @@ pub async fn probe_online(url: &str) -> Result<OnlineProbe> {
         "--retries",
         "1",
     ]);
-    let out = run_output(ytdlp_url(&mut cmd, url))
-        .await
-        .map_err(|e| crate::auth::with_bilibili_login_tip(url, e))?;
+    let out = run_output(ytdlp_url(&mut cmd, url)).await?;
     parse_online_probe(&out.stdout, url, &String::from_utf8_lossy(&out.stderr))
 }
 
@@ -475,7 +444,10 @@ pub struct SubtitleFetch {
 /// CLI compatibility path. `video` comes from the run's single probe so discovery
 /// stays consistent; select from every language, then fetch that exact track
 /// without silent fallback.
-pub async fn fetch_subtitle(video: &OnlineVideo, out_dir: &Path) -> Result<Option<SubtitleFetch>> {
+pub async fn fetch_subtitle(
+    video: &OnlineVideo,
+    cfg: &PipelineConfig,
+) -> Result<Option<SubtitleFetch>> {
     use crate::subtitle::SubtitleEvidence;
     match &video.subtitles {
         SubtitleEvidence::Found { tracks, .. } => {
@@ -489,9 +461,15 @@ pub async fn fetch_subtitle(video: &OnlineVideo, out_dir: &Path) -> Result<Optio
             let track = tracks.first().context(crate::tr!(
                 "字幕列表为空，请重新读取字幕 / Subtitle list is empty; probe subtitles again"
             ))?;
-            fetch_selected_subtitle(&video.meta.webpage_url, &video.identity, track, out_dir)
-                .await
-                .map(Some)
+            fetch_selected_subtitle(
+                &video.meta.webpage_url,
+                &video.identity,
+                track,
+                &cfg.out_dir,
+                cfg,
+            )
+            .await
+            .map(Some)
         }
         SubtitleEvidence::Failed { message } => {
             anyhow::bail!("读取字幕失败 / Could not read subtitles: {message}")
@@ -525,6 +503,7 @@ pub async fn fetch_selected_subtitle(
     source_identity: &str,
     track: &crate::subtitle::SubtitleTrack,
     out_dir: &Path,
+    cfg: &PipelineConfig,
 ) -> Result<SubtitleFetch> {
     use crate::subtitle::SubtitleOrigin;
     let SubtitleOrigin::Online {
@@ -555,7 +534,11 @@ pub async fn fetch_selected_subtitle(
     } else {
         let template = temp.path().join("subtitle");
         let mut cmd = Command::new(crate::ytdlp::program());
-        let _cookies = crate::auth::configure_ytdlp(cmd.as_std_mut(), url)?;
+        let _cookies = crate::auth::configure_ytdlp(
+            cmd.as_std_mut(),
+            cfg.cookies.as_deref(),
+            cfg.cookies_from_browser.as_deref(),
+        )?;
         ytdlp_base(&mut cmd).args([
             "--skip-download",
             "--no-simulate",
@@ -578,9 +561,7 @@ pub async fn fetch_selected_subtitle(
         } else {
             "--write-subs"
         });
-        let out = run_output(ytdlp_url(&mut cmd, url))
-            .await
-            .map_err(|error| crate::auth::with_bilibili_login_tip(url, error))?;
+        let out = run_output(ytdlp_url(&mut cmd, url)).await?;
         match parse_online_probe(&out.stdout, url, &String::from_utf8_lossy(&out.stderr))? {
             OnlineProbe::Video { video } => ensure!(
                 video.identity == source_identity,
@@ -619,7 +600,9 @@ pub fn sidecar_subtitle(video: &Path) -> Option<SubtitleFetch> {
 
 /// 下载视频到 `dest`（默认 1080p 上限，mp4 合并）。
 /// 调用方先处理已有文件（校验或归档）：这里绝不把未校验的旧文件当作下载结果。
-pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) -> Result<()> {
+pub async fn download(cfg: &PipelineConfig, dest: &Path, verbose: bool) -> Result<()> {
+    let url = &cfg.url;
+    let max_height = cfg.max_height;
     ensure!(
         !dest.exists(),
         crate::tr!(
@@ -630,23 +613,24 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
         tokio::fs::create_dir_all(p).await?;
     }
     let tmp: PathBuf = dest.with_extension("mp4.part");
-    // 瞬时网络错误由外层循环重试（共 DOWNLOAD_ATTEMPTS 次）；412 走专用退避；
+    // 瞬时网络错误由外层循环重试（共 DOWNLOAD_ATTEMPTS 次）；
     // 确定性错误（4xx/私有视频等）立即返回；每轮都可被任务控制文件中止。
     let mut last_err = None;
-    let mut next_delay = None;
-    let mut bilibili_412_retries = 0;
     for attempt in 0..DOWNLOAD_ATTEMPTS {
         crate::dispatch::check_control()?;
         if attempt > 0 {
             tracing::warn!(attempt, "视频下载失败，正在重试 / Retrying video download");
-            let delay = next_delay.unwrap_or(DOWNLOAD_RETRY_DELAY);
             tokio::select! {
-                _ = tokio::time::sleep(delay) => {}
+                _ = tokio::time::sleep(DOWNLOAD_RETRY_DELAY) => {}
                 e = crate::dispatch::watch_control() => return Err(e),
             }
         }
         let mut cmd = Command::new(crate::ytdlp::program());
-        let _cookies = crate::auth::configure_ytdlp(cmd.as_std_mut(), url)?;
+        let _cookies = crate::auth::configure_ytdlp(
+            cmd.as_std_mut(),
+            cfg.cookies.as_deref(),
+            cfg.cookies_from_browser.as_deref(),
+        )?;
         let fmt = format!("bv*[height<={max_height}]+ba/b[height<={max_height}]/b");
         ytdlp_base(&mut cmd).args([
             "-f",
@@ -668,9 +652,7 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
             cmd.arg("-v");
         }
         let outcome = tokio::select! {
-            status = run_download(ytdlp_url(&mut cmd, url)) => {
-                status.map_err(|e| crate::auth::with_bilibili_login_tip(url, e))
-            }
+            status = run_download(ytdlp_url(&mut cmd, url)) => status,
             // 取消/暂停：drop run_download 分支即 kill_on_drop 终止当前 yt-dlp
             e = crate::dispatch::watch_control() => return Err(e),
         };
@@ -704,19 +686,8 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
                 return Ok(());
             }
             Err(e) => {
-                if e.downcast_ref::<Bilibili412>().is_some() {
-                    match bilibili_retry_delay_steps(bilibili_412_retries) {
-                        Some(delay) => {
-                            bilibili_412_retries += 1;
-                            next_delay = Some(delay);
-                        }
-                        // 412 重试耗尽，不再进下一轮
-                        None => return Err(bilibili_hint(e)),
-                    }
-                } else if is_deterministic_download_error(&format!("{e:#}")) {
+                if is_deterministic_download_error(&format!("{e:#}")) {
                     return Err(e);
-                } else {
-                    next_delay = None;
                 }
                 last_err = Some(e);
             }
@@ -726,83 +697,20 @@ pub async fn download(url: &str, dest: &Path, max_height: u32, verbose: bool) ->
         .unwrap_or_else(|| anyhow::anyhow!(crate::tr!("视频下载失败 / Video download failed"))))
 }
 
-/// Bilibili can reject a request transiently at either the webpage or API stage.
-/// Match the extractor and status, not an arbitrary occurrence of "412" in a URL.
-pub fn is_bilibili_412(stderr: &str) -> bool {
-    let lower = stderr.to_ascii_lowercase();
-    lower.contains("[bilibili")
-        && (lower.contains("http error 412")
-            || lower.contains("http 412")
-            || lower.contains("request is blocked by server (412)"))
-}
-
-/// Retry Bilibili rate limiting at most twice.
-pub fn bilibili_retry_delay(stderr: &str, retries: usize) -> Option<std::time::Duration> {
-    is_bilibili_412(stderr)
-        .then(|| bilibili_retry_delay_steps(retries))
-        .flatten()
-}
-
-fn bilibili_retry_delay_steps(retries: usize) -> Option<std::time::Duration> {
-    [2, 5]
-        .get(retries)
-        .copied()
-        .map(std::time::Duration::from_secs)
-}
-
-pub fn bilibili_hint(error: anyhow::Error) -> anyhow::Error {
-    error.context(crate::tr!(BILIBILI_412_HINT))
-}
-
-/// Marker in the error chain: yt-dlp was rejected by Bilibili with HTTP 412.
-#[derive(Debug)]
-pub struct Bilibili412;
-
-impl std::fmt::Display for Bilibili412 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("bilibili http 412")
-    }
-}
-impl std::error::Error for Bilibili412 {}
-
-pub const BILIBILI_412_HINT: &str = "B 站暂时限制了访问。请稍后重试；若持续失败，运行 notepipe --login bilibili 重新登录，或导入本地视频。 / Bilibili is temporarily limiting access. Retry later; if it keeps failing, run notepipe --login bilibili to log in again, or import a local video.";
-
-#[cfg(all(test, unix))]
-async fn run(cmd: &mut Command) -> Result<String> {
-    let out = run_output(cmd).await?;
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
 async fn run_output(cmd: &mut Command) -> Result<std::process::Output> {
-    let mut retries = 0;
-    loop {
-        let out = cmd
-            .kill_on_drop(true)
-            .output()
-            .await
-            .context(crate::tr!("启动 yt-dlp 失败 / Failed to start yt-dlp"))?;
-        if out.status.success() {
-            return Ok(out);
-        }
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        if let Some(delay) = bilibili_retry_delay(&stderr, retries) {
-            retries += 1;
-            tracing::warn!(
-                retries,
-                "B 站暂时限制了访问，稍后重试 / Bilibili is limiting requests; retrying shortly"
-            );
-            tokio::select! {
-                _ = tokio::time::sleep(delay) => {}
-                e = crate::dispatch::watch_control() => return Err(e),
-            }
-            continue;
-        }
-        let error = crate::error::cmd_error("yt-dlp", out.status.code(), &stderr);
-        return if is_bilibili_412(&stderr) {
-            Err(bilibili_hint(error))
-        } else {
-            Err(error)
-        };
+    let out = cmd
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context(crate::tr!("启动 yt-dlp 失败 / Failed to start yt-dlp"))?;
+    if out.status.success() {
+        Ok(out)
+    } else {
+        Err(crate::error::cmd_error(
+            "yt-dlp",
+            out.status.code(),
+            &String::from_utf8_lossy(&out.stderr),
+        ))
     }
 }
 
@@ -831,7 +739,7 @@ fn parse_ytdlp_progress(line: &str) {
 }
 
 /// 运行 yt-dlp 下载：流式读取 stdout/stderr 并实时转发字节进度。
-/// 错误语义与 media::run_cmd 一致（stderr 尾部进错误，412 附登录提示）；
+/// 错误语义与 media::run_cmd 一致（stderr 尾部进错误）；
 /// 三个读取分支同属一个 future，drop 即整体取消（kill_on_drop 杀子进程）。
 async fn run_download(cmd: &mut Command) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, BufReader};
@@ -878,12 +786,7 @@ async fn run_download(cmd: &mut Command) -> Result<()> {
         }
         return Ok(());
     }
-    let error = crate::error::cmd_error("yt-dlp", status.code(), &stderr);
-    Err(if is_bilibili_412(&stderr) {
-        bilibili_hint(error.context(Bilibili412))
-    } else {
-        error
-    })
+    Err(crate::error::cmd_error("yt-dlp", status.code(), &stderr))
 }
 
 #[cfg(test)]
@@ -900,11 +803,7 @@ mod tests {
         ] {
             assert!(is_deterministic_download_error(text), "{text}");
         }
-        for text in [
-            "ERROR: [bilibili] HTTP Error 412: Precondition Failed",
-            "network unreachable",
-            "timed out",
-        ] {
+        for text in ["network unreachable", "timed out"] {
             assert!(!is_deterministic_download_error(text), "{text}");
         }
     }
@@ -912,8 +811,8 @@ mod tests {
     #[test]
     fn collection_is_never_implicitly_the_first_part() {
         let result = parse_online_probe(
-            include_bytes!("../tests/fixtures/source/bilibili-parts.json"),
-            "https://www.bilibili.com/video/BV-fixture",
+            include_bytes!("../tests/fixtures/source/playlist.json"),
+            "https://example.invalid/playlist",
             "",
         )
         .unwrap();
@@ -928,7 +827,7 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(
             candidates[1].input,
-            "https://www.bilibili.com/video/BV-fixture?p=2"
+            "https://example.invalid/watch?episode=2"
         );
         assert_eq!(unavailable_entries, 1);
         assert!(
@@ -939,35 +838,17 @@ mod tests {
     }
 
     #[test]
-    fn bilibili_ids_come_from_video_paths_and_part_query() {
-        assert_eq!(
-            crate::config::bilibili_bvid("https://www.bilibili.com/video/BV1CAxaeHEeH?p=3")
-                .as_deref(),
-            Some("BV1CAxaeHEeH")
-        );
-        assert_eq!(
-            crate::config::bilibili_bvid("https://www.bilibili.com/video/BV1xx411c7mD/").as_deref(),
-            Some("BV1xx411c7mD")
-        );
-        assert!(
-            crate::config::bilibili_bvid("https://www.bilibili.com/bangumi/play/ep123").is_none()
-        );
-        assert!(crate::config::bilibili_bvid("https://example.com/video/BV1CAxaeHEeH").is_none());
-        assert!(crate::config::bilibili_bvid("not a url").is_none());
-    }
-
-    #[test]
     fn exact_part_identity_and_all_language_evidence_survive_serialization() {
         let OnlineProbe::Video { video } = parse_online_probe(
             include_bytes!("../tests/fixtures/source/multilingual-video.json"),
-            "https://www.bilibili.com/video/fixture?p=2",
+            "https://example.invalid/watch?episode=2",
             "",
         )
         .unwrap() else {
             panic!("expected video")
         };
-        assert!(video.identity.ends_with("fixture_p2"));
-        assert!(video.meta.webpage_url.ends_with("?p=2"));
+        assert!(video.identity.ends_with("fixture-part-2"));
+        assert!(video.meta.webpage_url.ends_with("?episode=2"));
         let tracks = video.subtitles.tracks();
         assert_eq!(
             tracks
@@ -976,7 +857,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["fr", "ja", "zh"]
         );
-        assert_eq!(tracks[0].kind, crate::subtitle::SubtitleKind::Unknown);
+        assert_eq!(tracks[0].kind, crate::subtitle::SubtitleKind::Manual);
         assert_eq!(tracks[2].kind, crate::subtitle::SubtitleKind::Automatic);
         assert_eq!(
             video,
@@ -1028,48 +909,13 @@ mod tests {
         assert!(matches!(result, OnlineProbe::Unresolved { .. }));
     }
 
-    #[test]
-    fn only_bilibili_rejections_are_retried_with_a_limit() {
-        for error in [
-            "ERROR: [BiliBili] BVabc: HTTP Error 412: Precondition Failed",
-            "ERROR: [BilibiliSpaceVideo] Request is blocked by server (412), please wait",
-        ] {
-            assert_eq!(bilibili_retry_delay(error, 0).unwrap().as_secs(), 2);
-            assert_eq!(bilibili_retry_delay(error, 1).unwrap().as_secs(), 5);
-            assert!(bilibili_retry_delay(error, 2).is_none());
-        }
-        for error in [
-            "ERROR: [BiliBili] BV412abc: HTTP Error 404",
-            "ERROR: [youtube] HTTP Error 412",
-            "ERROR: [BiliBili] login required",
-        ] {
-            assert!(bilibili_retry_delay(error, 0).is_none());
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "requires yt-dlp and Bilibili network access"]
-    async fn live_example_metadata() {
-        let meta = probe_video("https://www.bilibili.com/video/BV1pb8o6yE8f")
-            .await
-            .unwrap()
-            .meta;
-        assert!(meta.title.contains("欢迎来到未来"));
-        assert!(meta.duration > 0.);
-        assert!(!meta.uploader.is_empty());
-    }
-
     #[cfg(unix)]
     #[tokio::test]
-    async fn download_errors_retain_stderr_and_login_guidance() {
+    async fn download_errors_retain_stderr() {
         let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            "echo 'ERROR: [BiliBili] HTTP Error 412: Precondition Failed' >&2; exit 1",
-        ]);
+        cmd.args(["-c", "echo 'ERROR: HTTP Error 403: Forbidden' >&2; exit 1"]);
         let error = run_download(&mut cmd).await.unwrap_err();
-        assert!(error.to_string().contains("--login bilibili"));
-        assert!(format!("{error:#}").contains("Precondition Failed"));
+        assert!(format!("{error:#}").contains("HTTP Error 403: Forbidden"));
     }
 
     #[test]
@@ -1086,43 +932,5 @@ mod tests {
         assert_eq!(ytdlp_progress("[notepipe] NA NA NA"), None);
         assert_eq!(ytdlp_progress("[download] 45.3% of 10MiB"), None);
         assert_eq!(ytdlp_progress(""), None);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn transient_rejection_recovers_and_permanent_failure_is_bounded() {
-        let dir = tempfile::tempdir().unwrap();
-        let count = dir.path().join("attempts");
-        let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            r#"
-            if [ ! -f "$1" ]; then
-                touch "$1"
-                echo 'ERROR: [BiliBili] HTTP Error 412: Precondition Failed' >&2
-                exit 1
-            fi
-            echo '{"title":"recovered"}'
-        "#,
-            "test",
-        ])
-        .arg(&count);
-        assert!(run(&mut cmd).await.unwrap().contains("recovered"));
-
-        let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            r#"
-            echo attempt >> "$1"
-            echo 'ERROR: [BiliBili] HTTP Error 412: Precondition Failed' >&2
-            exit 1
-        "#,
-            "test",
-        ])
-        .arg(&count);
-        let error = run(&mut cmd).await.unwrap_err();
-        assert!(error.to_string().contains(crate::tr!(BILIBILI_412_HINT)));
-        assert!(format!("{error:#}").contains("Precondition Failed"));
-        assert_eq!(std::fs::read_to_string(count).unwrap().lines().count(), 3);
     }
 }

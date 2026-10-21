@@ -10,6 +10,8 @@ use std::path::PathBuf;
 #[serde(default, deny_unknown_fields)]
 pub struct Defaults {
     pub out: Option<PathBuf>,
+    pub cookies: Option<PathBuf>,
+    pub cookies_from_browser: Option<String>,
     pub similarity: Option<f64>,
     pub sample_interval: Option<f64>,
     pub cooldown: Option<f64>,
@@ -197,6 +199,9 @@ const TEMPLATE: &str = r#"# notepipe 配置 / Configuration
 # 查看当前设置：notepipe config show / View settings: notepipe config show
 
 [defaults]
+# 可选的 yt-dlp Cookie 来源，可同时设置两项 / Optional yt-dlp cookie sources; both may be set
+#cookies = "/path/to/cookies.txt"
+#cookies_from_browser = "firefox:default-release"
 # 输出根目录，按平台/标题/ID 分类 / Output root, organized by platform/title/ID
 #out = "{OUT}"
 # 截图相似度 (0,1]，越高截图越多 / Similarity (0,1]; higher captures more slides
@@ -283,6 +288,16 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     );
     let rows: Vec<(&str, String)> = vec![
         ("out", r.out_root.display().to_string()),
+        (
+            "cookies",
+            r.cookies
+                .as_ref()
+                .map_or_else(|| "-".into(), |path| path.display().to_string()),
+        ),
+        (
+            "cookies_from_browser",
+            r.cookies_from_browser.clone().unwrap_or_else(|| "-".into()),
+        ),
         ("similarity", r.similarity.to_string()),
         ("sample_interval", r.sample_interval.to_string()),
         ("cooldown", r.cooldown.to_string()),

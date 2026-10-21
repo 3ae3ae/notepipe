@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(t_for(source, Lang::ZhHans), "读取失败");
         assert_eq!(t_for(source, Lang::En), "Failed to read");
         // A plain slash-separated list is not a bilingual message.
-        let list = "YouTube / Bilibili";
+        let list = "YouTube / Vimeo";
         assert_eq!(t_for(list, Lang::ZhHans), list);
         assert_eq!(t_for(list, Lang::En), list);
     }
