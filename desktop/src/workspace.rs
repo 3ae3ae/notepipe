@@ -1980,7 +1980,7 @@ impl Workspace {
                 }
             }
         } else {
-            let mut initial = State::initial(root.clone(), options);
+            let mut initial = State::initial(root.clone(), options.clone());
             match std::fs::create_dir_all(&root) {
                 Ok(()) => {
                     let marker = root.join(".course2md-library-id");
@@ -2012,6 +2012,13 @@ impl Workspace {
             initial
         };
         state.recover();
+        // Defaults may have changed while the app was closed, and drafts saved
+        // before an option existed carry no choice of their own for it.
+        for draft in &mut state.drafts {
+            if draft.submitted_task.is_none() {
+                draft.inherit(&options);
+            }
+        }
         hydrate_draft_subtitles(&mut state, &path);
         store_task_subtitles(&mut state);
         for task in &mut state.tasks {
@@ -2495,6 +2502,44 @@ mod tests {
             task_subtitle_events(again.state.task(&id).unwrap()).unwrap(),
             Some(events)
         );
+    }
+
+    #[test]
+    fn reopened_drafts_follow_defaults_for_options_they_never_chose() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state.json");
+        let mut ws =
+            Workspace::open_at(file.clone(), dir.path().join("library"), Default::default())
+                .unwrap();
+        ws.transaction(|state| {
+            state
+                .draft_mut()
+                .unwrap()
+                .overrides
+                .insert(Override::Summary);
+            state.draft_mut().unwrap().options.summarize = true;
+            Ok(())
+        })
+        .unwrap();
+        // A draft saved before per-task translation existed has no such field.
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        legacy["drafts"][0]["options"]
+            .as_object_mut()
+            .unwrap()
+            .remove("translate");
+        std::fs::write(&file, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let _ = std::fs::remove_file(file.with_extension("json.bak"));
+
+        let defaults = ConversionOptions {
+            summarize: false,
+            translate: Some("en".into()),
+            ..Default::default()
+        };
+        let reopened = Workspace::open_at(file, dir.path().join("library"), defaults).unwrap();
+        let options = &reopened.state.draft().unwrap().options;
+        assert_eq!(options.translate.as_deref(), Some("en"));
+        assert!(options.summarize);
     }
 
     #[test]
