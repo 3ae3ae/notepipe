@@ -7,7 +7,7 @@ This adapter is built in CI but has not yet been verified on hardware.
 
 ## Install
 
-macOS on Apple silicon:
+macOS 15 or later on Apple silicon:
 
 ```sh
 uv tool install notepipe --with notepipe-asr-apple

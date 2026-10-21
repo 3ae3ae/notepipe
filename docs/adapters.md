@@ -19,7 +19,7 @@ notepipe looks for adapter programs in its own directory first, then on `PATH`.
 | [`notepipe-source-ytdlp`](../adapters/ytdlp) | source | Any site yt-dlp supports; honors your yt-dlp configuration files |
 | [`notepipe-asr-llama`](../adapters/llama) | speech | Runs `llama-server`; strips Qwen3-ASR output markers |
 | [`notepipe-asr-openvino`](../adapters/openvino) | speech | Intel NPU by default; `--device CPU` or `GPU` also work |
-| [`notepipe-asr-apple`](../adapters/apple) | speech | Apple silicon Core ML / MLX; built in CI, not yet verified on hardware |
+| [`notepipe-asr-apple`](../adapters/apple) | speech | Apple silicon (macOS 15 or later), Core ML / MLX; built in CI, not yet verified on hardware |
 | [`notepipe-asr-xai`](../adapters/xai) | speech | Forwards to xAI's speech-to-text API |
 | [`notepipe-asr-meta`](../adapters/meta) | speech | Forwards to Meta's speech-to-text API |
 
@@ -65,7 +65,7 @@ process exits, notepipe reports its last output lines.
 |---|---|---|
 | `model` | no | `[asr].model`, when set |
 | `language` | no | `[asr].language`, when set, as written in the configuration (for example `ko`) |
-| `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, normally 20 seconds or less; always the last part |
+| `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, about `[asr].max_speech` seconds or less (20 by default) plus up to half a second of padding; always the last part |
 
 Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. On failure respond with a non-2xx status
 and `{"error": {"message": "…"}}`. If `[asr].api_key` is set, requests carry `Authorization: Bearer <key>`; an adapter may
@@ -105,14 +105,23 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, {"error": {"message": "not found"}})
 
     def do_POST(self):
-        length = int(self.headers["Content-Length"])
-        raw = b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + self.rfile.read(length)
-        parts = {
-            part.get_param("name", header="content-disposition"): part.get_payload(decode=True)
-            for part in email.message_from_bytes(raw).get_payload()
-        }
-        language = (parts.get("language") or b"").decode() or None
-        self.reply(200, {"text": transcribe(parts["file"], language)})
+        if self.path != "/v1/audio/transcriptions":
+            return self.reply(404, {"error": {"message": "not found"}})
+        try:
+            length = int(self.headers["Content-Length"])
+            raw = b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + self.rfile.read(length)
+            parts = {
+                part.get_param("name", header="content-disposition"): part.get_payload(decode=True)
+                for part in email.message_from_bytes(raw).get_payload()
+            }
+            wav = parts["file"]
+            language = (parts.get("language") or b"").decode() or None
+        except Exception:
+            return self.reply(400, {"error": {"message": "expected a multipart upload with a file field"}})
+        try:
+            self.reply(200, {"text": transcribe(wav, language)})
+        except Exception as error:
+            self.reply(500, {"error": {"message": str(error)}})
 
 
 parser = argparse.ArgumentParser()
@@ -135,7 +144,8 @@ start with `notepipe-source-`: if it finds exactly one it uses it, and if it fin
 command = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
 ```
 
-Results are cached per URL and adapter, so later runs on the same URL do not download again.
+Results are cached per URL and adapter. Media is deleted after a successful run, so a later run that only changes AI
+stages reuses the cached screenshots and transcript, while one that changes screenshot or speech settings downloads again.
 
 ### Contract
 
@@ -147,8 +157,8 @@ notepipe runs:
 
 `DIR` is an empty directory owned by notepipe. The adapter downloads the media, and any subtitles, into it.
 
-Standard output carries JSON objects, one per line. Optional progress lines look like `{"progress": 0.42}` (0 to 1). The
-last line is the result:
+Standard output carries JSON objects, one per line, each at most 1 MiB. Optional progress lines look like
+`{"progress": 0.42}` (0 to 1). The last line is the result:
 
 ```json
 {

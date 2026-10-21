@@ -13,12 +13,13 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 - `--config FILE` reads the configuration from `FILE` instead of the user's config file; `--config -` reads it from
   standard input. The content is TOML, or JSON when its first non-space character is `{`. It has the same structure as
   `config.toml` (see `notepipe config init`). Command-line options still override it.
-- `--subtitle FILE` supplies an SRT or VTT transcript; subtitle discovery and speech recognition are skipped.
+- `--subtitle FILE` supplies an SRT or VTT transcript; subtitle discovery and speech recognition are skipped. An
+  unreadable or empty file is an error.
 - `--stages a,b` / `--no-stages` choose the AI stages for this run.
 - With `--json` notepipe never prompts. Missing settings are errors.
 
-API keys can be part of the configuration. When the CLI reads its own config file, `NOTEPIPE_ASR_API_KEY` and
-`NOTEPIPE_LLM_API_KEY` fill empty keys.
+API keys can be part of the configuration. `NOTEPIPE_ASR_API_KEY` and `NOTEPIPE_LLM_API_KEY` fill keys that are empty,
+also when the configuration comes from `--config`; clear them in the child environment if a run must not use them.
 
 ## Events
 
@@ -42,7 +43,7 @@ informational; new ones may be added.
 | Code | Meaning |
 |---|---|
 | 0 | the note was written (it may still carry warnings) |
-| 1 | the run failed; the previous note for this source, if any, is unchanged |
+| 1 | the run failed; the previous note for this source, if any, is unchanged (see below for the rare exception) |
 | 2 | invalid command-line arguments |
 | 130 | cancelled by SIGINT or SIGTERM |
 
@@ -59,7 +60,8 @@ killing adapter processes.
 
 The folder name comes from the title. A run on the same source replaces that folder; a different source with the same
 title gets a `-2`, `-3`, … suffix. The note is built in a staging folder and moved into place, so a reader never sees a
-half-written note.
+half-written note. If moving the new note into place fails and the previous note cannot be moved back either, the error
+message gives the path where the previous note was kept; the next run restores it.
 
 `note.md` starts with YAML front matter:
 
@@ -93,17 +95,21 @@ generator: "notepipe 0.1.0"
 `image` is empty for sections without a screenshot (for example audio-only input). `raw` is present when a stage replaced
 the text, `below` when stages added text under it, and `seek_url` when the source adapter provided a link template.
 
+`note.json` lists the warnings known when the note was written. Warnings raised afterwards — cleaning up the previous
+note, or the completion hook — appear only in the `done` event, whose `warnings` list is final.
+
 ## Completion hook
 
 `[defaults].on_complete = ["program", "arg", …]` runs once after a note is written, without a shell, with the note folder
-as its working directory and a 10-minute limit. It receives:
+as its working directory and a 10-minute limit. A bare program name is looked up next to the notepipe executable, then on
+`PATH`; a relative path is resolved from the directory notepipe was started in. It receives:
 
 | Variable | Value |
 |---|---|
 | `NOTEPIPE_NOTE_DIR` | the note folder |
 | `NOTEPIPE_MARKDOWN` | path of `note.md` |
 | `NOTEPIPE_JSON` | path of `note.json` |
-| `NOTEPIPE_WARNINGS` | number of warnings |
+| `NOTEPIPE_WARNINGS` | number of warnings in `note.json` |
 
 A failing hook produces a warning; the note and the exit status are unaffected.
 
@@ -111,4 +117,6 @@ A failing hook produces a warning; the note and the exit status are unaffected.
 
 Downloads, screenshots, transcripts and AI responses are cached per source in `$XDG_CACHE_HOME/notepipe` when that is
 set, otherwise in `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and
-`~/.cache/notepipe` elsewhere. Media and extracted audio are deleted after a successful run. The cache can be deleted at any time; `--no-resume` clears one source's entry.
+`~/.cache/notepipe` elsewhere. Media and extracted audio are deleted after a successful run, so changing screenshot or
+speech settings later downloads the media again; changing only AI stages does not. The cache can be deleted whenever
+notepipe is not running; `--no-resume` clears one source's entry.

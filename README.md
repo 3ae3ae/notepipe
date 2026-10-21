@@ -141,7 +141,7 @@ notepipe --with <package>`.
 | [`notepipe-source-ytdlp`](adapters/ytdlp) | source | URLs from any site yt-dlp supports |
 | [`notepipe-asr-llama`](adapters/llama) | speech | llama.cpp on CPU or GPU |
 | [`notepipe-asr-openvino`](adapters/openvino) | speech | Intel NPU (or CPU/GPU) with OpenVINO |
-| [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon; built in CI, not yet verified on hardware |
+| [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon, macOS 15 or later; built in CI, not yet verified on hardware |
 | [`notepipe-asr-xai`](adapters/xai) | speech | xAI speech-to-text |
 | [`notepipe-asr-meta`](adapters/meta) | speech | Meta speech-to-text |
 
