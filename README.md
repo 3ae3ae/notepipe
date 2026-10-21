@@ -63,7 +63,8 @@ uv tool install notepipe --with notepipe-source-ytdlp     # also URLs, through y
 
 Add more [adapters](#adapters) with further `--with` options. With Cargo: `cargo install notepipe`. Prebuilt binaries are
 attached to each [GitHub release](https://github.com/3ae3ae/notepipe/releases). On Android, install
-[Termux](https://termux.dev), run `pkg install rust ffmpeg uv`, and use either method.
+[Termux](https://termux.dev), run `pkg install rust ffmpeg python`, then `cargo install notepipe`, and add adapters with
+`pip install <package>`.
 
 ## Quick start
 
