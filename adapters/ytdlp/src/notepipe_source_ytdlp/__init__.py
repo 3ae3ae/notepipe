@@ -2,11 +2,15 @@
 import argparse
 from contextlib import redirect_stdout
 import json
+import os
 from pathlib import Path
 import sys
 from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
+
+
+CAPTION_EXTENSIONS = {*yt_dlp.utils.MEDIA_EXTENSIONS.subtitles, "ssa", "ttml", "dfxp", "tt", "srv1", "srv2", "srv3", "json3"}
 
 
 def original_captions(info):
@@ -26,25 +30,28 @@ def original_captions(info):
 
 class YoutubeDL(yt_dlp.YoutubeDL):
     def process_ie_result(self, ie_result, download=True, extra_info=None):
-        language = ie_result.get("language")
+        media_language = ie_result.get("language")
         if ie_result.get("_type") in {"playlist", "multi_video", "compat_list"} or "entries" in ie_result:
             raise ValueError("pass the URL of a single item")
         if ie_result.get("_type", "video") == "video":
+            self.subtitle_tracks = {}
             for field, automatic, tracks in [
                 ("subtitles", False, ie_result.get("subtitles") or {}),
                 ("automatic_captions", True, original_captions(ie_result)),
             ]:
-                # Distinct keys preserve both manual and automatic tracks in one language.
-                ie_result[field] = {
-                    f"{language}-auto" if automatic else language: [
-                        {**entry, "_notepipe_language": language, "_notepipe_automatic": automatic}
-                        for entry in formats
-                    ]
-                    for language, formats in tracks.items()
-                }
+                ie_result[field] = {}
+                for language, formats in tracks.items():
+                    formats = [entry for entry in formats if entry.get("ext") in CAPTION_EXTENSIONS]
+                    if language == "live_chat" or not formats:
+                        continue
+                    # Distinct keys preserve both manual and automatic tracks in one language.
+                    key = f"{language}-auto" if automatic else language
+                    ie_result[field][key] = formats
+                    # Post-processors can replace subtitle dicts, so keep identity separately.
+                    self.subtitle_tracks[key] = {"language": language, "automatic": automatic}
         result = super().process_ie_result(ie_result, download=download, extra_info=extra_info)
-        if result and language and not result.get("language"):
-            result["language"] = language
+        if result and media_language and not result.get("language"):
+            result["language"] = media_language
         return result
 
 
@@ -116,10 +123,9 @@ def download(url, out, extra_args, output):
         "subtitles": [
             {
                 "path": relative_file(track["filepath"], out),
-                "language": track["_notepipe_language"],
-                "automatic": track["_notepipe_automatic"],
+                **downloader.subtitle_tracks[key],
             }
-            for track in (downloaded.get("requested_subtitles") or {}).values()
+            for key, track in (downloaded.get("requested_subtitles") or {}).items()
             if track.get("filepath") and Path(track["filepath"]).is_file()
         ],
     }
@@ -130,21 +136,25 @@ def download(url, out, extra_args, output):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Download one media item with yt-dlp")
-    parser.add_argument("url")
-    parser.add_argument("--out", required=True)
-    parser.epilog = "Pass yt-dlp options after -- (also supported before URL --out DIR in [source].command)."
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["--"]:
-        # The core appends URL --out DIR to the configured command.
-        adapter_args, extra_args = argv[-3:], argv[1:-3]
-    else:
-        separator = argv.index("--") if "--" in argv else len(argv)
-        adapter_args, extra_args = argv[:separator], argv[separator + 1:]
-    args = parser.parse_args(adapter_args)
-    try:
-        download(args.url, args.out, extra_args, sys.stdout)
-    except (yt_dlp.utils.DownloadError, OSError, ValueError) as error:
-        parser.exit(1, f"{error}\n")
-    except KeyboardInterrupt:
-        parser.exit(130, "Download interrupted\n")
+    sys.stdout.flush()
+    with os.fdopen(os.dup(1), "w", encoding="utf-8") as output:
+        # Child processes inherit fd 1; only the duplicated descriptor carries JSON.
+        os.dup2(2, 1)
+        parser = argparse.ArgumentParser(description="Download one media item with yt-dlp")
+        parser.add_argument("url")
+        parser.add_argument("--out", required=True)
+        parser.epilog = "Pass yt-dlp options after -- (also supported before URL --out DIR in [source].command)."
+        argv = list(sys.argv[1:] if argv is None else argv)
+        if argv[:1] == ["--"]:
+            # The core appends URL --out DIR to the configured command.
+            adapter_args, extra_args = argv[-3:], argv[1:-3]
+        else:
+            separator = argv.index("--") if "--" in argv else len(argv)
+            adapter_args, extra_args = argv[:separator], argv[separator + 1:]
+        args = parser.parse_args(adapter_args)
+        try:
+            download(args.url, args.out, extra_args, output)
+        except (yt_dlp.utils.DownloadError, OSError, ValueError) as error:
+            parser.exit(1, f"{error}\n")
+        except KeyboardInterrupt:
+            parser.exit(130, "Download interrupted\n")

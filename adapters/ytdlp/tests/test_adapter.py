@@ -1,8 +1,9 @@
 from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
-import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -60,14 +61,17 @@ class AdapterTests(unittest.TestCase):
             return downloader.process_ie_result(deepcopy(self.info), download=download)
 
         def process(downloader, info):
-            self.selected.append(info)
             filename = Path(downloader.prepare_filename(info))
             filename.write_bytes(b"simulated media")
             info["filepath"] = str(filename)
+            files_to_move = {}
             for language, track in (info.get("requested_subtitles") or {}).items():
                 path = filename.with_suffix(f".{language}.{track['ext']}")
                 path.write_text("simulated subtitles")
                 track["filepath"] = str(path)
+                files_to_move[str(path)] = str(path)
+            new_info, files_to_move = downloader.pre_process(info, "before_dl", files_to_move)
+            info.update(new_info)
             for event in [
                 {"status": "downloading", "downloaded_bytes": 25, "total_bytes": 100},
                 {"status": "downloading", "downloaded_bytes": 50, "total_bytes_estimate": 100},
@@ -77,6 +81,8 @@ class AdapterTests(unittest.TestCase):
             ]:
                 for hook in downloader.params["progress_hooks"]:
                     hook(event)
+            info.update(downloader.post_process(str(filename), info, files_to_move))
+            self.selected.append(deepcopy(info))
 
         self.addCleanup(patch.stopall)
         patch.object(adapter.yt_dlp.YoutubeDL, "extract_info", extract).start()
@@ -88,15 +94,32 @@ class AdapterTests(unittest.TestCase):
         real_parse = adapter.yt_dlp.parse_options
         self.parse = patch.object(adapter.yt_dlp, "parse_options", side_effect=lambda args: real_parse(["--ignore-config", *args])).start()
 
+    def call_adapter(self, args):
+        sys.stdout.flush()
+        sys.stderr.flush()
+        saved_stdout, saved_stderr = os.dup(1), os.dup(2)
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout, tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr:
+            try:
+                os.dup2(stdout.fileno(), 1)
+                os.dup2(stderr.fileno(), 2)
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    adapter.main(args)
+            finally:
+                os.dup2(saved_stdout, 1)
+                os.dup2(saved_stderr, 2)
+                os.close(saved_stdout)
+                os.close(saved_stderr)
+                stdout.seek(0)
+                stderr.seek(0)
+                self.protocol = stdout.read()
+                self.diagnostics = stderr.read()
+
     def run_adapter(self, *extra, prefix=False):
         args = [URL, "--out", str(self.out)]
         if extra:
             args = ["--", *extra, *args] if prefix else [*args, "--", *extra]
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with redirect_stdout(stdout), redirect_stderr(stderr):
-            adapter.main(args)
-        self.diagnostics = stderr.getvalue()
-        return [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.call_adapter(args)
+        return [json.loads(line) for line in self.protocol.splitlines()]
 
     def test_result_progress_subtitles_and_default_merged_format(self):
         lines = self.run_adapter()
@@ -119,6 +142,59 @@ class AdapterTests(unittest.TestCase):
         for name in [result["media"], *(track["path"] for track in result["subtitles"])]:
             self.assertTrue((self.out / name).is_file())
         self.assertIn("yt-dlp diagnostic", self.diagnostics)
+
+    def test_subtitle_identity_survives_conversion(self):
+        converter = adapter.yt_dlp.postprocessor.FFmpegSubtitlesConvertorPP
+
+        def convert(processor, source, target, options):
+            Path(target).write_text("converted subtitles")
+
+        with patch.object(converter, "run_ffmpeg", convert):
+            result = self.run_adapter("--convert-subs", "srt")[-1]
+        self.assertEqual(result["subtitles"], [
+            {"path": "media.en.srt", "language": "en", "automatic": False},
+            {"path": "media.ko.srt", "language": "ko", "automatic": False},
+            {"path": "media.ko-auto.srt", "language": "ko", "automatic": True},
+        ])
+        for track in self.selected[0]["requested_subtitles"].values():
+            self.assertNotIn("_notepipe_language", track)
+            self.assertNotIn("_notepipe_automatic", track)
+            self.assertEqual(Path(track["filepath"]).suffix, ".srt")
+
+    def test_child_stdout_is_sent_to_diagnostics(self):
+        extract = adapter.YoutubeDL.extract_info
+
+        def extract_with_child(downloader, *args, **kwargs):
+            subprocess.run([sys.executable, "-c", "print('child stdout diagnostic')"], check=True)
+            return extract(downloader, *args, **kwargs)
+
+        with patch.object(adapter.YoutubeDL, "extract_info", extract_with_child):
+            result = self.run_adapter()[-1]
+        self.assertEqual(result["media"], "media.mp4")
+        self.assertIn("child stdout diagnostic", self.diagnostics)
+
+    def test_non_caption_tracks_are_excluded_before_download(self):
+        self.info["subtitles"].update({
+            "live_chat": [
+                {**track, "protocol": "youtube_live_chat_replay"}
+                for track in subtitles("json", "vtt")
+            ],
+            "comments": subtitles("json"),
+            "thumbnails": subtitles("mhtml"),
+        })
+        self.info["subtitles"]["en"].extend(subtitles("json"))
+        result = self.run_adapter()[-1]
+        self.assertEqual(set(self.selected[0]["requested_subtitles"]), {"en", "ko", "ko-auto"})
+        self.assertEqual(set(self.selected[0]["subtitles"]), {"en", "ko"})
+        self.assertEqual([track["ext"] for track in self.selected[0]["subtitles"]["en"]], ["vtt", "srt"])
+        self.assertEqual(len(result["subtitles"]), 3)
+        self.assertFalse(list(self.out.glob("*.json")))
+        self.assertFalse(list(self.out.glob("*.mhtml")))
+
+    def test_media_language_is_preserved_without_automatic_captions(self):
+        self.info["subtitles"] = {"en": subtitles("vtt")}
+        self.info["automatic_captions"] = {}
+        self.assertEqual(self.run_adapter()[-1]["language"], "ko")
 
     def test_audio_only_fallback_and_optional_metadata(self):
         self.info["formats"] = self.info["formats"][:1]
@@ -164,12 +240,11 @@ class AdapterTests(unittest.TestCase):
         for kind in ["playlist", "multi_video", "compat_list"]:
             with self.subTest(kind=kind):
                 self.info = {"_type": kind, "entries": []}
-                stderr, stdout = io.StringIO(), io.StringIO()
-                with redirect_stderr(stderr), redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
-                    adapter.main([URL, "--out", str(self.out)])
+                with self.assertRaises(SystemExit) as raised:
+                    self.call_adapter([URL, "--out", str(self.out)])
                 self.assertEqual(raised.exception.code, 1)
-                self.assertIn("pass the URL of a single item", stderr.getvalue())
-                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn("pass the URL of a single item", self.diagnostics)
+                self.assertEqual(self.protocol, "")
                 self.assertEqual(self.selected, [])
 
     def test_original_caption_selection(self):
@@ -188,8 +263,8 @@ class AdapterTests(unittest.TestCase):
         self.out.mkdir()
         existing = self.out / "existing.txt"
         existing.write_text("keep")
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
-            adapter.main([URL, "--out", str(self.out)])
+        with self.assertRaises(SystemExit) as raised:
+            self.call_adapter([URL, "--out", str(self.out)])
         self.assertEqual(raised.exception.code, 1)
         self.assertEqual(existing.read_text(), "keep")
         self.assertIsNone(self.options)
@@ -206,12 +281,11 @@ class AdapterTests(unittest.TestCase):
 
     def test_download_failure_exits_nonzero_with_diagnostics(self):
         with patch.object(adapter.YoutubeDL, "extract_info", side_effect=adapter.yt_dlp.utils.DownloadError("download failed")):
-            stderr, stdout = io.StringIO(), io.StringIO()
-            with redirect_stderr(stderr), redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
-                adapter.main([URL, "--out", str(self.out)])
+            with self.assertRaises(SystemExit) as raised:
+                self.call_adapter([URL, "--out", str(self.out)])
         self.assertEqual(raised.exception.code, 1)
-        self.assertIn("download failed", stderr.getvalue())
-        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("download failed", self.diagnostics)
+        self.assertEqual(self.protocol, "")
 
 
 if __name__ == "__main__":
