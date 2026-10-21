@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-/// 取多行文本的最后 n 行（保持原有先后顺序），供错误摘要附带日志尾部。
+/// The last n lines of a text, in order, for error messages.
 pub fn tail_lines(s: &str, n: usize) -> String {
     s.lines()
         .rev()
@@ -12,7 +12,7 @@ pub fn tail_lines(s: &str, n: usize) -> String {
         .join("\n")
 }
 
-/// 子进程失败时附带 stderr 摘要的便捷构造。
+/// An error for a failed command, with the end of its stderr.
 pub fn cmd_error(program: &str, code: Option<i32>, stderr: &str) -> anyhow::Error {
     let tail = tail_lines(stderr, 5);
     anyhow::anyhow!("{program} failed (code={code:?}):\n{tail}")

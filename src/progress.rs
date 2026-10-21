@@ -1,4 +1,4 @@
-//! 机器可读进度协议（--json 模式）：stdout 每行一个 NDJSON 事件，供 GUI/脚本消费。
+//! Progress output. With --json, stdout carries one NDJSON event per line for other programs (see docs/cli.md).
 //!
 //! The only event types are `log`, `stage`, `progress`, `tokens`, `done`, `error`.
 //! - `log`: level, message
@@ -23,7 +23,7 @@ pub fn is_quiet() -> bool {
 
 static JSON_MODE: AtomicBool = AtomicBool::new(false);
 
-/// 进入 NDJSON 事件流模式（进程级，main 在解析完 CLI 后调用一次）。
+/// Switches the process to NDJSON events; called once after parsing the command line.
 pub fn set_json_mode() {
     JSON_MODE.store(true, Ordering::Relaxed);
 }
@@ -32,7 +32,7 @@ pub fn is_json() -> bool {
     JSON_MODE.load(Ordering::Relaxed)
 }
 
-/// 输出一个事件：json 模式写 stdout 一行并立即 flush；human 模式 no-op。
+/// Writes one event line to stdout and flushes it; does nothing outside JSON mode.
 pub fn emit(ev: serde_json::Value) {
     if !is_json() {
         return;
@@ -53,8 +53,8 @@ fn emit_to(mut w: impl std::io::Write, ev: &serde_json::Value) -> std::io::Resul
     w.flush()
 }
 
-/// 阶段边界事件（json 模式才发）。新阶段开始时清零 token 累计，
-/// 保证 GUI 看到的是当前阶段的实时用量。
+/// Emits a stage boundary. Token counts restart with each stage,
+/// so they always describe the current stage.
 pub fn stage(name: &str, status: &str) {
     if status == "start" {
         reset_tokens();
@@ -99,8 +99,8 @@ fn log_event(level: &str, message: &str) -> serde_json::Value {
     serde_json::json!({"type": "log", "level": level, "message": message})
 }
 
-/// LLM token 累计（当前阶段）：并发 worker 各自完成请求后累加，
-/// GUI 展示的是单调递增的实时用量。阶段开始时由 [`stage`] 清零。
+/// Token usage of the current stage, summed across concurrent workers,
+/// so the reported value only grows; [`stage`] resets it.
 static TOKENS: Mutex<(u64, u64)> = Mutex::new((0, 0));
 
 fn reset_tokens() {
@@ -111,7 +111,7 @@ fn tokens_event(stage: &str, prompt: u64, completion: u64) -> serde_json::Value 
     serde_json::json!({"type": "tokens", "stage": stage, "prompt": prompt, "completion": completion})
 }
 
-/// 记录一次 LLM 响应的 token 用量并发出累计值（json 模式才有事件）。
+/// Adds one response's token usage and emits the running total in JSON mode.
 pub fn note_tokens(stage: &str, prompt: u64, completion: u64) {
     if prompt == 0 && completion == 0 {
         return;
@@ -135,15 +135,15 @@ pub fn download_progress(current: u64, total: u64) {
     emit(progress_event("download", current, total, ""));
 }
 
-/// 共享进度条样式：模板均为静态字符串，解析失败是编程错误。
+/// Shared progress bar style; the templates are constants, so a parse failure is a bug.
 fn progress_style(template: &str) -> ProgressStyle {
     ProgressStyle::with_template(template)
         .expect("Static progress bar template")
         .progress_chars("##-")
 }
 
-/// 进度条包装：human 模式 = 可见 indicatif 进度条（样式与原来一致）；
-/// json 模式 = 隐藏 bar，inc/set_position/set_message 时发 progress 事件。
+/// A progress bar: visible in a terminal; in JSON mode it is hidden
+/// and its updates become progress events.
 pub struct Bar {
     stage: String,
     bar: ProgressBar,
@@ -170,7 +170,7 @@ impl Bar {
         }
     }
 
-    /// 应用 human 模式的进度条模板（json 模式下 bar 隐藏，跳过）。
+    /// Applies the terminal template; hidden bars in JSON mode skip it.
     pub fn with_template(self, template: &str) -> Self {
         if !is_json() {
             self.bar.set_style(progress_style(template));
@@ -227,8 +227,8 @@ impl Bar {
     }
 }
 
-/// tracing Layer：把日志事件格式化为 `{"type":"log"}` NDJSON 行写 stdout。
-/// 仅在 json 模式注册（main.rs），level 映射 error/warn/info/debug（trace 归 debug）。
+/// tracing layer that writes log records as `{"type":"log"}` lines to stdout.
+/// Installed only in JSON mode; levels map to error, warn, info and debug (trace counts as debug).
 pub struct JsonLogLayer;
 
 pub fn json_log_layer() -> JsonLogLayer {
@@ -253,7 +253,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for JsonLogLayer {
     }
 }
 
-/// 提取事件 message；没有 message 字段时把其余 fields 拼成 `k=v` 文本。
+/// The event's message, or its other fields as `k=v` text when it has none.
 #[derive(Default)]
 struct LogVisitor {
     message: Option<String>,
@@ -275,8 +275,8 @@ impl LogVisitor {
 }
 
 impl tracing::field::Visit for LogVisitor {
-    // `%`（Display）与 `?`（Debug）值、数值都经 record_debug：fmt::Arguments 的
-    // Debug 输出即格式化文本本身，不带引号。
+    // Display, Debug and numeric values all arrive through record_debug;
+    // the Debug output of fmt::Arguments is the formatted text without quotes.
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         self.push(field, format!("{value:?}"));
     }

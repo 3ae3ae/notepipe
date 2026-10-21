@@ -1,6 +1,6 @@
-//! 幻灯片抽帧：对齐 yt-slide-mark
-//! 每 `sample_interval` 秒取一帧，与上一张保留帧做 SSIM；
-//! 低于 `similarity` 则保存，并跳过 `cooldown` 秒。
+//! Screenshot detection, modeled on yt-slide-mark.
+//! A frame is sampled every `sample_interval` seconds and compared with the last kept frame (SSIM);
+//! below `similarity` it becomes a screenshot, and the next `cooldown` seconds are skipped.
 
 use crate::config::{PipelineConfig, Roi};
 use crate::media;
@@ -14,9 +14,9 @@ use std::path::Path;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-/// SSIM 采样宽度：足够区分版面变化，同时控制 rawvideo 带宽与 SSIM 计算开销
+/// Width of sampled frames: enough to see layout changes while keeping decoding and SSIM cheap.
 const SAMPLE_WIDTH: u32 = 640;
-/// 全分辨率抽帧并发度：每帧一个 ffmpeg 进程，4 路即可利用并行度又不至于进程风暴
+/// Parallel full-resolution extractions; each is one ffmpeg process.
 const EXTRACT_CONCURRENCY: usize = 4;
 
 #[derive(Serialize, Deserialize)]
@@ -31,7 +31,7 @@ fn scaled_wh(ow: u32, oh: u32, target_w: u32) -> (u32, u32) {
     (target_w, (h & !1).max(2))
 }
 
-/// 无 ROI 时借用原图（零拷贝）；有 ROI 时返回裁剪后的新图。
+/// Borrows the frame when there is no region of interest; otherwise returns the cropped copy.
 fn crop_roi(img: &GrayImage, roi: Option<Roi>) -> Cow<'_, GrayImage> {
     let Some(r) = roi else {
         return Cow::Borrowed(img);
@@ -49,10 +49,10 @@ fn ssim(a: &GrayImage, b: &GrayImage) -> f64 {
         .unwrap_or(0.0)
 }
 
-/// 单点精确抽帧（全分辨率 JPEG）。
+/// Extracts one full-resolution JPEG at an exact time.
 async fn extract_frame(media: &Path, t: f64, dest: &Path) -> Result<()> {
     let ss = format!("{t:.3}");
-    // -q:v 2：JPEG 高质量档（2~31，越小越好），讲义文字可读性优先
+    // -q:v 2 is a high JPEG quality (2–31, lower is better), so text on screen stays readable.
     media::run_cmd(
         Command::new("ffmpeg")
             .args(["-hide_banner", "-loglevel", "error", "-y", "-ss", &ss])
@@ -71,12 +71,12 @@ async fn extract_frame(media: &Path, t: f64, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 第 n 张（1 起）截图的文件名。
+/// File name of the n-th screenshot, counting from 1.
 fn slide_name(n: usize) -> String {
     format!("slide_{n:04}.jpg")
 }
 
-/// 1fps（或 sample_interval）灰度流 + SSIM，得到新幻灯片时间点。
+/// Samples a grayscale stream every `sample_interval` and returns the times of new screenshots.
 async fn sample_timestamps(
     cfg: &PipelineConfig,
     media: &Path,
@@ -108,8 +108,8 @@ async fn sample_timestamps(
         .spawn()
         .context("Could not start ffmpeg frame sampling")?;
     let mut stdout = child.stdout.take().context("ffmpeg stdout")?;
-    // stderr 必须全程 drain：piped 而不读的话，写满 64KB 管道缓冲会死锁。
-    // 缓存尾部供失败诊断，debug 时逐行转发。
+    // Drain stderr continuously: an unread pipe fills its 64 KB buffer and deadlocks ffmpeg.
+    // Its tail is kept for error messages.
     let mut stderr_buf: Vec<u8> = Vec::new();
     let mut stderr = child.stderr.take().context("ffmpeg stderr")?;
     let stderr_task = tokio::spawn(async move {
@@ -129,10 +129,10 @@ async fn sample_timestamps(
         .with_template("{spinner:.green} sample {pos}/{len} frames {msg}");
     pb.set_position(0);
 
-    // 三状态检测：检测永不休眠（cooldown 只限制「发射」，不再造成盲区）。
-    //   last_emitted  已输出的视觉状态
-    //   candidate     正在观察的候选画面（含首次出现时间，用于真实时间戳）
-    // 发射条件：候选与上一输出差异显著 + 稳定时长足够 + 距上次发射 >= cooldown。
+    // Detection never pauses; cooldown only limits how often a screenshot is taken, so nothing is missed.
+    //   last_emitted  the picture of the last screenshot
+    //   candidate     the new picture being watched, with the time it first appeared
+    // A screenshot is taken when the candidate differs from the last one, has been stable long enough and cooldown has passed.
     let stable_for = if matches!(cfg.screenshot_mode, crate::config::ScreenshotMode::Stable) {
         cfg.stable_secs
     } else {
@@ -152,14 +152,14 @@ async fn sample_timestamps(
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => return Err(e.into()),
         }
-        // 理想采样时刻 t = i * interval：fps 滤镜的取整与 VFR 补帧会让真实帧
-        // 时间略有漂移（通常 < 一个采样间隔）；场景检测只需秒级精度，可接受，
-        // 故不逐帧解析 pts。
+        // Nominal time t = i * interval. Rounding in the fps filter and variable frame rates shift real frames
+        // by less than one interval, which is fine at this precision,
+        // so frame timestamps are not parsed.
         let t = i as f64 * interval;
         i += 1;
         pb.inc(1);
-        // 帧缓冲复用：move 进 GrayImage 计算，结束时 into_raw 收回供下一帧
-        // （取消每帧 230KB 的 buf.clone()；仅物化 candidate 时才产生拥有所有权的拷贝）
+        // Reuse the frame buffer: move it into a GrayImage and take it back with into_raw;
+        // only a new candidate is copied.
         let gray = GrayImage::from_raw(tw, th, std::mem::take(&mut buf))
             .ok_or_else(|| anyhow::anyhow!("Grayscale frame size mismatch {tw}x{th}"))?;
         {
@@ -172,22 +172,22 @@ async fn sample_timestamps(
                 }
             };
             if !differs_from_emitted {
-                // 画面回到已输出状态：候选是过渡帧（动画/抖动），丢弃
+                // Back to the last screenshot's picture: the candidate was a transition, drop it.
                 candidate = None;
                 candidate_first_t = None;
             } else {
-                // 与已输出状态不同：跟踪候选（若候选本身又变了，说明动画进行中，重置起点）
+                // Different from the last screenshot: track the candidate, restarting if it keeps changing (an animation).
                 let candidate_changed = match &candidate {
                     None => true,
                     Some(c) => c.dimensions() != cmp.dimensions() || ssim(c, &cmp) < cfg.similarity,
                 };
                 if candidate_changed {
-                    // 仅候选变更时才物化为拥有所有权的图；其余路径 cmp 只借不拷
+                    // Copy the frame only when the candidate changes.
                     candidate = Some(cmp.into_owned());
                     candidate_first_t = Some(t);
                     candidate_last_t = Some(t);
                 } else {
-                    // 同一视觉状态的后续采样：更新代表帧时间（取稳定后的最后一帧）
+                    // Same picture: move the capture time to the latest stable frame.
                     candidate_last_t = Some(t);
                 }
                 let onset_t = candidate_first_t.unwrap_or(t);
@@ -195,8 +195,8 @@ async fn sample_timestamps(
                 let stable = t - onset_t >= stable_for;
                 let gap_ok = t - last_emit_t >= cfg.cooldown;
                 if stable && gap_ok {
-                    // 发射两个时间戳：onset 用于时间线对齐，capture 用于全分辨率截帧
-                    // （stable 模式下 capture 取确认稳定时的代表帧，避开 transition 早期态）
+                    // Two times: onset places the screenshot in the timeline, capture is the frame that is extracted
+                    // (in stable mode, after the transition has settled).
                     times.push((onset_t, capture_t));
                     last_emitted = candidate.take();
                     candidate_first_t = None;
@@ -208,7 +208,7 @@ async fn sample_timestamps(
         }
         buf = gray.into_raw();
     }
-    // EOF 冲刷：最后一个已稳定的候选即使还没过 cooldown 也补发（否则尾页永远丢失）
+    // At the end, keep a stable last candidate even within the cooldown; otherwise the final slide would be lost.
     if let (Some(_), Some(onset), Some(capture)) = (&candidate, candidate_first_t, candidate_last_t)
     {
         let stable = capture - onset >= stable_for;
@@ -227,7 +227,7 @@ async fn sample_timestamps(
     Ok(times)
 }
 
-/// 场景阶段入口。
+/// Runs screenshot detection and extraction.
 pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
     let Some(info) = media::probe_video(media).await? else {
         return Ok(Output::NoVideo);
@@ -245,8 +245,8 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
         .with_template("{spinner:.green} extract {pos}/{len} [{bar:32.cyan/blue}] {msg}");
     // Emit before launching ffmpeg: the first image may take a long time.
     pb.set_position(0);
-    // JoinSet 限流并发抽帧：最多 EXTRACT_CONCURRENCY 个 ffmpeg 进程并行；
-    // 按帧索引收集结果后排序，保证输出文件名与结果顺序与串行版完全一致。
+    // Extract with at most EXTRACT_CONCURRENCY ffmpeg processes and sort the results by index,
+    // so names and order match a sequential run.
     let mut set: tokio::task::JoinSet<(usize, Result<()>)> = tokio::task::JoinSet::new();
     let mut pending = times.iter().copied().enumerate();
     let mut results: Vec<(usize, Result<()>)> = Vec::with_capacity(times.len());
@@ -256,7 +256,7 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
             let Some((i, (_, capture_t))) = pending.next() else {
                 break;
             };
-            // 截帧用代表帧时间（稳定后），时间线用 onset（首次出现）
+            // Extract at the capture time; place in the timeline at the onset.
             let path = frames_dir.join(slide_name(i + 1));
             let media = media.to_path_buf();
             set.spawn(async move { (i, extract_frame(&media, capture_t, &path).await) });

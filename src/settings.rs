@@ -1,11 +1,11 @@
-//! 配置文件（~/.config/notepipe/config.toml）。
-//! 优先级：命令行参数 > 配置文件 > 内置默认值。
+//! The configuration file (~/.config/notepipe/config.toml).
+//! Precedence: command-line options, then the file, then built-in defaults.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// `[defaults]`：命令行参数的默认值。全部可选，未设置的项回落内置默认。
+/// `[defaults]`: defaults for command-line options; unset values use the built-in defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Defaults {
@@ -16,7 +16,7 @@ pub struct Defaults {
     pub screenshot_mode: Option<crate::config::ScreenshotMode>,
     pub stable_secs: Option<f64>,
     pub roi: Option<String>,
-    /// 转写来源：auto（字幕优先）| subtitle | asr
+    /// Transcript source: auto (subtitles first), subtitle or asr.
     pub transcript_source: Option<crate::config::TranscriptSource>,
     pub on_complete: Vec<String>,
 }
@@ -97,7 +97,7 @@ pub fn config_path() -> PathBuf {
     crate::config::config_dir().join("config.toml")
 }
 
-/// 读取配置文件。文件不存在 → 默认值；存在但无法解析 → 硬错误（带位置信息），
+/// Reads the configuration file: defaults when it does not exist, an error when it cannot be parsed.
 /// Invalid settings must not silently fall back to defaults.
 pub fn load() -> anyhow::Result<ConfigFile> {
     let p = config_path();
@@ -154,7 +154,7 @@ pub fn save(cfg: &ConfigFile, path: Option<&Path>) -> Result<PathBuf> {
     } else {
         None
     };
-    // 覆盖前备份旧配置（用户可能有手改内容），失败只告警不阻断
+    // Back up the old file before overwriting it, since it may hold manual edits; a failed backup only warns.
     if let Some(bytes) = &previous {
         let mut bak = p.as_os_str().to_os_string();
         bak.push(".bak");
@@ -175,7 +175,7 @@ pub fn save(cfg: &ConfigFile, path: Option<&Path>) -> Result<PathBuf> {
     Ok(p)
 }
 
-/// `config init` 写入的带注释模板。默认值占位符由内置默认渲染，注释不会与实际默认脱节。
+/// The commented template written by `config init`; its values come from the built-in defaults, so they cannot drift.
 pub fn template() -> String {
     use crate::config as c;
     let asr = Asr::default();
@@ -279,8 +279,8 @@ const TEMPLATE: &str = r#"# Configuration
 
 "#;
 
-/// 打印配置文件与内置默认合并后的设置（不含本次命令行与环境变量覆盖）。
-/// 默认值经 [`crate::options::resolve`] 得出，与实际转换使用同一套解析。
+/// Prints the file merged with the built-in defaults, without command-line or environment overrides.
+/// Uses [`crate::options::resolve`], the same resolution as a real run.
 pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     let d = &cfg.defaults;
     let r = crate::options::resolve(String::new(), &crate::cli::RunOpts::default(), cfg)?;

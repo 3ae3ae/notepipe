@@ -1,14 +1,14 @@
-//! ffmpeg 子进程封装：音频抽取（16k 单声道 PCM wav）与媒体探测。
+//! ffmpeg helpers: audio extraction (16 kHz mono PCM WAV) and media probing.
 
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-/// ffprobe 读元数据的上限：损坏或卡住的输入不能挂住流程。
+/// Time limit for ffprobe, so a broken input cannot hang the run.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// 有界运行 ffprobe；超时或启动失败返回 None（探测失败均非致命）。
+/// Runs ffprobe with a time limit; returns None on timeout or failure (probing is never fatal).
 async fn probe_output(cmd: &mut Command) -> Option<std::process::Output> {
     let output = cmd
         .kill_on_drop(true)
@@ -17,7 +17,7 @@ async fn probe_output(cmd: &mut Command) -> Option<std::process::Output> {
     tokio::time::timeout(PROBE_TIMEOUT, output).await.ok()?.ok()
 }
 
-/// 跑子进程并检查退出码；失败时返回带 stderr 尾部摘要的错误（供各模块复用）。
+/// Runs a command and returns an error with the end of stderr if it fails.
 pub(crate) async fn run_cmd(cmd: &mut Command, what: &str) -> Result<std::process::Output> {
     let out = cmd
         .kill_on_drop(true)
@@ -34,7 +34,7 @@ pub(crate) async fn run_cmd(cmd: &mut Command, what: &str) -> Result<std::proces
     Ok(out)
 }
 
-/// 抽取 16kHz 单声道 s16 wav。已存在则跳过。
+/// Extracts 16 kHz mono 16-bit WAV audio, unless it already exists.
 pub async fn extract_audio(media: &Path, dest: &Path) -> Result<()> {
     if dest.is_file() {
         tracing::info!(path = %dest.display(), "audio exists, skip extract");
@@ -67,7 +67,7 @@ pub struct VideoInfo {
     pub duration: f64,
 }
 
-/// ffprobe `-of json` 输出中我们关心的字段子集。
+/// The fields used from ffprobe's JSON output.
 #[derive(serde::Deserialize)]
 struct ProbeJson {
     #[serde(default)]
@@ -83,11 +83,11 @@ struct ProbeStream {
 
 #[derive(serde::Deserialize)]
 struct ProbeFormat {
-    /// ffprobe 的 duration 是字符串（如 "95.040000"）
+    /// ffprobe reports duration as a string, for example "95.040000".
     duration: Option<String>,
 }
 
-/// 视频宽高与时长。用 `-of json` 结构化输出，取代按逗号/空白切分的文本解析。
+/// Video size and duration, from ffprobe's JSON output.
 pub async fn probe_video(media: &Path) -> Result<Option<VideoInfo>> {
     let out = probe_output(
         Command::new("ffprobe")
@@ -136,7 +136,7 @@ pub async fn probe_video(media: &Path) -> Result<Option<VideoInfo>> {
     }))
 }
 
-/// `probe_duration` 两个入口共享的 ffprobe 参数（只输出时长数字）。
+/// ffprobe arguments that print only the duration, shared by both probe_duration variants.
 fn duration_args() -> [&'static str; 6] {
     [
         "-v",
@@ -148,7 +148,7 @@ fn duration_args() -> [&'static str; 6] {
     ]
 }
 
-/// 从 ffprobe 输出解析时长（秒）；进程失败或输出非法均为 None（非致命）。
+/// Duration in seconds from ffprobe output; None when ffprobe failed or printed nonsense.
 fn parse_duration_text(text: &str) -> Option<f64> {
     text.trim().parse::<f64>().ok()
 }
@@ -160,7 +160,7 @@ fn parse_duration(out: &std::process::Output) -> Option<f64> {
         .flatten()
 }
 
-/// 用 ffprobe 拿时长（秒）。失败时返回 None（非致命）。
+/// Duration in seconds via ffprobe; None on failure.
 pub async fn probe_duration(media: &Path) -> Option<f64> {
     let out = probe_output(Command::new("ffprobe").args(duration_args()).arg(media)).await?;
     parse_duration(&out)

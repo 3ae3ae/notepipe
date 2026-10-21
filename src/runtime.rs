@@ -1,8 +1,8 @@
 //! Process guards, bounded commands and interruptible HTTP readiness polling.
-//! - `ManagedChild`：Drop 保证 kill+wait，任何错误路径（含 `?` 早退）不泄漏进程
-//! - `run_bounded`：短命令的超时与输出捕获
-//! - `wait_ready`：健康轮询期间监视子进程，秒退立即报错而不是等满超时
-//! - `retry_backoff` / `interruptible_sleep`：可取消的重试退避
+//! - `ManagedChild`: killed and reaped on drop, so no error path (including `?`) leaks a process
+//! - `run_bounded`: timeouts and output capture for short commands
+//! - `wait_ready`: health polling that fails at once if the child exits
+//! - `retry_backoff` / `interruptible_sleep`: cancellable retry delays
 
 use anyhow::{Context, Result};
 #[cfg(windows)]
@@ -13,16 +13,14 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-/// 获取互斥锁；若锁已中毒（某线程在持锁期间 panic），直接取走数据继续用。
-/// 语义：本进程自愿接受中毒锁——所有持锁临界区只做内存内状态更新，
-/// 数据本身不会被 panic 路径写坏，传播 PoisonError 反而会让无关线程陪葬。
+/// Locks a mutex, taking the data even if another thread panicked while holding it.
+/// Every critical section here only updates in-memory state, so a panic cannot leave the data
+/// inconsistent, and propagating PoisonError would only bring down unrelated threads.
 pub fn lock_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// 在临时 Tokio runtime 上同步执行一个 async 块。
-/// CLI 的同步入口（main / wizard）多处需要跑单个 async 函数，
-/// 统一在此 `Runtime::new()?.block_on(...)`，避免每个调用点重复建 runtime 样板。
+/// Runs an async block on a temporary Tokio runtime.
 pub fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
     let runtime = tokio::runtime::Runtime::new()?;
     let result = runtime.block_on(async {
@@ -114,7 +112,7 @@ pub fn install_signal_handlers() -> std::io::Result<()> {
     Ok(())
 }
 
-/// kill-on-drop 的子进程句柄。
+/// A child process that is killed and reaped when dropped.
 pub struct ManagedChild {
     child: Child,
     name: &'static str,
@@ -221,12 +219,12 @@ impl ManagedChild {
         self.name
     }
 
-    /// 非阻塞收割；Some = 已退出。
+    /// Non-blocking reap; `Some` once the process has exited.
     pub fn try_wait(&mut self) -> Option<ExitStatus> {
         self.child.try_wait().ok().flatten()
     }
 
-    /// 轮询等待进程退出，最多 `timeout`；Err = 超时（进程仍由 Drop 兜底 kill+wait）。
+    /// Waits up to `timeout` for the process to exit; an error means it is still running (Drop will kill it).
     pub fn wait_within(&mut self, timeout: Duration) -> Result<ExitStatus> {
         let t0 = Instant::now();
         loop {
@@ -259,16 +257,15 @@ impl Drop for ManagedChild {
     }
 }
 
-/// 后台读取子进程 stderr：避免 pipe 写满阻塞子进程；保留尾部若干行
-/// 供失败诊断；verbose(debug) 时逐行转发到 tracing。
-/// 返回的尾部缓存与会话同寿命，随时可读取。
+/// Reads a child's stderr in the background so a full pipe never blocks it, keeps the last lines
+/// for error messages, and forwards each line to debug logging.
 #[derive(Clone, Default)]
 pub struct StderrTail {
     lines: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 const STDERR_TAIL_MAX: usize = 100;
-/// wait_within 的轮询间隔：50ms 足够及时，又不至于空转 CPU
+/// Polling interval of wait_within.
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 impl StderrTail {
@@ -276,8 +273,7 @@ impl StderrTail {
         self.lines.lock().map(|v| v.join("\n")).unwrap_or_default()
     }
 
-    /// 给错误附上 stderr 尾部作为 context（尾部为空则原样返回）。
-    /// 收拢 adapter.rs 同构的「失败时附加子进程 stderr 尾部」骨架。
+    /// Adds the stderr tail to an error as context, if there is any.
     pub fn attach(&self, e: anyhow::Error, label: &str) -> anyhow::Error {
         let tail = self.tail();
         if tail.is_empty() {
@@ -299,7 +295,7 @@ impl StderrTail {
         std::thread::spawn(move || {
             let reader = std::io::BufReader::new(reader);
             for line in reader.lines().map_while(Result::ok) {
-                // tracing 的 target: 只接受常量，来源名放消息前缀
+                // tracing targets must be constants, so the source name goes into the message.
                 tracing::debug!("[{target}] {line}");
                 if let Ok(mut v) = shared.lock()
                     && !line.trim().is_empty()
@@ -315,15 +311,15 @@ impl StderrTail {
     }
 }
 
-/// 有界命令输出（stdout/stderr 经临时文件捕获，不受 pipe 缓冲与 GUI stdin 影响）。
+/// Output of a bounded command; stdout and stderr are captured through temporary files, not pipes.
 pub struct BoundedOutput {
     pub status: ExitStatus,
     pub stdout: String,
     pub stderr: String,
 }
 
-/// 短命令执行：stdin 关闭（ffmpeg 等工具在 GUI/管道 stdin 上会挂死）、
-/// 超时强制 kill（ManagedChild 兜底）、输出经临时文件捕获（防 pipe 写满再超时）。
+/// Runs a short command with stdin closed (ffmpeg can hang on an inherited stdin),
+/// kills it at the timeout, and captures output in temporary files so a full pipe cannot stall it.
 pub fn run_bounded(
     name: &'static str,
     cmd: &mut Command,
@@ -355,9 +351,9 @@ pub fn run_bounded(
     })
 }
 
-/// 轮询 `{base}/health` 直到成功；子进程中途退出立即失败（不等满超时）。
-/// `control` 非空时每轮轮询前调用：返回 Err 表示外部要求中止（暂停/取消），
-/// 立即报错返回而不等满超时；子进程由 ManagedChild 的 Drop 兜底 kill。
+/// Polls `{base}/health` until it succeeds; fails at once if the child exits.
+/// `control`, when given, runs before each poll; an error from it (cancellation) is returned at once.
+/// The child is killed when its ManagedChild is dropped.
 pub fn wait_ready(
     base: &str,
     timeout: Duration,
@@ -368,7 +364,7 @@ pub fn wait_ready(
     let url = format!("{base}/health");
     loop {
         if let Some(check) = control {
-            // 暂停/取消原样上抛：调用方要据此区分「用户中止」与「启动失败」
+            // Return cancellation unchanged so callers can tell it apart from a failed start.
             check()?;
         }
         if let Some(st) = child.try_wait() {
@@ -390,10 +386,10 @@ pub fn wait_ready(
     }
 }
 
-/// 进程级抖动序列：与纳秒异或打散，避免并发请求同步重试（不引入 rand）。
+/// Per-process jitter, mixed with the clock, so concurrent requests do not retry in lockstep.
 static JITTER_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// 第 `attempt` 次失败后的退避时长：1s、2s、4s… 指数增长 + 0~500ms 抖动。
+/// Delay after failed attempt `attempt`: 1 s, 2 s, 4 s … plus up to 500 ms of jitter.
 pub fn retry_backoff(attempt: u32) -> Duration {
     let base = 1_u64 << attempt.saturating_sub(1).min(6);
     let seq = JITTER_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -405,7 +401,7 @@ pub fn retry_backoff(attempt: u32) -> Duration {
     Duration::from_nanos(base * 1_000_000_000 + jitter_ns)
 }
 
-/// 可取消的等待：分段小睡并轮询任务控制文件，暂停/取消立即返回其错误。
+/// A sleep that checks for cancellation in small steps and returns its error at once.
 pub fn interruptible_sleep(wait: Duration) -> Result<()> {
     let deadline = Instant::now() + wait;
     loop {
@@ -418,7 +414,7 @@ pub fn interruptible_sleep(wait: Duration) -> Result<()> {
     }
 }
 
-/// 无重定向的 HTTP agent：整体超时参数化，内置 `.redirects(0)`。
+/// HTTP agent that never follows redirects, with the given overall timeout.
 ///
 /// Shared HTTP policy: callers classify responses and follow no redirects.
 pub fn http_agent(timeout: Duration) -> ureq::Agent {
@@ -428,9 +424,8 @@ pub fn http_agent(timeout: Duration) -> ureq::Agent {
         .build()
 }
 
-/// 在 PATH 上查找可执行文件。
-/// 用 `which` crate 而非手写 PATH 遍历：正确处理 Windows PATHEXT
-/// （PATHEXT 含 `.bat`/`.cmd` 等）。
+/// Finds an executable on PATH.
+/// Uses the `which` crate, which handles Windows PATHEXT (.bat, .cmd, …).
 pub fn which(cmd: &str) -> Option<PathBuf> {
     which::which(cmd).ok()
 }
@@ -468,15 +463,15 @@ pub fn lock_file(path: &Path) -> Result<FileLock> {
     Ok(FileLock { file })
 }
 
-/// 让 OS 分配一个空闲端口。
-/// 注意 TOCTOU：返回后到真正 bind 之间端口可能被抢占，
+/// Asks the operating system for a free port.
+/// Another process may take the port before the caller binds it,
 /// Readiness polling detects a failed child bind.
 pub fn free_port() -> Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
-/// 临时工作目录（chunk / worker 脚本等中间产物）：创建失败立即报错，
-/// Drop 时尽力清理整个目录。目录名带 tag 与随机后缀，避免并发实例冲突。
+/// Temporary work directory for intermediate files; creation errors are reported,
+/// and the directory is removed on drop. Its name carries a tag and a random suffix to avoid clashes.
 pub struct TempWorkDir {
     dir: tempfile::TempDir,
 }
@@ -642,7 +637,7 @@ wait
         assert!(lock_file(&path).is_ok());
     }
 
-    /// 取消任务后，模型加载（最长 300s）不得继续空等：control 返回 Err 立即中止。
+    /// A cancelled run must not keep waiting for an adapter to start.
     #[cfg(unix)]
     #[test]
     fn wait_ready_aborts_when_control_hook_fails() {
@@ -650,7 +645,7 @@ wait
         cmd.arg("30");
         let mut child = ManagedChild::spawn("sleep", &mut cmd).unwrap();
         let t0 = Instant::now();
-        // 永远不就绪的端口 + 60s 超时；control 第二轮即报错，应远早于超时返回
+        // A port that never becomes ready and a 60 s timeout; control fails on the second poll, long before.
         let calls = std::sync::atomic::AtomicUsize::new(0);
         let result = wait_ready(
             "http://127.0.0.1:9",
@@ -658,19 +653,22 @@ wait
             &mut child,
             Some(&|| {
                 if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= 1 {
-                    anyhow::bail!("测试取消 / test cancellation")
+                    anyhow::bail!("test cancellation")
                 } else {
                     Ok(())
                 }
             }),
         );
-        let err = result.expect_err("control 报错必须中止 wait_ready");
+        let err = result.expect_err("a control error stops wait_ready");
         assert_eq!(
             err.to_string(),
-            "测试取消 / test cancellation",
-            "控制错误须原样返回"
+            "test cancellation",
+            "the control error is returned unchanged"
         );
-        assert!(t0.elapsed() < Duration::from_secs(10), "取消不应等到超时");
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "cancellation does not wait for the timeout"
+        );
     }
 
     #[test]
@@ -681,7 +679,7 @@ wait
         }
     }
 
-    /// 错误路径/panic unwind 也必须 kill+wait 子进程。
+    /// Error paths and panics must also kill and reap the child.
     #[cfg(unix)]
     #[test]
     fn managed_child_drop_kills_and_reaps() {
@@ -690,8 +688,8 @@ wait
         let child = ManagedChild::spawn("sleep", &mut cmd).unwrap();
         let pid = child.id().to_string();
         drop(child);
-        // kill -0 仅探测存在性：Drop 已 kill+wait，进程应不复存在（zombie 也被收割）
+        // kill -0 only checks existence: Drop has killed and reaped the process.
         let st = Command::new("kill").args(["-0", &pid]).status().unwrap();
-        assert!(!st.success(), "pid {pid} 应已被 Drop 清理");
+        assert!(!st.success(), "pid {pid} was cleaned up by Drop");
     }
 }

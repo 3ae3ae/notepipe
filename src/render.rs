@@ -3,7 +3,7 @@ use crate::{source::MediaMeta, timeline::Section};
 use anyhow::Result;
 use std::{fmt::Write as _, path::Path};
 
-/// mm:ss 或 h:mm:ss
+/// mm:ss or h:mm:ss
 pub fn fmt_ts(sec: f64) -> String {
     let s = sec.max(0.0).floor() as u64;
     let (h, m, s) = (s / 3600, (s % 3600) / 60, s % 60);
@@ -43,8 +43,8 @@ fn ts_url_from(source: &str, template: Option<&str>, sec: f64) -> String {
     )
 }
 
-/// md 侧的最小转义策略：标题/作者等内联元信息只 strip 换行（换行会截断 ATX
-/// 标题与列表行）与行首 `#`（防伪造标题）。其余 Markdown 字符保持原样。
+/// Minimal escaping for inline metadata such as the title: remove line breaks, which would end
+/// headings and list items, and a leading `#`, which would create a heading. Other Markdown is kept.
 fn md_inline(s: &str) -> String {
     s.replace(['\n', '\r'], " ")
         .trim_start_matches('#')

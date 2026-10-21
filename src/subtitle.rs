@@ -1,6 +1,6 @@
-//! 平台字幕作为转写源：SRT/VTT 解析、sidecar 查找、语言偏好挑选。
+//! Subtitles as the transcript: SRT/VTT parsing, sidecar discovery and language preference.
 //!
-//! 与 ASR 产物统一到 `TranscriptEvent`，下游 timeline/LLM/渲染完全复用。
+//! Like speech recognition, they produce `TranscriptEvent`s for the rest of the pipeline.
 
 use crate::timeline::TranscriptEvent;
 use anyhow::{Context, Result, ensure};
@@ -127,8 +127,8 @@ pub fn read_subtitle_text(path: &Path) -> Result<String> {
     decode_text_with_bom(&bytes)
 }
 
-/// 解码 UTF-8 / UTF-16（按 BOM 判端序）文本：UTF-8 BOM 与 UTF-16 BOM 都会剥掉，
-/// 无 BOM 按 UTF-8 处理。拒绝不完整的 UTF-16 与非法编码，不做有损替换。
+/// Decodes UTF-8 or UTF-16 (byte order from the BOM) and strips the BOM;
+/// without a BOM the text is UTF-8. Invalid or incomplete input is rejected, never replaced.
 pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         ensure!(
@@ -218,10 +218,10 @@ pub fn file_track(path: PathBuf, language: Option<String>) -> SubtitleTrack {
     }
 }
 
-/// 解析 SRT / VTT 字幕为转写事件。
-/// - 时间戳兼容 `HH:MM:SS,mmm`（SRT）与 `HH:MM:SS.mmm`（VTT）及 `MM:SS.mmm`
-/// - 去除 VTT 行内标签（`<c>...</c>` 等）与常见 HTML 实体
-/// - 合并同一 cue 的多行文本；滚动字幕（YouTube/B站自动字幕常见）按相邻去重
+/// Parses SRT or VTT subtitles into transcript events.
+/// - Timestamps: `HH:MM:SS,mmm` (SRT), `HH:MM:SS.mmm` (VTT) and `MM:SS.mmm`
+/// - Inline VTT tags (`<c>...</c>` and others) and common HTML entities are removed
+/// - Lines of one cue are joined; rolling captions (common in automatic captions) are de-duplicated
 pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
     let mut out: Vec<TranscriptEvent> = vec![];
     let lines: Vec<&str> = content.lines().collect();
@@ -230,8 +230,8 @@ pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
         let line = lines[i];
         if let Some((start, end)) = parse_cue_header(line) {
             i += 1;
-            // 外部数据不信任：非有限时间戳的 cue 直接丢弃，
-            // 避免 NaN/inf 污染下游排序与二分查找
+            // Untrusted input: drop cues with non-finite times,
+            // which would break sorting and binary search later.
             if !start.is_finite() || !end.is_finite() || end <= start {
                 tracing::warn!(line, "Skipped subtitle with invalid timestamps");
                 continue;
@@ -245,7 +245,7 @@ pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
                 i += 1;
             }
             let text = text_parts.join(" ");
-            // 滚动字幕去重：相邻 cue 文本相同则只保留首个（并延长时长）
+            // Rolling captions: keep the first of adjacent identical cues and extend it.
             if !text.is_empty() {
                 match out.last_mut() {
                     Some(prev) if prev.text == text && start <= prev.end => {
@@ -269,7 +269,7 @@ pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
 
 fn parse_cue_header(line: &str) -> Option<(f64, f64)> {
     let (a, b) = line.split_once("-->")?;
-    // VTT cue header 可能带 "line:0" 等设置
+    // A VTT cue header may carry settings such as "line:0".
     let end = b.split_whitespace().next()?;
     Some((
         crate::timeline::parse_timestamp(a)?,
@@ -277,7 +277,7 @@ fn parse_cue_header(line: &str) -> Option<(f64, f64)> {
     ))
 }
 
-/// 去掉 `<...>` 标签并还原常见实体。
+/// Removes `<...>` tags and decodes common entities.
 fn clean_cue_text(line: &str) -> String {
     let mut s = String::with_capacity(line.len());
     let mut in_tag = false;
@@ -289,8 +289,7 @@ fn clean_cue_text(line: &str) -> String {
             _ => {}
         }
     }
-    // 注意顺序：&amp; 必须最后替换，否则 "&amp;lt;" 会先被还原成 "&lt;"
-    // 再被二次还原成 "<"，造成双重反转义
+    // Replace &amp; last; otherwise "&amp;lt;" would become "&lt;" and then "<".
     for (from, to) in [
         ("&nbsp;", " "),
         ("&lt;", "<"),
@@ -527,7 +526,7 @@ second cue
 
     #[test]
     fn dedupes_rolling_captions() {
-        // YouTube 自动字幕的滚动重复：相邻 cue 文本相同
+        // Rolling duplicates as in automatic captions: adjacent cues with the same text
         let srt = "\
 1
 00:00:01,000 --> 00:00:02,000
@@ -542,8 +541,11 @@ second cue
 一门人工智能分支
 ";
         let ev = parse_subtitle(srt);
-        assert_eq!(ev.len(), 2, "相邻重复应合并");
-        assert!((ev[0].end - 3.0).abs() < 1e-3, "重复 cue 延长时长");
+        assert_eq!(ev.len(), 2, "adjacent duplicates merge");
+        assert!(
+            (ev[0].end - 3.0).abs() < 1e-3,
+            "a duplicate extends the cue"
+        );
         assert_eq!(ev[1].text, "一门人工智能分支");
     }
 

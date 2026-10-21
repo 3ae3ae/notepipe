@@ -1,14 +1,14 @@
-//! 环境体检：一次性报告依赖工具、平台后端可用性、配置与模型缓存状态。
-//! 用户报 issue 时附上 `notepipe doctor` 输出即可定位大多数环境问题。
+//! `notepipe doctor`: reports tools, adapters and settings in one place.
+//! Its output explains most setup problems in bug reports.
 
 use anyhow::Result;
 use std::process::Command;
 use std::time::Duration;
 
-/// 版本首行展示的最大字符数（防止某些工具输出超长首行撑爆版面）
+/// Longest version line shown, since some tools print very long ones.
 const VERSION_LINE_MAX_CHARS: usize = 72;
 
-/// 单个工具的版本探测上限：坏掉的二进制不能让 doctor 卡住。
+/// Time limit for one tool's version check, so a broken binary cannot hang doctor.
 const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn tool_version(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Option<String> {

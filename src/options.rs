@@ -2,7 +2,7 @@
 use crate::cli::RunOpts;
 use crate::{config, llm, settings};
 
-/// 配置文件 + CLI 覆盖 -> 生效 LLM 设置。
+/// The effective AI settings: the file with command-line overrides.
 fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<llm::LlmSettings> {
     let mut settings = file.llm.clone();
     if let Some(value) = &opts.llm_base_url {
@@ -42,7 +42,7 @@ fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<ll
     Ok(settings)
 }
 
-/// 优先级：CLI 显式参数 > 配置文件 [defaults] > 内置默认。
+/// Precedence: explicit options, then the file, then built-in defaults.
 pub fn resolve(
     source: String,
     opts: &RunOpts,

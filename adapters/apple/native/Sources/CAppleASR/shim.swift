@@ -1,12 +1,12 @@
 // C ABI for the Apple transcription adapter.
-// 供 Rust 侧静态链接；仅 macOS arm64 构建。
+// Linked statically into the Rust binary; macOS arm64 only.
 
 import Foundation
 import Qwen3ASR
 import WhisperASR
 import AudioCommon
 
-/// 在同步 C ABI 里执行 async 代码（信号量 + 锁保护结果）。
+/// Runs async code behind the synchronous C ABI (a semaphore, with the result behind a lock).
 private final class SyncBox<T>: @unchecked Sendable {
     private var value: Result<T, Error>?
     private let lock = NSLock()
@@ -32,7 +32,7 @@ private func loadWav(_ path: String) throws -> [Float] {
     return AudioFileLoader.resample(samples, from: rate, to: 16000)
 }
 
-// 单线程使用（Rust 侧在同一个阻塞线程内串行调用）。
+// Used from one thread: Rust calls in sequence from a single blocking thread.
 nonisolated(unsafe) private var lastErrorCStr: UnsafeMutablePointer<CChar>?
 
 private func setErr(_ message: String) {
@@ -42,7 +42,7 @@ private func setErr(_ message: String) {
     }
 }
 
-/// 最近一次错误的可读描述（指针在下次 setErr 前有效）。
+/// The last error message; the pointer is valid until the next setErr.
 @_cdecl("notepipe_last_error")
 public func notepipeLastError() -> UnsafePointer<CChar> {
     if let p = lastErrorCStr { return UnsafePointer(p) }
@@ -56,7 +56,7 @@ private func modelProgress(_ progress: Double, _ message: String) {
     message.withCString { reportModelProgress(progress, $0) }
 }
 
-// MARK: - ASR：qwen3（CoreML 0.6B/ANE）| qwen3-1.7b（MLX/GPU）| whisper
+// MARK: - Models: qwen3-0.6b (Core ML, Neural Engine) | qwen3-1.7b (MLX, GPU) | whisper
 
 enum AsrKind {
     case qwen(CoreMLASRModel)
@@ -82,8 +82,8 @@ public func notepipeAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRaw
             }
             kind = .whisper(m)
         } else if name == "qwen3-1.7b" {
-            // MLX/GPU 路径（1.7B 无 CoreML/ANE 导出）：WER 约为 0.6B 一半、
-            // 速度约 3 倍，代价是 ~2.7GB RSS 且放弃 ANE 低功耗。
+            // MLX on the GPU (there is no Core ML export of 1.7B): about half the error rate of 0.6B
+            // and about 3x faster, at ~2.7 GB of memory and without the Neural Engine's low power.
             let m = try runSync {
                 try await Qwen3ASRModel.fromPretrained(
                     modelId: "aufklarer/Qwen3-ASR-1.7B-MLX-8bit",
@@ -98,11 +98,11 @@ public func notepipeAsrCreate(_ model: UnsafePointer<CChar>) -> UnsafeMutableRaw
             try m.warmUp()
             kind = .qwen(m)
         } else {
-            throw NSError(domain: "notepipe", code: 1, userInfo: [NSLocalizedDescriptionKey: "不支持的 Apple 模型 / Unsupported Apple model: \(name)"])
+            throw NSError(domain: "notepipe", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unsupported Apple model: \(name)"])
         }
         return Unmanaged.passRetained(AsrBox(kind)).toOpaque()
     } catch {
-        setErr("识别模型加载失败 / Speech model failed to load (\(name)): \(error)")
+        setErr("Speech model failed to load (\(name)): \(error)")
         return nil
     }
 }
@@ -133,19 +133,19 @@ public func notepipeAsrTranscribe(
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             outText.pointee = 0
-            return 1 // 1 = 无文本（非错误）
+            return 1 // 1 = no text, not an error
         }
-        let fits = trimmed.utf8CString.count <= outLen // utf8CString 含结尾 NUL
+        let fits = trimmed.utf8CString.count <= outLen // utf8CString includes the trailing NUL
         trimmed.withCString { cStr in
             _ = strncpy(outText, cStr, outLen - 1)
         }
         if !fits {
-            outText[outLen - 1] = 0 // strncpy 截断时不保证补 NUL
+            outText[outLen - 1] = 0 // strncpy does not terminate a truncated copy
             return 2 // Rust reports buffer truncation as an error.
         }
         return 0
     } catch {
-        setErr("转写失败 / Transcription failed: \(error)")
+        setErr("Transcription failed: \(error)")
         return -1
     }
 }

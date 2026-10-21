@@ -6,9 +6,9 @@ use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FrameEvent {
-    /// 帧对应的视频时间（秒）
+    /// Time of the frame in the media, in seconds.
     pub t: f64,
-    /// 相对输出目录的图片路径，如 "frames/slide_0001.jpg"
+    /// Image path relative to the work directory, for example "frames/slide_0001.jpg".
     pub image: String,
 }
 
@@ -16,9 +16,9 @@ pub struct FrameEvent {
 pub struct TranscriptEvent {
     pub start: f64,
     pub end: f64,
-    /// 展示文本（LLM 校对后的）；未校对时与 raw 相同
+    /// Displayed text; after a replacing stage it differs from `raw`.
     pub text: String,
-    /// ASR 原始文本（provenance；校对后保留）
+    /// Original text, kept for provenance once a stage replaced it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -31,26 +31,26 @@ pub struct StageText {
     pub text: String,
 }
 
-/// 一张截图 + 展示期间的语音。
+/// One screenshot and the speech while it was shown.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
     pub t: f64,
-    /// 本截图覆盖的结束时间（下一张截图起点；最后一段为媒体时长）
+    /// End of this section: the next screenshot's time, or the media duration for the last one.
     #[serde(default)]
     pub end: f64,
     pub image: String,
     pub speech: Vec<TranscriptEvent>,
 }
 
-/// 段落组织：同一截图内相邻片段间隔超过此值则分段。
+/// A pause longer than this between fragments under one screenshot starts a new paragraph.
 const PARAGRAPH_GAP_SECS: f64 = 3.5;
 /// Paragraph limit: East Asian wide characters count double; other characters count once.
 const MAX_PARAGRAPH_UNITS: usize = 840;
 
-/// 宽容的时间戳解析（字幕 cue、旧导出标题、LLM 大纲时间共用，取三者超集语义）：
-/// `HH:MM:SS` / `MM:SS` / 裸秒数，小数分隔符 `.` 或 `,`，容忍首尾空白、
-/// `[...]` 包裹（旧导出标题）与秒后缀 `s`（LLM 常见的 "120s" 输出）。
-/// 分/秒位 >= 60、负数或非有限数值一律拒绝（下游排序/二分不接受异常值）。
+/// Lenient timestamp parsing, shared by subtitle cues and model output:
+/// `HH:MM:SS`, `MM:SS` or plain seconds, with `.` or `,` as the decimal separator, surrounding whitespace,
+/// `[...]` brackets and an `s` suffix (models often write "120s").
+/// Minutes or seconds of 60 or more, negative and non-finite values are rejected, because sorting relies on them.
 pub(crate) fn parse_timestamp(value: &str) -> Option<f64> {
     let value = value.trim().trim_matches(['[', ']']).trim();
     let value = value.strip_suffix('s').unwrap_or(value);
@@ -70,10 +70,10 @@ pub(crate) fn parse_timestamp(value: &str) -> Option<f64> {
     Some(result)
 }
 
-/// 合并算法：
-/// 每条语音按中点归属「时间 ≤ 中点的最后一张截图」；首张之前的归首张。
-/// 跨截图边界的语音只在边界附近找到句读/空格时才拆分（保持图文对应）；
-/// 找不到自然断点则整段保留——宁可晚一页，也不按字符比例从词中间截断。
+/// Merging:
+/// Each speech event belongs to the last screenshot at or before its midpoint; earlier events go to the first.
+/// An event spanning a screenshot change is split only at punctuation or a space near the change;
+/// without a natural break it stays whole, since a late screenshot is better than a word cut in half.
 pub fn merge(
     frames: Vec<FrameEvent>,
     speech: Vec<TranscriptEvent>,
@@ -91,7 +91,7 @@ pub fn merge(
             speech: vec![],
         })
         .collect();
-    // 每段的结束时间 = 下一段起点；末段用媒体时长（未知时退化为自身起点）
+    // Each section ends where the next starts; the last ends at the media duration, or its own start if unknown.
     for i in 0..sections.len() {
         let next = sections.get(i + 1).map(|s| s.t).unwrap_or(f64::INFINITY);
         sections[i].end = next.min(media_end.max(sections[i].t));
@@ -102,7 +102,7 @@ pub fn merge(
             let mid = (piece.start + piece.end) / 2.0;
             let idx = match sections[..].binary_search_by(|s| s.t.total_cmp(&mid)) {
                 Ok(i) => i,
-                Err(0) => 0, // 首张截图之前
+                Err(0) => 0, // before the first screenshot
                 Err(i) => i - 1,
             };
             sections[idx].speech.push(piece);
@@ -111,11 +111,11 @@ pub fn merge(
     sections
 }
 
-/// 仅在边界附近找到句读或空格时才拆分文字。
+/// Splits text only at punctuation or a space near a boundary.
 ///
-/// 时间与字符位置没有可靠的一一映射：找不到自然断点时，宁可让整段留在
-/// 一张截图下，也不按比例从词中间截断；多边界事件只要有任一边界无法安全
-/// 切分，就完整保留，避免产生半自然的混合结果。
+/// Time does not map reliably to character positions, so without a natural break the whole event stays
+/// under one screenshot rather than being cut mid-word; an event spanning several boundaries stays whole
+/// if any of them has no safe break.
 fn split_at_natural_boundaries(event: TranscriptEvent, boundaries: &[f64]) -> Vec<TranscriptEvent> {
     let inner: Vec<f64> = boundaries
         .iter()
@@ -142,7 +142,7 @@ fn split_at_natural_boundaries(event: TranscriptEvent, boundaries: &[f64]) -> Ve
             let ideal = (chars.len() as f64 * ((window[1] - event.start) / total)).round() as usize;
             match snap_to_natural_break(&chars, ideal, char_pos + 1, chars.len()) {
                 Some(p) => p,
-                // 任一边界找不到自然断点：整段保留
+                // Some boundary has no natural break: keep the event whole.
                 None => return vec![event],
             }
         };
@@ -168,7 +168,7 @@ fn split_at_natural_boundaries(event: TranscriptEvent, boundaries: &[f64]) -> Ve
         .collect()
 }
 
-/// 在理想切点附近（±WINDOW 字符）找最近的句读或空格，切点落在标点之后。
+/// Finds the nearest punctuation or space within WINDOW characters of the ideal cut; the cut falls after it.
 fn snap_to_natural_break(chars: &[char], ideal: usize, lo: usize, hi: usize) -> Option<usize> {
     const WINDOW: i32 = 6;
     const BREAKS: &str = "。！？；：，、,.!?;: ";
@@ -186,10 +186,10 @@ fn snap_to_natural_break(chars: &[char], ideal: usize, lo: usize, hi: usize) -> 
     None
 }
 
-/// 将同一截图下连续的 ASR 片段组织为可阅读的段落。
+/// Joins consecutive transcript fragments under one screenshot into readable paragraphs.
 ///
-/// 只作用于供渲染与可选 LLM 校对使用的 Section；调用方应在此之前把细粒度
-/// ASR 事件写入 timeline.jsonl，保留原始时间线与可追溯性。
+/// Works on the sections used for rendering and AI stages; the fine-grained events are kept
+/// in the cache's timeline first.
 pub fn coalesce_sections(sections: &mut [Section]) {
     for section in sections {
         let mut paragraphs: Vec<TranscriptEvent> = Vec::new();
@@ -342,7 +342,7 @@ mod tests {
         let frames = vec![frame(0.0), frame(60.0), frame(120.0)];
         let speech = vec![sp(10.0, 20.0), sp(50.0, 70.0), sp(5.0, 8.0)];
         let s = merge(frames, speech, 120.0);
-        // sp(50,70) 文本无句读：整段保留，按中点归属 slide1（不从词中间截断）
+        // sp(50, 70) has no punctuation: it stays whole and belongs to slide 1 by its midpoint.
         assert_eq!(s[0].speech.len(), 2);
         assert_eq!(s[1].speech.len(), 1);
         assert_eq!(s[1].speech[0].text, "50-70");
@@ -362,7 +362,7 @@ mod tests {
             below: Vec::new(),
         }];
         let s = merge(frames, speech, 10.0);
-        // 边界 5s 附近有句读「，」：安全拆分，图文对应
+        // A comma near the 5 s boundary: split there so text follows the screenshot.
         assert_eq!(s[0].speech.len(), 1);
         assert_eq!(s[1].speech.len(), 1);
         assert_eq!(s[0].speech[0].text, "前半句，");
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn no_punctuation_means_keep_whole() {
-        // 无句读文本：无论多少边界，整段保留（不按比例词中截断）
+        // No punctuation: the text stays whole however many boundaries there are.
         let ev = TranscriptEvent {
             start: 0.0,
             end: 10.0,
@@ -380,10 +380,10 @@ mod tests {
             below: Vec::new(),
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[5.0]);
-        assert_eq!(parts.len(), 1, "无句读不切分");
+        assert_eq!(parts.len(), 1, "no punctuation, no split");
         assert_eq!(parts[0].text, ev.text);
 
-        // 边界太靠近端点（<0.3s）也不拆
+        // A boundary within 0.3 s of either end does not split either.
         let ev2 = TranscriptEvent {
             start: 0.0,
             end: 1.0,
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn split_snaps_to_nearest_punctuation() {
-        // 比例切点 idx=5（「很」），最近的句读是 idx=3 的「，」→ 切在其后
+        // The proportional cut is index 5; the nearest punctuation is the comma at index 3, so the cut falls after it.
         let ev = TranscriptEvent {
             start: 0.0,
             end: 10.0,
@@ -409,7 +409,7 @@ mod tests {
         assert_eq!(parts[0].text, "你好，");
         assert_eq!(parts[1].text, "世界很好。再见");
 
-        // 英文：吸附到最近的空格，不切在单词中间
+        // English: move to the nearest space instead of cutting a word.
         let ev2 = TranscriptEvent {
             start: 0.0,
             end: 10.0,
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn multi_boundary_all_or_nothing() {
-        // 两个边界：一个有句读一个没有 → 整段保留
+        // Two boundaries, only one with punctuation: keep the event whole.
         let ev = TranscriptEvent {
             start: 0.0,
             end: 30.0,
@@ -433,7 +433,11 @@ mod tests {
             below: Vec::new(),
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[10.0, 20.0]);
-        assert_eq!(parts.len(), 1, "任一边界无自然断点则整段保留：{parts:?}");
+        assert_eq!(
+            parts.len(),
+            1,
+            "kept whole when any boundary lacks a break: {parts:?}"
+        );
         assert_eq!(parts[0].text, ev.text);
     }
 
@@ -445,20 +449,20 @@ mod tests {
             image: "f.jpg".into(),
             speech: vec![
                 sp(0.0, 2.0),
-                sp(2.5, 4.0),   // 与上段间隔 0.5s：合并
-                sp(10.0, 12.0), // 间隔 6s > 3.5s：分段
-                sp(12.1, 14.0), // 合并
+                sp(2.5, 4.0),   // 0.5 s after the previous fragment: same paragraph
+                sp(10.0, 12.0), // 6 s gap > 3.5 s: new paragraph
+                sp(12.1, 14.0), // same paragraph
             ],
         }];
         let mut sections = sections;
         coalesce_sections(&mut sections);
-        assert_eq!(sections[0].speech.len(), 2, "两段");
+        assert_eq!(sections[0].speech.len(), 2, "two paragraphs");
         assert_eq!(sections[0].speech[0].text, "0-2 2.5-4");
         assert_eq!(sections[0].speech[1].text, "10-12 12.1-14");
         assert!((sections[0].speech[0].start - 0.0).abs() < 1e-9);
         assert!(
             (sections[0].speech[0].end - 4.0).abs() < 1e-9,
-            "段落时间覆盖成员区间"
+            "a paragraph spans its fragments"
         );
     }
 
@@ -656,8 +660,11 @@ mod tests {
         let frames = vec![frame(0.0), frame(60.0)];
         let s = merge(frames, vec![], 95.0);
         assert_eq!(s[0].end, 60.0);
-        assert_eq!(s[1].end, 95.0, "末段 end = 媒体时长");
-        // 时长未知（0）时退化为自身起点，不 panic 不产生负区间
+        assert_eq!(
+            s[1].end, 95.0,
+            "the last section ends at the media duration"
+        );
+        // With an unknown duration (0) it ends at its own start: no panic and no negative range.
         let s2 = merge(vec![frame(5.0)], vec![], 0.0);
         assert_eq!(s2[0].end, 5.0);
     }

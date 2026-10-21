@@ -8,22 +8,22 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-// ---------- 超参数（VAD 切分参数见 normalize_segments 附近） ----------
+// Tuning constants; segmentation constants are next to normalize_segments.
 
-/// HTTP 请求最多尝试次数（1 次首发 + 2 次重试）
+/// HTTP attempts per request: the first try plus two retries.
 const MAX_ATTEMPTS: u32 = 3;
-/// 云端 STT 单次请求超时
+/// Timeout of one transcription request.
 const API_HTTP_TIMEOUT: Duration = Duration::from_secs(120);
-/// ffmpeg 单段切音频上限（chunk 最长 max_speech 秒，处理应远快于此）
+/// Limit for cutting one segment with ffmpeg; real cuts take a fraction of this.
 const CUT_TIMEOUT: Duration = Duration::from_secs(120);
-/// 空结果熔断：VAD 已判定这些分片含语音，端点却在没有任何成功的情况下
-/// 连续返回空文本——端点实际上无法处理音频输入（配置错误/网关丢音频体），
-/// 继续只会空烧请求。单片为空仍是合法静音（见 record 处注释）。
+/// Empty-result tripwire: speech detection found speech in these segments, yet the endpoint keeps returning
+/// empty text without a single success. Such an endpoint cannot handle audio (wrong configuration, or a gateway
+/// that drops the body), and continuing would only waste requests. A single empty segment is still valid silence.
 const EMPTY_RESULT_TRIPWIRE: usize = 10;
 
-/// 空结果熔断器：缓冲空结果，出现任何非空结果即复位（端点正常，静音属实）；
-/// 空结果连续达到阈值时熔断。缓冲的空结果由调用方在确认不熔断后再落 checkpoint，
-/// 避免熔断后空记录把分片标成"已完成静音"，修好之后重跑也救不回来。
+/// Buffers empty results and resets on the first non-empty one (the endpoint works and the silence is real);
+/// trips when empty results reach the threshold. The caller records buffered empty results only once it is clear
+/// the tripwire did not fire, so a broken endpoint cannot mark segments as silence that a fixed rerun would skip.
 #[derive(Default)]
 struct EmptyTripwire {
     pending_empty: usize,
@@ -31,7 +31,7 @@ struct EmptyTripwire {
 }
 
 impl EmptyTripwire {
-    /// 记录一条结果，返回是否已熔断。
+    /// Counts one result and returns whether the tripwire fired.
     fn record(&mut self, empty: bool) -> bool {
         if empty {
             self.pending_empty += 1;
@@ -50,10 +50,10 @@ impl EmptyTripwire {
 }
 
 /// Empty results are buffered until the endpoint is known to work.
-/// 每个 chunk 结果先经 tripwire 计数，连续空结果熔断时**不落任何 checkpoint**
-/// （空记录会把分片标成「已完成静音」，掩盖真实的识别失败）；空结果先缓冲，
-/// 出现非空结果（或正常收尾）才批量落账。并行路径结果乱序到达也安全：
-/// 乱序只改变 pending 的相对顺序，批量落账全部写同一空文本，checkpoint 内容一致。
+/// Every chunk result passes the tripwire first. When it fires, **nothing is checkpointed**:
+/// empty records would mark the segments as finished silence and hide the failure. Empty results are buffered
+/// and recorded once a non-empty result arrives or the run finishes normally. Results arriving out of order are safe:
+/// order only affects the buffer, and every buffered record has the same empty text.
 #[derive(Default)]
 struct EmptyResultTracker {
     tripwire: EmptyTripwire,
@@ -61,8 +61,8 @@ struct EmptyResultTracker {
 }
 
 impl EmptyResultTracker {
-    /// 处理一个 chunk 的转写结果：非空结果落账，空结果缓冲。
-    /// Err = 需要中止（熔断触发或 checkpoint 写盘失败），错误原样上抛。
+    /// Handles one chunk result: non-empty results are recorded, empty ones buffered.
+    /// Returns an error when the run must stop (the tripwire fired or the checkpoint write failed).
     fn record_outcome(
         &mut self,
         cp: &mut crate::checkpoint::Checkpoint,
@@ -72,7 +72,7 @@ impl EmptyResultTracker {
     ) -> Result<()> {
         let empty = text.trim().is_empty();
         if self.tripwire.record(empty) {
-            // 熔断不落账（见 struct 注释）
+            // Tripped: record nothing (see the struct comment).
             return Err(self.tripwire.tripped_error());
         }
         if empty {
@@ -83,14 +83,14 @@ impl EmptyResultTracker {
         cp.record(start, end, text)
     }
 
-    /// 正常收尾：把缓冲的空结果（真实静音）落 checkpoint，避免静音 chunk 反复重跑。
-    /// 出错（含熔断）时调用方不得调用本方法——pending 必须随任务失败丢弃。
+    /// Normal completion: records the buffered empty results (real silence) so silent chunks are not redone.
+    /// Do not call after an error, including the tripwire: the buffer must be discarded with the failed run.
     fn finish(self, cp: &mut crate::checkpoint::Checkpoint) -> Result<()> {
         let mut this = self;
         this.flush_pending(cp)
     }
 
-    /// 批量落账缓冲的空结果；写盘失败即中断，剩余 pending 保留待重跑。
+    /// Records buffered empty results; stops at the first write failure and keeps the rest for a rerun.
     fn flush_pending(&mut self, cp: &mut crate::checkpoint::Checkpoint) -> Result<()> {
         for (start, end) in std::mem::take(&mut self.pending_empty) {
             cp.record(start, end, "")?;
@@ -138,7 +138,7 @@ pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent
     .await
 }
 
-/// 所有后端共用的「VAD 后没有语音」收尾：只保留截图，并记录空结果。
+/// Shared result when speech detection finds no speech: keep the screenshots and record an empty transcript.
 pub(crate) fn no_speech_events() -> Vec<TranscriptEvent> {
     tracing::warn!("No speech detected");
     Vec::new()
@@ -160,7 +160,7 @@ fn run_api(
     };
     check_control()?;
     let t0 = Instant::now();
-    // 凭据已在任务预检时解析（含环境变量）；空 key = 明确选择的无鉴权服务
+    // Credentials were resolved before the run (including environment variables); an empty key means no authentication.
     let api_key = api.api_key.trim().to_string();
     let segs = earshot_vad(wav, api, &check_control)?;
     check_control()?;
@@ -169,7 +169,7 @@ fn run_api(
         return Ok(no_speech_events());
     }
 
-    // 断点续跑：预先过滤出未完成的 chunk（worker 只拿真正需要执行的任务）
+    // Resume: give the workers only the chunks that are not done yet.
     let pending: Vec<usize> = (0..segs.len())
         .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))
         .collect();
@@ -194,8 +194,8 @@ fn run_api(
     let client = crate::runtime::http_agent(API_HTTP_TIMEOUT);
     pb.set_position((segs.len() - pending.len()) as u64);
 
-    // 有界并发（std::thread::scope + 借用，无需 Arc）：网络往返是主要瓶颈；
-    // 结果经 channel 回收后记录。abort 后 in-flight 请求自然结束，无人 join 不到。
+    // Bounded concurrency with std::thread::scope (borrowing, no Arc); network round trips dominate.
+    // Results come back over a channel. After an abort, requests in flight finish on their own and are still joined.
     let (tx, rx) = std::sync::mpsc::channel::<(usize, Result<Option<String>>)>();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let abort = std::sync::atomic::AtomicBool::new(false);
@@ -264,7 +264,7 @@ fn run_api(
                 abort.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             match r {
-                _ if err.is_some() => {} // 已熔断/已出错：丢弃迟到结果
+                _ if err.is_some() => {} // already tripped or failed: drop late results
                 Ok(text) => {
                     let text = text.as_deref().unwrap_or("");
                     if let Err(e) = tracker.record_outcome(cp, segs[i].start, segs[i].end, text) {
@@ -283,10 +283,10 @@ fn run_api(
             {
                 adapter.stop();
             }
-            // 每个回收的结果（含空结果）恰好推进一次，与串行路径一致
+            // Every collected result, empty or not, advances progress exactly once, as in the sequential path.
             pb.inc(1);
         }
-        // 正常收尾：缓冲的空结果（真实静音）落 checkpoint，避免静音 chunk 反复重跑
+        // Normal completion: record buffered empty results (real silence) so silent chunks are not redone.
         if err.is_none()
             && let Err(e) = check_control().and_then(|()| tracker.finish(cp))
         {
@@ -302,7 +302,7 @@ fn run_api(
         });
     }
     check_control()?;
-    // 事件统一来自 checkpoint（收集循环里已 record），按时间排序
+    // Events come from the checkpoint, where the loop recorded them, sorted by time.
     let events: Vec<TranscriptEvent> = cp.sorted_events();
     tracing::info!(
         n = events.len(),
@@ -312,8 +312,8 @@ fn run_api(
     Ok(events)
 }
 
-/// 有界重试：可重试错误按 [`crate::runtime::retry_backoff`] 退避（退避期间可取消），
-/// 共尝试 MAX_ATTEMPTS 次；确定性错误（鉴权/参数）直接返回。
+/// Bounded retries: retryable errors back off with [`crate::runtime::retry_backoff`] (cancellable while waiting),
+/// up to MAX_ATTEMPTS attempts; deterministic errors (authentication, bad parameters) return at once.
 fn with_retry<T>(
     check_control: &dyn Fn() -> Result<()>,
     mut attempt_once: impl FnMut() -> std::result::Result<T, crate::dispatch::Failure>,
@@ -363,10 +363,10 @@ fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_js
     })
 }
 
-/// chat 模式下让多模态 LLM 转录的指令（保持与本地 ASR 输出风格一致：忠实、带自然标点）。
+/// Instruction for audio chat models: a faithful transcript with natural punctuation, like dedicated ASR output.
 const CHAT_TRANSCRIBE_PROMPT: &str = r#"Transcribe this audio. Output only the transcript itself with natural punctuation, and no explanation, summary or formatting. If there is no speech, output an empty string."#;
 
-/// 云端转录端点：地址、凭据与请求模式（worker 间共享借用）。
+/// Transcription endpoint: address, credentials and dialect, borrowed by all workers.
 struct ApiTarget<'a> {
     client: &'a ureq::Agent,
     url: &'a str,
@@ -377,7 +377,7 @@ struct ApiTarget<'a> {
     check_control: &'a (dyn Fn() -> Result<()> + Sync),
 }
 
-/// 转写单个 chunk；Ok(None) = 无语音内容。
+/// Transcribes one chunk; `Ok(None)` means it contains no speech.
 fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<Option<String>> {
     cut_wav(wav, seg.cut_start, seg.cut_end, chunk).context("Could not split audio")?;
     (t.check_control)()?;
@@ -432,8 +432,8 @@ fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>
     Ok((format!("multipart/form-data; boundary={boundary}"), body))
 }
 
-/// chat/completions 响应的 message.content 是否携带文本：字符串形式，或
-/// 多模态分片数组 [{type:"text", text:...}] 中任一片含 text 字段。
+/// Whether a chat/completions message.content carries text: either a string, or an array of
+/// parts [{type:"text", text:...}] in which some part has a text field.
 fn chat_content_has_text(v: &serde_json::Value) -> bool {
     let content = &v["choices"][0]["message"]["content"];
     content.is_string()
@@ -442,8 +442,8 @@ fn chat_content_has_text(v: &serde_json::Value) -> bool {
             .is_some_and(|parts| parts.iter().any(|part| part["text"].is_string()))
 }
 
-/// 从 chat/completions 响应取文本：content 通常是字符串；部分多模态端点
-/// 返回 [{type:"text", text:...}] 分片数组，拼起来即可。
+/// Text of a chat/completions response: content is usually a string; some audio-capable endpoints
+/// return an array of [{type:"text", text:...}] parts, which are concatenated.
 fn parse_chat_content(v: &serde_json::Value) -> String {
     let content = &v["choices"][0]["message"]["content"];
     if let Some(s) = content.as_str() {
@@ -513,7 +513,7 @@ fn earshot_vad(
     )
 }
 
-/// 最终送入 ASR 的分段：`start/end` 是事件时间（用于时间线），`cut_*` 是切音频范围（含静音填充）。
+/// A segment sent for transcription: `start`/`end` are its timeline times, `cut_*` the audio range including padding.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Seg {
     pub start: f64,
@@ -532,7 +532,7 @@ fn read_pcm_samples(
     let file = std::fs::File::open(wav)
         .with_context(|| format!("Could not read audio: {}", wav.display()))?;
     let mut reader = BufReader::new(file);
-    // RIFF 头 + 逐 chunk 头扫描，流式定位 PCM data 块。
+    // Read the RIFF header and scan chunk headers to find the PCM data chunk.
     let mut header = [0u8; 12];
     reader
         .read_exact(&mut header)
@@ -548,11 +548,11 @@ fn read_pcm_samples(
         if &ch[0..4] == b"data" {
             break size;
         }
-        // 跳过其他 chunk（含奇数对齐字节）
+        // Skip other chunks, including the padding byte after odd sizes.
         reader.seek(std::io::SeekFrom::Current((size + (size & 1)) as i64))?;
     };
     let mut buf = vec![0u8; 128 * 1024];
-    let mut half: Option<u8> = None; // 跨 read 边界的样本低字节
+    let mut half: Option<u8> = None; // low byte of a sample split across reads
     let mut samples = 0;
     let mut emit = |sample| {
         on_sample(sample)?;
@@ -565,7 +565,7 @@ fn read_pcm_samples(
         let want = remaining.min(buf.len() as u64) as usize;
         let n = reader.read(&mut buf[..want])?;
         if n == 0 {
-            break; // data 块声明长度超出文件实际（截断文件）：按实际读到的计
+            break; // truncated file: the data chunk claims more than exists; use what was read
         }
         remaining -= n as u64;
         let mut i = 0;
@@ -584,16 +584,16 @@ fn read_pcm_samples(
     Ok(samples)
 }
 
-/// 音频逐 100ms 的 RMS 能量（用于在目标切点附近找最近的静音最低点）。
+/// RMS energy per 100 ms, used to find the quietest point near a planned cut.
 pub struct Energy {
     hop: f64,
     rms: Vec<f32>,
 }
 
 impl Energy {
-    /// 流式读取 16k 单声道 s16 wav（extract_audio 的固定产物）：
-    /// 分块读入并滑动累计每个 100ms 窗口的平方和，只保留 rms 数组——
-    /// 不把整文件和全部样本读进内存（2h 音频约 1GB）。
+    /// Streams the 16 kHz mono 16-bit WAV produced by extract_audio and keeps only the RMS values,
+    /// accumulating squares per 100 ms window, so long recordings are not loaded into memory
+    /// (two hours of audio would be about 1 GB).
     pub fn load(wav: &Path, check_control: impl FnMut() -> Result<()>) -> Result<Self> {
         let mut rms = Vec::new();
         let mut sum = 0.0f64;
@@ -608,7 +608,7 @@ impl Energy {
         Ok(Self { hop: 0.1, rms })
     }
 
-    /// [a,b]（秒）内能量最低的时刻；无数据时返回 None。
+    /// The quietest moment within [a, b] seconds, or None without data.
     fn quietest(&self, a: f64, b: f64) -> Option<f64> {
         let i0 = (a / self.hop).ceil() as usize;
         let i1 = (b / self.hop).floor() as usize;
@@ -616,7 +616,7 @@ impl Energy {
             return None;
         }
         let i1 = i1.min(self.rms.len() - 1);
-        // total_cmp：rms 来自非负能量的 sqrt，理论上无 NaN，但不赌 partial_cmp 不 panic
+        // total_cmp: RMS values cannot be NaN in theory, but this never panics.
         let (bi, _) = self.rms[i0..=i1]
             .iter()
             .enumerate()
@@ -625,7 +625,7 @@ impl Energy {
     }
 }
 
-/// 累计一个样本进当前 100ms 窗口；窗口满则写入 rms 并归零重开。
+/// Adds one sample to the current 100 ms window and closes the window when it is full.
 fn rms_accumulate(sample: i16, sum: &mut f64, n_in_hop: &mut usize, rms: &mut Vec<f32>) {
     const HOP: usize = 1600; // 100ms @16k
     *sum += (sample as f64 / 32768.0).powi(2);
@@ -637,17 +637,17 @@ fn rms_accumulate(sample: i16, sum: &mut f64, n_in_hop: &mut usize, rms: &mut Ve
     }
 }
 
-const PAD: f64 = 0.25; // 切音频时向两侧静音各延展的秒数
-const SPLIT_WINDOW: f64 = 3.0; // 在目标切点 ± 此窗口内寻找静音最低点
-const MIN_PIECE: f64 = 1.0; // 硬切产生的最短片段
-/// 切点距段起点的最小秒数：防止能量异常时切点贴到起点，产生超短 chunk 无限递归
+const PAD: f64 = 0.25; // seconds of silence added on each outer side of a cut
+const SPLIT_WINDOW: f64 = 3.0; // seconds before a planned cut searched for the quietest point
+const MIN_PIECE: f64 = 1.0; // shortest piece a forced cut may produce
+/// Minimum distance of a cut from the segment start, so odd energy curves cannot produce endless tiny pieces.
 const MIN_HARD_CUT: f64 = 0.5;
 
-/// VAD 后处理：能量感知切分 + 静音填充。
-/// - 超过 max_speech 的段在 [target-3s, target+3s] 窗口内选能量最低点切（避开词中切断）
-/// - 切音频时向两侧静音各填充 0.25s（只进静音、不进相邻语音，故无重复文本）
+/// After speech detection: split long segments at quiet points and pad with silence.
+/// - A segment longer than max_speech is cut at the quietest point in [target - 3 s, target], avoiding mid-word cuts.
+/// - Outer edges get 0.25 s of silence, never neighbouring speech, so no text is duplicated.
 ///
-/// `dur` 由调用方一次性探测传入（避免每段各 ffprobe 一次）。
+/// `dur` is probed once by the caller.
 pub fn normalize_segments(
     speech: Vec<(f64, f64)>,
     max_speech: f64,
@@ -655,14 +655,14 @@ pub fn normalize_segments(
     dur: f64,
     check_control: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<Seg>> {
-    // VAD 成功但无语音（或全被短段过滤）→ 空分段。
-    // 不把整段音频当语音兜底：静音课件会诱发 ASR 幻觉。
+    // No speech, or only fragments too short to keep: no segments.
+    // Never fall back to sending the whole file: models hallucinate on silence.
     let mut raw = speech;
     raw.retain(|(a, b)| b - a >= 0.2);
     if raw.is_empty() {
         return Ok(vec![]);
     }
-    // 能量曲线只在有超长段需要切分时才读（要流式扫描整个音频）
+    // Read the energy curve only when a segment must be split; it scans the whole file.
     let energy = if raw.iter().any(|(a, b)| b - a > max_speech) {
         let mut interrupted = false;
         let result = Energy::load(wav, || {
@@ -689,15 +689,15 @@ pub fn normalize_segments(
         split_smart(s, e, max_speech, energy.as_ref(), &mut pieces);
     }
 
-    // 填充：VAD 外边界向真实静音扩展 0.25s（限制来自相邻原始语音段，而非本段自身）；
-    // max_speech 内部切点已在能量最低点，不额外填充（避免相邻 chunk 重复文本）。
+    // Padding: outer edges extend 0.25 s into silence, limited by the neighbouring speech segments;
+    // internal cuts already sit at quiet points and get no padding, so neighbouring chunks do not repeat text.
     let segs = pieces
         .iter()
         .map(|&(s, e)| {
             let host_idx = raw
                 .iter()
                 .position(|&(rs, re)| s >= rs - 1e-6 && e <= re + 1e-6);
-            // 该 piece 是否是其所在 raw 段的第一片/最后一片（外边界才能 pad）
+            // Only the first and last piece of a detected segment have outer edges to pad.
             let (is_first_of_host, is_last_of_host) = match host_idx {
                 Some(h) => {
                     let (rs, re) = raw[h];
@@ -707,7 +707,7 @@ pub fn normalize_segments(
                 }
                 None => (true, true),
             };
-            // 前一个原始语音段的终点（跨段静音的上限）
+            // End of the previous detected segment: the limit for padding into the gap.
             let speech_lo = match host_idx {
                 Some(h) if h > 0 => raw[h - 1].1,
                 _ => 0.0,
@@ -737,15 +737,15 @@ pub fn normalize_segments(
     Ok(segs)
 }
 
-/// 递归切分：优先在静音最低点切，找不到则回退硬切。
+/// Splits recursively at the quietest point, or at a fixed length when there is none.
 fn split_smart(s: f64, e: f64, max: f64, energy: Option<&Energy>, out: &mut Vec<(f64, f64)>) {
     if e - s <= max {
         out.push((s, e));
         return;
     }
     let target = s + max;
-    // 只在 [target-3s, target] 内找静音最低点：任何 piece 都不超过 max（硬上限，
-    // ASR 后端常有上下文长度限制）
+    // Search only [target - 3 s, target], so no piece exceeds max_speech; speech services often
+    // limit input length.
     let w0 = (target - SPLIT_WINDOW).max(s + MIN_PIECE.min(max / 2.0));
     let w1 = target;
     let cut = energy
@@ -791,10 +791,13 @@ mod tests {
         for _ in 0..EMPTY_RESULT_TRIPWIRE - 1 {
             assert!(!t.record(true));
         }
-        assert!(t.record(true), "连续空结果达到阈值必须熔断");
+        assert!(
+            t.record(true),
+            "consecutive empty results trip the tripwire"
+        );
         assert!(t.tripped_error().to_string().contains("empty text"));
 
-        // 一旦出现非空结果（端点其实正常），静音属实，不再熔断
+        // After a non-empty result the endpoint works, so silence is real and the tripwire stays open.
         let mut t = EmptyTripwire::default();
         assert!(!t.record(true));
         assert!(!t.record(false));
@@ -1034,16 +1037,16 @@ mod tests {
 
     #[test]
     fn chat_content_parsing() {
-        // 字符串形式（主流 OpenAI 兼容端点）
+        // String content (most OpenAI-compatible endpoints)
         let v = serde_json::json!({"choices":[{"message":{"content":"你好世界"}}]});
         assert_eq!(parse_chat_content(&v), "你好世界");
-        // 分片数组形式（部分多模态端点）
+        // Array of parts (some audio-capable endpoints)
         let v = serde_json::json!({"choices":[{"message":{"content":[
             {"type":"text","text":"你好"},
             {"type":"text","text":"世界"}
         ]}}]});
         assert_eq!(parse_chat_content(&v), "你好世界");
-        // 缺字段/异常响应 → 空串（调用方按无语音处理）
+        // Missing or malformed content becomes empty text, treated as no speech.
         let v = serde_json::json!({"choices":[]});
         assert_eq!(parse_chat_content(&v), "");
     }

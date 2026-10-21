@@ -19,21 +19,21 @@ fn init_logging(verbose: u8, quiet: bool, json: bool) {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| default.into())
     };
     if json {
-        // NDJSON 模式：stdout 只出 {"type":"log",...} 行（其余事件由各阶段显式 emit）
+        // NDJSON mode: logs become {"type":"log",...} lines on stdout; stages emit the other events.
         use tracing_subscriber::prelude::*;
         tracing_subscriber::registry()
             .with(filter)
             .with(progress::json_log_layer())
             .init();
     } else if verbose >= 2 {
-        // 调试档：完整格式（时间 + target）
+        // Debug level: full format with time and target
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_writer(std::io::stderr)
             .with_target(true)
             .init();
     } else {
-        // 默认档：个人 CLI 时间戳是纯噪音，compact 单行
+        // Default: compact single lines without timestamps
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_writer(std::io::stderr)

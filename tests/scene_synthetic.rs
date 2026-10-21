@@ -1,9 +1,9 @@
-//! 场景检测的合成视频回归测试。
-//! 用 ffmpeg 现场生成“色块换页”视频（无需提交 fixture），验证状态机的关键行为：
-//! - 换页被检出、时间戳为候选首次出现时间（而非 cooldown 到期时间）
-//! - cooldown 期间检测不休眠：跳过的中间页、后续页真实起点仍正确
+//! Screenshot detection on synthetic video.
+//! ffmpeg generates videos of solid-color "slides" on the fly (no fixtures), and the tests check that:
+//! - slide changes are detected at the time the slide first appears, not when the cooldown ends
+//! - detection continues during the cooldown, so later slides keep their real start times
 //!
-//! 运行需要 ffmpeg；不存在时跳过。
+//! Needs ffmpeg; skipped without it.
 
 #![cfg(feature = "integration")]
 
@@ -17,9 +17,9 @@ fn have_ffmpeg() -> bool {
         .unwrap_or(false)
 }
 
-/// 生成 20s 1280x720 测试视频（黑/灰/白整屏填充，亮度差异大、SSIM 可区分；
-/// 不用 drawtext 以兼容无 freetype 的 ffmpeg 构建）：
-/// 0-6.5s 白、6.5-7.5s 黑（模拟过渡页）、7.5-14.5s 灰、14.5-20s 白。
+/// Writes a 20 s 1280x720 video of full-screen white, black and gray, which SSIM tells apart
+/// (no drawtext, so ffmpeg builds without freetype work):
+/// 0–6.5 s white, 6.5–7.5 s black (a transition), 7.5–14.5 s gray, 14.5–20 s white.
 fn make_test_video(path: &std::path::Path) {
     let fill = |color: &str, from: &str, to: &str| {
         format!("drawbox=color={color}:t=fill:enable='between(t,{from},{to})'")
@@ -120,30 +120,30 @@ fn scene_detects_slides_with_true_timestamps() {
         ],
     );
 
-    // 期望（cooldown=10s、first 模式）：
-    //   0s "A" 被发射；6.5s "B" 成为候选、7.5s 被 "C" 替换（候选持续更新，检测无盲区）；
-    //   cooldown 在 ~10s 结束时发射的是 "C" 的首次出现时间 7.5s（而非 10s）；
-    //   14.5s "D" 距上次发射 <10s，被跳过。
+    // Expected with cooldown 10 s in first mode:
+    //   "A" at 0 s is kept; "B" at 6.5 s becomes the candidate and is replaced by "C" at 7.5 s;
+    //   when the cooldown ends at ~10 s, "C" is kept with its start time 7.5 s, not 10 s;
+    //   "D" at 14.5 s is within 10 s of the last screenshot and is skipped.
     let ts: Vec<f64> = frames
         .iter()
         .map(|frame| frame["t"].as_f64().unwrap())
         .collect();
-    assert!(ts.len() >= 2, "至少应检出 2 帧，got {ts:?}");
+    assert!(ts.len() >= 2, "at least 2 screenshots, got {ts:?}");
     assert!(
         (ts[0] - 0.0).abs() < 1.0,
-        "第一帧应为 0s 附近，got {}",
+        "first screenshot ~0 s, got {}",
         ts[0]
     );
     assert!(
         (ts[1] - 7.5).abs() < 1.0,
-        "第二帧应为 C 页首次出现时间 7.5s（而非 cooldown 到期的 ~10s），got {}（全部：{ts:?}）",
+        "second screenshot at C's start 7.5 s, not the cooldown end ~10 s; got {} (all: {ts:?})",
         ts[1]
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// stable 模式：动画中间态（A→A'→A''，每步 < stable_secs）应只发射最终稳定态，
-/// 且时间线用 onset（候选首现），截帧用 capture（确认稳定时）。
+/// Stable mode: intermediate pictures shorter than stable_secs are skipped and only the settled one is kept,
+/// placed at its onset and captured once it is stable.
 #[test]
 fn stable_mode_waits_for_settled_state() {
     if !have_ffmpeg() {
@@ -153,8 +153,8 @@ fn stable_mode_waits_for_settled_state() {
     let dir = std::env::temp_dir().join(format!("notepipe-stable-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let video = dir.join("synthetic.mp4");
-    // 0-2s 白（短页，会被 min 发射间隔保留为第一帧）；2-3.5s 黑（transition，0.5s 间隔 ×3）；
-    // 3.5-10s 灰（最终稳定态）
+    // 0–2 s white (kept as the first screenshot); 2–3.5 s black (a transition, three 0.5 s samples);
+    // 3.5–10 s gray (the settled picture)
     let filter = "drawbox=color=black:t=fill:enable='between(t,2,3.5)',\
 drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
     let st = Command::new("ffmpeg")
@@ -182,12 +182,15 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
         .iter()
         .map(|frame| frame["t"].as_f64().unwrap())
         .collect();
-    // 黑页（2~3.5s，持续 1.5s > stable_secs=1.2s）是否被单独发射取决于采样相位，
-    // 非确定行为；这里只断言确定性行为：首页 ~0s 与稳定灰页 onset ~3.5s 都存在。
-    assert!(ts.len() >= 2, "stable 模式至少检出 2 页，got {ts:?}");
+    // Whether the black picture (1.5 s, longer than stable_secs 1.2 s) is kept depends on sampling phase,
+    // so only the first screenshot (~0 s) and the gray onset (~3.5 s) are asserted.
+    assert!(
+        ts.len() >= 2,
+        "at least 2 screenshots in stable mode, got {ts:?}"
+    );
     assert!((ts[0] - 0.0).abs() < 1.0, "first slide ~0s, got {}", ts[0]);
     let gray = ts.iter().find(|&&t| (t - 3.5).abs() < 1.0);
-    assert!(gray.is_some(), "灰页 onset 应为 3.5s 附近，got {ts:?}");
+    assert!(gray.is_some(), "gray onset ~3.5 s, got {ts:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

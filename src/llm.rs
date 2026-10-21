@@ -259,7 +259,7 @@ pub fn validate(settings: &LlmSettings) -> Result<()> {
     Ok(())
 }
 
-/// 校对/摘要共享的 HTTP agent：整个任务复用同一连接池（clone 共享底层池）。
+/// HTTP agent shared by all stages of a run, so they reuse one connection pool.
 /// A response that sends nothing for [`STALL_TIMEOUT`] has stalled; it is
 /// abandoned then instead of holding the task for the whole request budget.
 pub(crate) fn chat_agent() -> ureq::Agent {
@@ -276,7 +276,7 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 pub struct StageReport {
     pub attempted: usize,
     pub failed: usize,
-    /// 首个失败原因（截断），用于结果消息可见性；无失败或纯跳过时为 None
+    /// The first failure, shortened for messages; None when nothing failed.
     pub note: Option<String>,
     pub warnings: Vec<String>,
 }
@@ -361,7 +361,7 @@ pub fn paragraphs(
         },
     )?;
     pb.finish();
-    // 删除「成功校对为空串」的纯语气词条目（全部 chunk 完成后统一过滤）
+    // Remove paragraphs a replacing stage emptied, once all batches are done.
     if stage.output == Output::Replace {
         for sec in sections.iter_mut() {
             sec.speech.retain(|e| !e.text.trim().is_empty());
@@ -389,7 +389,7 @@ fn brief(msg: &str) -> String {
     s
 }
 
-/// 校对结果的 id 集恰好覆盖 0..expected（无缺失/重复/越界）。
+/// Whether the result ids are exactly 0..expected, with none missing, repeated or out of range.
 fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
     let ids: std::collections::HashSet<usize> = polished.iter().map(|(id, _)| *id).collect();
     polished.len() == expected && ids.len() == expected && (0..expected).all(|id| ids.contains(&id))
@@ -514,11 +514,11 @@ pub(crate) fn clean_trailing_commas(s: &str) -> String {
     out
 }
 
-/// 发 chat/completions 请求并返回 message.content（校对与摘要共用）。
+/// Sends a chat/completions request and returns message.content.
 /// Only responses whose content passes `validate` enter the success cache.
 ///
-/// 兼容性降级：部分 OpenAI 兼容端点不支持 `response_format: json_object`，
-/// 仅当服务明确拒绝这个字段（400/422）时去掉该字段重试一次。
+/// Some OpenAI-compatible endpoints reject `response_format: json_object`;
+/// only when the service explicitly rejects it (400/422) is the request retried once without it.
 pub(crate) fn send_chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
@@ -539,14 +539,14 @@ pub(crate) fn send_chat(
             if let Some(object) = relaxed.as_object_mut() {
                 object.remove("response_format");
             }
-            // 降级请求只试一次：原请求已按 MAX_ATTEMPTS 重试过，这里只验证兼容性
+            // Try the relaxed request once; the original was already retried MAX_ATTEMPTS times.
             let response = request_chat_once(agent, s, &relaxed, validate)?;
             crate::dispatch::cache_validated_response(&endpoint(&s.base_url), body, &response)?;
             tracing::debug!("{}", "Retry succeeded without response_format");
             response
         }
     };
-    // token 用量实时反馈：GUI 阶段行据此跳动（上传=prompt，下载=completion）。
+    // Report token usage as it accumulates (prompt and completion).
     let usage = &resp["usage"];
     if resp[crate::dispatch::CACHED] != true {
         crate::progress::note_tokens(
@@ -596,7 +596,7 @@ fn request_chat_once(
     )
 }
 
-/// 发请求：可重试错误按退避重试（退避期间可取消），总共最多 [`MAX_ATTEMPTS`] 次。
+/// Sends the request, retrying retryable errors with cancellable backoff, at most [`MAX_ATTEMPTS`] times.
 fn request_chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
@@ -700,9 +700,9 @@ mod tests {
         let polished = [(0, "今天讲编译原理".into()), (1, String::new())];
         assert!(segment_ids_match(&polished, refs.len()));
         apply_results(&mut refs, &polished, &Stage::builtin("proofread").unwrap());
-        assert_eq!(a.raw, None, "未改动的条目不记 raw");
-        assert_eq!(b.text, "", "纯语气词被置空，随后由调用方删除");
-        assert_eq!(b.raw.as_deref(), Some("啊"), "原文进 raw 溯源");
+        assert_eq!(a.raw, None, "unchanged text keeps no raw copy");
+        assert_eq!(b.text, "", "filler is emptied and removed by the caller");
+        assert_eq!(b.raw.as_deref(), Some("啊"), "the original is kept in raw");
         assert!(!segment_ids_match(&[(0, "x".into()), (1, "y".into())], 1));
         assert!(!segment_ids_match(&[], 1));
         assert!(!segment_ids_match(&[(0, "x".into()), (0, "y".into())], 2));
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn parse_pairs_tolerates_trailing_commas() {
-        // 尾逗号（推理模型常见输出）
+        // Trailing commas, common in reasoning models' output
         let got =
             parse_segments("[{\"id\":0,\"text\":\"a\",},{\"id\":1,\"text\":\"b\",},]").unwrap();
         assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
@@ -734,7 +734,7 @@ mod tests {
         s.stages[0].images = true;
         let vision = build_chat_body(&s, &s.stages[0], &items, Some("aGVsbG8=")).unwrap();
         let user: &Vec<serde_json::Value> = vision["messages"][1]["content"].as_array().unwrap();
-        assert_eq!(user.len(), 2, "带图时附 image_url 内容块");
+        assert_eq!(user.len(), 2, "an image adds an image_url part");
         assert_eq!(user[1]["type"], "image_url");
         assert_eq!(
             user[1]["image_url"]["url"].as_str().unwrap(),
@@ -747,7 +747,7 @@ mod tests {
         );
         assert!(
             sys.contains("\"segments\""),
-            "系统提示与 response_format=json_object 同为 segments 对象契约"
+            "the system prompt and response_format both ask for the segments object"
         );
     }
 
@@ -935,20 +935,20 @@ request = { temperature = 0.7, top_p = 0.8 }
 
     #[test]
     fn parse_segments_object_contract() {
-        // 契约路径：顶层对象 {"segments":[...]}
+        // The contract: a top-level {"segments":[...]} object
         let got =
             parse_segments("{\"segments\":[{\"id\":0,\"text\":\"a\"},{\"id\":1,\"text\":\"b\"}]}")
                 .unwrap();
         assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
-        // 容忍围栏 + 尾逗号
+        // Code fences and trailing commas are tolerated
         let got =
             parse_segments("```json\n{\"segments\":[{\"id\":0,\"text\":\"a\"},]}\n```").unwrap();
         assert_eq!(got, vec![(0, "a".into())]);
-        // 兼容路径：模型无视指令仍返回顶层数组
+        // Models that ignore the instruction and return a top-level array
         let got = parse_segments("[{\"id\":0,\"text\":\"a\"}]").unwrap();
         assert_eq!(got, vec![(0, "a".into())]);
         assert!(parse_segments("{\"segments\":[]}").is_none());
-        assert!(parse_segments("没有 JSON").is_none());
+        assert!(parse_segments("no JSON here").is_none());
         for content in [
             r#"{"segments":[{"id":0,"text":"a"},{"id":"oops"},{"id":2,"text":"c"}]}"#,
             r#"[{"id":0,"text":"a"},{"id":"oops"},{"id":2,"text":"c"}]"#,
@@ -979,7 +979,7 @@ request = { temperature = 0.7, top_p = 0.8 }
             parse_segments("```json\n[{\"id\":0,\"text\":\"a\"},{\"id\":1,\"text\":\"b\"}]\n```")
                 .unwrap();
         assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
-        assert!(parse_segments("没有数组").is_none());
+        assert!(parse_segments("no array here").is_none());
         assert!(parse_segments("[]").is_none());
     }
     #[test]

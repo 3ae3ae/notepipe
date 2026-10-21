@@ -3,20 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-// —— 内置默认值（唯一来源）：options.rs 的合并与 settings.rs 的展示统一引用这里 ——
-/// SSIM 画面相似度阈值（越高越敏感、截图越多）
+// Built-in defaults, defined once here for option resolution and the config template.
+/// SSIM similarity threshold; higher is more sensitive and takes more screenshots.
 pub const DEFAULT_SIMILARITY: f64 = 0.85;
-/// 画面采样间隔（秒）
+/// Seconds between sampled frames.
 pub const DEFAULT_SAMPLE_INTERVAL: f64 = 1.0;
-/// 两张截图之间的最小间隔（秒）
+/// Minimum seconds between two screenshots.
 pub const DEFAULT_COOLDOWN: f64 = 10.0;
-/// stable 模式下画面需保持不变的秒数
+/// Seconds the picture must stay unchanged in stable mode.
 pub const DEFAULT_STABLE_SECS: f64 = 0.8;
-/// 单段语音最长秒数（过长会在静音点切分）
+/// Longest speech segment in seconds; longer ones are split at quiet points.
 pub const DEFAULT_MAX_SPEECH: f32 = 20.0;
-/// 默认输出根目录
+/// Default output directory.
 pub const DEFAULT_OUT_DIR: &str = ".";
-/// 校验服务地址为完整的 HTTP(S) URL（llm base_url 与 asr 共用同一判定）。
+/// Checks that a service address is a complete http(s) URL; shared by the speech and AI settings.
 pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
     let url =
         url::Url::parse(raw.trim()).context("Invalid service URL; use a complete HTTP(S) URL.")?;
@@ -28,7 +28,7 @@ pub fn ensure_http_url(raw: &str) -> AnyhowResult<url::Url> {
 }
 
 /// Append `suffix` unless the path already ends with it — never double-append.
-/// 端点后缀策略的唯一事实源（ASR 与 LLM 共用）。
+/// The single rule for endpoint suffixes, shared by speech and AI requests.
 pub fn append_endpoint_suffix(base: &str, suffix: &str) -> String {
     let base = base.trim_end_matches('/');
     if base.ends_with(suffix) {
@@ -39,7 +39,7 @@ pub fn append_endpoint_suffix(base: &str, suffix: &str) -> String {
 }
 
 /// `path` ends with a known endpoint suffix that conflicts with the desired one.
-/// 调用方应拒绝而不是静默改路由到另一个协议（凭据可能因此发到错误端点）。
+/// Callers reject a mismatch instead of silently switching protocols, which could send credentials to the wrong endpoint.
 pub fn conflicting_endpoint_suffix(path: &str, desired: &str, known: &[&str]) -> bool {
     let path = path.trim_end_matches('/');
     !path.ends_with(desired) && known.iter().any(|k| path.ends_with(k))
@@ -63,7 +63,7 @@ pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
     Ok(append_endpoint_suffix(base, suffix))
 }
 
-/// 云端 STT API key 环境变量：`NOTEPIPE_ASR_API_KEY`。
+/// Speech API key from `NOTEPIPE_ASR_API_KEY`.
 pub fn asr_api_key_from_env() -> Option<String> {
     std::env::var("NOTEPIPE_ASR_API_KEY")
         .ok()
@@ -77,7 +77,7 @@ pub fn llm_api_key_from_env() -> Option<String> {
         .filter(|key| !key.trim().is_empty())
 }
 
-/// 截图发射模式：first（首个不同帧）| stable（等待画面稳定，适合动画课件）。
+/// When to take a screenshot: `first` at the first changed frame, `stable` once the picture settles (for animated slides).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ScreenshotMode {
@@ -105,7 +105,7 @@ impl fmt::Display for ScreenshotMode {
     }
 }
 
-/// 转写来源策略。
+/// Where the transcript comes from.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriptSource {
@@ -118,7 +118,7 @@ pub enum TranscriptSource {
     Asr,
 }
 
-/// 运行期管线配置（由 CLI 参数归一而来）。
+/// Effective settings of a run, resolved from options, the configuration and defaults.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub url: String,
@@ -132,25 +132,25 @@ pub struct PipelineConfig {
     pub similarity: f64,
     pub sample_interval: f64,
     pub cooldown: f64,
-    /// 截图发射模式：first（首个不同帧）| stable（等待画面稳定，适合动画课件）
+    /// When to take a screenshot: `first` at the first changed frame, `stable` once the picture settles.
     pub screenshot_mode: ScreenshotMode,
-    /// stable 模式下画面需保持不变的秒数
+    /// Seconds the picture must stay unchanged in stable mode.
     pub stable_secs: f64,
     pub roi: Option<Roi>,
     /// Clear this source's cache before starting.
     pub no_resume: bool,
     pub subtitle: Option<PathBuf>,
-    /// LLM 字幕校对（已合并 CLI 覆盖后的生效配置）
+    /// AI stage settings after applying command-line options.
     pub llm: crate::llm::LlmSettings,
     /// HTTP transcription settings with CLI overrides applied.
     pub asr: crate::settings::Asr,
-    /// 转写来源：字幕优先 / 强制字幕 / 强制 ASR
+    /// Transcript source: subtitles first, subtitles only, or speech recognition only.
     pub transcript_source: TranscriptSource,
     /// Root containing published note folders.
     pub out_root: PathBuf,
 }
 
-/// 感兴趣区域；坐标以百分比表示（0–100%）。
+/// Region of interest, in percent (0–100%).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Roi {
     pub x1: f64,
@@ -160,7 +160,7 @@ pub struct Roi {
 }
 
 impl Roi {
-    /// 解析 "x1,y1-x2,y2"，坐标可带 `%` 或为像素。
+    /// Parses "x1,y1-x2,y2" with percentage coordinates.
     pub fn parse(s: &str) -> anyhow::Result<Self> {
         let (a, b) = s
             .split_once('-')
@@ -175,7 +175,7 @@ impl Roi {
         Ok(Self { x1, y1, x2, y2 })
     }
 
-    /// 按帧尺寸换算为像素矩形。
+    /// Converts to a pixel rectangle for the given frame size.
     pub fn pixels(&self, w: u32, h: u32) -> (u32, u32, u32, u32) {
         let sx = |v: f64| (v * w as f64).round() as u32;
         let sy = |v: f64| (v * h as f64).round() as u32;
@@ -217,8 +217,7 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
 }
 
 impl PipelineConfig {
-    /// 全量预检：所有配置错误必须在任何昂贵操作（下载/抽帧/模型加载）之前暴露。
-    /// 返回 Err 的送进 main 后直接退出，不会碰网络与模型。
+    /// Checks all settings up front, so every configuration error appears before downloads or other expensive work.
     pub fn validate(&self) -> AnyhowResult<()> {
         crate::llm::validate(&self.llm)?;
         let finite = |name: &str, v: f64| -> AnyhowResult<()> {
@@ -264,7 +263,7 @@ impl PipelineConfig {
             self.asr.min_silence >= 0.0,
             "asr.min_silence must be non-negative."
         );
-        // 上限防御 split_smart 的 clamp panic（0 会让 clamp(min>max) abort）
+        // The lower bound keeps split_smart's clamp(min, max) valid; 0 would panic.
         anyhow::ensure!(
             self.asr.max_speech >= 1.0 && self.asr.max_speech <= 600.0,
             "--max-speech must be between 1 and 600 seconds (received {})",
@@ -298,7 +297,7 @@ impl PipelineConfig {
     }
 }
 
-/// 用户主目录：HOME，Windows 上 HOME 可能缺席时退回 USERPROFILE。
+/// The home directory: HOME, or USERPROFILE on Windows when HOME is unset.
 pub fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -306,7 +305,7 @@ pub fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// 配置目录（XDG_CONFIG_HOME / Windows %APPDATA% / ~/.config）。
+/// The configuration directory: XDG_CONFIG_HOME, %APPDATA% on Windows, otherwise ~/.config.
 pub fn config_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("XDG_CONFIG_HOME") {
         return PathBuf::from(d).join("notepipe");
@@ -340,8 +339,8 @@ pub fn cache_dir() -> PathBuf {
     }
 }
 
-/// 展开 `~` / `~/...`（仅 Unix 主目录约定；无 HOME 时原样返回）。
-/// 防止配置里的 "~/cache" 真的在当前目录创建名为 `~` 的子目录。
+/// Expands `~` and `~/...` to the home directory; returns the path unchanged without one.
+/// Otherwise "~/notes" in a config file would create a directory named `~`.
 pub fn expand_tilde(p: PathBuf) -> PathBuf {
     let Some(s) = p.to_str() else { return p };
     if s == "~" {
@@ -360,8 +359,8 @@ const MAX_COMPONENT_CHARS: usize = 80;
 // Also bound UTF-8 bytes, leaving room for collision suffixes and the backup name.
 const MAX_COMPONENT_BYTES: usize = 200;
 
-/// 统一的文件名净化原语：路径非法符与空白折叠为 `-`，裁剪首尾，超长截断。
-/// `fallback` 为净化后为空时的名字（调用方语义：untitled / summary）。
+/// Makes a safe file name: characters invalid in paths and runs of whitespace become `-`, edges are trimmed and long names truncated.
+/// `fallback` is used when nothing is left.
 pub fn sanitize_filename_with_fallback(s: &str, fallback: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
@@ -491,7 +490,7 @@ mod tests {
     #[test]
     fn validate_rejects_out_of_range() {
         let mut c = valid_cfg();
-        // max_speech=0 曾导致 split_smart 中 clamp(min>max) panic
+        // max_speech = 0 used to make split_smart panic in clamp(min > max).
         c.asr.max_speech = 0.0;
         assert!(c.validate().is_err());
         c.asr.max_speech = f32::INFINITY;
