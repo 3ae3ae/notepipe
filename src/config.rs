@@ -122,6 +122,9 @@ pub enum TranscriptSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub url: String,
+    /// Configuration selected by the CLI; '-' disables interactive setup.
+    #[serde(default)]
+    pub config_path: Option<PathBuf>,
     pub source: crate::settings::Source,
     pub out_dir: PathBuf,
     pub similarity: f64,
@@ -471,6 +474,7 @@ mod tests {
     fn valid_cfg() -> PipelineConfig {
         PipelineConfig {
             url: "https://example.test/media".into(),
+            config_path: None,
             out_dir: "out".into(),
             out_root: "out".into(),
             similarity: DEFAULT_SIMILARITY,

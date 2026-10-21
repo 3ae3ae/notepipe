@@ -42,7 +42,7 @@ pub struct Section {
 
 /// 段落组织：同一截图内相邻片段间隔超过此值则分段。
 const PARAGRAPH_GAP_SECS: f64 = 3.5;
-/// Paragraph limit in half-character units: Han/kana/Hangul count twice.
+/// Paragraph limit: East Asian wide characters count double; other characters count once.
 const MAX_PARAGRAPH_UNITS: usize = 840;
 
 /// 宽容的时间戳解析（字幕 cue、旧导出标题、LLM 大纲时间共用，取三者超集语义）：
@@ -238,50 +238,42 @@ pub fn has_readable_events(events: &[TranscriptEvent]) -> bool {
     events.iter().any(|event| !event.text.trim().is_empty())
 }
 
-fn is_hangul(c: char) -> bool {
-    matches!(c as u32,
-        0x1100..=0x11ff | 0x3130..=0x318f | 0xa960..=0xa97f
-            | 0xac00..=0xd7ff | 0xffa0..=0xffdc
-    )
-}
-
-fn is_han_or_kana(c: char) -> bool {
-    c.is_alphabetic()
+fn is_unspaced(c: char) -> bool {
+    (c.is_alphabetic()
         && matches!(c as u32,
             0x3005..=0x3007 | 0x3040..=0x30ff | 0x31f0..=0x31ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff
-                | 0xf900..=0xfaff | 0xff66..=0xff9d | 0x1aff0..=0x1afff
+                | 0xf900..=0xfaff | 0xff66..=0xff9f | 0x1aff0..=0x1afff
                 | 0x1b000..=0x1b16f | 0x20000..=0x2fa1f | 0x30000..=0x3347f
+        ))
+        // Letters, marks and numerals in the remaining unspaced scripts, excluding punctuation.
+        || matches!(c as u32,
+            0x3099..=0x309a
+                | 0x0e01..=0x0e3a | 0x0e40..=0x0e4e | 0x0e50..=0x0e59
+                | 0x0e81..=0x0ec6 | 0x0ec8..=0x0ece | 0x0ed0..=0x0edf
+                | 0x1780..=0x17d3 | 0x17d7 | 0x17dc..=0x17dd | 0x17e0..=0x17e9 | 0x17f0..=0x17f9
+                | 0x1000..=0x1049 | 0x1050..=0x109d | 0xa9e0..=0xa9fe | 0xaa60..=0xaa76 | 0xaa7a..=0xaa7f
         )
 }
 
 fn paragraph_units(text: &str) -> usize {
+    let mut utf8 = [0; 4];
     text.chars()
-        .map(|c| {
-            if is_hangul(c) || is_han_or_kana(c) {
-                2
-            } else {
-                1
-            }
-        })
+        .map(|c| dialoguer::console::measure_text_width(c.encode_utf8(&mut utf8)).max(1))
         .sum()
 }
 
 fn needs_space(paragraph: &str, next: &str) -> bool {
-    let word = |c: char| {
-        is_hangul(c)
-            || (c.is_alphanumeric()
-                && !is_han_or_kana(c)
-                && !matches!(c as u32, 0x3000..=0x303f | 0xff00..=0xffef))
-    };
-    let previous_is_word = paragraph
-        .trim_end_matches(['.', ',', '!', '?', ':', ';', ')', ']', '}', '»', '”', '"'])
-        .chars()
-        .next_back()
-        .is_some_and(word);
-    previous_is_word && next.chars().next().is_some_and(word)
+    match (paragraph.chars().next_back(), next.chars().next()) {
+        (Some(left), Some(right)) => {
+            !left.is_whitespace()
+                && !right.is_whitespace()
+                && !(is_unspaced(left) && is_unspaced(right))
+        }
+        _ => false,
+    }
 }
 
-/// Preserve word spacing, while joining Chinese, Japanese and hyphenated fragments.
+/// Default to a space unless both boundary characters use unspaced scripts.
 fn append_text(paragraph: &mut String, next: &str) {
     if needs_space(paragraph, next) {
         paragraph.push(' ');
@@ -471,9 +463,10 @@ mod tests {
             coalesce_sections(&mut sections);
             assert_eq!(sections[0].speech.len(), expected, "{long_text}");
         }
-        assert_eq!(paragraph_units("a字あカ한ᄒㄱｶ𠀀"), 17);
-        assert_eq!(paragraph_units("、・。"), 3);
+        assert_eq!(paragraph_units("a字あカ한ᄒㄱｶ𠀀"), 16);
+        assert_eq!(paragraph_units("、・。"), 6);
         assert_eq!(paragraph_units("々〇"), 4);
+        assert_eq!(paragraph_units("ｶ\u{ffa1}"), 2);
     }
 
     #[test]
@@ -523,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_boundaries_preserve_latin_sentences_without_separating_cjk_or_apostrophes() {
+    fn fragment_boundaries_default_to_spaces_except_between_unspaced_scripts() {
         for (left, right, expected) in [
             (
                 "Le risque est limité.",
@@ -536,11 +529,24 @@ mod tests {
             ("ㄱ", "ㄴ", "ㄱ ㄴ"),
             ("\u{ffa1}", "\u{ffa2}", "\u{ffa1} \u{ffa2}"),
             ("A risk?", "Yes.", "A risk? Yes."),
-            ("a word", ", next", "a word, next"),
-            ("l’", "investissement", "l’investissement"),
-            ("long-", "term", "long-term"),
-            ("风险。", "收益。", "风险。收益。"),
+            ("a word", ", next", "a word , next"),
+            ("l’", "investissement", "l’ investissement"),
+            ("long-", "term", "long- term"),
+            ("السؤال؟", "الجواب", "السؤال؟ الجواب"),
+            ("风险。", "收益。", "风险。 收益。"),
             ("字幕は", "保持する。", "字幕は保持する。"),
+            ("ภาษา", "ไทย", "ภาษาไทย"),
+            ("ພາສາ", "ລາວ", "ພາສາລາວ"),
+            ("ភាសា", "ខ្មែរ", "ភាសាខ្មែរ"),
+            ("မြန်မာ", "စာ", "မြန်မာစာ"),
+            ("ပ", "့", "ပ့"),
+            ("あ", "\u{3099}", "あ\u{3099}"),
+            ("字", "word", "字 word"),
+            ("word ", "next", "word next"),
+            ("word", "\tnext", "word\tnext"),
+            ("字\n", "字", "字\n字"),
+            ("", "right", "right"),
+            ("left", "", "left"),
         ] {
             let mut paragraph = left.to_owned();
             append_text(&mut paragraph, right);

@@ -212,8 +212,8 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             cfg.transcript_source != TranscriptSource::Subtitle,
             "No subtitles found. Select existing subtitles, or use speech recognition."
         );
-        if crate::wizard::is_first_run(&cfg.asr) {
-            cfg.asr = crate::wizard::run(&cfg.asr)?;
+        if crate::wizard::is_first_run(&cfg) {
+            cfg.asr = crate::wizard::run(&cfg)?;
         }
         cfg.validate_asr()?;
     }

@@ -3,7 +3,7 @@
 //! The only event types are `log`, `stage`, `progress`, `tokens`, `done`, `error`.
 //! - `log`: level, message
 //! - `stage`: stage, status (start/done)
-//! - `progress`: stage, current, total, optional message and phase
+//! - `progress`: stage, current, total, optional message
 //! - `tokens`: stage, prompt, completion
 //! - `done`: note_dir, markdown, json, warnings
 //! - `error`: message
@@ -82,13 +82,7 @@ fn stage_event(name: &str, status: &str) -> serde_json::Value {
     serde_json::json!({"type": "stage", "stage": name, "status": status})
 }
 
-fn progress_event(
-    stage: &str,
-    current: u64,
-    total: u64,
-    message: &str,
-    phase: &str,
-) -> serde_json::Value {
+fn progress_event(stage: &str, current: u64, total: u64, message: &str) -> serde_json::Value {
     let mut ev = serde_json::json!({
         "type": "progress",
         "stage": stage,
@@ -97,9 +91,6 @@ fn progress_event(
     });
     if !message.is_empty() {
         ev["message"] = serde_json::Value::String(message.to_string());
-    }
-    if !phase.is_empty() {
-        ev["phase"] = serde_json::Value::String(phase.to_string());
     }
     ev
 }
@@ -141,7 +132,7 @@ pub fn download_progress(current: u64, total: u64) {
     }
     *last = Some(std::time::Instant::now());
     drop(last);
-    emit(progress_event("download", current, total, "", ""));
+    emit(progress_event("download", current, total, ""));
 }
 
 /// 共享进度条样式：模板均为静态字符串，解析失败是编程错误。
@@ -159,7 +150,6 @@ pub struct Bar {
     current: AtomicU64,
     total: u64,
     message: Mutex<String>,
-    phase: Mutex<String>,
     last_emit: Mutex<std::time::Instant>,
 }
 
@@ -176,7 +166,6 @@ impl Bar {
             current: AtomicU64::new(0),
             total: len,
             message: Mutex::new(String::new()),
-            phase: Mutex::new(String::new()),
             last_emit: Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(1)),
         }
     }
@@ -216,18 +205,6 @@ impl Bar {
         }
     }
 
-    /// Structured phase and its data (json mode); the GUI words it. Human mode
-    /// shows `human` as the bar message instead.
-    pub fn set_phase(&self, phase: &str, data: &str, human: impl Into<String>) {
-        if is_json() {
-            *crate::runtime::lock_recover(&self.phase) = phase.to_string();
-            *crate::runtime::lock_recover(&self.message) = data.to_string();
-            self.emit_progress(self.current.load(Ordering::Relaxed), true);
-        } else {
-            self.bar.set_message(human.into());
-        }
-    }
-
     pub fn finish(&self) {
         if is_json() {
             self.emit_progress(self.current.load(Ordering::Relaxed), true);
@@ -246,14 +223,7 @@ impl Bar {
         }
         *last = std::time::Instant::now();
         let msg = self.message.lock().map(|m| m.clone()).unwrap_or_default();
-        let phase = self.phase.lock().map(|p| p.clone()).unwrap_or_default();
-        emit(progress_event(
-            &self.stage,
-            current,
-            self.total,
-            &msg,
-            &phase,
-        ));
+        emit(progress_event(&self.stage, current, self.total, &msg));
     }
 }
 

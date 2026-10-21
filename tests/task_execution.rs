@@ -677,7 +677,7 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
         Some(if body.get("response_format").is_some() {
             (
                 422,
-                json!({"error":{"param":"response_format","code":"unsupported_parameter","message":"private-test-key"}}),
+                json!({"detail":"response_format: format de sortie invalide private-test-key"}),
             )
         } else {
             (

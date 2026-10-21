@@ -403,10 +403,7 @@ fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>
     if t.mode == AsrMode::Chat {
         let mut prompt = CHAT_TRANSCRIBE_PROMPT.to_owned();
         if !t.language.is_empty() {
-            prompt.push_str(&format!(
-                " The speech is in {}.",
-                crate::language::english_name(t.language)
-            ));
+            prompt.push_str(&format!(" The speech is in {}.", t.language));
         }
         let mut body = serde_json::json!({
             "temperature": 0,
@@ -1267,7 +1264,7 @@ mod http_tests {
                     assert_eq!(
                         prompt,
                         if with_options {
-                            format!("{CHAT_TRANSCRIBE_PROMPT} The speech is in Korean.")
+                            format!("{CHAT_TRANSCRIBE_PROMPT} The speech is in ko.")
                         } else {
                             CHAT_TRANSCRIBE_PROMPT.into()
                         }
@@ -1294,22 +1291,16 @@ mod http_tests {
     }
 
     #[test]
-    fn chat_requests_use_language_names() {
+    fn chat_requests_pass_language_tags_through() {
         let client = ureq::agent();
-        for (code, name) in [
-            ("zh", "Chinese"),
-            ("pt", "Portuguese"),
-            ("pt-BR", "Portuguese"),
-            ("zh-Hant", "Traditional Chinese"),
-            ("xx-custom", "xx-custom"),
-        ] {
+        for language in ["zh", "pt", "pt-BR", "zh-Hant", "xx-custom", " KO_kr "] {
             let target = ApiTarget {
                 client: &client,
                 url: "",
                 model: "",
                 key: "",
                 mode: AsrMode::Chat,
-                language: code,
+                language,
 
                 check_control: &crate::runtime::check_cancelled,
             };
@@ -1319,7 +1310,7 @@ mod http_tests {
                 body["messages"][0]["content"][0]["text"]
                     .as_str()
                     .unwrap()
-                    .ends_with(&format!(" The speech is in {name}."))
+                    .ends_with(&format!(" The speech is in {language}."))
             );
         }
     }

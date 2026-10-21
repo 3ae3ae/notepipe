@@ -58,6 +58,7 @@ pub fn resolve(
         .unwrap_or_else(|| config::DEFAULT_OUT_DIR.into());
     Ok(config::PipelineConfig {
         url: source,
+        config_path: opts.config.clone(),
         source: file.source.clone(),
         // The pipeline assigns the per-source work directory before processing.
         out_dir: out_root.clone(),

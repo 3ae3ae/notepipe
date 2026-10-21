@@ -7,7 +7,6 @@ pub mod config;
 pub mod dispatch;
 pub mod doctor;
 pub mod error;
-pub mod language;
 pub mod llm;
 pub mod media;
 pub mod options;

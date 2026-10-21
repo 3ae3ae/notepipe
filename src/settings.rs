@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// `[defaults]`：命令行参数的默认值。全部可选，未设置的项回落内置默认。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -134,23 +134,35 @@ fn parse(text: &str) -> Result<ConfigFile> {
     }
 }
 
-pub fn save(cfg: &ConfigFile) -> Result<PathBuf> {
-    let p = config_path();
+pub fn save(cfg: &ConfigFile, path: Option<&Path>) -> Result<PathBuf> {
+    let p = path.map(Path::to_path_buf).unwrap_or_else(config_path);
+    anyhow::ensure!(p != Path::new("-"), "Cannot save configuration to stdin");
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    let previous = if p.is_file() {
+        Some(std::fs::read(&p)?)
+    } else {
+        None
+    };
     // 覆盖前备份旧配置（用户可能有手改内容），失败只告警不阻断
-    if p.is_file() {
-        let bak = p.with_extension("toml.bak");
-        if let Err(e) = std::fs::read(&p)
-            .map_err(anyhow::Error::from)
-            .and_then(|bytes| crate::checkpoint::atomic_write(&bak, &bytes))
-        {
+    if let Some(bytes) = &previous {
+        let mut bak = p.as_os_str().to_os_string();
+        bak.push(".bak");
+        let bak = PathBuf::from(bak);
+        if let Err(e) = crate::checkpoint::atomic_write(&bak, bytes) {
             tracing::warn!("Could not back up configuration to {}: {e}", bak.display());
         }
     }
-    let bytes = toml::to_string_pretty(cfg)?;
-    crate::checkpoint::atomic_write(&p, bytes.as_bytes())?;
+    let bytes = if previous
+        .as_ref()
+        .is_some_and(|bytes| bytes.trim_ascii_start().starts_with(b"{"))
+    {
+        serde_json::to_vec_pretty(cfg)?
+    } else {
+        toml::to_string_pretty(cfg)?.into_bytes()
+    };
+    crate::checkpoint::atomic_write(&p, &bytes)?;
     Ok(p)
 }
 

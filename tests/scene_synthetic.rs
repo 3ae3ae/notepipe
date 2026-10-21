@@ -44,6 +44,7 @@ fn make_test_video(path: &std::path::Path) {
 fn test_cfg(video: &std::path::Path, dir: &std::path::Path) -> notepipe::config::PipelineConfig {
     notepipe::config::PipelineConfig {
         url: video.display().to_string(),
+        config_path: None,
         out_dir: dir.to_path_buf(),
         out_root: dir.to_path_buf(),
         similarity: 0.9,

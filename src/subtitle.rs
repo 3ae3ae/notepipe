@@ -26,22 +26,7 @@ pub enum SubtitleKind {
 }
 
 fn normalize_language(language: &str) -> String {
-    let value = language.trim().replace('_', "-").to_ascii_lowercase();
-    // ffprobe commonly returns ISO 639-2 language codes.
-    match value.as_str() {
-        "zho" | "chi" => "zh".into(),
-        "eng" => "en".into(),
-        "fra" | "fre" => "fr".into(),
-        "deu" | "ger" => "de".into(),
-        "jpn" => "ja".into(),
-        "kor" => "ko".into(),
-        "spa" => "es".into(),
-        "por" => "pt".into(),
-        "rus" => "ru".into(),
-        "ara" => "ar".into(),
-        "ita" => "it".into(),
-        _ => value,
-    }
+    language.trim().replace('_', "-").to_ascii_lowercase()
 }
 
 /// ASR language → known original language → discovery
@@ -168,32 +153,6 @@ pub(crate) fn decode_text_with_bom(bytes: &[u8]) -> Result<String> {
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     String::from_utf8(bytes.to_vec())
         .context("The file's character encoding is unreadable; re-export as UTF-8")
-}
-
-pub fn to_srt(events: &[TranscriptEvent]) -> String {
-    fn timestamp(seconds: f64) -> String {
-        let millis = (seconds.max(0.) * 1000.).round() as u64;
-        format!(
-            "{:02}:{:02}:{:02},{:03}",
-            millis / 3_600_000,
-            millis / 60_000 % 60,
-            millis / 1000 % 60,
-            millis % 1000
-        )
-    }
-    events
-        .iter()
-        .enumerate()
-        .map(|(index, event)| {
-            format!(
-                "{}\n{} --> {}\n{}\n\n",
-                index + 1,
-                timestamp(event.start),
-                timestamp(event.end),
-                event.text
-            )
-        })
-        .collect()
 }
 
 /// All exact-name and language-qualified sidecars, retaining both SRT and VTT.
@@ -420,6 +379,20 @@ mod tests {
     }
 
     #[test]
+    fn language_matching_ignores_case_and_subtags_without_aliasing_tags() {
+        for (preferred, expected) in [("EN-us", "en"), ("eNg", "eng"), ("FOO-latn", "foo-Latn")] {
+            let mut tracks = vec![
+                track("eng", SubtitleKind::Manual),
+                track("foo-Cyrl", SubtitleKind::Manual),
+                track("en", SubtitleKind::Manual),
+                track("foo-Latn", SubtitleKind::Manual),
+            ];
+            sort_tracks(&mut tracks, preferred, None);
+            assert_eq!(tracks[0].language.as_deref(), Some(expected), "{preferred}");
+        }
+    }
+
+    #[test]
     fn script_preference_preserves_unknown_caption_kind() {
         let mut tracks = vec![
             track("zh", SubtitleKind::Automatic),
@@ -481,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn utf16_sidecars_and_standard_cache_preserve_words_and_timing() {
+    fn utf16_sidecars_preserve_words_and_timing() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("arbitrary-name.srt");
         let text = "1\n00:00:01,125 --> 00:00:02,375\nBonjour 世界\n";
@@ -492,7 +465,9 @@ mod tests {
         std::fs::write(&file, bytes).unwrap();
         let events = parse_subtitle(&read_subtitle_text(&file).unwrap());
         assert_eq!(events.len(), 1);
-        assert_eq!(events, parse_subtitle(&to_srt(&events)));
+        assert_eq!(events[0].start, 1.125);
+        assert_eq!(events[0].end, 2.375);
+        assert_eq!(events[0].text, "Bonjour 世界");
         std::fs::write(&file, [0xff, 0xff, 0xfe]).unwrap();
         assert!(read_subtitle_text(&file).is_err());
     }

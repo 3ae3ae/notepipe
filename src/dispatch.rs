@@ -49,10 +49,10 @@ struct Rejection {
     message: String,
 }
 
-fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
+fn classify_rejection(status: u16, body: &[u8]) -> Rejection {
     Rejection {
         retryable: status == 429 || (500..=599).contains(&status),
-        unsupported_response_format: rejects_response_format(status, value),
+        unsupported_response_format: rejects_response_format(status, body),
         message: rejection_message(status),
     }
 }
@@ -70,45 +70,12 @@ fn rejection_message(status: u16) -> String {
     }
 }
 
-/// A status alone is not evidence that changing the payload will help. Classify
-/// only an explicit rejection of response_format, without retaining error text.
-fn rejects_response_format(status: u16, value: Option<&Value>) -> bool {
-    if !matches!(status, 400 | 422) {
-        return false;
-    }
-    let Some(error) = value.and_then(|v| v.get("error")) else {
-        return false;
-    };
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .or_else(|| error.as_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let param = error
-        .get("param")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let code = error
-        .get("code")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let named = param == "response_format" || message.contains("response_format");
-    named
-        && (matches!(
-            code,
-            "unsupported_parameter" | "unknown_parameter" | "unrecognized_parameter"
-        ) || [
-            "not supported",
-            "unsupported",
-            "unknown parameter",
-            "unrecognized",
-            "not recognized",
-            "does not support",
-            "不支持",
-        ]
-        .iter()
-        .any(|term| message.contains(term)))
+/// Classify the named request field without retaining provider error text.
+fn rejects_response_format(status: u16, body: &[u8]) -> bool {
+    matches!(status, 400 | 422)
+        && body
+            .windows(b"response_format".len())
+            .any(|part| part.eq_ignore_ascii_case(b"response_format"))
 }
 
 pub struct HttpResponse {
@@ -212,12 +179,7 @@ pub fn json_request(
     let response = send()?;
     runtime::check_cancelled().map_err(Failure::local)?;
     if !(200..300).contains(&response.status) {
-        let rejection = classify_rejection(
-            response.status,
-            serde_json::from_slice::<Value>(&response.body)
-                .ok()
-                .as_ref(),
-        );
+        let rejection = classify_rejection(response.status, &response.body);
         return Err(Failure {
             unsupported_response_format: rejection.unsupported_response_format,
             ..Failure::with_status(
@@ -273,32 +235,23 @@ pub fn receive(
 mod tests {
     use super::*;
     #[test]
-    fn response_format_fallback_requires_explicit_provider_evidence() {
+    fn response_format_fallback_uses_only_status_and_the_named_field() {
         for status in [400, 422] {
-            assert!(rejects_response_format(
-                status,
-                Some(
-                    &serde_json::json!({"error":{"param":"response_format","code":"unsupported_parameter"}})
-                )
-            ));
-            assert!(rejects_response_format(
-                status,
-                Some(
-                    &serde_json::json!({"error":{"message":"This model does not support response_format"}})
-                )
-            ));
-            for error in [
-                serde_json::json!({"error":{"message":"Invalid request parameters"}}),
-                serde_json::json!({"error":{"param":"model","code":"unsupported_parameter"}}),
-                serde_json::json!({"error":{"param":"response_format","message":"Request quota exhausted"}}),
+            for body in [
+                r#"{"error":{"param":"response_format"}}"#,
+                r#"{"detail":"response_format: format de sortie invalide"}"#,
+                "response_format 不支持",
+                "Invalid field: RESPONSE_FORMAT",
             ] {
-                assert!(!rejects_response_format(status, Some(&error)));
+                assert!(rejects_response_format(status, body.as_bytes()), "{body}");
+            }
+            for body in ["", "Invalid request parameters", "model is unsupported"] {
+                assert!(!rejects_response_format(status, body.as_bytes()));
             }
         }
-        assert!(!rejects_response_format(
-            500,
-            Some(&serde_json::json!({"error":{"message":"response_format is unsupported"}}))
-        ));
+        for status in [200, 401, 403, 404, 429, 500] {
+            assert!(!rejects_response_format(status, b"response_format"));
+        }
     }
     fn response(status: u16, value: Value) -> HttpResponse {
         HttpResponse {
