@@ -207,7 +207,6 @@ fn adapter_command(record: &Path, behavior: &str) -> Option<Vec<String>> {
     ])
 }
 
-#[cfg(unix)]
 fn wait_for_file(child: &mut std::process::Child, path: &Path) {
     let start = std::time::Instant::now();
     while !path.is_file() {
