@@ -362,15 +362,6 @@ impl Checkpoint {
 /// 不含掉电场景下父目录的 fsync（极端掉电时目录项本身可能未落盘）。
 /// 文件仅本人可读（0600）：配置、凭据与任务记录都走这里。
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_atomically(path, bytes, false)
-}
-
-/// Like [`atomic_write`], but new notes use 0644; replacements retain stricter permissions.
-pub fn atomic_write_shared(path: &Path, bytes: &[u8]) -> Result<()> {
-    write_atomically(path, bytes, true)
-}
-
-fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -380,19 +371,6 @@ fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(bytes)
         .with_context(|| format!("Failed to write {}", path.display()))?;
-    #[cfg(unix)]
-    if shared {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = match path.metadata() {
-            Ok(metadata) => metadata.permissions().mode() & 0o644,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0o644,
-            Err(error) => return Err(error.into()),
-        };
-        tmp.as_file()
-            .set_permissions(std::fs::Permissions::from_mode(mode))?;
-    }
-    #[cfg(not(unix))]
-    let _ = shared;
     tmp.as_file().sync_all()?;
     tmp.persist(path)
         .with_context(|| format!("Failed to replace {}", path.display()))?;
@@ -442,12 +420,6 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&path), 0o600, "配置与凭据仅本人可读");
-            let note = dir.path().join("note.md");
-            atomic_write_shared(&note, b"note").unwrap();
-            assert_eq!(mode(&note), 0o644, "笔记文件可被其他程序读取");
-            std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o600)).unwrap();
-            atomic_write_shared(&note, b"updated warnings").unwrap();
-            assert_eq!(mode(&note), 0o600);
         }
     }
 

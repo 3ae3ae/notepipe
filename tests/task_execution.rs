@@ -393,6 +393,60 @@ fn broken_media_publishes_subtitles_with_matching_warnings_and_no_phantom_images
     assert!(String::from_utf8_lossy(&output.stderr).contains("Warning:"));
 }
 
+#[cfg(unix)]
+#[test]
+fn new_note_folders_and_files_follow_umask_on_replacement() {
+    use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let subtitle = video.with_extension("srt");
+    std::fs::write(
+        &subtitle,
+        "1\n00:00:00,000 --> 00:00:02,000\nSelected words.\n",
+    )
+    .unwrap();
+    let settings = root.path().join("settings.json");
+    std::fs::write(&settings, serde_json::to_vec(&config()).unwrap()).unwrap();
+    for mask in [0o022u32, 0o077u32] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
+        command
+            .arg(&video)
+            .arg("--config")
+            .arg(&settings)
+            .arg("--subtitle")
+            .arg(&subtitle)
+            .arg("--json")
+            .current_dir(root.path())
+            .env("XDG_CACHE_HOME", root.path().join("cache"));
+        unsafe {
+            command.pre_exec(move || {
+                libc::umask(mask as libc::mode_t);
+                Ok(())
+            });
+        }
+        let output = command.output().unwrap();
+        let published = done(&output);
+        let note = Path::new(published["note_dir"].as_str().unwrap());
+        for path in [
+            note.to_path_buf(),
+            note.join("images"),
+            note.join("note.md"),
+            note.join("note.json"),
+            note.join("images/0001.jpg"),
+        ] {
+            let expected = if path.is_dir() { 0o777 } else { 0o666 } & !mask;
+            assert_eq!(
+                path.metadata().unwrap().permissions().mode() & 0o777,
+                expected,
+                "{}",
+                path.display()
+            );
+        }
+    }
+}
+
 #[test]
 fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() {
     let root = tempfile::tempdir().unwrap();
@@ -686,6 +740,10 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
     let json = Path::new(previous["json"].as_str().unwrap());
     let old_note = std::fs::read(note).unwrap();
     let old_json = std::fs::read(json).unwrap();
+    let note_dir = Path::new(previous["note_dir"].as_str().unwrap());
+    let backup = note_dir.with_file_name(".speech.notepipe-previous");
+    std::fs::rename(note_dir, &backup).unwrap();
+    assert!(!note_dir.exists());
     cfg.asr.command = command;
     cfg.asr.concurrency = 1;
     cfg.asr.max_speech = 1.;
@@ -695,6 +753,10 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
     assert_eq!(events(&failed).last().unwrap()["type"], "error");
     assert_eq!(std::fs::read(note).unwrap(), old_note);
     assert_eq!(std::fs::read(json).unwrap(), old_json);
+    assert!(
+        !backup.exists(),
+        "the interrupted note must be restored before ASR fails"
+    );
     let cache = files(&root.path().join("cache/notepipe/work"));
     let checkpoint = cache
         .iter()

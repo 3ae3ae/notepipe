@@ -174,6 +174,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             }
         }
     };
+    let publication = artifact::Publication::prepare(&cfg.out_root, &meta)?;
     if meta.duration <= 0. && work.join("meta.json").is_file() {
         let saved: MediaMeta = serde_json::from_slice(&std::fs::read(work.join("meta.json"))?)?;
         if saved.source == cfg.url && saved.duration.is_finite() && saved.duration > 0. {
@@ -366,32 +367,22 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     }
     runtime::check_cancelled()?;
     progress::stage("render", "start");
+    if let Some(path) = source_media {
+        remove_file(&path, &mut warnings);
+    }
+    remove_file(&audio, &mut warnings);
     let document = Document {
         schema: 1,
         meta,
         sections,
         top,
-        warnings: warnings.clone(),
+        warnings,
     };
-    let (root, cache, frames) = (cfg.out_root.clone(), cache_root, frames_root);
-    let (note_dir, mut document) =
-        tokio::task::spawn_blocking(move || artifact::publish(&root, &cache, &frames, &document))
+    let (note_dir, warnings) =
+        tokio::task::spawn_blocking(move || publication.publish(&frames_root, document))
             .await
             .context("Note publication interrupted")??;
     progress::stage("render", "done");
-    if let Some(path) = source_media {
-        remove_file(&path, &mut warnings);
-    }
-    remove_file(&audio, &mut warnings);
-    if document.warnings != warnings {
-        document.warnings = warnings.clone();
-        if let Err(error) = checkpoint::atomic_write_shared(
-            &note_dir.join("note.json"),
-            &serde_json::to_vec_pretty(&document)?,
-        ) {
-            eprintln!("Warning: Could not save cleanup warnings in note.json: {error:#}");
-        }
-    }
     for warning in &warnings {
         eprintln!("Warning: {warning}");
     }
