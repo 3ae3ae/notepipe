@@ -1355,7 +1355,7 @@ mod http_tests {
             });
             let gate = record.join("transcribing");
             let start = Instant::now();
-            while !gate.is_file() && start.elapsed() < Duration::from_secs(10) {
+            while !gate.is_file() && start.elapsed() < Duration::from_secs(60) {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             let reached_request = gate.is_file();

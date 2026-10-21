@@ -45,8 +45,9 @@ if args.behavior == 'orphan':
     deadline.start()
 if args.behavior == 'stubborn':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    code = "import signal,time; from pathlib import Path; signal.signal(signal.SIGTERM, lambda *_: (Path(%r).write_text('SIGTERM'), exit(0))); Path(%r).write_text('ready'); time.sleep(30)" % (str(args.record / 'child-terminated'), str(args.record / 'child-ready'))
-    subprocess.Popen([sys.executable, '-c', code])
+    code = "import time; from pathlib import Path; Path(%r).write_text('ready'); time.sleep(30)" % str(args.record / 'child-ready')
+    child = subprocess.Popen([sys.executable, '-c', code])
+    (args.record / 'child-pid').write_text(str(child.pid))
     while not (args.record / 'child-ready').exists():
         time.sleep(0.01)
 

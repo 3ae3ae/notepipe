@@ -191,11 +191,24 @@ mod tests {
         };
         let adapter = Adapter::start_with_control(&argv, &crate::runtime::check_cancelled).unwrap();
         let pid = adapter.child.id();
+        let child: i32 = std::fs::read_to_string(dir.path().join("child-pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
         let start = Instant::now();
         drop(adapter);
         assert!(start.elapsed() < Duration::from_secs(4));
-        assert!(dir.path().join("child-terminated").is_file());
         assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+        // The killed child is reaped by init, which may take a moment on a busy machine.
+        let start = Instant::now();
+        while unsafe { libc::kill(child, 0) } == 0 && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            unsafe { libc::kill(child, 0) },
+            -1,
+            "adapter child survived"
+        );
     }
 
     #[cfg(windows)]
