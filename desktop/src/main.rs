@@ -155,6 +155,9 @@ struct ConversionOptions {
     summarize: bool,
     #[serde(default)]
     vision: bool,
+    /// Bilingual notes: target language code, or None for no translation.
+    #[serde(default)]
+    translate: Option<String>,
     keep_video: bool,
     formats: [bool; 3],
 }
@@ -184,6 +187,7 @@ impl ConversionOptions {
             llm,
             summarize: config.llm.summarize,
             vision: config.llm.vision,
+            translate: config.llm.translate.clone(),
             keep_video,
             formats,
         }
