@@ -31,6 +31,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # The tests start Python fixture adapters; a set-up interpreter starts quickly on every runner.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install ffmpeg (ubuntu)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg

@@ -210,7 +210,7 @@ fn adapter_command(record: &Path, behavior: &str) -> Option<Vec<String>> {
 fn wait_for_file(child: &mut std::process::Child, path: &Path) {
     let start = std::time::Instant::now();
     while !path.is_file() {
-        if start.elapsed() >= std::time::Duration::from_secs(15)
+        if start.elapsed() >= std::time::Duration::from_secs(60)
             || child.try_wait().unwrap().is_some()
         {
             let _ = child.kill();
@@ -575,6 +575,8 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
             "{:?}",
             events(&output)
         );
+        // Windows ends the adapter's job object instead of sending SIGTERM, so no handler runs there.
+        #[cfg(unix)]
         assert!(record.join("terminated").is_file());
         assert_eq!(
             std::fs::read_to_string(record.join("authorization")).unwrap(),
