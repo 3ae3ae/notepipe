@@ -46,6 +46,39 @@ fn init_logging(verbose: u8, quiet: bool, json: bool) {
 }
 
 fn main() -> std::process::ExitCode {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let code = runtime.block_on(async {
+        if let Err(error) = notepipe::runtime::install_signal_handlers() {
+            eprintln!("Error: {error}");
+            return std::process::ExitCode::FAILURE;
+        }
+        // Keep signal handling responsive while stdin, prompts, or HTTP workers block.
+        let mut work = tokio::task::spawn_blocking(main_inner);
+        tokio::select! {
+            result = &mut work => result.unwrap_or(std::process::ExitCode::FAILURE),
+            _ = notepipe::runtime::watch_cancelled() => {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), work).await;
+                std::process::ExitCode::from(130)
+            }
+        }
+    });
+    if notepipe::runtime::is_cancelled() {
+        runtime.shutdown_timeout(std::time::Duration::from_millis(100));
+        return std::process::ExitCode::from(130);
+    }
+    code
+}
+
+fn main_inner() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
     // 近似扫描（先于 clap 解析，解析失败也要走对输出模式）：把值恰为 "--json"/
     // "run-task" 的其他参数值（如 --llm-prompt "--json"）误判为 NDJSON 是可接受的
@@ -94,7 +127,6 @@ fn main() -> std::process::ExitCode {
 fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
     match cli.command {
         Some(Command::RunTask) => {
-            notepipe::dispatch::watch_parent();
             let request = notepipe::execution::Request::read(std::io::stdin().lock())?;
             Ok(notepipe::runtime::block_on(notepipe::execution::run(
                 request,
@@ -261,7 +293,7 @@ fn summarize_note(
         &serde_json::json!({"source_id":base.source_id,"task_id":task_id,"settings":settings,"base_version":base.version_id}),
     )?;
     let _lock = notepipe::runtime::lock_file(&work.join(".task.lock"))?;
-    let _dispatch = notepipe::dispatch::install(&work, None, &Default::default())?;
+    let _dispatch = notepipe::dispatch::install(&work)?;
     let target = artifact::Target {
         task_id: task_id.clone(),
         note_id: base.note_id.clone(),

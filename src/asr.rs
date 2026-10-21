@@ -168,7 +168,7 @@ fn run_api(
             !cancelled.load(std::sync::atomic::Ordering::Relaxed),
             "Transcription cancelled."
         );
-        crate::dispatch::check_control()
+        crate::runtime::check_cancelled()
     };
     check_control()?;
     let t0 = Instant::now();
@@ -205,9 +205,6 @@ fn run_api(
 
     let client = crate::runtime::http_agent(API_HTTP_TIMEOUT);
     pb.set_position((segs.len() - pending.len()) as u64);
-    crate::progress::emit(
-        serde_json::json!({"type":"workers", "stage":"transcribe", "workers": api.concurrency.clamp(1, 16).min(pending.len())}),
-    );
 
     // 有界并发（std::thread::scope + 借用，无需 Arc）：网络往返是主要瓶颈；
     // 结果经 channel 回收后记录。abort 后 in-flight 请求自然结束，无人 join 不到。
@@ -225,7 +222,7 @@ fn run_api(
                 key: &api_key,
                 mode: api.mode,
                 language: &api.language,
-                managed: adapter.is_some(),
+
                 check_control: &check_control,
             };
             let (tmp_dir, wav) = (tmp.path(), wav);
@@ -348,46 +345,20 @@ fn with_retry<T>(
     }
 }
 
-/// 云端识别：每次发送前先落请求账本（结果不确定时绝不自动重发）。
-/// 响应在账本里按模式校验，取值时不必再检查一遍。
-fn post_cloud(
-    t: &ApiTarget,
-    seg: Seg,
-    content_type: &str,
-    body: &[u8],
-    identity: &serde_json::Value,
-) -> Result<serde_json::Value> {
-    let description = format!(
-        "Transcribe video audio {}–{}",
-        crate::render::fmt_ts(seg.start),
-        crate::render::fmt_ts(seg.end)
-    );
+/// Send a chunk with bounded retries; only its transcription checkpoint is persisted.
+fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_json::Value> {
     with_retry(t.check_control, || {
-        let send = || {
-            let request = t.client.post(t.url).set("Content-Type", content_type);
-            let request = if t.key.is_empty() {
-                request
-            } else {
-                request.set("Authorization", &format!("Bearer {}", t.key))
-            };
-            (t.check_control)().map_err(|error| crate::dispatch::NetworkFailure {
-                message: format!("{error:#}"),
-                definitely_unsent: true,
-            })?;
-            crate::dispatch::receive(request.send_bytes(body))
-        };
-        crate::dispatch::json_request_described(
-            "asr",
-            "transcription",
-            &description,
-            t.url,
-            identity,
-            if t.managed {
-                crate::dispatch::Resend::Free
-            } else {
-                crate::dispatch::Resend::AskUser
+        crate::dispatch::json_request(
+            || {
+                let request = t.client.post(t.url).set("Content-Type", content_type);
+                let request = if t.key.is_empty() {
+                    request
+                } else {
+                    request.set("Authorization", &format!("Bearer {}", t.key))
+                };
+                (t.check_control)().map_err(crate::dispatch::Failure::local)?;
+                crate::dispatch::receive(request.send_bytes(body))
             },
-            send,
             |value| {
                 anyhow::ensure!(
                     value.get("error").is_none_or(serde_json::Value::is_null),
@@ -415,7 +386,6 @@ struct ApiTarget<'a> {
     key: &'a str,
     mode: crate::settings::AsrMode,
     language: &'a str,
-    managed: bool,
     check_control: &'a (dyn Fn() -> Result<()> + Sync),
 }
 
@@ -425,9 +395,8 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
     (t.check_control)()?;
     let bytes = std::fs::read(chunk)
         .with_context(|| format!("Reading audio segment: {}", chunk.display()))?;
-    let identity = serde_json::json!({"model":t.model,"mode":t.mode,"language":t.language,"audio_sha256":crate::execution::digest(&bytes),"segment_start":seg.start,"segment_end":seg.end,"cut_start":seg.cut_start,"cut_end":seg.cut_end});
     let (content_type, body) = transcription_request(t, &bytes)?;
-    let result = post_cloud(t, seg, &content_type, &body, &identity);
+    let result = post_cloud(t, &content_type, &body);
     let _ = std::fs::remove_file(chunk);
     let value = result?;
     let text = match t.mode {
@@ -861,8 +830,7 @@ mod tests {
                 key: "",
                 mode: crate::settings::AsrMode::Transcriptions,
                 language: "",
-                managed: false,
-                check_control: &crate::dispatch::check_control,
+                check_control: &crate::runtime::check_cancelled,
             },
             audio,
         )
@@ -1143,22 +1111,9 @@ mod http_tests {
             key: "",
             mode: AsrMode::Transcriptions,
             language: "",
-            managed: false,
             check_control: &check,
         };
-        let error = post_cloud(
-            &target,
-            Seg {
-                start: 0.0,
-                end: 1.0,
-                cut_start: 0.0,
-                cut_end: 1.0,
-            },
-            "application/json",
-            b"{}",
-            &serde_json::json!({}),
-        )
-        .unwrap_err();
+        let error = post_cloud(&target, "application/json", b"{}").unwrap_err();
         assert!(error.to_string().contains("test send cancellation"));
         assert_eq!(
             listener.accept().unwrap_err().kind(),
@@ -1173,15 +1128,8 @@ mod http_tests {
         if crate::runtime::which("ffmpeg").is_none() {
             return;
         }
-        for intent in [
-            None,
-            Some(crate::dispatch::Intent::Pause),
-            Some(crate::dispatch::Intent::Cancel),
-        ] {
+        {
             let dir = tempfile::tempdir().unwrap();
-            let control = dir.path().join("control.json");
-            let _ledger =
-                crate::dispatch::install(dir.path(), Some(&control), &Default::default()).unwrap();
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
             let api = Asr {
@@ -1225,12 +1173,7 @@ mod http_tests {
                             }
                         }
                         requests += 1;
-                        if let Some(intent) = intent {
-                            let value = crate::dispatch::Control { intent, ..Default::default() };
-                            crate::checkpoint::atomic_write(&control, &serde_json::to_vec(&value).unwrap()).unwrap();
-                        } else {
-                            cancelled.store(true, Ordering::Relaxed);
-                        }
+                        cancelled.store(true, Ordering::Relaxed);
                         let body = r#"{"text":"Recognized."}"#;
                         write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
                     }
@@ -1246,9 +1189,9 @@ mod http_tests {
                     &cancelled,
                 );
                 done.store(true, Ordering::Relaxed);
-                assert!(result.is_err(), "{intent:?}");
-                assert_eq!(server.join().unwrap(), 1, "{intent:?}");
-                assert!(cp.sorted_events().is_empty(), "{intent:?}");
+                assert!(result.is_err());
+                assert_eq!(server.join().unwrap(), 1);
+                assert!(cp.sorted_events().is_empty());
             });
         }
     }
@@ -1317,8 +1260,7 @@ mod http_tests {
                     key: if with_options { "test-key" } else { "" },
                     mode,
                     language: if with_options { "ko" } else { "" },
-                    managed: false,
-                    check_control: &crate::dispatch::check_control,
+                    check_control: &crate::runtime::check_cancelled,
                 };
                 let dir = tempfile::tempdir().unwrap();
                 let text = transcribe_api(
@@ -1394,8 +1336,8 @@ mod http_tests {
                 key: "",
                 mode: AsrMode::Chat,
                 language: code,
-                managed: false,
-                check_control: &crate::dispatch::check_control,
+
+                check_control: &crate::runtime::check_cancelled,
             };
             let (_, body) = transcription_request(&target, b"audio").unwrap();
             let body: serde_json::Value = serde_json::from_slice(&body).unwrap();

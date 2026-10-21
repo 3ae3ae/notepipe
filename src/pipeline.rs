@@ -140,7 +140,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         cfg.llm.api_key = key;
     }
     cfg.resume = true;
-    let _dispatch = crate::dispatch::install(&cfg.out_dir, None, &Default::default())?;
+    let _dispatch = crate::dispatch::install(&cfg.out_dir)?;
     std::fs::create_dir_all(&cfg.out_dir)?;
     let _lock = crate::runtime::lock_file(&cfg.out_dir.join(".task.lock"))?;
     execution::bind_work_dir(&cfg.out_dir, &binding)?;
@@ -211,19 +211,9 @@ async fn run_task_inner(
     if let execution::Operation::Reprocess {
         base_version_dir,
         components,
-        prior_work_dir,
     } = &request.operation
     {
-        return reprocess(
-            request,
-            cfg,
-            target,
-            base_version_dir,
-            components,
-            prior_work_dir.as_deref(),
-            started,
-        )
-        .await;
+        return reprocess(request, cfg, target, base_version_dir, components, started).await;
     }
     let subtitle = if let Some(events) = &request.subtitle_events {
         Some(events.clone())
@@ -274,10 +264,9 @@ async fn reprocess(
     target: &Target,
     base_dir: &Path,
     components: &[execution::Component],
-    prior_work: Option<&Path>,
     started: Instant,
 ) -> Result<()> {
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     let base_dir_owned = base_dir.to_path_buf();
     let base = blocking(move || {
         let base = artifact::read_manifest(&base_dir_owned.join("manifest.json"))?;
@@ -325,50 +314,6 @@ async fn reprocess(
     if has(Component::Proofreading) || has(Component::Summary) {
         crate::llm::validate(&cfg.llm)?;
     }
-    if let Some(prior) = prior_work {
-        let identity: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prior.join("task-identity.json"))?)?;
-        anyhow::ensure!(
-            identity["source_id"].as_str() == Some(request.source_id.as_str()),
-            "Prior work belongs to another source"
-        );
-        anyhow::ensure!(
-            identity["task_id"]
-                .as_str()
-                .is_none_or(|id| id == base.task_id),
-            "Prior work belongs to another task"
-        );
-        let ledger_dir = cfg.out_dir.join("requests");
-        std::fs::create_dir_all(&ledger_dir)?;
-        for mut receipt in crate::dispatch::receipts(prior)? {
-            let needed = Component::parse(&receipt.purpose).is_some_and(|c| {
-                matches!(c, Component::Proofreading | Component::Summary) && has(c)
-            });
-            let matching_service = request.service_versions.get("llm").map_or(
-                receipt
-                    .service_version
-                    .starts_with(crate::dispatch::SNAPSHOT_PREFIX),
-                |version| version == &receipt.service_version,
-            );
-            if needed && matching_service && execution::valid_id(&receipt.stable_id) {
-                let destination = ledger_dir.join(format!("{}.json", receipt.stable_id));
-                if !destination.exists() {
-                    // This new task explicitly requests another attempt at selected
-                    // failed components. Persist authorization only while importing;
-                    // restarting this task must never refresh a consumed authorization.
-                    receipt.retry_authorized = matches!(
-                        receipt.state,
-                        crate::dispatch::State::Failed | crate::dispatch::State::Rejected
-                    )
-                    .then(|| receipt.request_id.clone());
-                    crate::checkpoint::atomic_write(
-                        &destination,
-                        &serde_json::to_vec_pretty(&receipt)?,
-                    )?;
-                }
-            }
-        }
-    }
     // Copy verified base images into a separate namespace; a failed new screenshot pass
     // cannot mix old and new frames or mutate the old version through shared hard links.
     for section in &mut document.sections {
@@ -390,7 +335,7 @@ async fn reprocess(
     outcomes.exports.clear();
     document.meta.title = request.title.clone();
     if has(Component::Screenshots) {
-        crate::dispatch::check_control()?;
+        crate::runtime::check_cancelled()?;
         crate::error::require_cmd("ffmpeg")?;
         crate::error::require_cmd("ffprobe")?;
         let media_path = if Path::new(&request.source).is_file() {
@@ -422,7 +367,7 @@ async fn reprocess(
     }
     if has(Component::Proofreading) {
         progress::stage("llm", "start");
-        crate::dispatch::check_control()?;
+        crate::runtime::check_cancelled()?;
         // The original complete transcript is an immutable version asset. Rebuild the
         // original batches (including entries an earlier successful polish removed).
         if base_dir.join("timeline.jsonl").is_file() {
@@ -478,7 +423,7 @@ async fn reprocess(
         document.summary =
             summarize_step(cfg, &document.sections, &document.meta, &mut outcomes).await?;
     }
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     let formats = if has(Component::Exports) {
         cfg.formats.as_slice()
     } else {
@@ -675,7 +620,7 @@ async fn run_prepared(
     input: SubtitleInput,
     started: Instant,
 ) -> Result<()> {
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     let published_target = target.clone();
     if let Some(manifest) = blocking(move || artifact::published(&published_target)).await? {
         // Also finish a publication interrupted between the directory and pointer commits.
@@ -705,7 +650,7 @@ async fn run_prepared(
     crate::error::require_cmd("ffmpeg")?;
     crate::error::require_cmd("ffprobe")?;
     meta.save(&cfg.meta_path())?;
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     let mut outcomes = Outcomes::default();
     // 两路并行但都受 watch_control 打断：取消时任一路不再等到自身阶段边界才停；
     // 被 dropped 的分支由 kill_on_drop 清理其子进程
@@ -713,7 +658,7 @@ async fn run_prepared(
         async {
             tokio::select! {
                 r = cached_frames(cfg, media_path) => r,
-                e = crate::dispatch::watch_control() => Err(e),
+                e = crate::runtime::watch_cancelled() => Err(e),
             }
         },
         async {
@@ -737,7 +682,7 @@ async fn run_prepared(
                             save_file_digest_async(audio.clone(), marker).await?;
                         }
                         progress::stage("audio", "done");
-                        crate::dispatch::check_control()?;
+                        crate::runtime::check_cancelled()?;
                         progress::stage("transcribe", "start");
                         let events = asr::run(cfg, &audio).await?;
                         progress::stage("transcribe", "done");
@@ -758,7 +703,7 @@ async fn run_prepared(
             };
             tokio::select! {
                 r = transcript_work => r,
-                e = crate::dispatch::watch_control() => Err(e),
+                e = crate::runtime::watch_cancelled() => Err(e),
             }
         }
     );
@@ -829,7 +774,7 @@ async fn run_prepared(
             summary: None,
         })?,
     )?;
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     if cfg.llm.enabled {
         progress::stage("llm", "start");
         let (polished, report) = polish_with_rollback(sections, cfg).await?;
@@ -837,17 +782,17 @@ async fn run_prepared(
         outcomes.proofreading = Outcome::from_report(&report);
         progress::stage("llm", "done");
     }
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     if let Some(target) = cfg.llm.translation_target() {
         sections = translate_step(sections, cfg, target, &mut outcomes).await?;
     }
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     let summary = if cfg.llm.summarize {
         summarize_step(cfg, &sections, meta, &mut outcomes).await?
     } else {
         None
     };
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     progress::stage("render", "start");
     let manifest = artifact::publish(
         target,
@@ -914,7 +859,7 @@ async fn cached_frames(cfg: &PipelineConfig, media: &Path) -> Result<Vec<timelin
             }
         }
     }
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     let frames = scene::run(cfg, media).await?;
     let files = {
         let (out_dir, images) = (
@@ -1142,7 +1087,7 @@ async fn summarize_step(
     meta: &VideoMeta,
     outcomes: &mut Outcomes,
 ) -> Result<Option<crate::summarize::Summary>> {
-    crate::dispatch::check_control()?;
+    crate::runtime::check_cancelled()?;
     progress::stage("summary", "start");
     let speech = all_speech(sections);
     match crate::summarize::summarize(&cfg.llm, &speech, meta).await {

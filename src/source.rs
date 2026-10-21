@@ -241,7 +241,7 @@ fn resolve_blocking(
                 !cancelled.load(Ordering::Relaxed),
                 "Source adapter cancelled"
             );
-            crate::dispatch::check_control()?;
+            crate::runtime::check_cancelled()?;
             match receiver.recv_timeout(Duration::from_millis(50)) {
                 Ok(line) => {
                     let value: serde_json::Value =

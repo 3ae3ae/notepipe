@@ -66,7 +66,7 @@ impl Default for LlmSettings {
     }
 }
 
-/// 请求用途：请求账本分类与 token 用量归属。
+/// Token usage stage for a chat request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Purpose {
     Proofreading,
@@ -75,13 +75,6 @@ pub(crate) enum Purpose {
 }
 
 impl Purpose {
-    fn ledger_name(self) -> &'static str {
-        match self {
-            Self::Proofreading => "proofreading",
-            Self::Summary => "summary",
-            Self::Translation => "translation",
-        }
-    }
     fn usage_stage(self) -> &'static str {
         match self {
             Self::Proofreading => "llm",
@@ -181,7 +174,7 @@ fn run_pool<T: Send>(
         for _ in 0..workers {
             scope.spawn(|| {
                 loop {
-                    if let Err(e) = crate::dispatch::check_control() {
+                    if let Err(e) = crate::runtime::check_cancelled() {
                         let mut guard = crate::runtime::lock_recover(&aborted);
                         if guard.is_none() {
                             *guard = Some(e);
@@ -213,7 +206,7 @@ fn run_pool<T: Send>(
 /// - vision=true 时附对应截图（每节只读盘 + base64 一次）；截图不可用的节保留原文
 /// - 模型对纯语气词条目返回空 text → 该条被删除
 /// - 队列单元为 chunk：纯文本跨 Section 展平后每 BATCH 条一批；vision 按节分批
-///   （同一请求只能附一张截图）。worker 池抢占式取活，已确认响应由请求账本复用。
+///   （同一请求只能附一张截图）。worker 池抢占式取活，已确认响应由成功响应缓存复用。
 pub fn polish_sections_report(
     sections: &mut [Section],
     frames_root: &Path,
@@ -227,7 +220,7 @@ pub fn polish_sections_report(
     // Paths only: the image is read and encoded once per request batch, not all up front.
     let mut image_paths: Vec<Option<std::path::PathBuf>> = Vec::with_capacity(sections.len());
     for sec in sections.iter() {
-        crate::dispatch::check_control()?;
+        crate::runtime::check_cancelled()?;
         image_paths
             .push((s.vision && !sec.speech.is_empty()).then(|| frames_root.join(&sec.image)));
     }
@@ -359,32 +352,20 @@ fn translate_chunk(
     warned: &std::sync::atomic::AtomicBool,
     first_error: &std::sync::Mutex<Option<String>>,
 ) -> usize {
-    let (Some(first), Some(last)) = (chunk.first(), chunk.last()) else {
+    if chunk.is_empty() {
         return 0;
-    };
-    let description = format!(
-        "Translate transcript {}–{}",
-        crate::render::fmt_ts(first.start),
-        crate::render::fmt_ts(last.end)
-    );
+    }
     let items: Vec<&str> = chunk.iter().map(|e| e.text.as_str()).collect();
     let result = translation_body(s, target, &items).and_then(|body| {
         let expected = items.len();
-        let content = send_chat_described(
-            agent,
-            s,
-            &body,
-            Purpose::Translation,
-            &description,
-            &|content| {
-                let parsed = parse_segments(content).context("Invalid translation structure")?;
-                anyhow::ensure!(
-                    segment_ids_match(&parsed, expected),
-                    "Translated segments do not match the input"
-                );
-                Ok(())
-            },
-        )?;
+        let content = send_chat(agent, s, &body, Purpose::Translation, &|content| {
+            let parsed = parse_segments(content).context("Invalid translation structure")?;
+            anyhow::ensure!(
+                segment_ids_match(&parsed, expected),
+                "Translated segments do not match the input"
+            );
+            Ok(())
+        })?;
         parse_segments(&content).context("Invalid translation structure")
     });
     match result {
@@ -502,16 +483,11 @@ fn polish_chunk(
     warned: &std::sync::atomic::AtomicBool,
     first_error: &std::sync::Mutex<Option<String>>,
 ) -> usize {
-    let (Some(first), Some(last)) = (chunk.first(), chunk.last()) else {
+    if chunk.is_empty() {
         return 0;
-    };
-    let description = format!(
-        "Proofread transcript {}–{}",
-        crate::render::fmt_ts(first.start),
-        crate::render::fmt_ts(last.end)
-    );
+    }
     let items: Vec<&str> = chunk.iter().map(|e| e.text.as_str()).collect();
-    match chat(agent, s, &items, image_b64, &description) {
+    match chat(agent, s, &items, image_b64) {
         Ok(polished) => {
             apply_polish(chunk, &polished);
             chunk.len()
@@ -553,7 +529,7 @@ fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
 }
 
 /// 把 (id, 新文本) 应用到一批事件上；空字符串 = 删除该条（由调用方 retain）。
-/// 调用前 id 集已由请求账本校验为恰好覆盖本批（[`segment_ids_match`]）。
+/// IDs must cover this batch exactly ([`segment_ids_match`]).
 fn apply_polish(chunk: &mut [&mut TranscriptEvent], polished: &[(usize, String)]) {
     for (id, new) in polished {
         let Some(ev) = chunk.get_mut(*id) else {
@@ -577,31 +553,23 @@ fn warn_once(warned: &std::sync::atomic::AtomicBool, msg: &str) {
 
 /// 发一批（id, 文本）给 LLM，返回校对后的 (id, 文本) 列表。
 /// `image_b64` 提供时在用户消息中附上该幻灯片截图（OpenAI 兼容 image_url 协议）。
-/// 失败由持久请求账本记录；此层保留完整原文。
+/// Failures leave the original transcript intact.
 fn chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
     items: &[&str],
     image_b64: Option<&str>,
-    description: &str,
 ) -> Result<Vec<(usize, String)>> {
     let body = build_chat_body(s, items, image_b64)?;
     let expected = items.len();
-    let content = send_chat_described(
-        agent,
-        s,
-        &body,
-        Purpose::Proofreading,
-        description,
-        &|content| {
-            let parsed = parse_segments(content).context("Invalid proofreading structure")?;
-            anyhow::ensure!(
-                segment_ids_match(&parsed, expected),
-                "Proofread segments do not match the input"
-            );
-            Ok(())
-        },
-    )?;
+    let content = send_chat(agent, s, &body, Purpose::Proofreading, &|content| {
+        let parsed = parse_segments(content).context("Invalid proofreading structure")?;
+        anyhow::ensure!(
+            segment_ids_match(&parsed, expected),
+            "Proofread segments do not match the input"
+        );
+        Ok(())
+    })?;
     parse_segments(&content).context("Invalid proofreading structure")
 }
 
@@ -834,19 +802,18 @@ fn lenient_scan(s: &str) -> Option<Vec<(usize, String)>> {
 }
 
 /// 发 chat/completions 请求并返回 message.content（校对与摘要共用）。
-/// `validate` 校验正文结构，在请求账本里执行：无效响应记为失败，不会被当成已完成复用。
+/// Only responses whose content passes `validate` enter the success cache.
 ///
 /// 兼容性降级：部分 OpenAI 兼容端点不支持 `response_format: json_object`，
 /// 仅当服务明确拒绝这个字段（400/422）时去掉该字段重试一次。
-pub(crate) fn send_chat_described(
+pub(crate) fn send_chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
     body: &serde_json::Value,
     purpose: Purpose,
-    description: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> Result<String> {
-    let resp = match request_chat(agent, s, body, purpose, description, validate) {
+    let resp = match request_chat(agent, s, body, validate) {
         Ok(r) => r,
         Err(first) => {
             let degradable = first
@@ -860,21 +827,21 @@ pub(crate) fn send_chat_described(
                 object.remove("response_format");
             }
             // 降级请求只试一次：原请求已按 MAX_ATTEMPTS 重试过，这里只验证兼容性
-            let response = request_chat_once(agent, s, &relaxed, purpose, description, validate)?;
+            let response = request_chat_once(agent, s, &relaxed, validate)?;
             tracing::debug!("{}", "Retry succeeded without response_format");
             response
         }
     };
     // token 用量实时反馈：GUI 阶段行据此跳动（上传=prompt，下载=completion）。
     let usage = &resp["usage"];
-    if resp[crate::dispatch::REPLAYED] != true {
+    if resp[crate::dispatch::CACHED] != true {
         crate::progress::note_tokens(
             purpose.usage_stage(),
             usage["prompt_tokens"].as_u64().unwrap_or(0),
             usage["completion_tokens"].as_u64().unwrap_or(0),
         );
     }
-    // 账本已校验正文存在且结构有效
+    // The response cache validates content before reuse.
     Ok(resp["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or_default()
@@ -886,18 +853,12 @@ fn request_chat_once(
     agent: &ureq::Agent,
     s: &LlmSettings,
     body: &serde_json::Value,
-    purpose: Purpose,
-    description: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> std::result::Result<serde_json::Value, crate::dispatch::Failure> {
     let url = endpoint(&s.base_url);
-    crate::dispatch::json_request_described(
-        "llm",
-        purpose.ledger_name(),
-        description,
+    crate::dispatch::cached_json_request(
         &url,
         body,
-        crate::dispatch::Resend::AskUser,
         || {
             let mut request = agent.post(&url).set("Content-Type", "application/json");
             if !s.api_key.is_empty() {
@@ -926,13 +887,11 @@ fn request_chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
     body: &serde_json::Value,
-    purpose: Purpose,
-    description: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> Result<serde_json::Value> {
     let mut attempt = 1;
     loop {
-        match request_chat_once(agent, s, body, purpose, description, validate) {
+        match request_chat_once(agent, s, body, validate) {
             Ok(resp) => return Ok(resp),
             Err(f) if f.retryable && attempt < MAX_ATTEMPTS => {
                 let wait = crate::runtime::retry_backoff(attempt);

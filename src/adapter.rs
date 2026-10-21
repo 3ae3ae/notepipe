@@ -36,7 +36,7 @@ fn resolve_from(program: &str, directory: &Path) -> Result<PathBuf> {
 
 impl Adapter {
     pub fn start(argv: &[String]) -> Result<Self> {
-        Self::start_with_control(argv, &crate::dispatch::check_control)
+        Self::start_with_control(argv, &crate::runtime::check_cancelled)
     }
 
     pub(crate) fn start_with_control(

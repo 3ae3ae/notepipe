@@ -146,50 +146,26 @@ pub(crate) fn parse_summary(content: &str) -> Option<Summary> {
     })
 }
 
-fn chat_once(
-    agent: &ureq::Agent,
-    s: &LlmSettings,
-    sys: &str,
-    user: &str,
-    description: &str,
-) -> Result<String> {
+fn chat_once(agent: &ureq::Agent, s: &LlmSettings, sys: &str, user: &str) -> Result<String> {
     let body = llm::chat_body(s, sys, user, llm::CHAT_MAX_TOKENS);
-    llm::send_chat_described(
-        agent,
-        s,
-        &body,
-        llm::Purpose::Summary,
-        description,
-        &|content| {
-            anyhow::ensure!(
-                parse_summary(content).is_some(),
-                "Invalid summary structure"
-            );
-            Ok(())
-        },
-    )
+    llm::send_chat(agent, s, &body, llm::Purpose::Summary, &|content| {
+        anyhow::ensure!(
+            parse_summary(content).is_some(),
+            "Invalid summary structure"
+        );
+        Ok(())
+    })
     .context("Summary request failed")
 }
 
 /// One requested summary scope. A protocol failure is retained, never hidden by another paid request.
-fn summarize_text(
-    agent: &ureq::Agent,
-    s: &LlmSettings,
-    transcript: &str,
-    description: &str,
-) -> Result<Summary> {
-    let content = chat_once(
-        agent,
-        s,
-        &system_prompt(),
-        &user_prompt(transcript),
-        description,
-    )?;
+fn summarize_text(agent: &ureq::Agent, s: &LlmSettings, transcript: &str) -> Result<Summary> {
+    let content = chat_once(agent, s, &system_prompt(), &user_prompt(transcript))?;
     parse_summary(&content).context("Invalid summary response")
 }
 
 /// Show the actionable cause once. Provider bodies never reach these errors;
-/// their safe status classification is produced by the request ledger.
+/// their safe status classification is produced by the HTTP helper.
 pub fn failure_message(error: &anyhow::Error) -> String {
     let message = error
         .downcast_ref::<crate::dispatch::Failure>()
@@ -251,12 +227,7 @@ pub async fn summarize(
     if total_chars <= DIRECT_CHAR_LIMIT {
         let t = transcript;
         let s2 = s.clone();
-        let description = format!(
-            "Generate the full summary ({}–{})",
-            crate::render::fmt_ts(events.first().unwrap().start),
-            crate::render::fmt_ts(events.last().unwrap().end)
-        );
-        return tokio::task::spawn_blocking(move || summarize_text(&agent, &s2, &t, &description))
+        return tokio::task::spawn_blocking(move || summarize_text(&agent, &s2, &t))
             .await
             .context("Summary generation was interrupted")?;
     }
@@ -267,34 +238,14 @@ pub async fn summarize(
         chars = total_chars,
         "summary map-reduce"
     );
-    let total = chunks.len();
     let settings = s.clone();
     let map_agent = agent.clone();
     let map_ctx = ctx.clone();
     let partials = tokio::task::spawn_blocking(move || {
-        crate::runtime::map_pool(
-            chunks.into_iter().enumerate().collect(),
-            SUMMARIZE_CONCURRENCY,
-            |(index, chunk)| {
-                let first = chunk
-                    .first()
-                    .map(|event| crate::render::fmt_ts(event.start))
-                    .unwrap_or_default();
-                let last = chunk
-                    .last()
-                    .map(|event| crate::render::fmt_ts(event.end))
-                    .unwrap_or_default();
-                let transcript = format!("{map_ctx}{}", build_transcript(&chunk));
-                let description = format!(
-                    "Generate summary part {}/{} ({}–{})",
-                    index + 1,
-                    total,
-                    first,
-                    last
-                );
-                summarize_text(&map_agent, &settings, &transcript, &description)
-            },
-        )
+        crate::runtime::map_pool(chunks, SUMMARIZE_CONCURRENCY, |chunk| {
+            let transcript = format!("{map_ctx}{}", build_transcript(&chunk));
+            summarize_text(&map_agent, &settings, &transcript)
+        })
     })
     .await
     .context("Summary worker interrupted")??;
@@ -326,7 +277,6 @@ pub async fn summarize(
 \"key_points\": [整个视频的3-8条要点], \
 \"outline\": [{{\"t\":秒,\"title\":\"章节标题\",\"detail\":\"简述\"}}]}}"
             ),
-            "Merge all partial summaries into the full summary",
         )
     })
     .await

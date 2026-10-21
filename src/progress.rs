@@ -5,7 +5,6 @@
 //! - `{"type":"stage","stage":..,"status":"start"|"done"}`
 //! - `{"type":"progress","stage":..,"current":n,"total":n,"message":?,"phase":?}`
 //! - `{"type":"tokens","stage":..,"prompt":n,"completion":n}` — LLM 累计 token 用量
-//! - `{"type":"workers","stage":..,"workers":n}` — 本阶段并发 worker 数
 //! - `{"type":"done", ...}` / `{"type":"error","message":..}` — 由 pipeline/main 直接 emit
 //!
 //! human 模式下 [`emit`]/[`stage`] 全是 no-op，[`Bar`] 退化为普通可见进度条，

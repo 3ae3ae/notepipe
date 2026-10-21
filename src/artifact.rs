@@ -33,7 +33,6 @@ pub enum FailureKind {
     RateLimit,
     Service,
     Local,
-    Uncertain,
     Other,
 }
 

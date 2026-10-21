@@ -43,11 +43,9 @@ fn request(root: &Path, source: &Path) -> Request {
         config,
         work_dir: root.join("work"),
         note_dir: root.join("note"),
-        control_path: None,
-        service_versions: Default::default(),
     }
 }
-fn run(root: &Path, request: &Request) -> Output {
+fn spawn(root: &Path, request: &Request) -> std::process::Child {
     let config = root.join("config/notepipe");
     std::fs::create_dir_all(&config).unwrap();
     std::fs::write(config.join("config.toml"), "[broken").unwrap();
@@ -70,7 +68,11 @@ fn run(root: &Path, request: &Request) -> Output {
         .unwrap()
         .write_all(&serde_json::to_vec(request).unwrap())
         .unwrap();
-    child.wait_with_output().unwrap()
+    child
+}
+
+fn run(root: &Path, request: &Request) -> Output {
+    spawn(root, request).wait_with_output().unwrap()
 }
 fn events(output: &Output) -> Vec<serde_json::Value> {
     assert!(
@@ -391,26 +393,6 @@ struct MockAi {
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl MockAi {
-    fn new() -> Self {
-        Self::respond_with(|number, body| {
-            if number == 0 {
-                return None; // Request was received, but its response is lost.
-            }
-            let is_polish = body["messages"][0]["content"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("segments");
-            let content = if is_polish {
-                serde_json::json!({"segments":[{"id":0,"text":"第一段已经校对。"},{"id":1,"text":"第二段已经校对。"}]})
-            } else {
-                serde_json::json!({"tldr":"这是一份独立生成的摘要。","key_points":["实际要点"],"outline":[{"t":0,"title":"开头","detail":"实际内容"}]})
-            };
-            Some((
-                200,
-                serde_json::json!({"choices":[{"message":{"content":content.to_string()}}]}),
-            ))
-        })
-    }
     fn respond_with(
         respond: impl Fn(usize, &serde_json::Value) -> Option<(u16, serde_json::Value)> + Send + 'static,
     ) -> Self {
@@ -736,9 +718,6 @@ fn proofreading_images_and_custom_rules_match_the_requested_outputs() {
     initial.config.llm.model = "proofread-vision".into();
     initial.config.llm.api_key = "private-task-key".into();
     initial.config.defaults.formats = Some(vec![notepipe::config::OutputFormat::Json]);
-    initial
-        .service_versions
-        .insert("llm".into(), "service-v1".into());
     let output = run(root.path(), &initial);
     assert!(output.status.success(), "{:?}", events(&output));
     let manifest =
@@ -798,9 +777,6 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     initial.config.llm.base_url = mock.url.clone();
     initial.config.llm.model = "summary-model".into();
     initial.config.llm.api_key = "private-task-key".into();
-    initial
-        .service_versions
-        .insert("llm".into(), "service-v1".into());
     let first = run(root.path(), &initial);
     assert!(first.status.success(), "{:?}", events(&first));
     assert_eq!(
@@ -843,7 +819,6 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     retry.operation = notepipe::execution::Operation::Reprocess {
         base_version_dir: base.clone(),
         components: vec![Component::Summary],
-        prior_work_dir: Some(initial.work_dir.clone()),
     };
     let second = run(root.path(), &retry);
     let second_events = events(&second);
@@ -866,14 +841,6 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
                 .as_str()
                 .is_some_and(|stage| stage.starts_with("scenes/"))
     }));
-    // 首轮降级重发留下过两张 receipt（原负载与去 response_format 的负载各一张）；
-    // 重新尝试只针对与当前负载匹配的那张。
-    let receipts = notepipe::dispatch::receipts(&retry.work_dir).unwrap();
-    let receipt = receipts.iter().find(|r| r.attempt == 2).unwrap();
-    assert!(
-        receipt.retry_authorized.is_none(),
-        "a consumed authorization must not survive the retried attempt"
-    );
     let resumed = run(root.path(), &retry);
     assert!(resumed.status.success(), "{:?}", events(&resumed));
     assert_eq!(
@@ -888,7 +855,6 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
     final_retry.operation = notepipe::execution::Operation::Reprocess {
         base_version_dir: initial.note_dir.join("versions/summary-retry"),
         components: vec![Component::Summary],
-        prior_work_dir: Some(retry.work_dir.clone()),
     };
     let third = run(root.path(), &final_retry);
     assert!(third.status.success(), "{:?}", events(&third));
@@ -918,115 +884,6 @@ fn summary_only_reprocessing_retries_known_failure_once_without_repeating_source
 }
 
 #[test]
-fn proofreading_resend_continues_unsent_summary_without_repeating_source_work() {
-    use std::sync::atomic::Ordering;
-    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
-    {
-        return;
-    }
-    let mock = MockAi::new();
-    let root = tempfile::tempdir().unwrap();
-    let source = root.path().join("unreadable-video.mp4");
-    std::fs::write(&source, b"broken").unwrap();
-    let mut original = request(root.path(), &source);
-    original.duration = 10.;
-    original.subtitle_events = Some(vec![
-        TranscriptEvent {
-            start: 0.,
-            end: 1.,
-            text: "第一段原文。".into(),
-            raw: None,
-            translation: None,
-        },
-        TranscriptEvent {
-            start: 6.,
-            end: 7.,
-            text: "第二段原文。".into(),
-            raw: None,
-            translation: None,
-        },
-    ]);
-    original.config.llm.enabled = true;
-    original.config.llm.summarize = true;
-    original.config.llm.base_url = mock.url.clone();
-    original.config.llm.model = "test-model".into();
-    original.config.llm.api_key = "private-task-key".into();
-    original
-        .service_versions
-        .insert("llm".into(), "ai-v1".into());
-    let first = run(root.path(), &original);
-    let first_events = events(&first);
-    assert!(first.status.success(), "{first_events:#?}");
-    assert!(
-        first_events
-            .iter()
-            .any(|event| event["type"] == "blocked" && event["reason"] == "uncertain")
-    );
-    assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
-    let mut receipts = notepipe::dispatch::receipts(&original.work_dir).unwrap();
-    assert_eq!(
-        receipts.len(),
-        1,
-        "blocked summary must not create an attempt"
-    );
-    let receipt = receipts.remove(0);
-    assert_eq!(receipt.state, notepipe::dispatch::State::Uncertain);
-    assert_eq!(receipt.purpose, "proofreading");
-    assert!(receipt.description.contains("00:00–00:07"));
-    assert!(!String::from_utf8_lossy(&first.stdout).contains("private-task-key"));
-    let base = original.note_dir.join("versions/version-one");
-    let manifest = artifact::read_manifest(&base.join("manifest.json")).unwrap();
-    assert_eq!(manifest.outcomes.summary.status, artifact::Status::Failed);
-    let untouched = std::fs::read(base.join("document.json")).unwrap();
-    std::fs::remove_file(&source).unwrap();
-    let mut retry = original.clone();
-    retry.task_id = "retry-polish".into();
-    retry.version_id = "retry-polish".into();
-    retry.work_dir = root.path().join("retry-work");
-    retry.control_path = Some(retry.work_dir.join("control.json"));
-    retry.operation = notepipe::execution::Operation::Reprocess {
-        base_version_dir: base.clone(),
-        components: vec![Component::Proofreading, Component::Summary],
-        prior_work_dir: Some(original.work_dir.clone()),
-    };
-    std::fs::create_dir_all(&retry.work_dir).unwrap();
-    std::fs::write(
-        retry.control_path.as_ref().unwrap(),
-        serde_json::to_vec(&serde_json::json!({"intent":"run","resend":[receipt.request_id]}))
-            .unwrap(),
-    )
-    .unwrap();
-    let second = run(root.path(), &retry);
-    let observed = events(&second);
-    assert!(second.status.success(), "{observed:#?}");
-    assert_eq!(mock.calls.load(Ordering::SeqCst), 3);
-    assert!(
-        !observed
-            .iter()
-            .any(|event| event["stage"] == "transcribe" || event["stage"] == "download")
-    );
-    let updated =
-        artifact::read_manifest(&retry.note_dir.join("versions/retry-polish/manifest.json"))
-            .unwrap();
-    assert_eq!(
-        updated.outcomes.proofreading.status,
-        artifact::Status::Succeeded
-    );
-    assert_eq!(updated.outcomes.summary.status, artifact::Status::Succeeded);
-    let receipts = notepipe::dispatch::receipts(&retry.work_dir).unwrap();
-    assert_eq!(receipts.len(), 2);
-    for (purpose, attempt) in [("proofreading", 2), ("summary", 1)] {
-        let receipt = receipts.iter().find(|r| r.purpose == purpose).unwrap();
-        assert_eq!(receipt.state, notepipe::dispatch::State::Completed);
-        assert_eq!(receipt.attempt, attempt);
-    }
-    assert_eq!(
-        std::fs::read(base.join("document.json")).unwrap(),
-        untouched
-    );
-}
-
-#[test]
 fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gone() {
     use notepipe::config::OutputFormat;
     if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
@@ -1049,7 +906,6 @@ fn export_only_recovery_uses_the_saved_version_after_source_and_subtitle_are_gon
     export.operation = notepipe::execution::Operation::Reprocess {
         base_version_dir: base,
         components: vec![Component::Exports],
-        prior_work_dir: None,
     };
     export.config.defaults.formats = Some(vec![
         OutputFormat::Md,
@@ -1206,48 +1062,6 @@ fn managed_adapter_uses_http_and_stops_after_success_or_error() {
 }
 
 #[test]
-fn managed_adapter_stops_when_a_running_task_is_paused_or_cancelled() {
-    use std::time::{Duration, Instant};
-    for intent in ["pause", "cancel"] {
-        let root = tempfile::tempdir().unwrap();
-        let Some(video) = speech_video(root.path()) else {
-            return;
-        };
-        let record = root.path().join("adapter");
-        let Some(command) = adapter_command(&record, "hang") else {
-            return;
-        };
-        let mut request = request(root.path(), &video);
-        request.subtitle_events = None;
-        request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
-        request.config.asr.command = command;
-        let control = request.work_dir.join("control.json");
-        request.control_path = Some(control.clone());
-        let gate = record.join("transcribing");
-        let controller = std::thread::spawn(move || {
-            let start = Instant::now();
-            while !gate.is_file() && start.elapsed() < Duration::from_secs(15) {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            assert!(gate.is_file(), "adapter never received audio");
-            notepipe::checkpoint::atomic_write(
-                &control,
-                &serde_json::to_vec(&serde_json::json!({"intent":intent})).unwrap(),
-            )
-            .unwrap();
-            Instant::now()
-        });
-        let output = run(root.path(), &request);
-        let stopped_at = controller.join().unwrap();
-        assert!(stopped_at.elapsed() < Duration::from_secs(10));
-        assert!(!output.status.success(), "{:#?}", events(&output));
-        #[cfg(unix)]
-        assert!(record.join("terminated").exists());
-        assert!(!request.work_dir.join(".asr_done").exists());
-    }
-}
-
-#[test]
 fn asr_concurrency_bounds_the_number_of_http_requests_in_flight() {
     for concurrency in [1, 3] {
         let root = tempfile::tempdir().unwrap();
@@ -1280,110 +1094,230 @@ fn asr_concurrency_bounds_the_number_of_http_requests_in_flight() {
     }
 }
 
+#[test]
+fn retryable_llm_failures_are_retried_without_persisting_error_bodies() {
+    use std::sync::atomic::Ordering;
+    if notepipe::runtime::which("ffmpeg").is_none() || notepipe::runtime::which("ffprobe").is_none()
+    {
+        return;
+    }
+    let mock = MockAi::respond_with(|number, _| {
+        Some(if number == 0 {
+            (
+                503,
+                serde_json::json!({"error":{"message":"private-test-key"}}),
+            )
+        } else {
+            (
+                200,
+                serde_json::json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"Cached transcript."}]}"#}}]}),
+            )
+        })
+    });
+    let root = tempfile::tempdir().unwrap();
+    let media = root.path().join("broken.mp4");
+    std::fs::write(&media, b"broken media; selected subtitles remain usable").unwrap();
+    let mut request = request(root.path(), &media);
+    request.config.llm.enabled = true;
+    request.config.llm.base_url = mock.url.clone();
+    request.config.llm.model = "fixture".into();
+    request.config.llm.api_key = "private-test-key".into();
+    let output = run(root.path(), &request);
+    assert!(output.status.success(), "{:?}", events(&output));
+    assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
+    let files = std::fs::read_dir(request.work_dir.join("llm"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(files.len(), 1);
+    let saved = std::fs::read_to_string(files[0].path()).unwrap();
+    assert!(saved.contains("Cached transcript."));
+    assert!(!saved.contains("private-test-key"));
+    assert!(!request.work_dir.join("requests").exists());
+}
+
+#[cfg(unix)]
+fn wait_for_file(child: &mut std::process::Child, path: &Path) {
+    let start = std::time::Instant::now();
+    while !path.is_file() {
+        if start.elapsed() >= std::time::Duration::from_secs(15)
+            || child.try_wait().unwrap().is_some()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("fixture never reached {}", path.display());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_cancelled(mut child: std::process::Child) -> Output {
+    let start = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() >= std::time::Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("cancellation did not stop the CLI");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(130));
+    output
+}
+
 #[cfg(unix)]
 #[test]
-fn cancellation_during_audio_cutting_sends_no_http_request() {
-    use std::{
-        os::unix::fs::PermissionsExt,
-        time::{Duration, Instant},
-    };
-    for intent in ["pause", "cancel"] {
+fn sigint_and_sigterm_stop_a_running_asr_adapter() {
+    for signal in [libc::SIGINT, libc::SIGTERM] {
         let root = tempfile::tempdir().unwrap();
         let Some(video) = speech_video(root.path()) else {
             return;
         };
-        let ffmpeg = notepipe::runtime::which("ffmpeg").unwrap();
         let record = root.path().join("adapter");
-        let Some(command) = adapter_command(&record, "healthy") else {
+        let Some(command) = adapter_command(&record, "hang") else {
             return;
         };
-        let adapter = notepipe::adapter::Adapter::start(&command).unwrap();
         let mut request = request(root.path(), &video);
         request.subtitle_events = None;
         request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
-        request.config.asr.base_url = format!("{}/v1", adapter.base);
-        let control = request.work_dir.join("control.json");
-        request.control_path = Some(control.clone());
-        let cutting = root.path().join("cutting");
-        let release = root.path().join("release-cut");
-        let bin = root.path().join("bin");
-        std::fs::create_dir(&bin).unwrap();
-        let wrapper = bin.join("ffmpeg");
-        std::fs::write(
-            &wrapper,
-            r#"#!/bin/sh
+        request.config.asr.command = command;
+        let mut child = spawn(root.path(), &request);
+        wait_for_file(&mut child, &record.join("transcribing"));
+        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+        let output = wait_for_cancelled(child);
+        let observed = events(&output);
+        assert!(!observed.iter().any(|event| event["type"] == "done"
+            || event["type"] == "blocked"
+            || event["type"] == "workers"));
+        assert!(record.join("terminated").is_file());
+        assert!(!request.work_dir.join(".asr_done").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_second_signal_exits_without_waiting_for_adapter_shutdown() {
+    use std::time::{Duration, Instant};
+    let Some(python) =
+        notepipe::runtime::which("python3").or_else(|| notepipe::runtime::which("python"))
+    else {
+        return;
+    };
+    let root = tempfile::tempdir().unwrap();
+    let media = root.path().join("placeholder");
+    std::fs::write(&media, b"placeholder").unwrap();
+    let record = root.path().join("source");
+    let mut request = request(root.path(), &media);
+    request.source = "https://example.test/media".into();
+    request.source_id = "online:fixture".into();
+    request.subtitle_events = None;
+    request.config.source.command = vec![
+        python.display().to_string(),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/source_adapter.py"
+        )
+        .into(),
+        "--record".into(),
+        record.display().to_string(),
+        "--behavior".into(),
+        "hang".into(),
+    ];
+    let mut child = spawn(root.path(), &request);
+    wait_for_file(&mut child, &record.join("child-ready"));
+    let adapter_pid: i32 = std::fs::read_to_string(record.join("pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0);
+    wait_for_file(&mut child, &record.join("child-stopped"));
+    let start = Instant::now();
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+    while child.try_wait().unwrap().is_none() && start.elapsed() < Duration::from_secs(3) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let elapsed = start.elapsed();
+    // Immediate exit intentionally skips Drop; the test owns the remaining fixture group.
+    unsafe {
+        libc::kill(-adapter_pid, libc::SIGKILL);
+    }
+    let output = wait_for_cancelled(child);
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "second signal took {elapsed:?}"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_during_audio_cutting_sends_no_http_request() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let ffmpeg = notepipe::runtime::which("ffmpeg").unwrap();
+    let record = root.path().join("adapter");
+    let Some(command) = adapter_command(&record, "healthy") else {
+        return;
+    };
+    let adapter = notepipe::adapter::Adapter::start(&command).unwrap();
+    let mut request = request(root.path(), &video);
+    request.subtitle_events = None;
+    request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
+    request.config.asr.base_url = format!("{}/v1", adapter.base);
+    let bin = root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let wrapper = bin.join("ffmpeg");
+    std::fs::write(
+        &wrapper,
+        r#"#!/bin/sh
 for output; do :; done
 case "$output" in
   */c????.wav)
     : > "$CUT_STARTED"
     count=0
-    while [ ! -f "$CUT_RELEASE" ] && [ "$count" -lt 3000 ]; do
-      sleep 0.01
-      count=$((count + 1))
-    done
+    while [ "$count" -lt 3000 ]; do sleep 0.01; count=$((count + 1)); done
     ;;
 esac
 exec "$REAL_FFMPEG" "$@"
 "#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+        .arg("run-task")
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
         )
+        .env("REAL_FFMPEG", ffmpeg)
+        .env("CUT_STARTED", root.path().join("cutting"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let failure = request.work_dir.join("run.json");
-        let controller = std::thread::spawn(move || {
-            let start = Instant::now();
-            while !cutting.is_file() && start.elapsed() < Duration::from_secs(15) {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            let reached_cut = cutting.is_file();
-            if reached_cut {
-                notepipe::checkpoint::atomic_write(
-                    &control,
-                    &serde_json::to_vec(&serde_json::json!({"intent":intent})).unwrap(),
-                )
-                .unwrap();
-            }
-            let start = Instant::now();
-            while !failure.is_file() && start.elapsed() < Duration::from_secs(10) {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            // The async task has stopped; only its dropped-future flag now blocks the send.
-            notepipe::checkpoint::atomic_write(&control, br#"{"intent":"run"}"#).unwrap();
-            std::fs::write(release, "continue").unwrap();
-            assert!(reached_cut, "audio cutting never started");
-            assert!(failure.is_file(), "task did not stop during the cut");
-        });
-        let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
-            .arg("run-task")
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    bin.display(),
-                    std::env::var("PATH").unwrap_or_default()
-                ),
-            )
-            .env("REAL_FFMPEG", ffmpeg)
-            .env("CUT_STARTED", root.path().join("cutting"))
-            .env("CUT_RELEASE", root.path().join("release-cut"))
-            .env("XDG_CONFIG_HOME", root.path().join("config"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&serde_json::to_vec(&request).unwrap())
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        controller.join().unwrap();
-        assert!(!output.status.success(), "{:#?}", events(&output));
-        assert!(
-            !record.join("request").exists(),
-            "HTTP request was sent after cancellation"
-        );
-        assert!(!request.work_dir.join(".asr_done").exists());
-    }
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&request).unwrap())
+        .unwrap();
+    wait_for_file(&mut child, &root.path().join("cutting"));
+    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+    let output = wait_for_cancelled(child);
+    assert!(!events(&output).iter().any(|event| event["type"] == "done"));
+    assert!(
+        !record.join("request").exists(),
+        "HTTP was sent after cancellation"
+    );
+    assert!(!request.work_dir.join(".asr_done").exists());
 }

@@ -1,86 +1,21 @@
-//! Durable external-request receipts. A lost response is never permission to resend.
+//! Validated HTTP requests and a success-only cache for LLM responses.
 
-/// 「结果不确定」阻断原因：block() 写入的 reason 与 Failure.uncertain 的判定
-/// 共用此常量，桌面端续跑 UI 亦引用它。
-pub const REASON_UNCERTAIN: &str = "uncertain";
-
-use crate::{checkpoint::atomic_write, execution};
-use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use crate::{checkpoint::atomic_write, execution, runtime};
+use anyhow::Result;
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
 
-/// Durable receipts describe a service snapshot without a stored configuration.
-pub const SNAPSHOT_PREFIX: &str = "snapshot:";
-
-pub fn snapshot_id(digest: &str) -> String {
-    format!("{SNAPSHOT_PREFIX}{digest}")
-}
-
-/// 任务运行意图：桌面端写入 control.json，引擎在每个安全边界读取。
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Intent {
-    #[default]
-    Run,
-    Pause,
-    Cancel,
-    Quit,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(default)]
-pub struct Control {
-    pub intent: Intent,
-    pub stopped_services: Vec<String>,
-    /// IDs identify an exact previous attempt, so persistent authorization is consumed once.
-    pub resend: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum State {
-    Sending,
-    Completed,
-    /// DNS or connection establishment failed before the request body could be sent.
-    NotSent,
-    Rejected,
-    Failed,
-    Uncertain,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Receipt {
-    pub schema: u32,
-    pub stable_id: String,
-    pub request_id: String,
-    pub purpose: String,
-    #[serde(default)]
-    pub description: String,
-    pub service_version: String,
-    pub attempt: u32,
-    pub state: State,
-    pub http_status: Option<u16>,
-    pub response: Option<Value>,
-    pub message: Option<String>,
-    /// A reviewed compatibility rejection; never stores the provider's error body.
-    #[serde(default)]
-    pub unsupported_response_format: bool,
-    /// Explicit component reprocessing permits this exact known-failed attempt once.
-    /// Sending/uncertain attempts still require Control::resend authorization.
-    #[serde(default)]
-    pub retry_authorized: Option<String>,
-}
+const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+pub const CACHED: &str = "notepipe_cached";
 
 #[derive(Debug)]
 pub struct Failure {
     pub status: Option<u16>,
     pub retryable: bool,
-    pub uncertain: bool,
     pub message: String,
     pub unsupported_response_format: bool,
     pub kind: Option<crate::artifact::FailureKind>,
@@ -92,12 +27,10 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 impl Failure {
-    /// A definite, non-retryable failure that no service status explains.
     pub fn local(error: impl std::fmt::Display) -> Self {
         Self {
             status: None,
             retryable: false,
-            uncertain: false,
             message: error.to_string(),
             unsupported_response_format: false,
             kind: Some(crate::artifact::FailureKind::Local),
@@ -113,7 +46,6 @@ impl Failure {
         }
     }
 }
-
 struct Rejection {
     retryable: bool,
     unsupported_response_format: bool,
@@ -135,7 +67,7 @@ fn kind_for_status(status: Option<u16>) -> crate::artifact::FailureKind {
 
 fn classify_rejection(status: u16, value: Option<&Value>) -> Rejection {
     Rejection {
-        retryable: status == 429,
+        retryable: status == 429 || (500..=599).contains(&status),
         unsupported_response_format: rejects_response_format(status, value),
         message: rejection_message(status),
         kind: kind_for_status(Some(status)),
@@ -200,70 +132,19 @@ pub struct HttpResponse {
     pub status: u16,
     pub body: Vec<u8>,
 }
-pub struct NetworkFailure {
-    pub message: String,
-    pub definitely_unsent: bool,
-}
 
-struct Ledger {
+struct Cache {
     dir: PathBuf,
-    control_path: Option<PathBuf>,
-    service_versions: BTreeMap<String, String>,
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
-    emitted: Mutex<HashSet<String>>,
-    /// Sending/Uncertain receipts by stable id: read from disk once, then kept in step by `save`.
-    unresolved: Mutex<Option<HashMap<String, Receipt>>>,
 }
-static ACTIVE: OnceLock<Mutex<Option<Arc<Ledger>>>> = OnceLock::new();
-// Tests installing or using the process-wide ledger must share this lock.
+static ACTIVE: OnceLock<Mutex<Option<Arc<Cache>>>> = OnceLock::new();
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-/// Whether an unconfirmed request may be sent again without asking: only when
-/// the service has no per-request billing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Resend {
-    AskUser,
-    Free,
-}
-
-/// Marks a response replayed from a completed receipt rather than received now.
-pub const REPLAYED: &str = "notepipe_replayed";
-
-/// The process that started this task. If it goes away (the app was killed
-/// rather than quit), the task stops at its next safe boundary as on quit, so
-/// no orphaned worker keeps changing a task the next app instance shows.
-#[cfg(unix)]
-static PARENT: OnceLock<u32> = OnceLock::new();
-
-pub fn watch_parent() {
-    #[cfg(unix)]
-    let _ = PARENT.set(std::os::unix::process::parent_id());
-}
-
-fn parent_gone() -> bool {
-    #[cfg(unix)]
-    {
-        PARENT
-            .get()
-            .is_some_and(|parent| std::os::unix::process::parent_id() != *parent)
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
-}
-fn active() -> Option<Arc<Ledger>> {
-    ACTIVE.get_or_init(|| Mutex::new(None)).lock().ok()?.clone()
-}
-pub struct Guard(Arc<Ledger>);
+pub struct Guard(Arc<Cache>);
 impl Drop for Guard {
     fn drop(&mut self) {
-        // 锁中毒也要清掉当前 guard：否则 install 会一直报「同一进程不能同时执行两个任务」
-        let mut current = ACTIVE
-            .get_or_init(|| Mutex::new(None))
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
+        let mut current = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None)));
         if current
             .as_ref()
             .is_some_and(|value| Arc::ptr_eq(value, &self.0))
@@ -273,426 +154,66 @@ impl Drop for Guard {
     }
 }
 
-pub fn install(
-    work_dir: &Path,
-    control_path: Option<&Path>,
-    service_versions: &BTreeMap<String, String>,
-) -> Result<Guard> {
-    let ledger = Arc::new(Ledger::new(work_dir, control_path, service_versions)?);
-    let mut current = ACTIVE
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Task state is unavailable; restart the app"))?;
+pub fn install(work_dir: &Path) -> Result<Guard> {
+    let cache = Arc::new(Cache {
+        dir: work_dir.join("llm"),
+        locks: Mutex::new(HashMap::new()),
+    });
+    let mut current = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None)));
     anyhow::ensure!(current.is_none(), "Another task is already active");
-    *current = Some(ledger.clone());
-    Ok(Guard(ledger))
+    *current = Some(cache.clone());
+    Ok(Guard(cache))
 }
 
-/// Safe boundaries for local work. Unknown cloud receipts do not prevent saving local work.
-pub fn check_control() -> Result<()> {
-    if let Some(ledger) = active() {
-        ledger.check_intent(None).map_err(anyhow::Error::new)?;
-    }
-    Ok(())
-}
-
-/// 轮询任务控制文件，意图不再是 run 时返回 Err。配合 `tokio::select!` 打断
-/// 长时间运行的分支（子进程句柄的 kill_on_drop 随分支 drop 生效）。
-/// 无活动任务账本时 check_control 恒 Ok，此 future 永不完成，不影响 CLI 独立调用。
-pub async fn watch_control() -> anyhow::Error {
-    loop {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if let Err(e) = check_control() {
-            return e;
-        }
-    }
-}
-
-/// Exposes unresolved attempts for task state reconciliation even if the process crashed.
-pub fn receipts(work_dir: &Path) -> Result<Vec<Receipt>> {
-    read_receipts(&work_dir.join("requests"))
-}
-fn is_unresolved(receipt: &Receipt) -> bool {
-    matches!(receipt.state, State::Sending | State::Uncertain)
-}
-fn read_receipts(dir: &Path) -> Result<Vec<Receipt>> {
-    if !dir.is_dir() {
-        return Ok(vec![]);
-    }
-    let mut result = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        if path.extension().is_some_and(|e| e == "json") {
-            result.push(serde_json::from_slice(&std::fs::read(path)?).context("A saved service request record is damaged; nothing was resent to avoid duplicate charges")?);
-        }
-    }
-    Ok(result)
-}
-
-impl Ledger {
-    fn new(
-        work_dir: &Path,
-        control_path: Option<&Path>,
-        versions: &BTreeMap<String, String>,
-    ) -> Result<Self> {
-        let dir = work_dir.join("requests");
-        std::fs::create_dir_all(&dir)?;
-        Ok(Self {
-            dir,
-            control_path: control_path.map(Path::to_path_buf),
-            service_versions: versions.clone(),
-            locks: Mutex::new(HashMap::new()),
-            emitted: Mutex::new(HashSet::new()),
-            unresolved: Mutex::new(None),
-        })
-    }
-    fn control(&self) -> Result<Control> {
-        match &self.control_path {
-            Some(path) if path.exists() => serde_json::from_slice(&std::fs::read(path)?)
-                .context("Task state is unreadable; paused"),
-            _ => Ok(Control::default()),
-        }
-    }
-    fn block(&self, reason: &str, request: Option<&Receipt>, message: &str) -> Failure {
-        let request_id = request.map(|r| r.request_id.clone());
-        let message = request.filter(|r| !r.description.is_empty()).map_or_else(
-            || message.to_string(),
-            |r| format!("{}: {}", r.description, message),
-        );
-        let signature = format!("{reason}:{request_id:?}:{message}");
-        if self
-            .emitted
-            .lock()
-            .map(|mut seen| seen.insert(signature))
-            .unwrap_or(true)
-        {
-            crate::progress::emit(
-                serde_json::json!({"type":"blocked","reason":reason,"request_id":request_id,"purpose":request.map(|r|&r.purpose),"kind":"uncertain","message":message,"description":request.map(|r|&r.description)}),
-            );
-        }
-        Failure {
-            uncertain: reason == REASON_UNCERTAIN,
-            kind: Some(if reason == REASON_UNCERTAIN {
-                crate::artifact::FailureKind::Uncertain
-            } else {
-                crate::artifact::FailureKind::Other
-            }),
-            ..Failure::local(message)
-        }
-    }
-    fn check_intent(&self, service_version: Option<&str>) -> std::result::Result<Control, Failure> {
-        let control = self.control().map_err(Failure::local)?;
-        let intent = if parent_gone() {
-            &Intent::Quit
-        } else {
-            &control.intent
-        };
-        let reason = match intent {
-            Intent::Run => None,
-            Intent::Pause => Some(("paused", "Generation paused; progress retained")),
-            Intent::Cancel => Some(("cancelled", "Task cancelled; saved results retained")),
-            Intent::Quit => Some(("quit", "Progress saved; waiting to continue")),
-        };
-        if let Some((reason, message)) = reason {
-            return Err(self.block(reason, None, message));
-        }
-        if service_version
-            .is_some_and(|version| control.stopped_services.iter().any(|v| v == version))
-        {
-            return Err(self.block(
-                "service_stopped",
-                None,
-                "Service deleted; no new request sent",
-            ));
-        }
-        Ok(control)
-    }
-    fn save(&self, receipt: &Receipt) -> std::result::Result<(), Failure> {
-        atomic_write(
-            &self.dir.join(format!("{}.json", receipt.stable_id)),
-            &serde_json::to_vec_pretty(receipt).map_err(Failure::local)?,
-        )
-        .map_err(Failure::local)?;
-        if let Some(index) = self.unresolved.lock().map_err(Failure::local)?.as_mut() {
-            if is_unresolved(receipt) {
-                index.insert(receipt.stable_id.clone(), receipt.clone());
-            } else {
-                index.remove(&receipt.stable_id);
-            }
-        }
-        Ok(())
-    }
-    fn unresolved_receipts(&self) -> std::result::Result<Vec<Receipt>, Failure> {
-        let mut index = self.unresolved.lock().map_err(Failure::local)?;
-        if index.is_none() {
-            let loaded = read_receipts(&self.dir)
-                .map_err(Failure::local)?
-                .into_iter()
-                .filter(is_unresolved)
-                .map(|receipt| (receipt.stable_id.clone(), receipt))
-                .collect();
-            *index = Some(loaded);
-        }
-        Ok(index
-            .as_ref()
-            .map_or_else(Vec::new, |index| index.values().cloned().collect()))
-    }
-    #[cfg(test)]
-    fn send(
-        &self,
-        service: &str,
-        purpose: &str,
-        endpoint: &str,
-        identity: &Value,
-        send: impl FnOnce() -> std::result::Result<HttpResponse, NetworkFailure>,
-        validate: impl FnOnce(&Value) -> Result<()>,
-    ) -> std::result::Result<Value, Failure> {
-        self.send_described(
-            service,
-            purpose,
-            purpose,
-            endpoint,
-            identity,
-            Resend::AskUser,
-            send,
-            validate,
-        )
-    }
-    // Keep the transport, validation and persisted request identity explicit at the call site.
-    #[allow(clippy::too_many_arguments)]
-    fn send_described(
-        &self,
-        service: &str,
-        purpose: &str,
-        description: &str,
-        endpoint: &str,
-        identity: &Value,
-        resend: Resend,
-        send: impl FnOnce() -> std::result::Result<HttpResponse, NetworkFailure>,
-        validate: impl FnOnce(&Value) -> Result<()>,
-    ) -> std::result::Result<Value, Failure> {
-        let service_version = self
-            .service_versions
-            .get(service)
-            .cloned()
-            .unwrap_or_else(|| snapshot_id(&execution::digest(endpoint.as_bytes())));
-        let stable_id = execution::digest(&serde_json::to_vec(&serde_json::json!({"service_version":service_version,"purpose":purpose,"endpoint":endpoint,"payload":identity})).map_err(Failure::local)?);
-        let lock = self
-            .locks
-            .lock()
-            .map_err(Failure::local)?
-            .entry(stable_id.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone();
-        let _lock = lock.lock().map_err(Failure::local)?;
-        let path = self.dir.join(format!("{stable_id}.json"));
-        let old: Option<Receipt> = if path.exists() {
-            Some(
-                serde_json::from_slice(&std::fs::read(&path).map_err(Failure::local)?)
-                    .map_err(Failure::local)?,
-            )
-        } else {
-            None
-        };
-        if let Some(old) = &old
-            && old.state == State::Completed
-        {
-            let response = old
-                .response
-                .clone()
-                .ok_or_else(|| Failure::local("Saved request result is missing"))?;
-            validate(&response).map_err(Failure::local)?;
-            // A replayed result was received in an earlier run; callers that
-            // report live usage skip it.
-            let mut response = response;
-            if let Some(object) = response.as_object_mut() {
-                object.insert(REPLAYED.into(), Value::Bool(true));
-            }
-            return Ok(response);
-        }
-        let control = self.check_intent(Some(&service_version))?;
-        let authorized = old.as_ref().is_some_and(|receipt| {
-            (resend == Resend::Free && matches!(receipt.state, State::Sending | State::Uncertain))
-                || control.resend.contains(&receipt.request_id)
-                || (matches!(receipt.state, State::Failed | State::Rejected)
-                    && receipt.retry_authorized.as_ref() == Some(&receipt.request_id))
-        });
-        if let Some(old) = &old {
-            if matches!(old.state, State::Sending | State::Uncertain) && !authorized {
-                let mut uncertain = old.clone();
-                uncertain.state = State::Uncertain;
-                self.save(&uncertain)?;
-                return Err(self.block(
-                    REASON_UNCERTAIN,
-                    Some(old),
-                    "Service result is uncertain; resending may incur additional charges",
-                ));
-            }
-            let settled = match old.state {
-                State::Failed => Some("Request failed"),
-                State::Rejected if old.http_status != Some(429) => {
-                    Some("Service rejected this request")
-                }
-                _ => None,
-            };
-            if let Some(fallback) = settled
-                && !authorized
-            {
-                return Err(Failure {
-                    unsupported_response_format: old.unsupported_response_format,
-                    ..Failure::with_status(
-                        old.http_status,
-                        false,
-                        old.message.clone().unwrap_or_else(|| fallback.into()),
-                    )
-                });
-            }
-        }
-        // An unknown prerequisite cannot be bypassed by splitting/relaxing the payload
-        // or by beginning downstream summary requests. Unrelated local work remains possible.
-        // A free service resends unresolved requests when it reaches them, so
-        // overlapping or downstream requests cost nothing extra either.
-        for unresolved in self
-            .unresolved_receipts()?
-            .into_iter()
-            .filter(|_| resend == Resend::AskUser)
-        {
-            if unresolved.stable_id != stable_id {
-                // Live in-flight requests may run concurrently; only stale Sending from another
-                // process is unknown. A lock currently held in this context proves it is live.
-                let live = self
-                    .locks
-                    .lock()
-                    .map_err(Failure::local)?
-                    .get(&unresolved.stable_id)
-                    .cloned()
-                    .is_some_and(|lock| lock.try_lock().is_err());
-                if unresolved.state == State::Uncertain || !live {
-                    return Err(self.block(
-                        REASON_UNCERTAIN,
-                        Some(&unresolved),
-                        "A previous request is unresolved; progress retained",
-                    ));
-                }
-            }
-        }
-        let attempt = old.as_ref().map_or(1, |r| r.attempt + 1);
-        let mut receipt = Receipt {
-            schema: 1,
-            stable_id: stable_id.clone(),
-            request_id: format!("{stable_id}.{attempt}"),
-            purpose: purpose.into(),
-            description: description.into(),
-            service_version,
-            attempt,
-            state: State::Sending,
-            http_status: None,
-            response: None,
-            message: None,
-            unsupported_response_format: false,
-            retry_authorized: None,
-        };
-        // This durable write happens before the only call that can send network bytes.
-        self.save(&receipt)?;
-        let response = match send() {
-            Ok(response) => response,
-            Err(error) => {
-                if error.definitely_unsent {
-                    receipt.state = State::NotSent;
-                    receipt.message = Some(error.message.clone());
-                    self.save(&receipt)?;
-                    return Err(Failure::with_status(None, true, error.message));
-                }
-                receipt.state = State::Uncertain;
-                receipt.message = Some(error.message);
-                self.save(&receipt)?;
-                return Err(self.block(
-                    REASON_UNCERTAIN,
-                    Some(&receipt),
-                    "Service result is uncertain; resending may incur additional charges",
-                ));
-            }
-        };
-        receipt.http_status = Some(response.status);
-        let value = serde_json::from_slice::<Value>(&response.body);
-        if (400..500).contains(&response.status) {
-            let rejection = classify_rejection(response.status, value.as_ref().ok());
-            receipt.state = State::Rejected;
-            receipt.unsupported_response_format = rejection.unsupported_response_format;
-            receipt.message = Some(rejection.message.clone());
-            // Error bodies may echo credentials. Keep status, not the untrusted body.
-            self.save(&receipt)?;
-            // Each caller bounds its retry loop; a later task continuation may retry
-            // a confirmed rejection without requiring uncertain-request authorization.
-            return Err(Failure {
-                unsupported_response_format: rejection.unsupported_response_format,
-                kind: Some(rejection.kind),
-                ..Failure::with_status(
-                    Some(response.status),
-                    rejection.retryable,
-                    rejection.message,
-                )
-            });
-        }
-        if !(200..300).contains(&response.status) {
-            receipt.state = State::Uncertain;
-            self.save(&receipt)?;
-            return Err(self.block(
-                REASON_UNCERTAIN,
-                Some(&receipt),
-                "Service processing is uncertain",
-            ));
-        }
-        let value = match value {
-            Ok(value) => value,
-            Err(_) => {
-                receipt.state = State::Failed;
-                receipt.message = Some("The service response could not be read".into());
-                self.save(&receipt)?;
-                return Err(Failure::local(receipt.message.unwrap()));
-            }
-        };
-        if let Err(error) = validate(&value) {
-            receipt.state = State::Failed;
-            receipt.message = Some(format!("{error:#}"));
-            self.save(&receipt)?;
-            return Err(Failure::local(receipt.message.unwrap()));
-        }
-        receipt.state = State::Completed;
-        receipt.response = Some(value.clone());
-        self.save(&receipt)?;
-        Ok(value)
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn json_request_described(
-    service: &str,
-    purpose: &str,
-    description: &str,
+pub fn cached_json_request(
     endpoint: &str,
-    identity: &Value,
-    resend: Resend,
-    send: impl FnOnce() -> std::result::Result<HttpResponse, NetworkFailure>,
+    body: &Value,
+    send: impl FnOnce() -> std::result::Result<HttpResponse, Failure>,
+    validate: impl Fn(&Value) -> Result<()>,
+) -> std::result::Result<Value, Failure> {
+    let cache = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None))).clone();
+    let Some(cache) = cache else {
+        return json_request(send, validate);
+    };
+    let key = execution::digest(format!("{endpoint}\n{body}").as_bytes());
+    let lock = runtime::lock_recover(&cache.locks)
+        .entry(key.clone())
+        .or_default()
+        .clone();
+    let _lock = runtime::lock_recover(&lock);
+    runtime::check_cancelled().map_err(Failure::local)?;
+    let path = cache.dir.join(format!("{key}.json"));
+    if path.is_file() {
+        let cached = std::fs::File::open(&path)
+            .and_then(|file| {
+                use std::io::Read;
+                let mut bytes = Vec::new();
+                file.take(MAX_RESPONSE_BYTES + 1).read_to_end(&mut bytes)?;
+                Ok(bytes)
+            })
+            .map_err(Failure::local)?;
+        if cached.len() as u64 <= MAX_RESPONSE_BYTES
+            && let Ok(mut value) = serde_json::from_slice::<Value>(&cached)
+            && validate(&value).is_ok()
+        {
+            value[CACHED] = true.into();
+            return Ok(value);
+        }
+    }
+    let value = json_request(send, validate)?;
+    runtime::check_cancelled().map_err(Failure::local)?;
+    atomic_write(&path, &serde_json::to_vec(&value).map_err(Failure::local)?)
+        .map_err(Failure::local)?;
+    Ok(value)
+}
+
+pub fn json_request(
+    send: impl FnOnce() -> std::result::Result<HttpResponse, Failure>,
     validate: impl FnOnce(&Value) -> Result<()>,
 ) -> std::result::Result<Value, Failure> {
-    if let Some(ledger) = active() {
-        return ledger.send_described(
-            service,
-            purpose,
-            description,
-            endpoint,
-            identity,
-            resend,
-            send,
-            validate,
-        );
-    }
-    // The CLI has no durable task context. Only confirmed unsent/429 are retryable.
-    let response = send().map_err(|e| Failure {
-        uncertain: !e.definitely_unsent,
-        ..Failure::with_status(None, e.definitely_unsent, e.message)
-    })?;
+    runtime::check_cancelled().map_err(Failure::local)?;
+    let response = send()?;
+    runtime::check_cancelled().map_err(Failure::local)?;
     if !(200..300).contains(&response.status) {
         let rejection = classify_rejection(
             response.status,
@@ -701,7 +222,6 @@ pub fn json_request_described(
                 .as_ref(),
         );
         return Err(Failure {
-            uncertain: response.status >= 500,
             unsupported_response_format: rejection.unsupported_response_format,
             kind: Some(rejection.kind),
             ..Failure::with_status(
@@ -711,52 +231,44 @@ pub fn json_request_described(
             )
         });
     }
-    let value = serde_json::from_slice(&response.body).map_err(Failure::local)?;
+    let value = serde_json::from_slice(&response.body)
+        .map_err(|_| Failure::local("The service response is not valid JSON"))?;
     validate(&value).map_err(Failure::local)?;
     Ok(value)
 }
 
-/// Drain the HTTP body before recording completion; a body read error is still uncertain.
-/// Cloud callers must disable redirects: a failed connection after a redirect would not
-/// prove that the initial request was never handled.
+/// Provider error bodies are used only for safe classification and are never persisted.
 pub fn receive(
     result: std::result::Result<ureq::Response, ureq::Error>,
-) -> std::result::Result<HttpResponse, NetworkFailure> {
+) -> std::result::Result<HttpResponse, Failure> {
     use std::io::Read;
     let response = match result {
         Ok(response) | Err(ureq::Error::Status(_, response)) => response,
         Err(ureq::Error::Transport(error)) => {
-            let definitely_unsent = matches!(
-                error.kind(),
-                ureq::ErrorKind::Dns | ureq::ErrorKind::ConnectionFailed
-            );
-            return Err(NetworkFailure {
-                message: if definitely_unsent {
-                    "Could not connect; request content was not submitted"
-                } else {
-                    "Did not receive a complete service response"
-                }
-                .into(),
-                definitely_unsent,
-            });
+            return Err(Failure::with_status(
+                None,
+                matches!(
+                    error.kind(),
+                    ureq::ErrorKind::Dns
+                        | ureq::ErrorKind::ConnectionFailed
+                        | ureq::ErrorKind::Io
+                        | ureq::ErrorKind::ProxyConnect
+                ),
+                "Could not complete the service connection",
+            ));
         }
     };
     let status = response.status();
     let mut body = Vec::new();
-    const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
     response
         .into_reader()
         .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut body)
-        .map_err(|_| NetworkFailure {
-            message: "Service response was interrupted".into(),
-            definitely_unsent: false,
-        })?;
+        .map_err(|_| Failure::with_status(None, true, "Service response was interrupted"))?;
     if body.len() as u64 > MAX_RESPONSE_BYTES {
-        return Err(NetworkFailure {
-            message: "Service response exceeds the receiving limit".into(),
-            definitely_unsent: false,
-        });
+        return Err(Failure::local(
+            "Service response exceeds the receiving limit",
+        ));
     }
     Ok(HttpResponse { status, body })
 }
@@ -764,8 +276,6 @@ pub fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     #[test]
     fn response_format_fallback_requires_explicit_provider_evidence() {
         for status in [400, 422] {
@@ -794,334 +304,133 @@ mod tests {
             Some(&serde_json::json!({"error":{"message":"response_format is unsupported"}}))
         ));
     }
+    fn response(status: u16, value: Value) -> HttpResponse {
+        HttpResponse {
+            status,
+            body: serde_json::to_vec(&value).unwrap(),
+        }
+    }
+
+    fn valid(value: &Value) -> Result<()> {
+        anyhow::ensure!(value["text"].is_string(), "Missing text");
+        Ok(())
+    }
 
     #[test]
-    fn explicit_failed_component_authorization_is_consumed_before_sending() {
-        let dir = tempfile::tempdir().unwrap();
-        let ledger = Ledger::new(dir.path(), None, &Default::default()).unwrap();
-        let payload = serde_json::json!({"text":"lesson"});
-        let calls = AtomicUsize::new(0);
-        let reject = || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Ok(HttpResponse {
-                status: 400,
-                body: br#"{"error":{"message":"invalid model"}}"#.to_vec(),
-            })
+    fn cache_keys_include_the_url_and_body_and_only_store_valid_successes() {
+        let _serial = runtime::lock_recover(&TEST_LOCK);
+        let root = tempfile::tempdir().unwrap();
+        let _cache = install(root.path()).unwrap();
+        let body = serde_json::json!({"model":"test","messages":["Hello"]});
+        let calls = std::cell::Cell::new(0);
+        let send = || {
+            calls.set(calls.get() + 1);
+            Ok(response(200, serde_json::json!({"text":"response"})))
         };
-        assert!(
-            ledger
-                .send(
-                    "llm",
-                    "summary",
-                    "http://example.test",
-                    &payload,
-                    reject,
-                    |_| Ok(())
-                )
-                .is_err()
-        );
-        let mut receipt = receipts(dir.path()).unwrap().remove(0);
-        receipt.retry_authorized = Some(receipt.request_id.clone());
-        ledger.save(&receipt).unwrap();
-        assert!(
-            ledger
-                .send(
-                    "llm",
-                    "summary",
-                    "http://example.test",
-                    &payload,
-                    reject,
-                    |_| Ok(())
-                )
-                .is_err()
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-        let mut receipt = receipts(dir.path()).unwrap().remove(0);
-        assert!(receipt.retry_authorized.is_none());
-        assert!(
-            ledger
-                .send(
-                    "llm",
-                    "summary",
-                    "http://example.test",
-                    &payload,
-                    || panic!("same task may not repeat a rejected attempt"),
-                    |_| Ok(())
-                )
-                .is_err()
-        );
-        // Even a stale/forged known-failure authorization never authorizes an unknown result.
-        receipt.state = State::Uncertain;
-        receipt.retry_authorized = Some(receipt.request_id.clone());
-        ledger.save(&receipt).unwrap();
-        assert!(
-            ledger
-                .send(
-                    "llm",
-                    "summary",
-                    "http://example.test",
-                    &payload,
-                    || panic!("unknown requires Control::resend"),
-                    |_| Ok(())
-                )
-                .unwrap_err()
-                .uncertain
-        );
+        let url = "https://example.test/v1/chat/completions";
+        let first = cached_json_request(url, &body, send, valid).unwrap();
+        assert_ne!(first[CACHED], true);
+        let cached = cached_json_request(url, &body, send, valid).unwrap();
+        assert_eq!(cached[CACHED], true);
+        assert_eq!(calls.get(), 1);
+        cached_json_request("https://other.test/v1/chat/completions", &body, send, valid).unwrap();
+        cached_json_request(url, &serde_json::json!({"model":"other"}), send, valid).unwrap();
+        assert_eq!(calls.get(), 3);
+        let key = execution::digest(format!("{url}\n{body}").as_bytes());
+        let saved: Value = serde_json::from_slice(
+            &std::fs::read(root.path().join("llm").join(format!("{key}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(saved, first);
+        assert!(saved.get(CACHED).is_none());
+        assert!(!root.path().join("requests").exists());
     }
-    fn success() -> std::result::Result<HttpResponse, NetworkFailure> {
-        Ok(HttpResponse {
-            status: 200,
-            body: br#"{"text":"saved"}"#.to_vec(),
-        })
-    }
+
     #[test]
-    fn confirmed_connection_failure_can_resume_without_resend_authorization() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        drop(listener);
-        let dir = tempfile::tempdir().unwrap();
-        let ledger = Ledger::new(dir.path(), None, &Default::default()).unwrap();
-        let payload = serde_json::json!({"text":"lesson"});
-        let client = crate::runtime::http_agent(std::time::Duration::from_secs(2));
-        let failure = ledger
-            .send(
-                "llm",
-                "summary",
-                &endpoint,
-                &payload,
-                || receive(client.post(&endpoint).send_json(&payload)),
-                |_| Ok(()),
+    fn failed_or_invalid_responses_never_enter_the_cache_and_do_not_block_a_retry() {
+        let _serial = runtime::lock_recover(&TEST_LOCK);
+        let root = tempfile::tempdir().unwrap();
+        let _cache = install(root.path()).unwrap();
+        let body = serde_json::json!({"model":"test"});
+        for status in [302, 400, 401, 422, 429, 500, 503, 599] {
+            let error = cached_json_request(
+                "https://example.test",
+                &body,
+                || {
+                    Ok(response(
+                        status,
+                        serde_json::json!({"error":{"message":"private-test-key"}}),
+                    ))
+                },
+                valid,
             )
             .unwrap_err();
-        assert!(failure.retryable);
-        assert!(!failure.uncertain);
-        assert_eq!(receipts(dir.path()).unwrap()[0].state, State::NotSent);
-        ledger
-            .send("llm", "summary", &endpoint, &payload, success, |_| Ok(()))
-            .unwrap();
-        let receipt = &receipts(dir.path()).unwrap()[0];
-        assert_eq!(receipt.state, State::Completed);
-        assert_eq!(receipt.attempt, 2);
-    }
-    #[test]
-    fn free_services_resend_unconfirmed_requests_without_asking() {
-        let dir = tempfile::tempdir().unwrap();
-        let control = dir.path().join("control.json");
-        let ledger = Ledger::new(dir.path(), Some(&control), &Default::default()).unwrap();
-        let send = |payload: &Value, resend, ok: bool| {
-            ledger.send_described(
-                "llm",
-                "proofreading",
-                "segment",
-                "https://example.test",
-                payload,
-                resend,
-                || {
-                    if ok {
-                        Ok(HttpResponse {
-                            status: 200,
-                            body: br#"{"ok":true}"#.to_vec(),
-                        })
-                    } else {
-                        Err(NetworkFailure {
-                            message: "stalled".into(),
-                            definitely_unsent: false,
-                        })
-                    }
-                },
-                |_| Ok(()),
-            )
-        };
-        let first = serde_json::json!({"text":"one"});
-        let second = serde_json::json!({"text":"two"});
-        assert!(send(&first, Resend::Free, false).unwrap_err().uncertain);
-        // A billed service still stops at the unresolved request.
-        assert!(send(&second, Resend::AskUser, true).is_err());
-        // A free one carries on, and resends the unconfirmed request itself.
-        assert!(send(&second, Resend::Free, true).is_ok());
-        assert!(send(&first, Resend::Free, true).is_ok());
+            assert_eq!(error.retryable, status == 429 || status >= 500);
+            assert!(!error.to_string().contains("private-test-key"));
+            assert!(!root.path().join("llm").exists());
+        }
+        for value in [
+            serde_json::json!({"error":"private-test-key"}),
+            serde_json::json!({"text":null}),
+        ] {
+            assert!(
+                cached_json_request(
+                    "https://example.test",
+                    &body,
+                    || Ok(response(200, value)),
+                    valid
+                )
+                .is_err()
+            );
+            assert!(!root.path().join("llm").exists());
+        }
         assert!(
-            receipts(dir.path())
-                .unwrap()
-                .iter()
-                .all(|r| !is_unresolved(r))
+            cached_json_request(
+                "https://example.test",
+                &body,
+                || Err(Failure::with_status(None, true, "timeout")),
+                valid
+            )
+            .is_err()
+        );
+        assert!(!root.path().join("llm").exists());
+        cached_json_request(
+            "https://example.test",
+            &body,
+            || Ok(response(200, serde_json::json!({"text":"valid"}))),
+            valid,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_dir(root.path().join("llm")).unwrap().count(),
+            1
         );
     }
 
     #[test]
-    fn uncertain_attempt_requires_exact_single_use_authorization() {
-        let dir = tempfile::tempdir().unwrap();
-        let control = dir.path().join("control.json");
-        let ledger = Ledger::new(dir.path(), Some(&control), &Default::default()).unwrap();
-        let payload = serde_json::json!({"model":"test","audio":"hash"});
-        let calls = AtomicUsize::new(0);
-        let fail = || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Err(NetworkFailure {
-                message: "lost".into(),
-                definitely_unsent: false,
-            })
-        };
-        assert!(
-            ledger
-                .send(
-                    "asr",
-                    "transcription",
-                    "https://example.test",
-                    &payload,
-                    fail,
-                    |_| Ok(())
-                )
-                .unwrap_err()
-                .uncertain
-        );
-        let first = receipts(dir.path()).unwrap()[0].request_id.clone();
-        assert!(
-            ledger
-                .send(
-                    "asr",
-                    "transcription",
-                    "https://example.test",
-                    &payload,
-                    fail,
-                    |_| Ok(())
-                )
-                .is_err()
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        atomic_write(
-            &control,
-            &serde_json::to_vec(&Control {
-                resend: vec![first],
-                ..Default::default()
-            })
-            .unwrap(),
-        )
-        .unwrap();
-        assert!(
-            ledger
-                .send(
-                    "asr",
-                    "transcription",
-                    "https://example.test",
-                    &payload,
-                    fail,
-                    |_| Ok(())
-                )
-                .is_err()
-        );
-        assert!(
-            ledger
-                .send(
-                    "asr",
-                    "transcription",
-                    "https://example.test",
-                    &payload,
-                    fail,
-                    |_| Ok(())
-                )
-                .is_err()
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-        let second = receipts(dir.path()).unwrap()[0].request_id.clone();
-        atomic_write(
-            &control,
-            &serde_json::to_vec(&Control {
-                resend: vec![second],
-                ..Default::default()
-            })
-            .unwrap(),
-        )
-        .unwrap();
-        let result = ledger
-            .send(
-                "asr",
-                "transcription",
-                "https://example.test",
-                &payload,
-                success,
-                |_| Ok(()),
-            )
+    fn receiving_preserves_the_response_cap_and_safe_transport_errors() {
+        let oversized = "x".repeat(MAX_RESPONSE_BYTES as usize + 1);
+        let response = ureq::Response::new(200, "OK", &oversized).unwrap();
+        let error = receive(Ok(response)).err().unwrap();
+        assert!(!error.retryable);
+        assert!(error.to_string().contains("receiving limit"));
+        let error = receive(ureq::get("invalid private-test-key").call())
+            .err()
             .unwrap();
-        let cached = ledger
-            .send(
-                "asr",
-                "transcription",
-                "https://example.test",
-                &payload,
-                || panic!("completed request must not send again"),
-                |_| Ok(()),
-            )
-            .unwrap();
-        // The replay is the saved result, marked as not received now.
-        let mut cached = cached;
-        assert_eq!(cached[REPLAYED], true);
-        cached.as_object_mut().unwrap().remove(REPLAYED);
-        assert_eq!(cached, result);
-    }
-    #[test]
-    fn durable_sending_and_protocol_failure_are_not_automatic_retries() {
-        let dir = tempfile::tempdir().unwrap();
-        let ledger = Ledger::new(dir.path(), None, &Default::default()).unwrap();
-        let payload = serde_json::json!({"text":"lesson"});
-        let result = ledger.send(
-            "llm",
-            "proofreading",
-            "https://example.test",
-            &payload,
-            || {
-                assert_eq!(receipts(dir.path()).unwrap()[0].state, State::Sending);
-                Ok(HttpResponse {
-                    status: 200,
-                    body: br#"{"error":"invalid"}"#.to_vec(),
-                })
-            },
-            |_| anyhow::bail!("协议错误"),
-        );
-        assert!(result.is_err());
+        assert!(!error.retryable);
+        assert!(!error.to_string().contains("private-test-key"));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
         assert!(
-            ledger
-                .send(
-                    "llm",
-                    "proofreading",
-                    "https://example.test",
-                    &payload,
-                    || panic!("protocol errors must not resend"),
-                    |_| Ok(())
-                )
-                .is_err()
+            receive(
+                runtime::http_agent(std::time::Duration::from_secs(1))
+                    .get(&format!("http://{address}"))
+                    .call()
+            )
+            .err()
+            .unwrap()
+            .retryable
         );
-    }
-    #[test]
-    fn paused_or_revoked_service_sends_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("control.json");
-        let versions = BTreeMap::from([("llm".into(), "service-v1".into())]);
-        let ledger = Ledger::new(dir.path(), Some(&path), &versions).unwrap();
-        for control in [
-            Control {
-                intent: Intent::Pause,
-                ..Default::default()
-            },
-            Control {
-                stopped_services: vec!["service-v1".into()],
-                ..Default::default()
-            },
-        ] {
-            atomic_write(&path, &serde_json::to_vec(&control).unwrap()).unwrap();
-            assert!(
-                ledger
-                    .send(
-                        "llm",
-                        "summary",
-                        "https://example.test",
-                        &Value::Null,
-                        || panic!("blocked request sent"),
-                        |_| Ok(())
-                    )
-                    .is_err()
-            );
-        }
-        assert!(receipts(dir.path()).unwrap().is_empty());
     }
 }

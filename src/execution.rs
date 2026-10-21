@@ -4,7 +4,6 @@ use crate::{config::PipelineConfig, settings::ConfigFile, timeline::TranscriptEv
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -20,7 +19,6 @@ pub enum Operation {
     Reprocess {
         base_version_dir: PathBuf,
         components: Vec<Component>,
-        prior_work_dir: Option<PathBuf>,
     },
 }
 
@@ -33,28 +31,6 @@ pub enum Component {
     Proofreading,
     Summary,
     Exports,
-}
-
-impl Component {
-    pub const ALL: [Self; 4] = [
-        Self::Screenshots,
-        Self::Proofreading,
-        Self::Summary,
-        Self::Exports,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Screenshots => "screenshots",
-            Self::Proofreading => "proofreading",
-            Self::Summary => "summary",
-            Self::Exports => "exports",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|c| c.as_str() == name)
-    }
 }
 
 /// Sent once over stdin. Do not derive Debug: config contains decrypted credentials.
@@ -81,11 +57,6 @@ pub struct Request {
     pub config: ConfigFile,
     pub work_dir: PathBuf,
     pub note_dir: PathBuf,
-    /// Reserved for the cooperative pause/cancel protocol; never sent as argv.
-    #[serde(default)]
-    pub control_path: Option<PathBuf>,
-    #[serde(default)]
-    pub service_versions: BTreeMap<String, String>,
 }
 
 impl Request {
@@ -152,7 +123,6 @@ impl Request {
         if let Operation::Reprocess {
             base_version_dir,
             components,
-            prior_work_dir,
         } = &self.operation
         {
             anyhow::ensure!(
@@ -160,18 +130,6 @@ impl Request {
                 "Base version requires an absolute path"
             );
             anyhow::ensure!(!components.is_empty(), "Invalid requested components");
-            anyhow::ensure!(
-                prior_work_dir
-                    .as_ref()
-                    .is_none_or(|p| p.is_absolute() && p != &self.work_dir),
-                "Invalid prior work directory"
-            );
-        }
-        if let Some(path) = &self.control_path {
-            anyhow::ensure!(
-                path.is_absolute() && path.starts_with(&self.work_dir),
-                "Invalid control file location"
-            );
         }
         Ok(())
     }
@@ -244,7 +202,6 @@ impl Request {
             "author": self.author, "duration": self.duration, "config": config,
             "subtitle_digest": subtitle_digest,
             "subtitle_events": self.subtitle_events, "local_digest": local_digest,
-            "service_versions": self.service_versions,
         }))
     }
 }
@@ -318,11 +275,7 @@ pub fn bind_work_dir(work_dir: &Path, binding: &serde_json::Value) -> Result<()>
 
 pub async fn run(request: Request) -> Result<()> {
     let cfg = request.resolve()?;
-    let _dispatch = crate::dispatch::install(
-        &request.work_dir,
-        request.control_path.as_deref(),
-        &request.service_versions,
-    )?;
+    let _cache = crate::dispatch::install(&request.work_dir)?;
     // No settings::load, environment credential resolution or wizard on this path.
     crate::pipeline::run_task(&request, &cfg).await
 }

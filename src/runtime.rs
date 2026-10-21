@@ -24,7 +24,76 @@ pub fn lock_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// CLI 的同步入口（main / wizard）多处需要跑单个 async 函数，
 /// 统一在此 `Runtime::new()?.block_on(...)`，避免每个调用点重复建 runtime 样板。
 pub fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
-    Ok(tokio::runtime::Runtime::new()?.block_on(f))
+    let runtime = tokio::runtime::Runtime::new()?;
+    let result = runtime.block_on(async {
+        tokio::select! {
+            error = watch_cancelled() => Err(error),
+            value = f => Ok(value),
+        }
+    });
+    // Finish adapter cleanup without waiting indefinitely for blocking HTTP reads.
+    if is_cancelled() {
+        runtime.shutdown_timeout(Duration::from_secs(4));
+    }
+    result
+}
+
+static CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Debug)]
+pub struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Cancelled")
+    }
+}
+impl std::error::Error for Cancelled {}
+
+pub fn is_cancelled() -> bool {
+    CANCELLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn check_cancelled() -> Result<()> {
+    if is_cancelled() {
+        return Err(Cancelled.into());
+    }
+    Ok(())
+}
+
+pub async fn watch_cancelled() -> anyhow::Error {
+    loop {
+        if let Err(error) = check_cancelled() {
+            return error;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+pub fn install_signal_handlers() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupt = signal(SignalKind::interrupt())?;
+        let mut terminate = signal(SignalKind::terminate())?;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
+                if CANCELLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    std::process::exit(130);
+                }
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    tokio::spawn(async {
+        while tokio::signal::ctrl_c().await.is_ok() {
+            if CANCELLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                std::process::exit(130);
+            }
+        }
+    });
+    Ok(())
 }
 
 /// kill-on-drop 的子进程句柄。
@@ -90,7 +159,6 @@ impl ManagedChild {
 
     pub(crate) fn stop(&mut self) {
         if self.adapter {
-            self.adapter = false;
             #[cfg(unix)]
             {
                 let group = -(self.id() as i32);
@@ -105,6 +173,7 @@ impl ManagedChild {
             }
             #[cfg(windows)]
             drop(self.job.take());
+            self.adapter = false;
         }
         self.kill();
         let _ = self.wait();
@@ -136,6 +205,10 @@ impl ManagedChild {
     pub fn wait_within(&mut self, timeout: Duration) -> Result<ExitStatus> {
         let t0 = Instant::now();
         loop {
+            // Adapter shutdown still needs its grace period after cancellation.
+            if !self.adapter {
+                check_cancelled()?;
+            }
             if let Some(status) = self.try_wait() {
                 return Ok(status);
             }
@@ -314,7 +387,7 @@ pub fn retry_backoff(attempt: u32) -> Duration {
 pub fn interruptible_sleep(wait: Duration) -> Result<()> {
     let deadline = Instant::now() + wait;
     loop {
-        crate::dispatch::check_control()?;
+        crate::runtime::check_cancelled()?;
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return Ok(());
@@ -325,11 +398,7 @@ pub fn interruptible_sleep(wait: Duration) -> Result<()> {
 
 /// 无重定向的 HTTP agent：整体超时参数化，内置 `.redirects(0)`。
 ///
-/// 安全纪律（与 dispatch.rs 请求账本注释一致）：请求经 3xx 重定向后失败，
-/// 无法证明服务端「未提交」——可能已产生费用/副作用，因此凡走账本的调用
-/// 必须禁止跟随重定向。这里在构造处统一内置，不靠每个调用点自觉。
-/// Metadata probes use their own connect/read timeouts.
-/// 形态不合，保留各自 AgentBuilder，不套用本 helper。
+/// Shared HTTP policy: callers classify responses and follow no redirects.
 pub fn http_agent(timeout: Duration) -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(timeout)
@@ -425,7 +494,7 @@ where
         for _ in 0..workers.max(1).min(total.max(1)) {
             scope.spawn(|| {
                 loop {
-                    if let Err(error) = crate::dispatch::check_control() {
+                    if let Err(error) = crate::runtime::check_cancelled() {
                         let mut guard = lock_recover(&first_error);
                         if guard.is_none() {
                             *guard = Some(error);

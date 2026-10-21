@@ -137,7 +137,7 @@ async fn sample_timestamps(cfg: &PipelineConfig, media: &Path) -> Result<Vec<(f6
     let mut last_emit_t: f64 = -f64::INFINITY;
     let mut i: u64 = 0;
     loop {
-        crate::dispatch::check_control()?;
+        crate::runtime::check_cancelled()?;
         match stdout.read_exact(&mut buf).await {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -239,7 +239,7 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Vec<FrameEvent>> 
     let mut pending = times.iter().copied().enumerate();
     let mut results: Vec<(usize, Result<()>)> = Vec::with_capacity(times.len());
     loop {
-        crate::dispatch::check_control()?;
+        crate::runtime::check_cancelled()?;
         while set.len() < EXTRACT_CONCURRENCY {
             let Some((i, (_, capture_t))) = pending.next() else {
                 break;
