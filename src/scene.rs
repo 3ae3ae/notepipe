@@ -92,8 +92,8 @@ async fn sample_timestamps(
         h = info.height,
         duration = format_args!("{:.0}s", info.duration),
         interval,
-        similarity = cfg.similarity,
-        cooldown = cfg.cooldown,
+        sensitivity = cfg.similarity,
+        min_gap = cfg.cooldown,
         "screenshot sample"
     );
 

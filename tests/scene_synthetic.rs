@@ -136,7 +136,7 @@ fn scene_detects_slides_with_true_timestamps() {
     );
     assert!(
         (ts[1] - 7.5).abs() < 1.0,
-        "second screenshot at C's start 7.5 s, not the cooldown end ~10 s; got {} (all: {ts:?})",
+        "second screenshot at C's start 7.5 s, not the end of min_gap at ~10 s; got {} (all: {ts:?})",
         ts[1]
     );
     let _ = std::fs::remove_dir_all(&dir);

@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_false_overrides_config_and_invalid_values_are_not_clamped() {
+    fn options_pass_through_and_invalid_values_are_not_clamped() {
         let file = settings::ConfigFile::default();
         let opts = RunOpts {
             no_resume: true,

@@ -385,7 +385,7 @@ const TEMPLATE: &str = r#"# notepipe configuration
 # "first" takes the screenshot as soon as the picture changes.
 #mode = "{SCREENSHOT_MODE}"
 
-# How small a change triggers a screenshot, from 0 to 1. Higher takes more screenshots.
+# How small a change triggers a screenshot, greater than 0 and at most 1. Higher takes more.
 #sensitivity = {SIMILARITY}
 
 # Seconds between the frames that are compared, at least 0.2.
@@ -510,7 +510,11 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     println!("  {:<17}: {}", "base_url", cfg.ai.base_url);
     println!("  {:<17}: {}", "api_key", hidden(&cfg.ai.api_key));
     println!("  {:<17}: {}", "model", cfg.ai.model);
-    println!("  {:<17}: {}", "concurrency", cfg.ai.concurrency);
+    println!(
+        "  {:<17}: {}",
+        "concurrency",
+        cfg.ai.concurrency.clamp(1, 16)
+    );
     println!(
         "  {:<17}: {:?}",
         "request keys",
@@ -606,6 +610,5 @@ mod tests {
         assert_eq!(from_template.source, built_in.source);
         assert_eq!(from_template.asr, built_in.asr);
         assert_eq!(file.speech, super::Speech::default());
-        assert_eq!(file.speech.detection, super::Detection::default());
     }
 }
