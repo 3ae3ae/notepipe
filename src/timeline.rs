@@ -310,16 +310,13 @@ fn is_standalone_filler(text: &str) -> bool {
             | "唉"
             | "诶"
             | "噢"
-            | "um"
             | "umm"
             | "uh"
             | "uhm"
             | "hmm"
             | "mm"
-            | "er"
             | "erm"
             | "음"
-            | "어"
             | "엄"
             | "えー"
             | "えっと"
@@ -548,16 +545,13 @@ mod tests {
             "唉",
             "诶",
             "噢",
-            "UM",
             "umm",
             "Uh",
             "uhm",
             "HMM",
             "mm",
-            "er",
             "erm",
             "음",
-            "어",
             "엄",
             "えー",
             "えっと",
@@ -577,6 +571,24 @@ mod tests {
             "嗯，今天",
         ] {
             assert!(!is_standalone_filler(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn coalesce_keeps_ambiguous_standalone_answers() {
+        for text in ["um", "UM!", "er", "Er?", "어", "어."] {
+            let mut sections = vec![Section {
+                t: 0.0,
+                end: 1.0,
+                image: String::new(),
+                speech: vec![TranscriptEvent {
+                    text: text.into(),
+                    ..sp(0.0, 1.0)
+                }],
+            }];
+            coalesce_sections(&mut sections);
+            assert_eq!(sections[0].speech.len(), 1, "{text}");
+            assert_eq!(sections[0].speech[0].text, text);
         }
     }
 

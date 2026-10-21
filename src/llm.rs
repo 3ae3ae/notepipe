@@ -419,13 +419,19 @@ fn translation_body(s: &LlmSettings, target: &str, items: &[&str]) -> Result<ser
         .enumerate()
         .map(|(i, t)| serde_json::json!({"id": i, "text": t}))
         .collect();
+    let target = target.trim();
+    let name = crate::language::english_name(target);
+    let name = if target.contains(['-', '_']) && name != target {
+        format!("{name} ({target})")
+    } else {
+        name.to_owned()
+    };
     // The instruction stays in English: it names the target for any service.
     let system = format!(
-        "You translate lecture transcripts. Translate each item into {}. Keep the meaning, \
+        "You translate lecture transcripts. Translate each item into {name}. Keep the meaning, \
          terminology and tone; do not summarize, add or omit content. Keep names, code and \
          formulas as they are. Output a JSON object {{\"segments\":[{{\"id\":number,\"text\":translation}}]}} \
-         with exactly one entry per input id. {MATH_RULE}",
-        crate::language::english_name(target)
+         with exactly one entry per input id. {MATH_RULE}"
     );
     Ok(chat_body(
         s,
@@ -1061,6 +1067,23 @@ mod tests {
             summarize: false,
             translate: None,
             concurrency: 8,
+        }
+    }
+
+    #[test]
+    fn translation_instructions_preserve_region_and_script_targets() {
+        for (target, name) in [
+            ("pt-BR", "Portuguese (pt-BR)"),
+            ("zh-TW", "Chinese (zh-TW)"),
+            ("sr-Latn", "Serbian (sr-Latn)"),
+            ("zh-Hant", "Traditional Chinese (zh-Hant)"),
+            ("pt", "Portuguese"),
+            ("English", "English"),
+            ("xx-custom", "xx-custom"),
+        ] {
+            let body = translation_body(&test_settings(), target, &["Hello"]).unwrap();
+            let system = body["messages"][0]["content"].as_str().unwrap();
+            assert!(system.contains(&format!("Translate each item into {name}.")));
         }
     }
 

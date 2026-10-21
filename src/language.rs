@@ -103,6 +103,10 @@ fn family(code: &str) -> &str {
 /// Whether text that `detect` judged to be `detected` is already in `target`.
 pub fn already_in(detected: Option<&str>, target: &str) -> bool {
     let target = target.trim();
+    let target = LANGUAGE_NAMES
+        .iter()
+        .find(|(_, name)| name.eq_ignore_ascii_case(target))
+        .map_or(target, |(code, _)| *code);
     let language = family(target);
     if language.eq_ignore_ascii_case("zh") && target.contains(['-', '_']) {
         return false;
@@ -229,7 +233,15 @@ mod tests {
 
     #[test]
     fn chinese_script_and_region_targets_always_translate() {
-        for target in ["zh-Hans", "zh-Hant", "zh-TW", "ZH_hant", "zh-HK"] {
+        for target in [
+            "zh-Hans",
+            "zh-Hant",
+            "zh-TW",
+            "ZH_hant",
+            "zh-HK",
+            "Simplified Chinese",
+            "Traditional Chinese",
+        ] {
             for detected in [Some("zh"), Some("zh-Hant"), None] {
                 assert!(!already_in(detected, target), "{detected:?} → {target}");
             }
@@ -239,6 +251,21 @@ mod tests {
         assert!(already_in(Some("en"), "EN_us"));
         assert!(!already_in(Some("en"), "zh-Hans"));
         assert!(!already_in(None, "en"));
+    }
+
+    #[test]
+    fn recognized_target_names_skip_translation_like_codes() {
+        for (code, name) in [
+            ("en", "English"),
+            ("fr", " french "),
+            ("de", "GERMAN"),
+            ("zh", "Chinese"),
+        ] {
+            assert!(already_in(Some(code), name), "{code} → {name}");
+            assert!(!already_in(None, name));
+        }
+        assert!(!already_in(Some("en"), "French"));
+        assert!(!already_in(Some("en"), "Unknown language"));
     }
 
     #[test]
