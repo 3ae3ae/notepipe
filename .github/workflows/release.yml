@@ -266,3 +266,6 @@ jobs:
           merge-multiple: true
       - name: Publish Python packages
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Adapters are versioned independently; versions already on PyPI are left as they are.
+          skip-existing: true
