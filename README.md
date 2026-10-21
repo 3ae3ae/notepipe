@@ -1,23 +1,54 @@
 # notepipe
 
-Turn video and audio into Markdown notes: the transcript arranged around screenshots of what was on screen, optionally
-proofread, summarized or extended by a language model.
+[![CI](https://github.com/3ae3ae/notepipe/actions/workflows/ci.yml/badge.svg)](https://github.com/3ae3ae/notepipe/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-notepipe is a small engine with a command-line interface. It is useful on its own, and other programs can drive it.
-Speech recognition and language models are reached over standard HTTP APIs; local engines and online sources plug in as
-separately installed [adapters](docs/adapters.md).
+**Turn video and audio into Markdown notes.** notepipe takes a lecture, talk, meeting or podcast and writes a note: the
+transcript arranged around screenshots of what was on screen, optionally proofread, summarized or extended by the
+language model of your choice.
 
-## Features
+It is a small, dependable command-line tool, and a component other programs can build on.
 
-- **Local files and URLs** — video or audio files on your computer; web pages through a source adapter such as the
-  official [yt-dlp adapter](adapters/ytdlp).
-- **Subtitles first** — existing subtitles are used when available; otherwise speech is transcribed.
-- **Any speech service** — OpenAI-compatible transcription APIs, audio-capable chat models, or a local engine through an
-  adapter.
-- **Screenshots** — a screenshot is taken whenever the picture changes and placed next to what was said.
-- **Prompt-driven AI stages** — proofreading, summaries, translations or anything else you can describe in a prompt, with
-  any OpenAI-compatible model.
-- **Plain output** — a folder per note with `note.md` (YAML front matter and Markdown), `images/` and `note.json`.
+## Principles
+
+- **One job, done well.** A recording goes in; a plain note folder comes out.
+- **Standard interfaces, no lock-in.** Speech recognition and language models are reached through OpenAI-compatible APIs,
+  so any provider, self-hosted server or local engine can be used.
+- **Light by default.** No models are bundled. Local engines and website support are separate
+  [adapters](docs/adapters.md) that you install only if you want them.
+- **Neutral.** No preferred vendor, website or language. Prompts are defaults you can replace, and notes follow the
+  language of the recording.
+- **Your data stays yours.** Plain Markdown, images and JSON; a failed run never replaces a good note; nothing is sent
+  anywhere you did not configure.
+
+[docs/design.md](docs/design.md) explains these choices and how the pieces fit together.
+
+## What a note looks like
+
+```markdown
+---
+title: "Introduction to Compilers"
+source: "https://www.youtube.com/watch?v=…"
+author: "Example University"
+duration: "1:12:40"
+created: "2026-10-21T09:30:00Z"
+generator: "notepipe 0.1.0"
+---
+
+# Introduction to Compilers
+
+## Overview
+A compiler translates a program in stages, from characters to tokens, trees and finally machine code.
+
+## [03:12](https://www.youtube.com/watch?v=…&t=192s)
+
+![03:12](images/0002.jpg)
+
+The first stage is lexical analysis. The scanner reads characters and groups them into tokens such as identifiers,
+numbers and operators.
+```
+
+Each note is a folder with `note.md`, the screenshots in `images/`, and `note.json` with the same content as data.
 
 ## Install
 
@@ -26,33 +57,29 @@ notepipe needs [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`.
 With [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uv tool install notepipe                                  # local files only
-uv tool install notepipe --with notepipe-source-ytdlp     # also URLs (via yt-dlp)
+uv tool install notepipe                                  # local video and audio files
+uv tool install notepipe --with notepipe-source-ytdlp     # also URLs, through yt-dlp
 ```
 
-Add other [adapters](#adapters) the same way with more `--with` options.
-
-With Cargo: `cargo install notepipe`. Prebuilt binaries are attached to each
-[GitHub release](https://github.com/3ae3ae/notepipe/releases).
-
-On Android, install [Termux](https://termux.dev), then `pkg install rust ffmpeg uv` and use either method above.
+Add more [adapters](#adapters) with further `--with` options. With Cargo: `cargo install notepipe`. Prebuilt binaries are
+attached to each [GitHub release](https://github.com/3ae3ae/notepipe/releases). On Android, install
+[Termux](https://termux.dev), run `pkg install rust ffmpeg uv`, and use either method.
 
 ## Quick start
 
 ```sh
 notepipe lecture.mp4
 notepipe interview.m4a -o ~/notes
-notepipe https://www.youtube.com/watch?v=VIDEO_ID      # needs a source adapter
+notepipe https://www.youtube.com/watch?v=VIDEO_ID        # with a source adapter
 ```
 
-If a recording has no usable subtitles and no speech service is configured, the first interactive run asks for one and
-saves it. `notepipe doctor` checks your setup.
+Existing subtitles are used when available. Otherwise speech is transcribed: if no speech service is configured yet, the
+first interactive run asks for one and saves it. `notepipe doctor` checks your setup.
 
 ## Configuration
 
-Settings live in `~/.config/notepipe/config.toml` (`%APPDATA%\notepipe\config.toml` on Windows; `$XDG_CONFIG_HOME` is
-honored). `notepipe config init` writes a commented template and `notepipe config show` prints the effective settings.
-Command-line options override the file.
+Settings live in `~/.config/notepipe/config.toml` (`%APPDATA%\notepipe\config.toml` on Windows). `notepipe config init`
+writes a commented template. The full list of settings is in [docs/configuration.md](docs/configuration.md).
 
 ```toml
 [asr]                                      # speech recognition
@@ -64,13 +91,13 @@ language = "ko"                            # optional; detected when empty
 base_url = "https://api.openai.com/v1"
 model = "gpt-5.6-luna"
 
-[[llm.stages]]                             # stages run in this order
+[[llm.stages]]                             # run in this order
 name = "proofread"
 
 [[llm.stages]]
 name = "summary"
-model = "gpt-5.6-terra"                    # per-stage overrides: base_url, api_key, model, prompt, request
-request = { reasoning_effort = "medium" }  # extra fields merged into the request body
+model = "gpt-5.6-terra"                    # any stage can use its own model, endpoint, key or prompt
+request = { reasoning_effort = "medium" }  # extra fields merged into the request
 ```
 
 API keys can stay out of the file: `NOTEPIPE_ASR_API_KEY` and `NOTEPIPE_LLM_API_KEY` are used when the file has none.
@@ -83,61 +110,42 @@ API keys can stay out of the file: `NOTEPIPE_ASR_API_KEY` and `NOTEPIPE_LLM_API_
 | Groq | `base_url = "https://api.groq.com/openai/v1"`, `model = "whisper-large-v3-turbo"` |
 | Mistral | `base_url = "https://api.mistral.ai/v1"`, `model = "voxtral-mini-latest"` |
 | Audio-capable chat models | `mode = "chat"` with the provider's `base_url` and `model` |
-| xAI | `command = ["notepipe-asr-xai"]` — [adapter](adapters/xai) |
-| Meta | `command = ["notepipe-asr-meta"]` — [adapter](adapters/meta) |
-| llama.cpp (local, any platform) | `command = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]`, `concurrency = 1` — [adapter](adapters/llama) |
-| Intel NPU (local) | `command = ["notepipe-asr-openvino"]`, `concurrency = 1` — [adapter](adapters/openvino) |
-| Apple silicon (local) | `command = ["notepipe-asr-apple"]`, `concurrency = 1` — [adapter](adapters/apple) |
-
-When `command` is set, notepipe starts the adapter for the run and stops it afterwards. Other tuning: `max_speech`
-(longest segment, seconds), `vad_threshold` and `min_silence` (speech detection).
+| Any OpenAI-compatible server you run | its `base_url` |
+| xAI, Meta | the [xAI](adapters/xai) or [Meta](adapters/meta) adapter |
+| llama.cpp, Intel NPU, Apple silicon (local) | the [llama](adapters/llama), [OpenVINO](adapters/openvino) or [Apple](adapters/apple) adapter |
 
 ### AI stages
 
-A stage applies a prompt either to the paragraphs of the note or to the whole transcript:
-
-| `input` | `output` | Effect |
-|---|---|---|
-| `paragraphs` | `replace` | each paragraph is replaced by the model's text (an empty result removes it) |
-| `paragraphs` | `below` | the model's text is added under each paragraph |
-| `transcript` | `top` | the model's Markdown is added at the top of the note |
-
-`proofread` (paragraphs → replace) and `summary` (transcript → top) are built in with default prompts; set `prompt` to
-change what they do. Any other name defines your own stage, for example bilingual notes:
+A stage sends either the note's paragraphs or the whole transcript to a language model, with a prompt that says what to
+do. `proofread` and `summary` are built in. Anything else is a few lines of configuration — for example, bilingual notes:
 
 ```toml
 [[llm.stages]]
 name = "translate"
-input = "paragraphs"
-output = "below"
-prompt = "Translate each item into Korean. Keep the meaning, terminology and tone; do not summarize, add or omit content. Keep names, code and formulas unchanged. Return an item unchanged if it is already in Korean."
+input = "paragraphs"       # each paragraph …
+output = "below"           # … gets the model's text underneath
+prompt = "Translate each item into Korean. Keep names, code and formulas unchanged. Return an item unchanged if it is already in Korean."
 ```
 
-Set `images = true` on a paragraphs stage to send each paragraph's screenshot along. `--stages proofread,summary` picks
-stages for one run and `--no-stages` runs none. Any OpenAI-compatible chat endpoint works:
+Any OpenAI-compatible chat endpoint works, including OpenAI, Anthropic (`https://api.anthropic.com/v1`), Google Gemini
+(`https://generativelanguage.googleapis.com/v1beta/openai`), OpenRouter, Groq, and local servers such as Ollama
+(`http://localhost:11434/v1`) or LM Studio.
 
-| Provider | `base_url` |
-|---|---|
-| OpenAI | `https://api.openai.com/v1` |
-| Anthropic | `https://api.anthropic.com/v1` |
-| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` |
-| OpenRouter | `https://openrouter.ai/api/v1` |
-| Groq | `https://api.groq.com/openai/v1` |
-| Ollama (local) | `http://localhost:11434/v1` |
-| LM Studio (local) | `http://localhost:1234/v1` |
+## Adapters
 
-## Output
+Adapters are separate programs that notepipe starts when needed. Install them next to notepipe with `uv tool install
+notepipe --with <package>`.
 
-```
-<out>/<title>/
-├── note.md        YAML front matter, stage output at the top, then the notes
-├── images/        screenshots referenced by note.md
-└── note.json      the same note as structured data
-```
+| Package | Kind | Purpose |
+|---|---|---|
+| [`notepipe-source-ytdlp`](adapters/ytdlp) | source | URLs from any site yt-dlp supports |
+| [`notepipe-asr-llama`](adapters/llama) | speech | llama.cpp on CPU or GPU |
+| [`notepipe-asr-openvino`](adapters/openvino) | speech | Intel NPU (or CPU/GPU) with OpenVINO |
+| [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon; built in CI, not yet verified on hardware |
+| [`notepipe-asr-xai`](adapters/xai) | speech | xAI speech-to-text |
+| [`notepipe-asr-meta`](adapters/meta) | speech | Meta speech-to-text |
 
-Running again on the same source replaces its note. Intermediate results are cached per source, so changing only AI
-settings reuses the download, screenshots and transcript; `--no-resume` starts over. `[defaults].on_complete` runs a
-command after each note is written, for example to convert or sync it.
+Writing your own takes a few dozen lines; see [docs/adapters.md](docs/adapters.md).
 
 ## Using notepipe from other programs
 
@@ -147,24 +155,18 @@ Pass the configuration on standard input and read newline-delimited JSON events:
 notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 ```
 
-See [docs/cli.md](docs/cli.md) for the events, exit codes, `note.json` and the completion hook.
+[docs/cli.md](docs/cli.md) documents the events, exit codes, `note.json`, caching and the completion hook that runs after
+each note is written.
 
-## Adapters
+## Status
 
-| Package | Kind | Purpose |
-|---|---|---|
-| [`notepipe-source-ytdlp`](adapters/ytdlp) | source | URLs from any site yt-dlp supports |
-| [`notepipe-asr-llama`](adapters/llama) | speech | llama.cpp on CPU or GPU |
-| [`notepipe-asr-openvino`](adapters/openvino) | speech | Intel NPU (or CPU/GPU) with OpenVINO |
-| [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon (not yet verified on hardware) |
-| [`notepipe-asr-xai`](adapters/xai) | speech | xAI speech-to-text |
-| [`notepipe-asr-meta`](adapters/meta) | speech | Meta speech-to-text |
-
-[docs/adapters.md](docs/adapters.md) describes the contracts and how to write your own.
+notepipe is young (0.x). The configuration format, the CLI contract and `note.json` may still change; every change is
+recorded in the [changelog](CHANGELOG.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), and report security problems as described in
+[SECURITY.md](SECURITY.md).
 
 ## License
 

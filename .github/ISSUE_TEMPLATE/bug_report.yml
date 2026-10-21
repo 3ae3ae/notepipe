@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and configuration
+      description: The command line and the relevant parts of config.toml. Remove API keys, cookies and private URLs.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Output of the same command with -v (or -vv).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `notepipe --version`, and adapter versions if adapters are involved.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: e.g. macOS 15 arm64, Ubuntu 24.04 x86_64, Windows 11, Termux
+    validations:
+      required: true
