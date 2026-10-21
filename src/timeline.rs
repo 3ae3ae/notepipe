@@ -202,11 +202,12 @@ pub fn coalesce_sections(sections: &mut [Section]) {
             }
 
             let should_break = current.as_ref().is_some_and(|paragraph| {
-                event.start - paragraph.end > PARAGRAPH_GAP_SECS
-                    || paragraph_units(&paragraph.text)
-                        + paragraph_units(text)
-                        + usize::from(needs_space(&paragraph.text, text))
-                        > MAX_PARAGRAPH_UNITS
+                !continues_grapheme(&paragraph.text, text)
+                    && (event.start - paragraph.end > PARAGRAPH_GAP_SECS
+                        || paragraph_units(&paragraph.text)
+                            + paragraph_units(text)
+                            + usize::from(needs_space(&paragraph.text, text))
+                            > MAX_PARAGRAPH_UNITS)
             });
             if should_break {
                 paragraphs.push(current.take().expect("paragraph exists when breaking"));
@@ -264,18 +265,21 @@ fn paragraph_units(text: &str) -> usize {
         .sum()
 }
 
-fn needs_space(paragraph: &str, next: &str) -> bool {
+fn continues_grapheme(paragraph: &str, next: &str) -> bool {
     let (Some(left), Some(right)) = (
         paragraph.graphemes(true).next_back(),
         next.graphemes(true).next(),
     ) else {
         return false;
     };
-    if ![left, right]
+    ![left, right]
         .concat()
         .grapheme_indices(true)
         .any(|(offset, _)| offset == left.len())
-    {
+}
+
+fn needs_space(paragraph: &str, next: &str) -> bool {
+    if continues_grapheme(paragraph, next) {
         return false;
     }
     let boundary_character = |c: &char| {
@@ -493,6 +497,34 @@ mod tests {
         assert_eq!(paragraph_units("、・。"), 6);
         assert_eq!(paragraph_units("々〇"), 4);
         assert_eq!(paragraph_units("ｶ\u{ffa1}"), 2);
+    }
+
+    #[test]
+    fn coalesce_keeps_grapheme_continuations_despite_length_or_time_gaps() {
+        for prefix in [String::new(), "x".repeat(MAX_PARAGRAPH_UNITS)] {
+            for start in [2.1, 10.0] {
+                let mut sections = vec![Section {
+                    t: 0.,
+                    end: start + 1.,
+                    image: String::new(),
+                    speech: vec![
+                        TranscriptEvent {
+                            text: format!("{prefix}e"),
+                            ..sp(0., 2.)
+                        },
+                        TranscriptEvent {
+                            text: "\u{301}clair".into(),
+                            ..sp(start, start + 1.)
+                        },
+                    ],
+                }];
+                coalesce_sections(&mut sections);
+                assert_eq!(sections[0].speech.len(), 1);
+                assert_eq!(sections[0].speech[0].text, format!("{prefix}e\u{301}clair"));
+                assert_eq!(sections[0].speech[0].start, 0.);
+                assert_eq!(sections[0].speech[0].end, start + 1.);
+            }
+        }
     }
 
     #[test]
