@@ -40,9 +40,9 @@ pub fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
 
 static CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(unix)]
-static ADAPTERS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static PROCESS_TREES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 #[cfg(windows)]
-static ADAPTERS: Mutex<Vec<(u32, windows::Job)>> = Mutex::new(Vec::new());
+static PROCESS_TREES: Mutex<Vec<(u32, windows::Job)>> = Mutex::new(Vec::new());
 
 #[derive(Debug)]
 pub struct Cancelled;
@@ -76,15 +76,15 @@ pub async fn watch_cancelled() -> anyhow::Error {
 
 fn cancel_or_exit() {
     if CANCELLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        let mut adapters = lock_recover(&ADAPTERS);
+        let mut trees = lock_recover(&PROCESS_TREES);
         #[cfg(unix)]
-        for pid in adapters.drain(..) {
+        for pid in trees.drain(..) {
             unsafe {
                 libc::kill(-(pid as i32), libc::SIGKILL);
             }
         }
         #[cfg(windows)]
-        adapters.clear(); // Closing each job kills its whole process tree.
+        trees.clear(); // Closing each job kills its whole process tree.
         std::process::exit(130);
     }
 }
@@ -118,7 +118,7 @@ pub fn install_signal_handlers() -> std::io::Result<()> {
 pub struct ManagedChild {
     child: Child,
     name: &'static str,
-    adapter: bool,
+    process_tree: bool,
 }
 
 pub(crate) struct CancelOnDrop(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
@@ -144,12 +144,12 @@ impl ManagedChild {
         Ok(Self {
             child,
             name,
-            adapter: false,
+            process_tree: false,
         })
     }
 
-    /// Adapter launchers own their process trees, including download/model workers.
-    pub(crate) fn spawn_adapter(name: &'static str, command: &mut Command) -> Result<Self> {
+    /// Own the whole process tree, including workers spawned by the launcher.
+    pub(crate) fn spawn_tree(name: &'static str, command: &mut Command) -> Result<Self> {
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -162,39 +162,43 @@ impl ManagedChild {
             windows::Job::new()?
         };
         // Register under the same lock as forced shutdown, including the spawn window.
-        let mut adapters = lock_recover(&ADAPTERS);
+        let mut trees = lock_recover(&PROCESS_TREES);
         check_cancelled()?;
         let mut child = Self::spawn(name, command)?;
         #[cfg(windows)]
         {
             job.assign_and_resume(&child)?;
-            adapters.push((child.id(), job));
+            trees.push((child.id(), job));
         }
         #[cfg(unix)]
-        adapters.push(child.id());
-        child.adapter = true;
+        trees.push(child.id());
+        child.process_tree = true;
         Ok(child)
     }
 
     pub(crate) fn stop(&mut self) {
-        if self.adapter {
+        if self.process_tree {
             #[cfg(unix)]
             {
                 let group = -(self.id() as i32);
                 unsafe {
                     libc::kill(group, libc::SIGTERM);
                 }
-                let _ = self.wait_within(Duration::from_secs(2));
-                let mut adapters = lock_recover(&ADAPTERS);
+                // Allow graceful shutdown even when cancellation has already arrived.
+                let start = Instant::now();
+                while self.try_wait().is_none() && start.elapsed() < Duration::from_secs(2) {
+                    std::thread::sleep(WAIT_POLL_INTERVAL);
+                }
+                let mut trees = lock_recover(&PROCESS_TREES);
                 // The leader may exit before its children; terminate the entire group.
                 unsafe {
                     libc::kill(group, libc::SIGKILL);
                 }
-                adapters.retain(|pid| *pid != self.id());
+                trees.retain(|pid| *pid != self.id());
             }
             #[cfg(windows)]
-            lock_recover(&ADAPTERS).retain(|(pid, _)| *pid != self.id());
-            self.adapter = false;
+            lock_recover(&PROCESS_TREES).retain(|(pid, _)| *pid != self.id());
+            self.process_tree = false;
         }
         self.kill();
         let _ = self.wait();
@@ -226,10 +230,7 @@ impl ManagedChild {
     pub fn wait_within(&mut self, timeout: Duration) -> Result<ExitStatus> {
         let t0 = Instant::now();
         loop {
-            // Adapter shutdown still needs its grace period after cancellation.
-            if !self.adapter {
-                check_cancelled()?;
-            }
+            check_cancelled()?;
             if let Some(status) = self.try_wait() {
                 return Ok(status);
             }
@@ -334,17 +335,17 @@ pub fn run_bounded(
     cmd.stdin(Stdio::null())
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
-    let mut child = ManagedChild::spawn(name, cmd)?;
+    let mut child = ManagedChild::spawn_tree(name, cmd)?;
     let status = child.wait_within(timeout);
-    if status.is_err() {
-        child.stop();
-    }
+    child.stop();
     stdout.rewind()?;
     stderr.rewind()?;
-    let mut out = String::new();
-    let mut err = String::new();
-    stdout.take(64 * 1024 * 1024).read_to_string(&mut out)?;
-    stderr.take(64 * 1024 * 1024).read_to_string(&mut err)?;
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    stdout.take(64 * 1024 * 1024).read_to_end(&mut out)?;
+    stderr.take(64 * 1024 * 1024).read_to_end(&mut err)?;
+    let out = String::from_utf8_lossy(&out).into_owned();
+    let err = String::from_utf8_lossy(&err).into_owned();
     let status = status
         .with_context(|| format!("{name} was stopped:\n{}", crate::error::tail_lines(&err, 5)))?;
     Ok(BoundedOutput {
@@ -578,13 +579,23 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn bounded_timeout_stops_the_process_and_keeps_the_stderr_tail() {
+    fn bounded_timeout_stops_the_process_tree_and_keeps_the_stderr_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("child-pid");
         let error = run_bounded(
-            "fixture",
-            Command::new("sh").args([
-                "-c",
-                "printf 'hook-timeout-diagnostic\\n' >&2; exec sleep 10",
-            ]),
+            "on_complete",
+            Command::new("sh")
+                .args([
+                    "-c",
+                    r#"trap 'wait; exit 0' TERM
+sleep 30 &
+printf '%s' "$!" > "$1"
+printf 'hook-timeout-diagnostic\n' >&2
+wait
+"#,
+                    "hook",
+                ])
+                .arg(&pid_file),
             Duration::from_millis(300),
         )
         .err()
@@ -592,6 +603,11 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("was stopped") && message.contains("time limit"));
         assert!(message.contains("hook-timeout-diagnostic"));
+        let pid = std::fs::read_to_string(pid_file)
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "hook child was orphaned");
     }
 
     #[test]

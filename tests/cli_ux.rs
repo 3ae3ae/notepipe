@@ -67,6 +67,17 @@ fn no_arguments_or_help_succeed_with_guidance() {
     let text = stdout(&help);
     assert!(text.contains("Quick start"), "{text}");
     assert!(text.contains("Speech recognition"), "{text}");
+    for description in [
+        "Prefer subtitles; transcribe speech if unavailable",
+        "Subtitles only; local files need a matching .srt/.vtt",
+        "Transcribe with the selected backend; skip subtitles",
+    ] {
+        assert!(text.contains(description), "{text}");
+    }
+    assert!(
+        !text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+        "{text}"
+    );
     for cmd in ["config", "doctor"] {
         assert!(cli.run(&[cmd, "--help"]).status.success(), "{cmd}");
     }

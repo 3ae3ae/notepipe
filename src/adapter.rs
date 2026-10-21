@@ -52,7 +52,7 @@ impl Adapter {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         crate::progress::stage("adapter/start", "start");
-        let mut child = crate::runtime::ManagedChild::spawn_adapter("ASR adapter", &mut command)?;
+        let mut child = crate::runtime::ManagedChild::spawn_tree("ASR adapter", &mut command)?;
         let stderr = crate::runtime::StderrTail::default();
         let mut drains = Vec::new();
         if let Some(pipe) = child.take_stderr() {

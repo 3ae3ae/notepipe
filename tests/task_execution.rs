@@ -705,7 +705,8 @@ fn completion_hooks_receive_note_paths_and_warning_counts_once_per_publication()
     let hook = root.path().join("completion hook.sh");
     std::fs::write(&hook, r#"#!/bin/sh
 printf '%s\n' "$PWD" "$NOTEPIPE_NOTE_DIR" "$NOTEPIPE_MARKDOWN" "$NOTEPIPE_JSON" "$NOTEPIPE_WARNINGS" >> "$1"
-printf 'omit-first\none\ntwo\nthree\nfour\nhook failure tail\n' >&2
+printf '\377'
+printf 'omit-first\none\ntwo\nthree\nfour\nhook failure tail\377\n' >&2
 exit "$2"
 "#).unwrap();
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -740,6 +741,7 @@ exit "$2"
         if code == "7" {
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(stderr.contains("code=Some(7)") && stderr.contains("hook failure tail"));
+            assert!(stderr.contains("hook failure tail\u{fffd}"));
             assert!(!stderr.contains("omit-first"));
         }
     }
@@ -771,6 +773,42 @@ exit "$2"
         std::fs::read_to_string(&record).unwrap().lines().count(),
         10
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn cancelling_completion_hooks_stops_their_process_trees() {
+    for signal in [libc::SIGINT, libc::SIGTERM] {
+        let root = tempfile::tempdir().unwrap();
+        if which::which("ffmpeg").is_err() {
+            return;
+        }
+        let media = root.path().join("broken.mp4");
+        std::fs::write(&media, "broken media").unwrap();
+        std::fs::write(
+            media.with_extension("srt"),
+            "1\n00:00:00,000 --> 00:00:02,000\nComplete note.\n",
+        )
+        .unwrap();
+        let record = root.path().join("hook-child");
+        let mut cfg = config();
+        cfg["defaults"]["on_complete"] = json!([
+            "sh",
+            "-c",
+            "trap 'wait; exit 0' TERM\nsleep 30 &\nprintf '%s' \"$!\" > \"$1\"\nwait",
+            "hook",
+            record,
+        ]);
+        let mut child = spawn(root.path(), media.to_str().unwrap(), &cfg, &[]);
+        wait_for_file(&mut child, &record);
+        let pid: i32 = std::fs::read_to_string(&record).unwrap().parse().unwrap();
+        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+        let output = wait_for_cancelled(child);
+        assert!(!events(&output).iter().any(|event| event["type"] == "done"));
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "hook child was orphaned");
+        assert!(root.path().join("broken/note.md").is_file());
+        assert!(root.path().join("broken/note.json").is_file());
+    }
 }
 
 #[test]

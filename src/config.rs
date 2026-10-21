@@ -109,12 +109,12 @@ impl fmt::Display for ScreenshotMode {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TranscriptSource {
-    /// 优先字幕，无字幕时识别语音 / Prefer subtitles; transcribe speech if unavailable
+    /// Prefer subtitles; transcribe speech if unavailable
     #[default]
     Auto,
-    /// 仅字幕；本地需同名 .srt/.vtt / Subtitles only; local files need a matching .srt/.vtt
+    /// Subtitles only; local files need a matching .srt/.vtt
     Subtitle,
-    /// 使用所选后端识别，不查字幕 / Transcribe with the selected backend; skip subtitles
+    /// Transcribe with the selected backend; skip subtitles
     Asr,
 }
 

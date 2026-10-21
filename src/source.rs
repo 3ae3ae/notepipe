@@ -288,7 +288,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     runtime::check_cancelled()?;
-    let mut child = runtime::ManagedChild::spawn_adapter("source adapter", &mut command)?;
+    let mut child = runtime::ManagedChild::spawn_tree("source adapter", &mut command)?;
     let stderr = runtime::StderrTail::default();
     let drain = stderr.drain(
         child
