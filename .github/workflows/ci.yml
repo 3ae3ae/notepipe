@@ -16,7 +16,8 @@ permissions:
   contents: read
 
 jobs:
-  # Decide which jobs this change needs; a manual run or a change to this file runs everything.
+  # Decide which jobs this change needs: code and build files, not READMEs. A manual run or a change to this file
+  # runs everything.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -35,17 +36,17 @@ jobs:
         with:
           filters: |
             core: [src/**, tests/**, Cargo.toml, Cargo.lock, .github/workflows/ci.yml]
-            speech_swift: [adapters/speech-swift/**, .github/workflows/ci.yml]
+            speech_swift: ['adapters/speech-swift/{src,native}/**', 'adapters/speech-swift/{Cargo.toml,Cargo.lock,build.rs}', .github/workflows/ci.yml]
       - uses: dorny/paths-filter@v3
         id: adapters
         if: github.event_name != 'workflow_dispatch'
         with:
           filters: |
-            llama: [adapters/llama/**, .github/workflows/ci.yml]
-            meta: [adapters/meta/**, .github/workflows/ci.yml]
-            openvino: [adapters/openvino/**, .github/workflows/ci.yml]
-            xai: [adapters/xai/**, .github/workflows/ci.yml]
-            ytdlp: [adapters/ytdlp/**, .github/workflows/ci.yml]
+            llama: ['adapters/llama/{src,tests}/**', 'adapters/llama/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
+            meta: ['adapters/meta/{src,tests}/**', 'adapters/meta/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
+            openvino: ['adapters/openvino/{src,tests}/**', 'adapters/openvino/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
+            xai: ['adapters/xai/{src,tests}/**', 'adapters/xai/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
+            ytdlp: ['adapters/ytdlp/{src,tests}/**', 'adapters/ytdlp/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
 
   test:
     needs: changes
