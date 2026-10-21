@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" width="112" alt="notepipe logo"></p>
+
 <h1 align="center">notepipe</h1>
 
 <p align="center">

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="notepipe">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#tile)"/>
+  <g fill="#fff">
+    <rect x="17" y="56" width="6" height="16" rx="3"/>
+    <rect x="27" y="45" width="6" height="38" rx="3"/>
+    <rect x="37" y="38" width="6" height="52" rx="3"/>
+    <rect x="47" y="51" width="6" height="26" rx="3"/>
+  </g>
+  <rect x="60" y="26" width="8" height="76" rx="4" fill="#fcd34d"/>
+  <rect x="76" y="36" width="35" height="23" rx="4" fill="#fff"/>
+  <path d="M80 55 L88.5 45.5 L94.5 51.5 L98.5 47.5 L107 55 Z" fill="#3b82f6"/>
+  <circle cx="102" cy="41.5" r="2.8" fill="#3b82f6"/>
+  <g fill="#fff">
+    <rect x="76" y="66" width="35" height="5" rx="2.5"/>
+    <rect x="76" y="76" width="28" height="5" rx="2.5"/>
+    <rect x="76" y="86" width="32" height="5" rx="2.5"/>
+  </g>
+</svg>
