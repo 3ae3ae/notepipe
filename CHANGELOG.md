@@ -12,7 +12,7 @@ The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizoreww
 
 - Audio files and audio-only online items as input.
 - Speech adapters: notepipe starts a local engine that serves an OpenAI-compatible transcription API for the run.
-  Official adapters for llama.cpp, OpenVINO, Apple silicon, xAI and Meta.
+  Official adapters for llama.cpp, OpenVINO, speech-swift (Apple silicon), xAI and Meta.
 - Source adapters for URLs, with an official yt-dlp adapter; the core itself reads local files.
 - `[asr].language`, `concurrency`, `vad_threshold` and `min_silence`; API keys are optional.
 - Prompt-driven AI stages (`[[llm.stages]]`): built-in `proofread` and `summary`, plus custom stages that replace

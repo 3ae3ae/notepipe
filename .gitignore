@@ -12,7 +12,7 @@ out-bv/
 out-bench/
 out-gpu/
 out-smoke/
-adapters/apple/native/.build/
-/adapters/apple/target/
-/adapters/apple/wheel-data/
+adapters/speech-swift/native/.build/
+/adapters/speech-swift/target/
+/adapters/speech-swift/wheel-data/
 /dist/

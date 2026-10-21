@@ -15,7 +15,7 @@ readme = "README.md"
 ytdlp = ["notepipe-source-ytdlp"]
 llama = ["notepipe-asr-llama"]
 openvino = ["notepipe-asr-openvino"]
-apple = ["notepipe-asr-apple"]
+speech-swift = ["notepipe-asr-speech-swift"]
 xai = ["notepipe-asr-xai"]
 meta = ["notepipe-asr-meta"]
 

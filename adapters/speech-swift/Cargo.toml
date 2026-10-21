@@ -1,8 +1,8 @@
 [package]
-name = "notepipe-asr-apple"
+name = "notepipe-asr-speech-swift"
 version = "0.1.0"
 edition = "2024"
-description = "Apple silicon HTTP transcription adapter for notepipe"
+description = "Speech recognition adapter for notepipe on Apple silicon, using speech-swift (MLX and Core ML)"
 license = "MIT"
 
 [workspace]

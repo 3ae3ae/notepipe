@@ -91,7 +91,7 @@ fn check_metallib(executable: &Path) -> Result<()> {
     let path = executable.with_file_name("mlx.metallib");
     ensure!(
         path.is_file(),
-        "Missing {}: mlx.metallib must sit next to the Apple adapter binary. Install via the wheel or release archive, which ships this file; plain cargo install does not.",
+        "Missing {}: mlx.metallib must sit next to the notepipe-asr-speech-swift binary. Install via the wheel or release archive, which ships this file; plain cargo install does not.",
         path.display()
     );
     Ok(())
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn startup_requires_a_colocated_metallib() {
         let dir = tempfile::tempdir().unwrap();
-        let executable = dir.path().join("notepipe-asr-apple");
+        let executable = dir.path().join("notepipe-asr-speech-swift");
         let error = check_metallib(&executable).unwrap_err().to_string();
         for guidance in [
             "next to",

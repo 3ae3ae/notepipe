@@ -125,14 +125,14 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  apple-adapter:
+  speech-swift-adapter:
     needs: validate
     runs-on: macos-26
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.0'
     defaults:
       run:
-        working-directory: adapters/apple
+        working-directory: adapters/speech-swift
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -140,19 +140,19 @@ jobs:
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: adapters/apple
+          workspaces: adapters/speech-swift
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Build Apple adapter
+      - name: Build speech-swift adapter
         run: cargo build --release --locked --target aarch64-apple-darwin
       - uses: ./.github/actions/macos-signing
         with:
           certificate: ${{ secrets.MACOS_CERT_P12 }}
           password: ${{ secrets.MACOS_CERT_PASS }}
-      - name: Sign Apple adapter
+      - name: Sign speech-swift adapter
         run: |
-          binary=target/aarch64-apple-darwin/release/notepipe-asr-apple
+          binary=target/aarch64-apple-darwin/release/notepipe-asr-speech-swift
           if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
             codesign --force --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "$binary"
           else
@@ -163,12 +163,12 @@ jobs:
         run: |
           mkdir -p wheel-data/scripts dist
           cp target/aarch64-apple-darwin/release/mlx.metallib wheel-data/scripts/mlx.metallib
-          tar -czf dist/notepipe-asr-apple-macos-arm64.tar.gz \
-            -C target/aarch64-apple-darwin/release notepipe-asr-apple mlx.metallib
-      - name: Build Apple wheel
+          tar -czf dist/notepipe-asr-speech-swift-macos-arm64.tar.gz \
+            -C target/aarch64-apple-darwin/release notepipe-asr-speech-swift mlx.metallib
+      - name: Build speech-swift wheel
         uses: PyO3/maturin-action@v1
         with:
-          working-directory: adapters/apple
+          working-directory: adapters/speech-swift
           target: aarch64-apple-darwin
           args: --release --locked --out dist --compatibility pypi
       - name: Verify wheel runtime files
@@ -180,18 +180,18 @@ jobs:
           assert len(wheels) == 1, wheels
           with ZipFile(wheels[0]) as wheel:
               files = wheel.namelist()
-              for name in ('notepipe-asr-apple', 'mlx.metallib'):
+              for name in ('notepipe-asr-speech-swift', 'mlx.metallib'):
                   assert any(path.endswith('.data/scripts/' + name) for path in files), files
           PYCODE
       - uses: actions/upload-artifact@v4
         with:
-          name: package-apple-wheel
-          path: adapters/apple/dist/*.whl
+          name: package-speech-swift-wheel
+          path: adapters/speech-swift/dist/*.whl
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: notepipe-asr-apple-macos-arm64
-          path: adapters/apple/dist/*.tar.gz
+          name: notepipe-asr-speech-swift-macos-arm64
+          path: adapters/speech-swift/dist/*.tar.gz
           if-no-files-found: error
       - name: Remove signing material
         if: always()
@@ -229,7 +229,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build, sdist, apple-adapter, python-adapters]
+    needs: [build, sdist, speech-swift-adapter, python-adapters]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
@@ -260,7 +260,7 @@ jobs:
       matrix:
         include:
           - { artifacts: package-core-*, environment: pypi }
-          - { artifacts: package-apple-*, environment: pypi-notepipe-asr-apple }
+          - { artifacts: package-speech-swift-*, environment: pypi-notepipe-asr-speech-swift }
           - { artifacts: package-llama, environment: pypi-notepipe-asr-llama }
           - { artifacts: package-meta, environment: pypi-notepipe-asr-meta }
           - { artifacts: package-openvino, environment: pypi-notepipe-asr-openvino }

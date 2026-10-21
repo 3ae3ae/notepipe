@@ -59,11 +59,11 @@ jobs:
         if: runner.os != 'Windows'
         run: cargo test --features integration --test scene_synthetic
 
-  apple-adapter:
+  speech-swift-adapter:
     runs-on: macos-26
     defaults:
       run:
-        working-directory: adapters/apple
+        working-directory: adapters/speech-swift
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -71,7 +71,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: adapters/apple
+          workspaces: adapters/speech-swift
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests

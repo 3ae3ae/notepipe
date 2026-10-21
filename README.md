@@ -117,7 +117,7 @@ API keys can stay out of the file: `NOTEPIPE_ASR_API_KEY` and `NOTEPIPE_LLM_API_
 | Audio-capable chat models | `mode = "chat"` with the provider's `base_url` and `model` |
 | Any OpenAI-compatible server you run | its `base_url` |
 | xAI, Meta | the [xAI](adapters/xai) or [Meta](adapters/meta) adapter |
-| llama.cpp, Intel NPU, Apple silicon (local) | the [llama](adapters/llama), [OpenVINO](adapters/openvino) or [Apple](adapters/apple) adapter |
+| llama.cpp, Intel NPU, Apple silicon (local) | the [llama](adapters/llama), [OpenVINO](adapters/openvino) or [speech-swift](adapters/speech-swift) adapter |
 
 ### AI stages
 
@@ -147,7 +147,7 @@ Adapters are separate packages with programs that notepipe starts when needed. T
 | `ytdlp` | [`notepipe-source-ytdlp`](adapters/ytdlp) | source | URLs from any site yt-dlp supports |
 | `llama` | [`notepipe-asr-llama`](adapters/llama) | speech | llama.cpp on CPU or GPU |
 | `openvino` | [`notepipe-asr-openvino`](adapters/openvino) | speech | Intel NPU (or CPU/GPU) with OpenVINO |
-| `apple` | [`notepipe-asr-apple`](adapters/apple) | speech | Apple silicon, macOS 15 or later; built in CI, not yet verified on hardware |
+| `speech-swift` | [`notepipe-asr-speech-swift`](adapters/speech-swift) | speech | Apple silicon (macOS 15 or later) with MLX and Core ML; built in CI, not yet verified on hardware |
 | `xai` | [`notepipe-asr-xai`](adapters/xai) | speech | xAI speech-to-text |
 | `meta` | [`notepipe-asr-meta`](adapters/meta) | speech | Meta speech-to-text |
 

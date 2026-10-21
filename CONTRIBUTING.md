@@ -35,7 +35,7 @@ Each adapter under `adapters/` is a separate package with its own tests:
 
 ```sh
 uv run --directory adapters/llama python -m unittest       # Python adapters
-cargo test --manifest-path adapters/apple/Cargo.toml        # Apple adapter (macOS arm64 with Xcode)
+cargo test --manifest-path adapters/speech-swift/Cargo.toml # speech-swift adapter (macOS arm64 with Xcode)
 ```
 
 ## Project layout

@@ -3,9 +3,9 @@ requires = ["maturin>=1.8,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "notepipe-asr-apple"
+name = "notepipe-asr-speech-swift"
 dynamic = ["version"]
-description = "Apple silicon HTTP transcription adapter for notepipe"
+description = "Speech recognition adapter for notepipe on Apple silicon, using speech-swift (MLX and Core ML)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"

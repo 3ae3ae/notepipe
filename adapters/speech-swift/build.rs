@@ -11,7 +11,7 @@ fn main() {
 
     assert!(
         target_os == "macos" && target_arch == "aarch64",
-        "The Apple adapter supports macOS arm64 only"
+        "The speech-swift adapter supports macOS arm64 only"
     );
     assert!(
         tool_available("swiftc"),
@@ -145,7 +145,7 @@ fn main() {
     // OUT_DIR = <target>/<profile>/build/<package>-<hash>/out.
     let exe_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("../../..");
     std::fs::copy(metallib, exe_dir.join("mlx.metallib"))
-        .expect("Failed to copy mlx.metallib next to the built Apple adapter");
+        .expect("Failed to copy mlx.metallib next to the built speech-swift adapter");
     // Compatibility hooks for Swift 5 mode packages and the clang runtime (___isPlatformVersionAtLeast and others).
     let devdir = xcode_devdir();
     if let Some(swift_lib) = devdir.as_deref().and_then(toolchain_swift_lib_dir) {

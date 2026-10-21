@@ -1,4 +1,4 @@
-// C ABI for the Apple transcription adapter.
+// C ABI for the speech-swift transcription adapter.
 // Linked statically into the Rust binary; macOS arm64 only.
 
 import Foundation
