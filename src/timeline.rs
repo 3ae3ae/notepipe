@@ -244,15 +244,15 @@ pub fn has_readable_events(events: &[TranscriptEvent]) -> bool {
 fn is_unspaced(c: char) -> bool {
     (c.is_alphabetic()
         && matches!(c as u32,
-            0x3040..=0x30ff | 0x31f0..=0x31ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff
-                | 0xf900..=0xfaff | 0x1aff0..=0x1afff
+            0x3005..=0x3007 | 0x3040..=0x30ff | 0x31f0..=0x31ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff
+                | 0xf900..=0xfaff | 0xff66..=0xff9f | 0x1aff0..=0x1afff
                 | 0x1b000..=0x1b16f | 0x20000..=0x2fa1f | 0x30000..=0x3347f
         ))
-        // Include CJK punctuation forms, while leaving halfwidth Hangul spaced.
-        || matches!(c as u32,
-            0x3000..=0x303f | 0xfe10..=0xfe1f | 0xfe30..=0xfe6f
-                | 0xff00..=0xff9f | 0xffe0..=0xffef
-        )
+        // CJK punctuation and full-width symbols; full-width letters and digits keep word spacing.
+        || (!c.is_alphanumeric()
+            && matches!(c as u32,
+                0x3000..=0x303f | 0xfe10..=0xfe1f | 0xfe30..=0xfe6f | 0xff00..=0xffef
+            ))
         // Letters, marks and numerals in the remaining unspaced scripts, excluding punctuation.
         || matches!(c as u32,
             0x3099..=0x309a
@@ -300,9 +300,9 @@ fn needs_space(paragraph: &str, next: &str) -> bool {
         next.chars().find(boundary_character),
     ) {
         (Some(left), Some(right)) => {
-            !left.is_whitespace()
-                && !right.is_whitespace()
-                && !(is_unspaced(left) && is_unspaced(right))
+            !(left.is_whitespace()
+                || right.is_whitespace()
+                || is_unspaced(left) && is_unspaced(right))
         }
         _ => false,
     }
@@ -614,6 +614,8 @@ mod tests {
             ("字幕", "\u{fe41}保持する。", "字幕\u{fe41}保持する。"),
             ("风险\u{fe50}", "收益。", "风险\u{fe50}收益。"),
             ("위험.", "수익.", "위험. 수익."),
+            ("Ｈｅｌｌｏ", "ｗｏｒｌｄ", "Ｈｅｌｌｏ ｗｏｒｌｄ"),
+            ("１２", "３４", "１２ ３４"),
             ("위험。", "수익。", "위험。 수익。"),
             ("ภาษา", "ไทย", "ภาษาไทย"),
             ("ພາສາ", "ລາວ", "ພາສາລາວ"),
