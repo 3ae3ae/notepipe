@@ -203,7 +203,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [openvino, xai, meta, ytdlp]
+        adapter: [llama, meta, openvino, xai, ytdlp]
     steps:
       - uses: actions/checkout@v4
       - name: Find adapter
