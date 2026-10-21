@@ -136,11 +136,17 @@ Connection test passed.	连接测试通过	連線測試透過	接続テストに
 Continue interrupted transcription (on by default)	继续上次中断的识别（默认开启）
 Cookie file (Netscape format; uses a private copy)	Cookie 文件（Netscape 格式，使用私有副本）	Cookie 檔案（Netscape 格式，使用私有副本）	Cookie ファイル（Netscape 形式、非公開のコピーを使用）
 Cookie file must exist and be a regular file	Cookie 文件必须存在且为普通文件	Cookie 檔案必須存在且為一般檔案	Cookie ファイルは存在する通常のファイルである必要があります
+Could not assign the ASR adapter to its job
 Could not back up configuration to {}: {e}	无法备份旧配置
+Could not configure the ASR adapter job
 Could not connect; request content was not submitted	无法连接服务，尚未提交内容	無法連線服務，尚未提交內容	サービスに接続できません。コンテンツはまだ送信されていません
 Could not create a temporary working directory	无法创建临时工作目录	無法建立臨時工作目錄	一時作業ディレクトリを作成できません
+Could not create the ASR adapter job
 Could not extract slide {n} (t={onset_t:.1}s)	第 {n} 张截图（{}:{:02}）提取失败
 Could not fetch the account's models; using {}.	无法获取账号可用的模型列表，已使用默认模型 {}。	無法取得帳號可用的模型清單，已使用預設模型 {}。	アカウントで利用可能なモデル一覧を取得できません。デフォルトモデル {} を使用します。
+Could not find the ASR adapter thread
+Could not find the suspended ASR adapter thread
+Could not open the ASR adapter thread
 Could not probe the local video duration	无法探测本地视频时长	無法探測本地影片時長	ローカル動画の長さを検出できません
 Could not publish note version	无法发布笔记版本；旧笔记已保留	無法釋出筆記版本；舊筆記已保留	ノートのバージョンを公開できません。古いノートは保存されています
 Could not read audio energy; long segments are split at fixed lengths: {e:#}	无法读取音频能量，长段将按固定长度切分
@@ -149,6 +155,7 @@ Could not read subtitles: {message}	读取字幕失败
 Could not read video dimensions; check that the file plays correctly	无法读取视频尺寸，请检查文件是否可播放	無法讀取影片尺寸，請檢查檔案是否可播放	動画のサイズを読み取れません。ファイルが再生可能かどうかを確認してください。
 Could not read video subtitles	读取视频字幕失败	讀取影片字幕失敗	動画の字幕を読み取れませんでした
 Could not remove Codex login	清除 Codex 登录状态失败	清除 Codex 登入狀態失敗	Codex ログイン ステータスのクリアに失敗しました
+Could not resume the ASR adapter
 Could not save export: {}	无法保存导出文件；原文件未覆盖
 Could not split audio	无法切分音频	無法切分音訊	音声を分割できません
 Could not start ffmpeg frame sampling	无法读取视频画面	無法讀取影片畫面	動画画面を読み取れません

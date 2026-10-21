@@ -234,6 +234,7 @@ fn run_api(
                 mode: api.mode,
                 language: &api.language,
                 managed: adapter.is_some(),
+                check_control: &check_control,
             };
             let (tmp_dir, wav) = (tmp.path(), wav);
             let (segs, pending, next, abort) = (&segs, &pending, &next, &abort);
@@ -338,14 +339,16 @@ fn run_api(
 /// 有界重试：可重试错误按 [`crate::runtime::retry_backoff`] 退避（退避期间可取消），
 /// 共尝试 MAX_ATTEMPTS 次；确定性错误（鉴权/参数）直接返回。
 fn with_retry<T>(
+    check_control: &dyn Fn() -> Result<()>,
     mut attempt_once: impl FnMut() -> std::result::Result<T, crate::dispatch::Failure>,
 ) -> Result<T> {
     let mut attempt = 1;
     loop {
-        crate::dispatch::check_control()?;
+        check_control()?;
         match attempt_once() {
             Ok(value) => return Ok(value),
             Err(error) if error.retryable && attempt < MAX_ATTEMPTS => {
+                check_control()?;
                 crate::runtime::interruptible_sleep(crate::runtime::retry_backoff(attempt))?;
                 attempt += 1;
             }
@@ -368,7 +371,7 @@ fn post_cloud(
         crate::render::fmt_ts(seg.start),
         crate::render::fmt_ts(seg.end)
     );
-    with_retry(|| {
+    with_retry(t.check_control, || {
         let send = || {
             let request = t.client.post(t.url).set("Content-Type", content_type);
             let request = if t.key.is_empty() {
@@ -376,6 +379,10 @@ fn post_cloud(
             } else {
                 request.set("Authorization", &format!("Bearer {}", t.key))
             };
+            (t.check_control)().map_err(|error| crate::dispatch::NetworkFailure {
+                message: format!("{error:#}"),
+                definitely_unsent: true,
+            })?;
             crate::dispatch::receive(request.send_bytes(body))
         };
         crate::dispatch::json_request_described(
@@ -421,11 +428,13 @@ struct ApiTarget<'a> {
     mode: crate::settings::AsrMode,
     language: &'a str,
     managed: bool,
+    check_control: &'a (dyn Fn() -> Result<()> + Sync),
 }
 
 /// 转写单个 chunk；Ok(None) = 无语音内容。
 fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<Option<String>> {
     cut_wav(wav, seg.cut_start, seg.cut_end, chunk).context(crate::tr!("Could not split audio"))?;
+    (t.check_control)()?;
     let bytes = std::fs::read(chunk)
         .with_context(|| crate::tr!("Reading audio segment: {}", chunk.display()))?;
     let identity = serde_json::json!({"model":t.model,"mode":t.mode,"language":t.language,"audio_sha256":crate::execution::digest(&bytes),"segment_start":seg.start,"segment_end":seg.end,"cut_start":seg.cut_start,"cut_end":seg.cut_end});
@@ -548,7 +557,7 @@ fn earshot_vad(
     let mut frame = [0i16; 256];
     let mut filled = 0;
     let mut offset = 0u64;
-    let samples = read_pcm_samples(wav, |sample| {
+    let samples = read_pcm_samples(wav, check_control, |sample| {
         frame[filled] = sample;
         filled += 1;
         if filled == frame.len() {
@@ -574,6 +583,7 @@ fn earshot_vad(
         asr.max_speech as f64,
         wav,
         samples as f64 / 16_000.0,
+        check_control,
     )
 }
 
@@ -587,7 +597,11 @@ pub struct Seg {
 }
 
 /// Stream the pipeline's 16 kHz mono s16le WAV, returning its actual sample count.
-fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16) -> Result<()>) -> Result<u64> {
+fn read_pcm_samples(
+    wav: &Path,
+    mut check_control: impl FnMut() -> Result<()>,
+    mut on_sample: impl FnMut(i16) -> Result<()>,
+) -> Result<u64> {
     use std::io::{BufReader, Read, Seek};
     let file = std::fs::File::open(wav)
         .with_context(|| format!("Could not read audio: {}", wav.display()))?;
@@ -621,6 +635,7 @@ fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16) -> Result<()>) ->
     };
     let mut remaining = data_size;
     while remaining > 0 {
+        check_control()?;
         let want = remaining.min(buf.len() as u64) as usize;
         let n = reader.read(&mut buf[..want])?;
         if n == 0 {
@@ -653,11 +668,11 @@ impl Energy {
     /// 流式读取 16k 单声道 s16 wav（extract_audio 的固定产物）：
     /// 分块读入并滑动累计每个 100ms 窗口的平方和，只保留 rms 数组——
     /// 不把整文件和全部样本读进内存（2h 音频约 1GB）。
-    pub fn load(wav: &Path) -> Result<Self> {
+    pub fn load(wav: &Path, check_control: impl FnMut() -> Result<()>) -> Result<Self> {
         let mut rms = Vec::new();
         let mut sum = 0.0f64;
         let mut n_in_hop = 0usize;
-        read_pcm_samples(wav, |sample| {
+        read_pcm_samples(wav, check_control, |sample| {
             rms_accumulate(sample, &mut sum, &mut n_in_hop, &mut rms);
             Ok(())
         })?;
@@ -712,6 +727,7 @@ pub fn normalize_segments(
     max_speech: f64,
     wav: &Path,
     dur: f64,
+    check_control: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<Seg>> {
     // VAD 成功但无语音（或全被短段过滤）→ 空分段。
     // 不把整段音频当语音兜底：静音课件会诱发 ASR 幻觉。
@@ -722,13 +738,22 @@ pub fn normalize_segments(
     }
     // 能量曲线只在有超长段需要切分时才读（要流式扫描整个音频）
     let energy = if raw.iter().any(|(a, b)| b - a > max_speech) {
-        Energy::load(wav)
-            .inspect_err(|e| {
+        let mut interrupted = false;
+        let result = Energy::load(wav, || {
+            let result = check_control();
+            interrupted |= result.is_err();
+            result
+        });
+        match result {
+            Ok(energy) => Some(energy),
+            Err(error) if interrupted => return Err(error),
+            Err(e) => {
                 tracing::warn!(
                     "Could not read audio energy; long segments are split at fixed lengths: {e:#}"
-                )
-            })
-            .ok()
+                );
+                None
+            }
+        }
     } else {
         None
     };
@@ -864,6 +889,7 @@ mod tests {
                 mode: crate::settings::AsrMode::Transcriptions,
                 language: "",
                 managed: false,
+                check_control: &crate::dispatch::check_control,
             },
             audio,
         )
@@ -883,10 +909,14 @@ mod tests {
             "/tests/fixtures/speech.wav"
         ));
         let mut samples = Vec::new();
-        let count = read_pcm_samples(path, |sample| {
-            samples.push(sample);
-            Ok(())
-        })
+        let count = read_pcm_samples(
+            path,
+            || Ok(()),
+            |sample| {
+                samples.push(sample);
+                Ok(())
+            },
+        )
         .unwrap();
         assert_eq!(count, samples.len() as u64);
         samples
@@ -949,6 +979,51 @@ mod tests {
     }
 
     #[test]
+    fn energy_scan_propagates_control_errors_but_keeps_io_fallback() {
+        let wav = test_wav(&vec![0; 160_000]);
+        let polls = std::cell::Cell::new(0);
+        let error = normalize_segments(vec![(0.0, 10.0)], 2.0, wav.path(), 10.0, &|| {
+            polls.set(polls.get() + 1);
+            anyhow::ensure!(polls.get() != 2, "test energy cancellation");
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "test energy cancellation");
+        assert_eq!(polls.get(), 2);
+        let missing = wav.path().with_extension("missing");
+        assert_eq!(
+            normalize_segments(vec![(0.0, 10.0)], 2.0, &missing, 10.0, &|| Ok(()))
+                .unwrap()
+                .len(),
+            5
+        );
+    }
+
+    #[test]
+    fn retries_obey_the_drop_flag() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let check = || {
+            anyhow::ensure!(
+                !cancelled.load(std::sync::atomic::Ordering::Relaxed),
+                "test retry cancellation"
+            );
+            Ok(())
+        };
+        let mut attempts = 0;
+        let error = with_retry(&check, || {
+            attempts += 1;
+            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+            let mut error = crate::dispatch::Failure::local("retryable response");
+            error.retryable = true;
+            Err::<(), _>(error)
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "test retry cancellation");
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
     fn earshot_silence_has_no_segments_including_a_partial_final_frame() {
         let wav = test_wav(&vec![0; 16_000]);
         assert!(
@@ -983,15 +1058,22 @@ mod tests {
         let wav = test_wav(&samples);
         let mut decoded = Vec::new();
         assert_eq!(
-            read_pcm_samples(wav.path(), |sample| {
-                decoded.push(sample);
-                Ok(())
-            })
+            read_pcm_samples(
+                wav.path(),
+                || Ok(()),
+                |sample| {
+                    decoded.push(sample);
+                    Ok(())
+                }
+            )
             .unwrap(),
             16_017
         );
         assert_eq!(decoded, samples);
-        assert_eq!(Energy::load(wav.path()).unwrap().rms, vec![0.5; 11]);
+        assert_eq!(
+            Energy::load(wav.path(), || Ok(())).unwrap().rms,
+            vec![0.5; 11]
+        );
     }
 
     #[test]
@@ -1063,6 +1145,53 @@ mod http_tests {
     use super::*;
     use crate::settings::{Asr, AsrMode};
     use std::io::{Read, Write};
+
+    #[test]
+    fn cancellation_is_checked_immediately_before_the_http_send() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!(
+            "http://{}/v1/audio/transcriptions",
+            listener.local_addr().unwrap()
+        );
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let check = || {
+            anyhow::ensure!(
+                polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0,
+                "test send cancellation"
+            );
+            Ok(())
+        };
+        let target = ApiTarget {
+            client: &crate::runtime::http_agent(Duration::from_millis(100)),
+            url: &url,
+            model: "",
+            key: "",
+            mode: AsrMode::Transcriptions,
+            language: "",
+            managed: false,
+            check_control: &check,
+        };
+        let error = post_cloud(
+            &target,
+            Seg {
+                start: 0.0,
+                end: 1.0,
+                cut_start: 0.0,
+                cut_end: 1.0,
+            },
+            "application/json",
+            b"{}",
+            &serde_json::json!({}),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("test send cancellation"));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 
     #[test]
     fn fast_responses_obey_cancellation_before_dispatch_and_checkpointing() {
@@ -1218,6 +1347,7 @@ mod http_tests {
                     mode,
                     language: if with_options { "ko" } else { "" },
                     managed: false,
+                    check_control: &crate::dispatch::check_control,
                 };
                 let dir = tempfile::tempdir().unwrap();
                 let text = transcribe_api(
@@ -1311,6 +1441,7 @@ mod http_tests {
                 mode: AsrMode::Chat,
                 language: code,
                 managed: false,
+                check_control: &crate::dispatch::check_control,
             };
             let (_, body) = transcription_request(&target, b"audio").unwrap();
             let body: serde_json::Value = serde_json::from_slice(&body).unwrap();

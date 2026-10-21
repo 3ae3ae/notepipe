@@ -31,6 +31,13 @@ pub struct ManagedChild {
     name: &'static str,
 }
 
+#[cfg(windows)]
+impl std::os::windows::io::AsRawHandle for ManagedChild {
+    fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
+        self.child.as_raw_handle()
+    }
+}
+
 impl ManagedChild {
     pub fn spawn(name: &'static str, cmd: &mut Command) -> Result<Self> {
         let child = cmd

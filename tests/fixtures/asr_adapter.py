@@ -30,8 +30,19 @@ def stop(signum, frame):
 
 
 signal.signal(signal.SIGTERM, stop)
-if args.behavior == 'tree':
-    subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+if args.behavior == 'launcher':
+    child = subprocess.Popen([
+        sys.executable, '-u', __file__, '--host', args.host, '--port', str(args.port),
+        '--record', str(args.record), '--behavior', 'orphan',
+    ])
+    (args.record / 'child-pid').write_text(str(child.pid))
+    while not (args.record / 'release-launcher').exists():
+        time.sleep(0.01)
+    sys.exit(0)
+if args.behavior == 'orphan':
+    deadline = threading.Timer(30, lambda: os._exit(0))
+    deadline.daemon = True
+    deadline.start()
 if args.behavior == 'stubborn':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     code = "import signal,time; from pathlib import Path; signal.signal(signal.SIGTERM, lambda *_: (Path(%r).write_text('SIGTERM'), exit(0))); Path(%r).write_text('ready'); time.sleep(30)" % (str(args.record / 'child-terminated'), str(args.record / 'child-ready'))

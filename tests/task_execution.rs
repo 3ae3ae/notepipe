@@ -1106,3 +1106,111 @@ fn asr_concurrency_bounds_the_number_of_http_requests_in_flight() {
         }
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn cancellation_during_audio_cutting_sends_no_http_request() {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+    for intent in ["pause", "cancel"] {
+        let root = tempfile::tempdir().unwrap();
+        let Some(video) = speech_video(root.path()) else {
+            return;
+        };
+        let ffmpeg = notepipe::runtime::which("ffmpeg").unwrap();
+        let record = root.path().join("adapter");
+        let Some(command) = adapter_command(&record, "healthy") else {
+            return;
+        };
+        let adapter = notepipe::adapter::Adapter::start(&command).unwrap();
+        let mut request = request(root.path(), &video);
+        request.subtitle_events = None;
+        request.config.defaults.transcript_source = Some(TranscriptSource::Asr);
+        request.config.asr.base_url = format!("{}/v1", adapter.base);
+        let control = request.work_dir.join("control.json");
+        request.control_path = Some(control.clone());
+        let cutting = root.path().join("cutting");
+        let release = root.path().join("release-cut");
+        let bin = root.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let wrapper = bin.join("ffmpeg");
+        std::fs::write(
+            &wrapper,
+            r#"#!/bin/sh
+for output; do :; done
+case "$output" in
+  */c????.wav)
+    : > "$CUT_STARTED"
+    count=0
+    while [ ! -f "$CUT_RELEASE" ] && [ "$count" -lt 3000 ]; do
+      sleep 0.01
+      count=$((count + 1))
+    done
+    ;;
+esac
+exec "$REAL_FFMPEG" "$@"
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let failure = request.work_dir.join("run.json");
+        let controller = std::thread::spawn(move || {
+            let start = Instant::now();
+            while !cutting.is_file() && start.elapsed() < Duration::from_secs(15) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let reached_cut = cutting.is_file();
+            if reached_cut {
+                notepipe::checkpoint::atomic_write(
+                    &control,
+                    &serde_json::to_vec(&serde_json::json!({"intent":intent})).unwrap(),
+                )
+                .unwrap();
+            }
+            let start = Instant::now();
+            while !failure.is_file() && start.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            // The async task has stopped; only its dropped-future flag now blocks the send.
+            notepipe::checkpoint::atomic_write(&control, br#"{"intent":"run"}"#).unwrap();
+            std::fs::write(release, "continue").unwrap();
+            assert!(reached_cut, "audio cutting never started");
+            assert!(failure.is_file(), "task did not stop during the cut");
+        });
+        let mut child = Command::new(env!("CARGO_BIN_EXE_notepipe"))
+            .args(["--lang", "en", "run-task"])
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env("REAL_FFMPEG", ffmpeg)
+            .env("CUT_STARTED", root.path().join("cutting"))
+            .env("CUT_RELEASE", root.path().join("release-cut"))
+            .env("XDG_CONFIG_HOME", root.path().join("config"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&request).unwrap())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        controller.join().unwrap();
+        assert!(!output.status.success(), "{:#?}", events(&output));
+        assert!(
+            !record.join("request").exists(),
+            "HTTP request was sent after cancellation"
+        );
+        assert!(!request.work_dir.join(".asr_done").exists());
+    }
+}

@@ -1,6 +1,8 @@
 //! Managed HTTP adapter lifecycle, generalized from the OpenVINO worker.
 
 use anyhow::{Context, Result};
+#[cfg(windows)]
+mod windows;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -18,6 +20,8 @@ pub struct Adapter {
     pub base: String,
     drains: Vec<std::thread::JoinHandle<()>>,
     stopped: bool,
+    #[cfg(windows)]
+    job: Option<windows::Job>,
 }
 
 /// Bare names prefer the canonical executable's directory, then PATH.
@@ -58,12 +62,20 @@ impl Adapter {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
+        #[cfg(windows)]
+        let job = {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+            windows::Job::new()?
+        };
         command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         crate::progress::stage("model/load", "start");
         let mut child = crate::runtime::ManagedChild::spawn("ASR adapter", &mut command)?;
+        #[cfg(windows)]
+        job.assign_and_resume(&child)?;
         let stderr = crate::runtime::StderrTail::default();
         let mut drains = Vec::new();
         if let Some(pipe) = child.take_stderr() {
@@ -78,6 +90,8 @@ impl Adapter {
             base: format!("http://127.0.0.1:{port}"),
             drains,
             stopped: false,
+            #[cfg(windows)]
+            job: Some(job),
         };
         let started = Instant::now();
         if let Err(error) = crate::runtime::wait_ready(
@@ -117,13 +131,7 @@ impl Adapter {
             }
         }
         #[cfg(windows)]
-        {
-            let _ = crate::runtime::run_bounded(
-                "taskkill",
-                Command::new("taskkill").args(["/PID", &self.child.id().to_string(), "/T", "/F"]),
-                Duration::from_secs(10),
-            );
-        }
+        drop(self.job.take());
         self.child.kill();
         let _ = self.child.wait();
         for drain in self.drains.drain(..) {
@@ -230,16 +238,40 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn adapter_terminates_children_that_keep_output_pipes_open() {
+    fn adapter_job_terminates_children_after_the_launcher_exits() {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::{
+            Foundation::WAIT_OBJECT_0,
+            System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+        };
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         let dir = tempfile::tempdir().unwrap();
-        let Some(argv) = argv(dir.path(), "tree") else {
+        let Some(argv) = argv(dir.path(), "launcher") else {
             return;
         };
-        let adapter = Adapter::start(&argv).unwrap();
+        let mut adapter = Adapter::start(&argv).unwrap();
+        let pid = std::fs::read_to_string(dir.path().join("child-pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        assert!(!process.is_null());
+        let process = unsafe { OwnedHandle::from_raw_handle(process) };
+        std::fs::write(dir.path().join("release-launcher"), "exit").unwrap();
         let start = Instant::now();
+        while adapter.child.try_wait().is_none() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "launcher did not exit"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
         drop(adapter);
-        assert!(start.elapsed() < Duration::from_secs(15));
+        assert!(start.elapsed() < Duration::from_secs(5));
+        assert_eq!(
+            unsafe { WaitForSingleObject(process.as_raw_handle(), 1000) },
+            WAIT_OBJECT_0
+        );
     }
 
     #[cfg(unix)]
