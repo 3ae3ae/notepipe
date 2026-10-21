@@ -78,8 +78,8 @@ pub struct LlmSettings {
     pub vision: bool,
     /// 独立生成视频摘要并写入笔记（不依赖校对 enabled）
     pub summarize: bool,
-    /// Bilingual notes: the target language code (see [`crate::language::TARGETS`]).
-    /// Skipped when the transcript is already in that language.
+    /// Bilingual notes: the target language code or name.
+    /// Skipped when already in that language, except for Chinese script/region targets.
     pub translate: Option<String>,
     /// 校对并发数（chunk 间相互独立；自建网关/代理可调高）
     pub concurrency: usize,
@@ -135,6 +135,9 @@ pub fn endpoint(base_url: &str) -> String {
 
 /// 校验配置可直接使用。
 pub fn validate(s: &LlmSettings) -> Result<()> {
+    if let Some(target) = &s.translate {
+        crate::language::target(target).map_err(anyhow::Error::msg)?;
+    }
     if s.provider != LlmProvider::Codex && s.base_url.trim().is_empty() {
         bail!(crate::tr!(
             "AI service URL is not set. Run: notepipe llm setup"
@@ -323,9 +326,9 @@ impl LlmSettings {
         self.enabled || self.summarize || self.translation_target().is_some()
     }
 
-    /// The supported bilingual target, if one is set.
-    pub fn translation_target(&self) -> Option<&'static str> {
-        self.translate.as_deref().and_then(crate::language::target)
+    /// The bilingual target, if one is set; validated during preflight.
+    pub fn translation_target(&self) -> Option<&str> {
+        self.translate.as_deref().map(str::trim)
     }
 }
 

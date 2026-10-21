@@ -171,6 +171,49 @@ fn validation_precedes_dependency_checks_and_downloads() {
 }
 
 #[test]
+fn translation_accepts_language_names_and_rejects_invalid_cli_and_config_values() {
+    let cli = CliTest::new();
+    std::fs::write(cli.dir.path().join("lecture.mp4"), []).unwrap();
+    for target in [" pt-BR ", "Arabic", "Canadian French"] {
+        let error = json_error(&cli.run(&[
+            "./lecture.mp4",
+            "--translate",
+            target,
+            "--sample-interval",
+            "0",
+            "--json",
+        ]));
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("--sample-interval")
+        );
+    }
+    for target in ["", "  ", "en\n", &"語".repeat(41)] {
+        let error = json_error(&cli.run(&["./lecture.mp4", "--translate", target, "--json"]));
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("Translation target")
+        );
+        cli.config(&format!(
+            "[llm]\ntranslate = {}\n",
+            serde_json::to_string(target).unwrap()
+        ));
+        let error = json_error(&cli.run(&["./lecture.mp4", "--json"]));
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("Translation target")
+        );
+    }
+    assert!(!cli.dir.path().join("cache").exists());
+}
+
+#[test]
 fn noninteractive_setup_explains_missing_values_without_saving() {
     let cli = CliTest::new();
     let result = cli.run(&["llm", "setup"]);

@@ -218,7 +218,7 @@ pub struct RunOpts {
     #[arg(help_heading = "AI proofreading")]
     pub no_summarize: bool,
 
-    /// Bilingual notes: translate the text into this language (zh-Hans, zh-Hant, en, ja, ko, fr, de, es)
+    /// Bilingual notes: target language code or name (e.g. en, pt-BR, Arabic)
     #[arg(long, value_name = "LANG", conflicts_with = "no_translate", value_parser = parse_translation_target)]
     #[arg(help_heading = "AI proofreading")]
     pub translate: Option<String>,
@@ -492,10 +492,5 @@ pub fn localize_rendered(text: &str) -> String {
 fn parse_translation_target(value: &str) -> Result<String, String> {
     crate::language::target(value)
         .map(str::to_owned)
-        .ok_or_else(|| {
-            crate::tr!(
-                "Supported languages: {}",
-                crate::language::TARGETS.join(", ")
-            )
-        })
+        .map_err(str::to_owned)
 }

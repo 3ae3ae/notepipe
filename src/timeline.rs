@@ -39,8 +39,8 @@ pub struct Section {
 
 /// 段落组织：同一截图内相邻片段间隔超过此值则分段。
 const PARAGRAPH_GAP_SECS: f64 = 3.5;
-/// 段落组织：单段最大字符数（超过则强制分段）。
-const MAX_PARAGRAPH_CHARS: usize = 420;
+/// Paragraph limit in half-character units: Han/kana/Hangul count twice.
+const MAX_PARAGRAPH_UNITS: usize = 840;
 
 /// 宽容的时间戳解析（字幕 cue、旧导出标题、LLM 大纲时间共用，取三者超集语义）：
 /// `HH:MM:SS` / `MM:SS` / 裸秒数，小数分隔符 `.` 或 `,`，容忍首尾空白、
@@ -207,7 +207,10 @@ pub fn coalesce_sections(sections: &mut [Section]) {
 
             let should_break = current.as_ref().is_some_and(|paragraph| {
                 event.start - paragraph.end > PARAGRAPH_GAP_SECS
-                    || paragraph.text.chars().count() + text.chars().count() > MAX_PARAGRAPH_CHARS
+                    || paragraph_units(&paragraph.text)
+                        + paragraph_units(text)
+                        + usize::from(needs_space(&paragraph.text, text))
+                        > MAX_PARAGRAPH_UNITS
             });
             if should_break {
                 paragraphs.push(current.take().expect("paragraph exists when breaking"));
@@ -241,30 +244,52 @@ pub fn has_readable_events(events: &[TranscriptEvent]) -> bool {
     events.iter().any(|event| !event.text.trim().is_empty())
 }
 
-/// 保留拉丁文字的词间/句间空格；中文、日文和连字符内的片段直接相连。
-fn append_text(paragraph: &mut String, next: &str) {
-    fn is_cjk(c: char) -> bool {
-        matches!(
-            c as u32,
-            0x3000..=0x303f
-                | 0x3040..=0x30ff
-                | 0x3400..=0x4dbf
-                | 0x4e00..=0x9fff
-                | 0xac00..=0xd7af
-                | 0xf900..=0xfaff
-                | 0xff00..=0xffef
+fn is_hangul(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x11ff | 0x3130..=0x318f | 0xa960..=0xa97f
+            | 0xac00..=0xd7ff | 0xffa0..=0xffdc
+    )
+}
+
+fn is_han_or_kana(c: char) -> bool {
+    c.is_alphabetic()
+        && matches!(c as u32,
+            0x3005..=0x3007 | 0x3040..=0x30ff | 0x31f0..=0x31ff | 0x3400..=0x4dbf | 0x4e00..=0x9fff
+                | 0xf900..=0xfaff | 0xff66..=0xff9d | 0x1aff0..=0x1afff
+                | 0x1b000..=0x1b16f | 0x20000..=0x2fa1f | 0x30000..=0x3347f
         )
-    }
-    // Spacing is needed between words in Latin, Cyrillic, Greek, etc.; CJK,
-    // kana and hangul are written without spaces.
-    let latin_word = |c: char| c.is_alphanumeric() && !is_cjk(c);
+}
+
+fn paragraph_units(text: &str) -> usize {
+    text.chars()
+        .map(|c| {
+            if is_hangul(c) || is_han_or_kana(c) {
+                2
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+fn needs_space(paragraph: &str, next: &str) -> bool {
+    let word = |c: char| {
+        is_hangul(c)
+            || (c.is_alphanumeric()
+                && !is_han_or_kana(c)
+                && !matches!(c as u32, 0x3000..=0x303f | 0xff00..=0xffef))
+    };
     let previous_is_word = paragraph
         .trim_end_matches(['.', ',', '!', '?', ':', ';', ')', ']', '}', '»', '”', '"'])
         .chars()
         .next_back()
-        .is_some_and(latin_word);
-    let next_is_word = next.chars().next().is_some_and(latin_word);
-    if previous_is_word && next_is_word {
+        .is_some_and(word);
+    previous_is_word && next.chars().next().is_some_and(word)
+}
+
+/// Preserve word spacing, while joining Chinese, Japanese and hyphenated fragments.
+fn append_text(paragraph: &mut String, next: &str) {
+    if needs_space(paragraph, next) {
         paragraph.push(' ');
     }
     paragraph.push_str(next);
@@ -276,8 +301,29 @@ fn is_standalone_filler(text: &str) -> bool {
         c.is_whitespace() || " ，。！？、,.!?：:；;“”‘’'\"（）()【】[]".contains(c)
     });
     matches!(
-        normalized,
-        "嗯" | "呃" | "额" | "啊" | "哦" | "唔" | "唉" | "诶" | "噢"
+        normalized.to_ascii_lowercase().as_str(),
+        "嗯" | "呃"
+            | "额"
+            | "啊"
+            | "哦"
+            | "唔"
+            | "唉"
+            | "诶"
+            | "噢"
+            | "um"
+            | "umm"
+            | "uh"
+            | "uhm"
+            | "hmm"
+            | "mm"
+            | "er"
+            | "erm"
+            | "음"
+            | "어"
+            | "엄"
+            | "えー"
+            | "えっと"
+            | "ええと"
     )
 }
 
@@ -451,31 +497,87 @@ mod tests {
 
     #[test]
     fn coalesce_breaks_on_length_limit() {
-        let long_text = "字".repeat(300);
-        let speech = vec![
-            TranscriptEvent {
-                start: 0.0,
-                end: 2.0,
-                text: long_text.clone(),
-                raw: None,
-                translation: None,
-            },
-            TranscriptEvent {
-                start: 2.1,
-                end: 4.0,
-                text: long_text.clone(),
-                raw: None,
-                translation: None,
-            },
-        ];
-        let mut sections = vec![Section {
-            t: 0.0,
-            end: 10.0,
-            image: "f.jpg".into(),
-            speech,
-        }];
-        coalesce_sections(&mut sections);
-        assert_eq!(sections[0].speech.len(), 2, "600 字 > 420 上限：分两段");
+        for (long_text, expected) in [
+            ("word ".repeat(84), 1),
+            ("word ".repeat(85), 2),
+            ("x".repeat(419), 1),
+            ("x".repeat(420), 2),
+            ("字".repeat(210), 1),
+            ("字".repeat(211), 2),
+            ("字".repeat(300), 2),
+        ] {
+            let speech = vec![
+                TranscriptEvent {
+                    start: 0.0,
+                    end: 2.0,
+                    text: long_text.clone(),
+                    raw: None,
+                    translation: None,
+                },
+                TranscriptEvent {
+                    start: 2.1,
+                    end: 4.0,
+                    text: long_text.clone(),
+                    raw: None,
+                    translation: None,
+                },
+            ];
+            let mut sections = vec![Section {
+                t: 0.0,
+                end: 10.0,
+                image: "f.jpg".into(),
+                speech,
+            }];
+            coalesce_sections(&mut sections);
+            assert_eq!(sections[0].speech.len(), expected, "{long_text}");
+        }
+        assert_eq!(paragraph_units("a字あカ한ᄒㄱｶ𠀀"), 17);
+        assert_eq!(paragraph_units("、・。"), 3);
+        assert_eq!(paragraph_units("々〇"), 4);
+    }
+
+    #[test]
+    fn fillers_are_case_insensitive_whole_segments_in_each_language() {
+        for filler in [
+            "嗯",
+            "呃",
+            "额",
+            "啊",
+            "哦",
+            "唔",
+            "唉",
+            "诶",
+            "噢",
+            "UM",
+            "umm",
+            "Uh",
+            "uhm",
+            "HMM",
+            "mm",
+            "er",
+            "erm",
+            "음",
+            "어",
+            "엄",
+            "えー",
+            "えっと",
+            "ええと",
+        ] {
+            assert!(
+                is_standalone_filler(&format!(" （{filler}?!） ")),
+                "{filler}"
+            );
+        }
+        for text in [
+            "summer",
+            "um well",
+            "음 오늘은",
+            "어떤",
+            "えっと、今日は",
+            "嗯，今天",
+        ] {
+            assert!(!is_standalone_filler(text), "{text}");
+        }
     }
 
     #[test]
@@ -555,6 +657,10 @@ mod tests {
                 "Le risque est limité. La suite.",
             ),
             ("café", "économique", "café économique"),
+            ("오늘은", "수업입니다", "오늘은 수업입니다"),
+            ("한", "글", "한 글"),
+            ("ㄱ", "ㄴ", "ㄱ ㄴ"),
+            ("\u{ffa1}", "\u{ffa2}", "\u{ffa1} \u{ffa2}"),
             ("A risk?", "Yes.", "A risk? Yes."),
             ("a word", ", next", "a word, next"),
             ("l’", "investissement", "l’investissement"),

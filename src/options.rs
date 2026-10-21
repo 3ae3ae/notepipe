@@ -172,6 +172,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn translation_config_validates_and_preserves_arbitrary_targets_and_overrides() {
+        let mut file = settings::ConfigFile::default();
+        for target in [" pt-BR ", "Arabic", "Canadian French"] {
+            file.llm.translate = Some(target.into());
+            let cfg = resolve("video".into(), &RunOpts::default(), &file).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.llm.translation_target(), Some(target.trim()));
+            assert!(cfg.llm.uses_service());
+        }
+        for target in ["", "  ", "en\n", &"語".repeat(41)] {
+            file.llm.translate = Some(target.into());
+            let cfg = resolve("video".into(), &RunOpts::default(), &file).unwrap();
+            assert!(
+                cfg.validate()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Translation target")
+            );
+        }
+        for opts in [
+            RunOpts {
+                no_translate: true,
+                ..Default::default()
+            },
+            RunOpts {
+                translate: Some("Arabic".into()),
+                ..Default::default()
+            },
+        ] {
+            let cfg = resolve("video".into(), &opts, &file).unwrap();
+            cfg.validate().unwrap();
+            assert_eq!(cfg.llm.translation_target(), opts.translate.as_deref());
+        }
+    }
+
+    #[test]
     fn explicit_false_overrides_config_and_invalid_values_are_not_clamped() {
         let mut file = settings::ConfigFile::default();
         file.defaults.keep_video = Some(true);

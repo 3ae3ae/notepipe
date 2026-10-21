@@ -458,8 +458,7 @@ pub async fn fetch_subtitle(
             let mut tracks = tracks.clone();
             crate::subtitle::sort_tracks(
                 &mut tracks,
-                &[],
-                "zh",
+                &cfg.asr.language,
                 video.original_language.as_deref(),
             );
             let track = tracks
@@ -594,8 +593,9 @@ pub async fn fetch_selected_subtitle(
 }
 
 /// 本地视频的同名字幕 sidecar（lecture.mp4 → lecture.srt/.vtt）。
-pub fn sidecar_subtitle(video: &Path) -> Option<SubtitleFetch> {
-    crate::subtitle::sidecar_subtitle(video).map(|path| SubtitleFetch { path, auto: false })
+pub fn sidecar_subtitle(video: &Path, preferred_language: &str) -> Option<SubtitleFetch> {
+    crate::subtitle::sidecar_subtitle(video, preferred_language)
+        .map(|path| SubtitleFetch { path, auto: false })
 }
 
 /// 下载视频到 `dest`（默认 1080p 上限，mp4 合并）。
@@ -797,6 +797,43 @@ async fn run_download(cmd: &mut Command) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn subtitles_prefer_asr_language_then_original_language() {
+        let cue = |text| {
+            serde_json::json!([{
+                "ext": "srt", "data": format!("1\n00:00:00,000 --> 00:00:01,000\n{text}\n")
+            }])
+        };
+        let metadata = serde_json::json!({
+            "id": "one", "title": "One", "extractor": "test", "language": "en",
+            "subtitles": { "ja": cue("Japanese") },
+            "automatic_captions": { "zh": cue("Chinese"), "en": cue("English") }
+        });
+        let OnlineProbe::Video { video } = parse_online_probe(
+            &serde_json::to_vec(&metadata).unwrap(),
+            "https://example.invalid/one",
+            "",
+        )
+        .unwrap() else {
+            panic!("expected video")
+        };
+        let dir = tempfile::tempdir().unwrap();
+        for (language, expected) in [("", "English"), ("ja", "Japanese")] {
+            let mut file = crate::settings::ConfigFile::default();
+            file.asr.language = language.into();
+            let opts = crate::cli::RunOpts {
+                out: Some(dir.path().into()),
+                ..Default::default()
+            };
+            let cfg = crate::options::resolve("video".into(), &opts, &file).unwrap();
+            let subtitle = fetch_subtitle(&video, &cfg).await.unwrap().unwrap();
+            let events =
+                crate::subtitle::parse_subtitle(&std::fs::read_to_string(subtitle.path).unwrap());
+            assert_eq!(events[0].text, expected);
+            assert_eq!(subtitle.auto, language.is_empty());
+        }
+    }
 
     #[test]
     fn deterministic_download_errors_skip_the_retry_loop() {

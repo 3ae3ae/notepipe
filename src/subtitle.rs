@@ -95,24 +95,18 @@ fn normalize_language(language: &str) -> String {
     }
 }
 
-/// Preference list → interface language → known original language → discovery
+/// ASR language → known original language → discovery
 /// order. A missed preference always falls through, never removes other languages.
 /// A generic preference such as `zh` covers its language family equally; a
 /// script/region preference such as `zh-Hans` prefers that exact variant.
 /// Within an identical language, known human captions precede known automatic ones.
 pub fn sort_tracks(
     tracks: &mut [SubtitleTrack],
-    preferences: &[String],
-    interface_language: &str,
+    preferred_language: &str,
     original_language: Option<&str>,
 ) {
     let mut languages = Vec::new();
-    for language in preferences
-        .iter()
-        .map(String::as_str)
-        .chain(std::iter::once(interface_language))
-        .chain(original_language)
-    {
+    for language in std::iter::once(preferred_language).chain(original_language) {
         let value = normalize_language(language);
         if !value.is_empty() && !languages.contains(&value) {
             languages.push(value);
@@ -412,41 +406,17 @@ fn clean_cue_text(line: &str) -> String {
 /// 在已有目录中挑一个字幕文件。新调用方会把确定的一条字幕抓取到独立目录；
 /// 这里绝不能选中属于其他来源的产物。
 pub fn pick_subtitle_file(dir: &Path) -> Option<PathBuf> {
-    let files: Vec<PathBuf> = std::fs::read_dir(dir)
+    std::fs::read_dir(dir)
         .ok()?
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| is_subtitle_file(path))
-        .collect();
-    if files.is_empty() {
-        return None;
-    }
-    let mut tracks: Vec<SubtitleTrack> = files
-        .into_iter()
-        .enumerate()
-        .map(|(index, path)| {
-            let language = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .and_then(|stem| stem.split_once('.'))
-                .map(|(_, language)| language.to_owned());
-            let mut track = file_track(path, language);
-            track.source_order = index;
-            track
-        })
-        .collect();
-    sort_tracks(&mut tracks, &[], "zh", Some("en"));
-    tracks.into_iter().find_map(|track| match track.origin {
-        SubtitleOrigin::File { path } => Some(path),
-        _ => None,
-    })
+        .find(|path| is_subtitle_file(path))
 }
 
-/// 本地视频的同名字幕 sidecar（`lecture.srt`、`lecture.zh.vtt` 等），
-/// 中文优先、其次英文。
-pub fn sidecar_subtitle(video: &Path) -> Option<PathBuf> {
+/// Same-name sidecars, preferring the requested ASR language when set.
+pub fn sidecar_subtitle(video: &Path, preferred_language: &str) -> Option<PathBuf> {
     let mut tracks = sidecar_tracks(video);
-    sort_tracks(&mut tracks, &[], "zh", Some("en"));
+    sort_tracks(&mut tracks, preferred_language, None);
     tracks.into_iter().find_map(|track| match track.origin {
         SubtitleOrigin::File { path } => Some(path),
         _ => None,
@@ -480,7 +450,7 @@ mod tests {
             track("fr", SubtitleKind::Manual),
             track("de", SubtitleKind::Manual),
         ];
-        sort_tracks(&mut tracks, &["zh".into()], "en", Some("ja"));
+        sort_tracks(&mut tracks, "zh", Some("ja"));
         assert_eq!(
             tracks
                 .iter()
@@ -490,12 +460,12 @@ mod tests {
         );
         assert_eq!(tracks[1].kind, SubtitleKind::Manual);
         assert_eq!(tracks[2].kind, SubtitleKind::Automatic);
-        sort_tracks(&mut tracks, &["xx".into()], "yy", None);
+        sort_tracks(&mut tracks, "xx", None);
         assert_eq!(tracks.len(), 4);
     }
 
     #[test]
-    fn explicit_language_then_interface_then_original_then_discovery_order() {
+    fn explicit_language_then_original_then_discovery_order() {
         let mut tracks = vec![
             track("ru", SubtitleKind::Manual),
             track("fr", SubtitleKind::Manual),
@@ -503,18 +473,18 @@ mod tests {
             track("en", SubtitleKind::Manual),
             track("ja", SubtitleKind::Manual),
         ];
-        sort_tracks(&mut tracks, &["ja".into()], "en", Some("de"));
+        sort_tracks(&mut tracks, "ja", Some("de"));
         assert_eq!(
             tracks
                 .iter()
                 .map(|track| track.language.as_deref().unwrap())
                 .collect::<Vec<_>>(),
-            ["ja", "en", "de", "ru", "fr"]
+            ["ja", "de", "ru", "fr", "en"]
         );
     }
 
     #[test]
-    fn simplified_interface_prefers_hans_without_inventing_caption_kind() {
+    fn script_preference_preserves_unknown_caption_kind() {
         let mut tracks = vec![
             track("zh", SubtitleKind::Automatic),
             track("zh-Hans", SubtitleKind::Unknown),
@@ -523,7 +493,7 @@ mod tests {
         for (index, track) in tracks.iter_mut().enumerate() {
             track.source_order = index;
         }
-        sort_tracks(&mut tracks, &[], "zh-Hans", Some("ja"));
+        sort_tracks(&mut tracks, "zh-Hans", Some("ja"));
         assert_eq!(tracks[0].language.as_deref(), Some("zh-Hans"));
         assert_eq!(tracks[0].kind, SubtitleKind::Unknown);
         assert_eq!(tracks[1].kind, SubtitleKind::Automatic);
@@ -539,7 +509,7 @@ mod tests {
         for (index, track) in tracks.iter_mut().enumerate() {
             track.source_order = index;
         }
-        sort_tracks(&mut tracks, &["zh".into()], "en", None);
+        sort_tracks(&mut tracks, "zh", None);
         assert_eq!(tracks[0].language.as_deref(), Some("zh-Hans"));
         assert_eq!(tracks[1].language.as_deref(), Some("zh"));
     }
@@ -666,15 +636,19 @@ second cue
     }
 
     #[test]
-    fn pick_prefers_zh_then_en() {
-        let d = std::env::temp_dir().join(format!("notepipe-subs-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+    fn pick_uses_discovery_order_for_the_selected_tracks_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
         for name in ["sub.en.srt", "sub.zh-Hans.srt", "sub.ja.srt"] {
             std::fs::write(d.join(name), b"1\n00:00:01,000 --> 00:00:02,000\nx\n").unwrap();
         }
-        let picked = pick_subtitle_file(&d).unwrap();
-        assert_eq!(picked.file_name().unwrap(), "sub.zh-Hans.srt");
-        let _ = std::fs::remove_dir_all(&d);
+        let first = std::fs::read_dir(d)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(pick_subtitle_file(d).unwrap(), first);
     }
 
     #[test]
@@ -683,19 +657,23 @@ second cue
         std::fs::create_dir_all(&d).unwrap();
         let video = d.join("lecture.mp4");
         std::fs::write(&video, b"v").unwrap();
-        assert!(sidecar_subtitle(&video).is_none());
+        assert!(sidecar_subtitle(&video, "").is_none());
         std::fs::write(
             d.join("lecture.srt"),
             b"1\n00:00:01,000 --> 00:00:02,000\nx\n",
         )
         .unwrap();
-        assert_eq!(sidecar_subtitle(&video).unwrap(), d.join("lecture.srt"));
+        assert_eq!(sidecar_subtitle(&video, "").unwrap(), d.join("lecture.srt"));
         std::fs::write(
             d.join("lecture.zh.VTT"),
             b"WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nx\n",
         )
         .unwrap();
-        assert_eq!(sidecar_subtitle(&video).unwrap(), d.join("lecture.zh.VTT"));
+        assert_eq!(sidecar_subtitle(&video, "").unwrap(), d.join("lecture.srt"));
+        assert_eq!(
+            sidecar_subtitle(&video, "zh").unwrap(),
+            d.join("lecture.zh.VTT")
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 }

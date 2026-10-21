@@ -1,12 +1,8 @@
 //! Translation targets and a light guess of a transcript's language.
 //!
 //! The guess only decides whether a bilingual note needs translating at all,
-//! so it compares language families: Simplified and Traditional Chinese count
-//! as the same language, and a transcript too short or mixed to judge is
-//! translated rather than skipped.
-
-/// Target languages offered for bilingual notes, using stable codes.
-pub const TARGETS: [&str; 8] = ["zh-Hans", "zh-Hant", "en", "ja", "ko", "fr", "de", "es"];
+//! so it compares language families. Chinese script/region targets always need
+//! translation, as does a transcript too short or mixed to judge.
 
 /// English names shared by translation instructions and speech language hints.
 const LANGUAGE_NAMES: &[(&str, &str)] = &[
@@ -70,13 +66,15 @@ const LANGUAGE_NAMES: &[(&str, &str)] = &[
     ("zh-Hant", "Traditional Chinese"),
 ];
 
-/// The supported target matching `code` (case and `_`/`-` insensitive).
-pub fn target(code: &str) -> Option<&'static str> {
-    let wanted = code.trim().replace('_', "-").to_ascii_lowercase();
-    TARGETS
-        .iter()
-        .copied()
-        .find(|code| code.to_ascii_lowercase() == wanted)
+/// Validate a language code or name, preserving the trimmed user input.
+pub fn target(value: &str) -> Result<&str, &'static str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 40 || value.chars().any(char::is_control) {
+        return Err(
+            "Translation target must be a non-empty language code or name of at most 40 characters, with no control characters",
+        );
+    }
+    Ok(trimmed)
 }
 
 /// English language name, accepting region/script subtags; unknown codes pass through.
@@ -99,12 +97,17 @@ pub fn english_name(code: &str) -> &str {
 
 /// Language family of a target code: `zh-Hans` and `zh-Hant` are both `zh`.
 fn family(code: &str) -> &str {
-    code.split('-').next().unwrap_or(code)
+    code.split(['-', '_']).next().unwrap_or(code)
 }
 
 /// Whether text that `detect` judged to be `detected` is already in `target`.
 pub fn already_in(detected: Option<&str>, target: &str) -> bool {
-    detected.is_some_and(|detected| family(detected) == family(target))
+    let target = target.trim();
+    let language = family(target);
+    if language.eq_ignore_ascii_case("zh") && target.contains(['-', '_']) {
+        return false;
+    }
+    detected.is_some_and(|detected| family(detected).eq_ignore_ascii_case(language))
 }
 
 /// Minimum letters before a guess is trusted.
@@ -225,18 +228,37 @@ mod tests {
     }
 
     #[test]
-    fn chinese_variants_are_one_language() {
-        assert!(already_in(Some("zh"), "zh-Hant"));
+    fn chinese_script_and_region_targets_always_translate() {
+        for target in ["zh-Hans", "zh-Hant", "zh-TW", "ZH_hant", "zh-HK"] {
+            for detected in [Some("zh"), Some("zh-Hant"), None] {
+                assert!(!already_in(detected, target), "{detected:?} → {target}");
+            }
+        }
+        assert!(already_in(Some("zh"), "zh"));
         assert!(already_in(Some("en"), "en"));
+        assert!(already_in(Some("en"), "EN_us"));
         assert!(!already_in(Some("en"), "zh-Hans"));
         assert!(!already_in(None, "en"));
     }
 
     #[test]
-    fn targets_parse_loosely() {
-        assert_eq!(target("zh_hans"), Some("zh-Hans"));
-        assert_eq!(target(" EN "), Some("en"));
-        assert_eq!(target("xx"), None);
+    fn targets_accept_trimmed_codes_and_names() {
+        for value in ["zh_hans", "EN", "pt-BR", "Arabic", "Canadian French", "xx"] {
+            assert_eq!(target(&format!("  {value}  ")), Ok(value));
+        }
+        let forty_chars = "語".repeat(40);
+        assert_eq!(target(&forty_chars), Ok(forty_chars.as_str()));
+        for value in [
+            "",
+            "   ",
+            "en\n",
+            "\tja",
+            "A\0B",
+            "ar\u{85}",
+            &"語".repeat(41),
+        ] {
+            assert!(target(value).is_err(), "{value:?}");
+        }
         assert_eq!(english_name("ja"), "Japanese");
     }
 
@@ -254,6 +276,6 @@ mod tests {
         ] {
             assert_eq!(english_name(code), name);
         }
-        assert_eq!(target("pt-BR"), None);
+        assert_eq!(target("pt-BR"), Ok("pt-BR"));
     }
 }

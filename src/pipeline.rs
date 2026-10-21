@@ -628,7 +628,7 @@ async fn subtitles(
         return Ok(None);
     }
     let found = if local {
-        fetch::sidecar_subtitle(Path::new(&cfg.url))
+        fetch::sidecar_subtitle(Path::new(&cfg.url), &cfg.asr.language)
     } else {
         let video = probed.context(crate::tr!("Missing video info; please probe again"))?;
         fetch::fetch_subtitle(&video, cfg)
@@ -1154,7 +1154,7 @@ const LANGUAGE_SAMPLE_CHARS: usize = 4000;
 async fn translate_step(
     mut sections: Vec<timeline::Section>,
     cfg: &PipelineConfig,
-    target: &'static str,
+    target: &str,
     outcomes: &mut Outcomes,
 ) -> Result<Vec<timeline::Section>> {
     let mut sample = String::new();
@@ -1176,8 +1176,9 @@ async fn translate_step(
     }
     progress::stage("translate", "start");
     let llm = cfg.llm.clone();
+    let target = target.to_owned();
     let (sections, report) = tokio::task::spawn_blocking(move || {
-        crate::llm::translate_sections_report(&mut sections, &llm, target)
+        crate::llm::translate_sections_report(&mut sections, &llm, &target)
             .map(|report| (sections, report))
     })
     .await
