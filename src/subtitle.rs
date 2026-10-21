@@ -193,7 +193,7 @@ pub fn sidecar_tracks(video: &Path) -> Vec<SubtitleTrack> {
                 .filter(|candidate| {
                     candidate
                         .bytes()
-                        .all(|byte| byte.is_ascii_alphabetic() || byte == b'-' || byte == b'_')
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
                 })
                 .map(str::to_owned);
             let mut track = file_track(path, language);
@@ -277,16 +277,19 @@ fn parse_cue_header(line: &str) -> Option<(f64, f64)> {
     ))
 }
 
-/// Removes `<...>` tags and decodes common entities.
+/// Removes HTML/VTT tags and decodes common entities.
 fn clean_cue_text(line: &str) -> String {
     let mut s = String::with_capacity(line.len());
-    let mut in_tag = false;
-    for c in line.trim().chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => s.push(c),
-            _ => {}
+    let mut chars = line.trim().chars();
+    while let Some(c) = chars.next() {
+        if c == '<'
+            && let Some(end) = chars.as_str().find(['<', '>'])
+            && chars.as_str().as_bytes()[end] == b'>'
+            && is_cue_tag(&chars.as_str()[..end])
+        {
+            chars = chars.as_str()[end + 1..].chars();
+        } else {
+            s.push(c);
         }
     }
     // Replace &amp; last; otherwise "&amp;lt;" would become "&lt;" and then "<".
@@ -300,6 +303,28 @@ fn clean_cue_text(line: &str) -> String {
         s = s.replace(from, to);
     }
     s.trim().to_string()
+}
+
+fn is_cue_tag(tag: &str) -> bool {
+    if tag.contains(':')
+        && tag.contains('.')
+        && tag
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b':' || byte == b'.')
+        && crate::timeline::parse_timestamp(tag).is_some()
+    {
+        return true;
+    }
+    let tag = tag.strip_prefix('/').unwrap_or(tag);
+    let end = tag
+        .find(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        .unwrap_or(tag.len());
+    let (name, suffix) = tag.split_at(end);
+    name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        && (suffix.is_empty()
+            || suffix == "/"
+            || suffix.starts_with(|c: char| c.is_ascii_whitespace())
+            || (name == "c" && suffix.starts_with('.')))
 }
 
 /// Same-name sidecars, preferring the requested ASR language when set.
@@ -454,6 +479,22 @@ mod tests {
     }
 
     #[test]
+    fn numeric_region_sidecars_are_recognized_and_preferred() {
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("Lecture.mp4");
+        let preferred = dir.path().join("Lecture.es-419.srt");
+        std::fs::write(&preferred, "Latin American Spanish").unwrap();
+        std::fs::write(dir.path().join("Lecture.es-ES.srt"), "Spanish").unwrap();
+
+        assert_eq!(sidecar_subtitle(&video, "es-419"), Some(preferred));
+        assert!(
+            sidecar_tracks(&video)
+                .iter()
+                .any(|track| track.language.as_deref() == Some("es-419"))
+        );
+    }
+
+    #[test]
     fn utf16_sidecars_preserve_words_and_timing() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("arbitrary-name.srt");
@@ -522,6 +563,35 @@ second cue
         assert_eq!(ev[0].text, "hello world !");
         assert!((ev[0].start - 61.0).abs() < 1e-3);
         assert_eq!(ev[1].text, "second cue");
+    }
+
+    #[test]
+    fn cue_text_preserves_literal_angle_brackets() {
+        for (input, expected) in [
+            ("if x < 3, return true.", "if x < 3, return true."),
+            ("if x < 3 and y > 2.", "if x < 3 and y > 2."),
+            ("a > b", "a > b"),
+            ("an unfinished <b", "an unfinished <b"),
+            ("2 < 3 <b>bold</b> > 1", "2 < 3 bold > 1"),
+        ] {
+            assert_eq!(clean_cue_text(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn cue_text_strips_html_and_vtt_markup_and_keeps_entity_decoding() {
+        for (input, expected) in [
+            ("<c>one</c><c.yellow>two</c>", "onetwo"),
+            ("<i>one</i><b>two</b><u>three</u>", "onetwothree"),
+            ("<v Speaker>one</v><lang en>two</lang>", "onetwo"),
+            ("<ruby>one<rt>two</rt></ruby>", "onetwo"),
+            ("<00:00:01.000>one<00:02.000>two", "onetwo"),
+            ("<font color=\"red\">one</font><br/>two", "onetwo"),
+            ("a <b> c", "a  c"),
+            ("&lt;b&gt; &amp;lt; &nbsp;&quot;", "<b> &lt;  \""),
+        ] {
+            assert_eq!(clean_cue_text(input), expected, "{input}");
+        }
     }
 
     #[test]
