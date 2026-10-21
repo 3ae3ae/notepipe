@@ -88,18 +88,6 @@ struct LoadedEvents {
 }
 
 impl Checkpoint {
-    /// Read completed chunks for a failed task's material preview without opening a
-    /// writer, repairing a truncated tail, or marking the transcription complete.
-    pub fn saved_events(out_dir: &Path) -> Result<Vec<TranscriptEvent>> {
-        let mut events = Self::load_events(&out_dir.join("asr.jsonl"))?
-            .events
-            .into_iter()
-            .filter(|event| !event.text.trim().is_empty())
-            .collect::<Vec<_>>();
-        events.sort_by(|a, b| a.start.total_cmp(&b.start));
-        Ok(events)
-    }
-
     /// 在 out_dir 下打开（或按 resume/身份决定作废重开）checkpoint。
     pub fn open(out_dir: &Path, resume: bool, identity: &AsrIdentity) -> Result<Self> {
         let path = out_dir.join("asr.jsonl");
@@ -377,21 +365,9 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     write_atomically(path, bytes, false)
 }
 
-/// 同 [`atomic_write`]，但产物是用户要阅读、分享的笔记文件：权限与普通文件一致（0644）。
+/// Like [`atomic_write`], but new notes use 0644; replacements retain stricter permissions.
 pub fn atomic_write_shared(path: &Path, bytes: &[u8]) -> Result<()> {
     write_atomically(path, bytes, true)
-}
-
-/// 把临时文件放宽为普通文件权限（0644）；非 Unix 无此概念。
-pub fn make_shared(file: &std::fs::File) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o644))?;
-    }
-    #[cfg(not(unix))]
-    let _ = file;
-    Ok(())
 }
 
 fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
@@ -404,9 +380,19 @@ fn write_atomically(path: &Path, bytes: &[u8], shared: bool) -> Result<()> {
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(bytes)
         .with_context(|| format!("Failed to write {}", path.display()))?;
+    #[cfg(unix)]
     if shared {
-        make_shared(tmp.as_file())?;
+        use std::os::unix::fs::PermissionsExt;
+        let mode = match path.metadata() {
+            Ok(metadata) => metadata.permissions().mode() & 0o644,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0o644,
+            Err(error) => return Err(error.into()),
+        };
+        tmp.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(mode))?;
     }
+    #[cfg(not(unix))]
+    let _ = shared;
     tmp.as_file().sync_all()?;
     tmp.persist(path)
         .with_context(|| format!("Failed to replace {}", path.display()))?;
@@ -429,20 +415,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
-    }
-
-    #[test]
-    fn failed_task_preview_reads_completed_chunks_without_mutating_a_truncated_tail() {
-        let dir = tempfile::tempdir().unwrap();
-        let bytes = b"{\"start\":2.0,\"end\":3.0,\"text\":\"second\"}\n{\"start\":0.0,\"end\":1.0,\"text\":\"first\"}\n{\"start\":";
-        let path = dir.path().join("asr.jsonl");
-        std::fs::write(&path, bytes).unwrap();
-        let events = Checkpoint::saved_events(dir.path()).unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].text, "first");
-        assert_eq!(events[1].text, "second");
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
-        assert!(!dir.path().join(".asr_done").exists());
     }
 
     #[test]
@@ -473,6 +445,9 @@ mod tests {
             let note = dir.path().join("note.md");
             atomic_write_shared(&note, b"note").unwrap();
             assert_eq!(mode(&note), 0o644, "笔记文件可被其他程序读取");
+            std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o600)).unwrap();
+            atomic_write_shared(&note, b"updated warnings").unwrap();
+            assert_eq!(mode(&note), 0o600);
         }
     }
 

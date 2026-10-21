@@ -13,16 +13,24 @@ use std::path::{Path, PathBuf};
 
 pub const NO_SCREENSHOTS: &str = "No screenshots retrieved";
 
-fn source_key(source: &str) -> Result<String> {
+fn source_key(source: &str, adapter: &crate::settings::Source) -> Result<String> {
     let path = Path::new(source);
     let identity = if path.is_file() {
+        // shortcut: identity is path, size and mtime; a same-size replacement with preserved mtime reuses stale results — hash the file if that becomes a real problem
         let path = path.canonicalize()?;
         let metadata = path.metadata()?;
         serde_json::to_vec(
             &serde_json::json!({"path":path,"size":metadata.len(),"mtime":metadata.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_nanos()}),
         )?
     } else {
-        source.as_bytes().to_vec()
+        let discovered = if adapter.command.is_empty() {
+            Some(source::command(adapter)?.0)
+        } else {
+            None
+        };
+        serde_json::to_vec(
+            &serde_json::json!({"url":source,"command":adapter.command,"discovered":discovered}),
+        )?
     };
     Ok(runtime::digest(&identity)[..16].into())
 }
@@ -97,7 +105,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let cache_root = config::cache_dir();
     let work_root = cache_root.join("work");
     std::fs::create_dir_all(&work_root)?;
-    let key = source_key(&cfg.url)?;
+    let key = source_key(&cfg.url, &cfg.source)?;
     let _lock = runtime::lock_file(&work_root.join(format!("{key}.lock")))?;
     let work = work_root.join(key);
     runtime::check_cancelled()?;
@@ -162,6 +170,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
                 author: String::new(),
                 duration: 0.,
                 source: cfg.url.clone(),
+                seek_url: None,
             }
         }
     };
@@ -311,15 +320,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             Vec::new()
         }
     };
-    let speech = match transcript {
-        Ok(events) => events,
-        Err(error) => {
-            let events = checkpoint::Checkpoint::saved_events(&asr_root)?;
-            anyhow::ensure!(!events.is_empty(), "{error:#}");
-            warnings.push(format!("Transcription incomplete: {error:#}"));
-            events
-        }
-    };
+    let speech = transcript?;
     let mut sections = if frames.is_empty() {
         vec![timeline::Section {
             t: 0.,
@@ -373,12 +374,10 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         warnings: warnings.clone(),
     };
     let (root, cache, frames) = (cfg.out_root.clone(), cache_root, frames_root);
-    let (note_dir, mut document) = tokio::task::spawn_blocking(move || {
-        let note_dir = artifact::publish(&root, &cache, &frames, &document)?;
-        Ok::<_, anyhow::Error>((note_dir, document))
-    })
-    .await
-    .context("Note publication interrupted")??;
+    let (note_dir, mut document) =
+        tokio::task::spawn_blocking(move || artifact::publish(&root, &cache, &frames, &document))
+            .await
+            .context("Note publication interrupted")??;
     progress::stage("render", "done");
     if let Some(path) = source_media {
         remove_file(&path, &mut warnings);
@@ -459,9 +458,21 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("media");
         std::fs::write(&path, "first").unwrap();
-        let before = source_key(path.to_str().unwrap()).unwrap();
+        let mut adapter = crate::settings::Source {
+            command: vec!["adapter-one".into()],
+        };
+        let before = source_key(path.to_str().unwrap(), &adapter).unwrap();
         std::fs::write(&path, "changed length").unwrap();
-        assert_ne!(source_key(path.to_str().unwrap()).unwrap(), before);
+        assert_ne!(
+            source_key(path.to_str().unwrap(), &adapter).unwrap(),
+            before
+        );
+        let url = "https://example.test/media";
+        let first = source_key(url, &adapter).unwrap();
+        adapter.command.push("--different-setting".into());
+        assert_ne!(source_key(url, &adapter).unwrap(), first);
+        adapter.command = vec!["adapter-two".into()];
+        assert_ne!(source_key(url, &adapter).unwrap(), first);
         let mut cfg = crate::options::resolve(
             "https://example.test/media".into(),
             &Default::default(),

@@ -15,7 +15,7 @@ pub fn fmt_ts(sec: f64) -> String {
 }
 
 fn source_url(meta: &MediaMeta) -> String {
-    let source = meta.source.trim();
+    let source = meta.source.as_str();
     if Path::new(source).is_absolute() {
         let path = Path::new(source)
             .canonicalize()
@@ -27,29 +27,20 @@ fn source_url(meta: &MediaMeta) -> String {
     source.to_string()
 }
 
-/// Existing timestamps and fragments must not mask the requested seek time.
-/// `source` is resolved by the caller (canonicalize runs once per render,
-/// not once per section).
-fn ts_url_from(source: &str, sec: f64) -> String {
+/// File links use Media Fragments; HTTP seeking is defined by the source adapter.
+fn ts_url_from(source: &str, template: Option<&str>, sec: f64) -> String {
     let Ok(mut url) = url::Url::parse(source) else {
         return source.to_string();
     };
     let seconds = (sec.max(0.0).floor() as u64).to_string();
     if url.scheme() == "file" {
         url.set_fragment(Some(&format!("t={seconds}")));
-    } else {
-        let pairs: Vec<_> = url
-            .query_pairs()
-            .filter(|(key, _)| key != "t")
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect();
-        url.set_query(None);
-        url.query_pairs_mut()
-            .extend_pairs(pairs)
-            .append_pair("t", &seconds);
-        url.set_fragment(None);
+        return url.into();
     }
-    url.into()
+    template.map_or_else(
+        || source.to_owned(),
+        |template| template.replace("{t}", &seconds),
+    )
 }
 
 /// md 侧的最小转义策略：标题/作者等内联元信息只 strip 换行（换行会截断 ATX
@@ -107,7 +98,7 @@ pub fn render_markdown(
                 md,
                 "## [{}]({})\n",
                 fmt_ts(section.t),
-                ts_url_from(&source, section.t)
+                ts_url_from(&source, meta.seek_url.as_deref(), section.t)
             )
             .unwrap();
         }
@@ -174,16 +165,28 @@ fn utc_timestamp(seconds: u64) -> String {
 mod tests {
     use super::*;
     #[test]
-    fn timestamps_use_utc_and_links_replace_existing_seek_times() {
+    fn timestamps_use_utc_and_http_seeking_requires_an_adapter_template() {
         assert_eq!(utc_timestamp(0), "1970-01-01T00:00:00Z");
         assert_eq!(utc_timestamp(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(utc_timestamp(1_709_164_800), "2024-02-29T00:00:00Z");
         assert_eq!(
-            ts_url_from("https://example.test/watch?t=3&x=1#old", 61.9),
-            "https://example.test/watch?x=1&t=61"
+            ts_url_from("https://example.test/watch?t=3&x=1#old", None, 61.9),
+            "https://example.test/watch?t=3&x=1#old"
         );
         assert_eq!(
-            ts_url_from("file:///tmp/a%20lesson.mp4#t=2", 4.),
+            ts_url_from("https://EXAMPLE.test:443/%7epath?x=a%20b#old", None, 61.9),
+            "https://EXAMPLE.test:443/%7epath?x=a%20b#old"
+        );
+        assert_eq!(
+            ts_url_from(
+                "https://example.test/watch",
+                Some("https://example.test/play?seconds={t}&end={t}#keep"),
+                61.9
+            ),
+            "https://example.test/play?seconds=61&end=61#keep"
+        );
+        assert_eq!(
+            ts_url_from("file:///tmp/a%20lesson.mp4#t=2", None, 4.),
             "file:///tmp/a%20lesson.mp4#t=4"
         );
     }
@@ -194,6 +197,7 @@ mod tests {
             author: "A \"quote\"".into(),
             duration: 3725.,
             source: "https://example.test/a".into(),
+            seek_url: None,
         };
         let summary = "## Custom heading\n\nExact **Markdown**.";
         let md = render_markdown(

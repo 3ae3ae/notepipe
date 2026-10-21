@@ -21,6 +21,8 @@ pub struct MediaMeta {
     pub author: String,
     pub duration: f64,
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seek_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -34,6 +36,7 @@ pub(crate) struct Output {
     duration: f64,
     language: Option<String>,
     url: Option<String>,
+    seek_url: Option<String>,
     #[serde(default)]
     subtitles: Vec<Caption>,
 }
@@ -80,6 +83,10 @@ impl Output {
         if let Some(url) = self.url.as_deref().filter(|url| !url.is_empty()) {
             crate::config::ensure_http_url(url).context("Invalid source adapter URL")?;
         }
+        if let Some(template) = &self.seek_url {
+            crate::config::ensure_http_url(&template.replace("{t}", "0"))
+                .context("Invalid source adapter seek URL")?;
+        }
         Ok(MediaMeta {
             title: if self.title.trim().is_empty() {
                 Path::new(&self.media)
@@ -93,6 +100,7 @@ impl Output {
             author: self.author.clone(),
             duration: self.duration,
             source: source.into(),
+            seek_url: self.seek_url.clone(),
         })
     }
 
@@ -416,6 +424,20 @@ mod tests {
             std::os::unix::fs::symlink(outside.path(), root.path().join("escaped.wav")).unwrap();
             assert!(output_path(root.path(), "escaped.wav").is_err());
         }
+    }
+
+    #[test]
+    fn seek_templates_are_optional_and_must_use_http() {
+        let mut output: Output = serde_json::from_str(r#"{"media":"media.wav"}"#).unwrap();
+        let source = "https://example.test/media?x=1#part";
+        assert!(output.metadata(source).unwrap().seek_url.is_none());
+        let template = "https://example.test/play?at={t}#part";
+        output.seek_url = Some(template.into());
+        let meta = output.metadata(source).unwrap();
+        assert_eq!(meta.source, source);
+        assert_eq!(meta.seek_url.as_deref(), Some(template));
+        output.seek_url = Some("javascript:alert({t})".into());
+        assert!(output.metadata(source).is_err());
     }
 
     #[test]

@@ -363,9 +363,9 @@ pub fn resolve_flag(cli_on: bool, cli_off: bool, file: Option<bool>, default: bo
     }
 }
 
-/// 路径组件的字符数上限（净化后的标题/平台名）：防止超长标题撑出超过
-/// 文件系统限制的路径。
 const MAX_COMPONENT_CHARS: usize = 80;
+// Also bound UTF-8 bytes, leaving room for collision suffixes and the backup name.
+const MAX_COMPONENT_BYTES: usize = 200;
 
 /// 统一的文件名净化原语：路径非法符与空白折叠为 `-`，裁剪首尾，超长截断。
 /// `fallback` 为净化后为空时的名字（调用方语义：untitled / summary）。
@@ -387,6 +387,12 @@ pub fn sanitize_filename_with_fallback(s: &str, fallback: &str) -> String {
     }
     let out = out.trim_matches(['-', '.', ' ']).to_string();
     let out: String = out.chars().take(MAX_COMPONENT_CHARS).collect();
+    // Reserve one byte for a device-name escape.
+    let mut length = out.len().min(MAX_COMPONENT_BYTES - 1);
+    while !out.is_char_boundary(length) {
+        length -= 1;
+    }
+    let out = &out[..length];
     let out = out.trim_end_matches(['-', '.', ' ']);
     if out.is_empty() {
         fallback.to_string()
@@ -395,7 +401,10 @@ pub fn sanitize_filename_with_fallback(s: &str, fallback: &str) -> String {
         let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
             || ["COM", "LPT"].iter().any(|prefix| {
                 stem.strip_prefix(prefix).is_some_and(|suffix| {
-                    suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9')
+                    matches!(
+                        suffix,
+                        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                    )
                 })
             });
         if reserved {
@@ -429,6 +438,19 @@ mod tests {
             sanitize_filename_with_fallback(&format!("{} rest", "a".repeat(79)), "untitled"),
             "a".repeat(79)
         );
+        for name in ["COM¹", "com².txt", "COM³", "LPT¹", "LPT²", "LPT³.ext"] {
+            let sanitized = sanitize_filename_with_fallback(name, "untitled");
+            assert!(sanitized.contains('_'), "{name}");
+        }
+        for title in [
+            "한".repeat(100),
+            "📝".repeat(100),
+            format!("{}📝", "a".repeat(199)),
+        ] {
+            let sanitized = sanitize_filename_with_fallback(&title, "untitled");
+            assert!(sanitized.len() <= MAX_COMPONENT_BYTES);
+            assert!(title.starts_with(&sanitized));
+        }
         assert_eq!(
             sanitize_filename_with_fallback(" ... ", "untitled"),
             "untitled"

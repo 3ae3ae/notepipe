@@ -148,6 +148,7 @@ mod tests {
             author: String::new(),
             source: String::new(),
             duration: 0.,
+            seek_url: None,
         };
         let stage = Stage::builtin("summary").unwrap();
         assert!(

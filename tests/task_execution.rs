@@ -394,6 +394,49 @@ fn broken_media_publishes_subtitles_with_matching_warnings_and_no_phantom_images
 }
 
 #[test]
+fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() {
+    let root = tempfile::tempdir().unwrap();
+    if notepipe::runtime::which("ffmpeg").is_none() {
+        return;
+    }
+    let record = root.path().join("source");
+    let mut cfg = config();
+    let url = "https://EXAMPLE.test:443/media?episode=1&t=12#part";
+    for (behavior, link) in [
+        ("healthy", url),
+        ("seek", "https://example.test/play?at=0#part"),
+        ("healthy", url),
+    ] {
+        let Some(command) = source_command(&record, behavior) else {
+            return;
+        };
+        cfg.source.command = command;
+        let output = run(root.path(), url, &cfg, &[]);
+        let doc = document(&output);
+        assert_eq!(doc["meta"]["source"], url);
+        let markdown =
+            std::fs::read_to_string(done(&output)["markdown"].as_str().unwrap()).unwrap();
+        assert!(
+            markdown.contains(&format!("## [00:00]({link})")),
+            "{markdown}"
+        );
+        if behavior == "seek" {
+            assert_eq!(
+                doc["meta"]["seek_url"],
+                "https://example.test/play?at={t}#part"
+            );
+        } else {
+            assert!(doc["meta"].get("seek_url").is_none());
+        }
+    }
+    assert_eq!(
+        calls(&record),
+        2,
+        "each command needs its own source and stage caches"
+    );
+}
+
+#[test]
 fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr() {
     let root = tempfile::tempdir().unwrap();
     if notepipe::runtime::which("ffmpeg").is_none() {
@@ -478,6 +521,37 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
         frame_marker.metadata().unwrap().modified().unwrap(),
         frame_time
     );
+    // A directory at the obsolete audio path makes cleanup fail on every platform.
+    let audio = source_marker
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("audio.wav");
+    std::fs::create_dir(&audio).unwrap();
+    let warning_run = run(root.path(), url, &cfg, &[]);
+    let warning_doc = document(&warning_run);
+    assert!(
+        warning_doc["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap()
+                .contains("Could not remove cached media"))
+    );
+    assert_eq!(warning_doc["warnings"], done(&warning_run)["warnings"]);
+    for section in warning_doc["sections"].as_array().unwrap() {
+        let image = section["image"].as_str().unwrap();
+        assert!(image.starts_with("images/"));
+        assert!(
+            Path::new(first_done["note_dir"].as_str().unwrap())
+                .join(image)
+                .is_file()
+        );
+    }
+    std::fs::remove_dir(audio).unwrap();
     let reset = run(root.path(), url, &cfg, &["--no-resume"]);
     done(&reset);
     assert_eq!(calls(&source_record), 2);
@@ -583,6 +657,62 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
             );
         }
     }
+}
+
+#[test]
+fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let record = root.path().join("asr");
+    let Some(command) = adapter_command(&record, "fail-after-first") else {
+        return;
+    };
+    let subtitle = root.path().join("complete.srt");
+    std::fs::write(
+        &subtitle,
+        "1\n00:00:00,000 --> 00:00:02,000\nComplete previous note.\n",
+    )
+    .unwrap();
+    let mut cfg = config();
+    let previous = done(&run(
+        root.path(),
+        video.to_str().unwrap(),
+        &cfg,
+        &["--subtitle", subtitle.to_str().unwrap()],
+    ));
+    let note = Path::new(previous["markdown"].as_str().unwrap());
+    let json = Path::new(previous["json"].as_str().unwrap());
+    let old_note = std::fs::read(note).unwrap();
+    let old_json = std::fs::read(json).unwrap();
+    cfg.asr.command = command;
+    cfg.asr.concurrency = 1;
+    cfg.asr.max_speech = 1.;
+    cfg.defaults.transcript_source = Some(TranscriptSource::Asr);
+    let failed = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
+    assert!(!failed.status.success());
+    assert_eq!(events(&failed).last().unwrap()["type"], "error");
+    assert_eq!(std::fs::read(note).unwrap(), old_note);
+    assert_eq!(std::fs::read(json).unwrap(), old_json);
+    let cache = files(&root.path().join("cache/notepipe/work"));
+    let checkpoint = cache
+        .iter()
+        .find(|path| path.file_name().unwrap() == "asr.jsonl")
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(checkpoint).unwrap().lines().count(),
+        1
+    );
+    assert!(!checkpoint.parent().unwrap().join(".asr_done").exists());
+    std::fs::write(record.join("release"), "ready").unwrap();
+    done(&run(root.path(), video.to_str().unwrap(), &cfg, &[]));
+    let chunks = std::fs::read_to_string(checkpoint).unwrap().lines().count();
+    assert_eq!(
+        calls(&record),
+        chunks + 1,
+        "completed chunks must be reused"
+    );
 }
 
 #[cfg(unix)]
@@ -1104,6 +1234,7 @@ fn transcript_map_reduce_keeps_part_order_and_uses_the_fixed_merge_template() {
         author: "Author".into(),
         duration: 120.,
         source: "https://example.test/media".into(),
+        seek_url: None,
     };
     let result =
         notepipe::runtime::block_on(notepipe::summarize::run(&settings, &stage, &events, &meta))

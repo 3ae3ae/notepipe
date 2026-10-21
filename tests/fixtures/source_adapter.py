@@ -55,7 +55,10 @@ for language, automatic, text in [('fr', False, 'French captions.'), ('en', True
     (out / name).write_text(f'1\n00:00:00,000 --> 00:00:02,500\n{text}\n', encoding='utf-8')
     tracks.append({'path': name, 'language': language, 'automatic': automatic})
 print(json.dumps({'progress': 1.0}), flush=True)
-result = json.dumps({'media': media.name, 'title': 'Fixture source', 'author': 'Fixture author', 'duration': 3, 'language': 'en', 'url': url, 'subtitles': tracks})
+result = {'media': media.name, 'title': 'Fixture source', 'author': 'Fixture author', 'duration': 3, 'language': 'en', 'url': url, 'subtitles': tracks}
+if args.behavior == 'seek':
+    result['seek_url'] = 'https://example.test/play?at={t}#part'
+result = json.dumps(result)
 if args.behavior == 'instant':
     result = json.dumps({'media': media.name, 'title': 'x' * 131072, 'subtitles': tracks})
     sys.stdout.write(result)

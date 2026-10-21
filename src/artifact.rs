@@ -85,25 +85,101 @@ fn destination(root: &Path, meta: &MediaMeta) -> Result<PathBuf> {
     unreachable!()
 }
 
+const PREVIOUS_SUFFIX: &str = ".notepipe-previous";
+
+fn previous_path(destination: &Path) -> PathBuf {
+    destination.with_file_name(format!(
+        ".{}{PREVIOUS_SUFFIX}",
+        destination.file_name().unwrap().to_string_lossy()
+    ))
+}
+
+fn recover(root: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix('.'))
+            .and_then(|name| name.strip_suffix(PREVIOUS_SUFFIX))
+        else {
+            continue;
+        };
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let destination = root.join(name);
+        match destination.symlink_metadata() {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::rename(entry.path(), destination)
+                    .context("Could not recover the previous note")?;
+            }
+            Err(error) => return Err(error.into()),
+            Ok(_) => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_permissions(path: &Path, mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            restrict_permissions(&entry?.path(), mode)?;
+        }
+    }
+    let current = path.metadata()?.permissions().mode();
+    std::fs::set_permissions(
+        path,
+        std::fs::Permissions::from_mode(current & mode & 0o777),
+    )?;
+    Ok(())
+}
+
+fn remove_previous(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    if path.symlink_metadata()?.is_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = path.metadata()?.permissions().mode();
+        // Only the obsolete backup needs owner access for deletion.
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o700))?;
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                remove_previous(&entry.path())?;
+            }
+        }
+    }
+    std::fs::remove_dir_all(path)?;
+    Ok(())
+}
+
 fn swap(staging: &Path, destination: &Path) -> Result<()> {
     if !destination.exists() {
         return std::fs::rename(staging, destination).context("Could not publish note folder");
     }
-    let backup = tempfile::Builder::new()
-        .prefix(".notepipe-old-")
-        .tempdir_in(destination.parent().unwrap())?;
-    let previous = backup.path().join("note");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        restrict_permissions(staging, destination.metadata()?.permissions().mode())?;
+    }
+    let previous = previous_path(destination);
+    if previous.try_exists()? {
+        remove_previous(&previous).context("Could not remove the previous note backup")?;
+    }
     std::fs::rename(destination, &previous).context("Could not preserve the previous note")?;
     if let Err(error) = std::fs::rename(staging, destination) {
         if let Err(restore) = std::fs::rename(&previous, destination) {
-            let retained = backup.keep().join("note");
             anyhow::bail!(
                 "Could not publish note: {error}; could not restore it: {restore}; previous note retained at {}",
-                retained.display()
+                previous.display()
             );
         }
         return Err(error).context("Could not publish note; previous note restored");
     }
+    remove_previous(&previous)
+        .context("Note published; could not remove the previous note backup")?;
     Ok(())
 }
 
@@ -112,7 +188,7 @@ pub fn publish(
     cache_root: &Path,
     frames_root: &Path,
     document: &Document,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, Document)> {
     runtime::check_cancelled()?;
     anyhow::ensure!(
         has_readable_body(&document.sections),
@@ -120,6 +196,15 @@ pub fn publish(
     );
     std::fs::create_dir_all(root)?;
     let root = root.canonicalize()?;
+    // Recover interrupted swaps before staging or choosing a name for this source.
+    let locks = cache_root.join("outputs");
+    std::fs::create_dir_all(&locks)?;
+    let _lock = runtime::lock_file(&locks.join(format!(
+        "{}.lock",
+        runtime::digest(root.to_string_lossy().as_bytes())
+    )))?;
+    recover(&root)?;
+    let destination = destination(&root, &document.meta)?;
     let staging = tempfile::Builder::new()
         .prefix(".notepipe-new-")
         .tempdir_in(&root)?;
@@ -149,17 +234,9 @@ pub fn publish(
         &staging.path().join("note.json"),
         &serde_json::to_vec_pretty(&document)?,
     )?;
-    // Different sources can have the same title; serialize their final name selection and swap.
-    let locks = cache_root.join("outputs");
-    std::fs::create_dir_all(&locks)?;
-    let _lock = runtime::lock_file(&locks.join(format!(
-        "{}.lock",
-        runtime::digest(root.to_string_lossy().as_bytes())
-    )))?;
-    let destination = destination(&root, &document.meta)?;
     runtime::check_cancelled()?;
     swap(staging.path(), &destination)?;
-    Ok(destination)
+    Ok((destination, document))
 }
 
 #[cfg(test)]
@@ -173,6 +250,7 @@ mod tests {
                 source: source.into(),
                 author: String::new(),
                 duration: 1.,
+                seek_url: None,
             },
             sections: vec![Section {
                 t: 0.,
@@ -196,9 +274,9 @@ mod tests {
         let root = temp.path().join("notes");
         let cache = temp.path().join("cache");
         let mut first = document("https://example.test/one");
-        let one = publish(&root, &cache, temp.path(), &first).unwrap();
+        let (one, _) = publish(&root, &cache, temp.path(), &first).unwrap();
         assert_eq!(one.file_name().unwrap(), "Shared-title");
-        let two = publish(
+        let (two, _) = publish(
             &root,
             &cache,
             temp.path(),
@@ -210,7 +288,7 @@ mod tests {
             stage: "summary".into(),
             text: "Updated summary".into(),
         });
-        assert_eq!(publish(&root, &cache, temp.path(), &first).unwrap(), one);
+        assert_eq!(publish(&root, &cache, temp.path(), &first).unwrap().0, one);
         let previous = std::fs::read(one.join("note.md")).unwrap();
         first.sections[0].image = "../missing.jpg".into();
         assert!(publish(&root, &cache, temp.path(), &first).is_err());
@@ -237,10 +315,70 @@ mod tests {
         let note = temp.path().join("note");
         std::fs::create_dir(&note).unwrap();
         std::fs::write(note.join("note.md"), "previous").unwrap();
-        assert!(swap(&temp.path().join("missing"), &note).is_err());
+        let staging = note.join("staging");
+        std::fs::create_dir(&staging).unwrap();
+        assert!(swap(&staging, &note).is_err());
         assert_eq!(
             std::fs::read_to_string(note.join("note.md")).unwrap(),
             "previous"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_applies_folder_restrictions_to_all_published_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("notes");
+        let cache = temp.path().join("cache");
+        let mut doc = document("same source");
+        std::fs::write(temp.path().join("frame.jpg"), "image").unwrap();
+        doc.sections[0].image = "frame.jpg".into();
+        let (note, _) = publish(&root, &cache, temp.path(), &doc).unwrap();
+        for mode in [0o500, 0o700, 0o750] {
+            std::fs::set_permissions(&note, std::fs::Permissions::from_mode(mode)).unwrap();
+            publish(&root, &cache, temp.path(), &doc).unwrap();
+            for path in [
+                note.clone(),
+                note.join("images"),
+                note.join("note.md"),
+                note.join("note.json"),
+                note.join("images/0001.jpg"),
+            ] {
+                let permissions = path.metadata().unwrap().permissions().mode() & 0o777;
+                assert_eq!(permissions & !mode, 0, "{}", path.display());
+                if path.is_file() {
+                    assert_eq!(permissions, 0o644 & mode);
+                }
+            }
+            assert!(!previous_path(&note).exists());
+        }
+    }
+
+    #[test]
+    fn interrupted_swaps_are_recovered_before_staging_even_for_colliding_titles() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("notes");
+        let cache = temp.path().join("cache");
+        let first = document("one");
+        let mut second = document("two");
+        let (one, _) = publish(&root, &cache, temp.path(), &first).unwrap();
+        let (two, _) = publish(&root, &cache, temp.path(), &second).unwrap();
+        let original = std::fs::read(two.join("note.md")).unwrap();
+        for note in [&one, &two] {
+            std::fs::rename(note, previous_path(note)).unwrap();
+        }
+        let mut unrelated = document("three");
+        unrelated.meta.title = "Other title".into();
+        unrelated.sections[0].image = "missing.jpg".into();
+        assert!(publish(&root, &cache, temp.path(), &unrelated).is_err());
+        assert!(matches_source(&one, "one").unwrap());
+        assert_eq!(std::fs::read(two.join("note.md")).unwrap(), original);
+        // A crash after the second rename leaves both the new note and its backup.
+        std::fs::create_dir(previous_path(&two)).unwrap();
+        std::fs::write(previous_path(&two).join("note.md"), "previous").unwrap();
+        second.sections[0].image.clear();
+        assert_eq!(publish(&root, &cache, temp.path(), &second).unwrap().0, two);
+        assert!(!previous_path(&two).exists());
     }
 }
