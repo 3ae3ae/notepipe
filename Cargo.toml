@@ -9,6 +9,8 @@ license = "MIT"
 readme = "README.md"
 keywords = ["transcription", "markdown", "notes", "speech-to-text", "cli"]
 categories = ["command-line-utilities", "multimedia::audio", "multimedia::video"]
+# Adapters are packaged separately.
+exclude = [".github/", "adapters/"]
 
 [dependencies]
 earshot = "1.2.2"

@@ -77,4 +77,6 @@ of adapters that are already on PyPI are skipped, so bump an adapter's version w
 publishes from its own GitHub environment, `pypi` for notepipe and `pypi-<package>` for an adapter, and its trusted
 publisher on PyPI names that environment.
 
+The crate is published to crates.io by hand: run `cargo publish` from the tagged commit.
+
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).
