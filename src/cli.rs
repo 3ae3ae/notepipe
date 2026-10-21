@@ -539,13 +539,7 @@ fn more_version(lang: Lang) -> &'static str {
 fn parse_translation_target(value: &str) -> Result<String, String> {
     crate::language::target(value)
         .map(str::to_owned)
-        .ok_or_else(|| {
-            let codes: Vec<_> = crate::language::TARGETS
-                .iter()
-                .map(|(code, _)| *code)
-                .collect();
-            crate::tr!("支持的语言：{}", codes.join(", "))
-        })
+        .ok_or_else(|| crate::tr!("支持的语言：{}", crate::language::TARGETS.join(", ")))
 }
 
 #[cfg(test)]

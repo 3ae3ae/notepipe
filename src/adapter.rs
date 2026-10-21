@@ -116,6 +116,14 @@ impl Adapter {
                 libc::kill(group, libc::SIGKILL);
             }
         }
+        #[cfg(windows)]
+        {
+            let _ = crate::runtime::run_bounded(
+                "taskkill",
+                Command::new("taskkill").args(["/PID", &self.child.id().to_string(), "/T", "/F"]),
+                Duration::from_secs(10),
+            );
+        }
         self.child.kill();
         let _ = self.child.wait();
         for drain in self.drains.drain(..) {
@@ -150,6 +158,7 @@ mod tests {
 
     #[test]
     fn adapter_waits_for_200_drains_both_pipes_and_stops_on_drop() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         let dir = tempfile::tempdir().unwrap();
         let Some(argv) = argv(dir.path(), "healthy") else {
             return;
@@ -172,6 +181,7 @@ mod tests {
 
     #[test]
     fn adapter_startup_exit_includes_the_output_tail() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         let dir = tempfile::tempdir().unwrap();
         let Some(argv) = argv(dir.path(), "exit") else {
             return;
@@ -204,6 +214,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn adapter_terminates_the_group_and_kills_a_stubborn_leader() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         let dir = tempfile::tempdir().unwrap();
         let Some(argv) = argv(dir.path(), "stubborn") else {
             return;
@@ -215,6 +226,20 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(4));
         assert!(dir.path().join("child-terminated").is_file());
         assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn adapter_terminates_children_that_keep_output_pipes_open() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let dir = tempfile::tempdir().unwrap();
+        let Some(argv) = argv(dir.path(), "tree") else {
+            return;
+        };
+        let adapter = Adapter::start(&argv).unwrap();
+        let start = Instant::now();
+        drop(adapter);
+        assert!(start.elapsed() < Duration::from_secs(15));
     }
 
     #[cfg(unix)]

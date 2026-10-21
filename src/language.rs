@@ -5,17 +5,69 @@
 //! as the same language, and a transcript too short or mixed to judge is
 //! translated rather than skipped.
 
-/// Target languages offered for bilingual notes: stable code and the name
-/// the AI service is asked to write in.
-pub const TARGETS: [(&str, &str); 8] = [
+/// Target languages offered for bilingual notes, using stable codes.
+pub const TARGETS: [&str; 8] = ["zh-Hans", "zh-Hant", "en", "ja", "ko", "fr", "de", "es"];
+
+/// English names shared by translation instructions and speech language hints.
+const LANGUAGE_NAMES: &[(&str, &str)] = &[
+    ("af", "Afrikaans"),
+    ("am", "Amharic"),
+    ("ar", "Arabic"),
+    ("az", "Azerbaijani"),
+    ("bg", "Bulgarian"),
+    ("bn", "Bengali"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("fa", "Persian"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("gu", "Gujarati"),
+    ("ha", "Hausa"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("hu", "Hungarian"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("jv", "Javanese"),
+    ("kn", "Kannada"),
+    ("ko", "Korean"),
+    ("ml", "Malayalam"),
+    ("mr", "Marathi"),
+    ("ms", "Malay"),
+    ("my", "Burmese"),
+    ("ne", "Nepali"),
+    ("nl", "Dutch"),
+    ("no", "Norwegian"),
+    ("pa", "Punjabi"),
+    ("pl", "Polish"),
+    ("ps", "Pashto"),
+    ("pt", "Portuguese"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("si", "Sinhala"),
+    ("so", "Somali"),
+    ("sr", "Serbian"),
+    ("su", "Sundanese"),
+    ("sv", "Swedish"),
+    ("sw", "Swahili"),
+    ("ta", "Tamil"),
+    ("te", "Telugu"),
+    ("th", "Thai"),
+    ("tl", "Tagalog"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("ur", "Urdu"),
+    ("uz", "Uzbek"),
+    ("vi", "Vietnamese"),
+    ("yo", "Yoruba"),
+    ("zh", "Chinese"),
     ("zh-Hans", "Simplified Chinese"),
     ("zh-Hant", "Traditional Chinese"),
-    ("en", "English"),
-    ("ja", "Japanese"),
-    ("ko", "Korean"),
-    ("fr", "French"),
-    ("de", "German"),
-    ("es", "Spanish"),
 ];
 
 /// The supported target matching `code` (case and `_`/`-` insensitive).
@@ -23,17 +75,26 @@ pub fn target(code: &str) -> Option<&'static str> {
     let wanted = code.trim().replace('_', "-").to_ascii_lowercase();
     TARGETS
         .iter()
-        .map(|(code, _)| *code)
+        .copied()
         .find(|code| code.to_ascii_lowercase() == wanted)
 }
 
-/// The English name used in the translation instruction.
+/// English language name, accepting region/script subtags; unknown codes pass through.
 pub fn english_name(code: &str) -> &str {
-    TARGETS
-        .iter()
-        .find(|(target, _)| *target == code)
-        .map(|(_, name)| *name)
-        .unwrap_or(code)
+    let normalized = code.trim().replace('_', "-");
+    let mut wanted = normalized.as_str();
+    loop {
+        if let Some((_, name)) = LANGUAGE_NAMES
+            .iter()
+            .find(|(target, _)| target.eq_ignore_ascii_case(wanted))
+        {
+            return name;
+        }
+        let Some((parent, _)) = wanted.rsplit_once('-') else {
+            return code;
+        };
+        wanted = parent;
+    }
 }
 
 /// Language family of a target code: `zh-Hans` and `zh-Hant` are both `zh`.
@@ -177,5 +238,22 @@ mod tests {
         assert_eq!(target(" EN "), Some("en"));
         assert_eq!(target("xx"), None);
         assert_eq!(english_name("ja"), "Japanese");
+    }
+
+    #[test]
+    fn language_names_accept_subtags_and_preserve_unknown_codes() {
+        for (code, name) in [
+            ("zh", "Chinese"),
+            ("pt", "Portuguese"),
+            ("pt-BR", "Portuguese"),
+            (" PT_br ", "Portuguese"),
+            ("zh-Hans", "Simplified Chinese"),
+            ("zh-Hant", "Traditional Chinese"),
+            ("zh_hant_TW", "Traditional Chinese"),
+            ("xx-custom", "xx-custom"),
+        ] {
+            assert_eq!(english_name(code), name);
+        }
+        assert_eq!(target("pt-BR"), None);
     }
 }

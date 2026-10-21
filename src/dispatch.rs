@@ -215,6 +215,9 @@ struct Ledger {
     unresolved: Mutex<Option<HashMap<String, Receipt>>>,
 }
 static ACTIVE: OnceLock<Mutex<Option<Arc<Ledger>>>> = OnceLock::new();
+// Tests installing or using the process-wide ledger must share this lock.
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Whether an unconfirmed request may be sent again without asking: only when
 /// the service has no per-request billing.

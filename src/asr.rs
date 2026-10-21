@@ -109,13 +109,6 @@ pub fn sanitize_qwen_text(s: &str) -> String {
     if let Some(p) = t.rfind("<asr_text>") {
         t = t[p + "<asr_text>".len()..].trim();
     }
-    const LANGUAGE_PREFIX: &str = "language ";
-    if t.get(..LANGUAGE_PREFIX.len())
-        .is_some_and(|p| p.eq_ignore_ascii_case(LANGUAGE_PREFIX))
-        && let Some((_, rest)) = t[LANGUAGE_PREFIX.len()..].split_once(char::is_whitespace)
-    {
-        t = rest.trim();
-    }
     t.to_string()
 }
 
@@ -194,7 +187,8 @@ fn run_api(
     let t0 = Instant::now();
     // 凭据已在任务预检时解析（含环境变量）；空 key = 明确选择的无鉴权服务
     let api_key = api.api_key.trim().to_string();
-    let segs = earshot_vad(wav, api)?;
+    let segs = earshot_vad(wav, api, &check_control)?;
+    check_control()?;
     tracing::info!(segs = segs.len(), endpoint = %api.base_url, model = %api.model, "api vad");
     if segs.is_empty() {
         return Ok(no_speech_events());
@@ -248,6 +242,7 @@ fn run_api(
             };
             let (tmp_dir, wav) = (tmp.path(), wav);
             let (segs, pending, next, abort) = (&segs, &pending, &next, &abort);
+            let check_control = &check_control;
             s.spawn(move || {
                 loop {
                     if abort.load(std::sync::atomic::Ordering::Relaxed) {
@@ -257,6 +252,11 @@ fn run_api(
                     let Some(i) = pending.get(idx).copied() else {
                         break;
                     };
+                    if let Err(error) = check_control() {
+                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let _ = tx.send((i, Err(error)));
+                        break;
+                    }
                     let seg = segs[i];
                     let r =
                         transcribe_api(&target, &tmp_dir.join(format!("c{i:04}.wav")), seg, wav);
@@ -270,22 +270,26 @@ fn run_api(
 
         let mut tracker = EmptyResultTracker::default();
         loop {
+            if err.is_none()
+                && let Err(error) = check_control()
+            {
+                err = Some(error);
+                abort.store(true, std::sync::atomic::Ordering::Relaxed);
+                if let Some(adapter) = &mut adapter {
+                    adapter.stop();
+                }
+            }
             let (i, r) = match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(result) => result,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    if err.is_none()
-                        && let Err(error) = check_control()
-                    {
-                        err = Some(error);
-                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
-                        if let Some(adapter) = &mut adapter {
-                            adapter.stop();
-                        }
-                    }
-                    continue;
-                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             };
+            if err.is_none()
+                && let Err(error) = check_control()
+            {
+                err = Some(error);
+                abort.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             match r {
                 _ if err.is_some() => {} // 已熔断/已出错：丢弃迟到结果
                 Ok(text) => {
@@ -312,7 +316,7 @@ fn run_api(
         }
         // 正常收尾：缓冲的空结果（真实静音）落 checkpoint，避免静音 chunk 反复重跑
         if err.is_none()
-            && let Err(e) = tracker.finish(cp)
+            && let Err(e) = check_control().and_then(|()| tracker.finish(cp))
         {
             err = Some(e);
         }
@@ -534,7 +538,11 @@ fn parse_chat_content(v: &serde_json::Value) -> String {
 }
 
 /// Stream 16 kHz mono s16le PCM in 256-sample frames; pad only the final frame.
-fn earshot_vad(wav: &Path, asr: &crate::settings::Asr) -> Result<Vec<Seg>> {
+fn earshot_vad(
+    wav: &Path,
+    asr: &crate::settings::Asr,
+    check_control: &dyn Fn() -> Result<()>,
+) -> Result<Vec<Seg>> {
     let mut detector = earshot::Detector::default();
     let mut speech: Vec<(u64, u64)> = Vec::new();
     let mut detect = |frame: &[i16], start: u64, end: u64| {
@@ -555,10 +563,14 @@ fn earshot_vad(wav: &Path, asr: &crate::settings::Asr) -> Result<Vec<Seg>> {
         frame[filled] = sample;
         filled += 1;
         if filled == frame.len() {
+            if offset.is_multiple_of(256 * 32) {
+                check_control()?;
+            }
             detect(&frame, offset, offset + 256);
             offset += 256;
             filled = 0;
         }
+        Ok(())
     })?;
     if filled > 0 {
         frame[filled..].fill(0);
@@ -586,7 +598,7 @@ pub struct Seg {
 }
 
 /// Stream the pipeline's 16 kHz mono s16le WAV, returning its actual sample count.
-fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16)) -> Result<u64> {
+fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16) -> Result<()>) -> Result<u64> {
     use std::io::{BufReader, Read, Seek};
     let file = std::fs::File::open(wav)
         .with_context(|| format!("无法读取音频 / Could not read audio: {}", wav.display()))?;
@@ -620,8 +632,9 @@ fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16)) -> Result<u64> {
     let mut half: Option<u8> = None; // 跨 read 边界的样本低字节
     let mut samples = 0;
     let mut emit = |sample| {
-        on_sample(sample);
+        on_sample(sample)?;
         samples += 1;
+        Ok::<(), anyhow::Error>(())
     };
     let mut remaining = data_size;
     while remaining > 0 {
@@ -633,11 +646,11 @@ fn read_pcm_samples(wav: &Path, mut on_sample: impl FnMut(i16)) -> Result<u64> {
         remaining -= n as u64;
         let mut i = 0;
         if let Some(lo) = half.take() {
-            emit(i16::from_le_bytes([lo, buf[0]]));
+            emit(i16::from_le_bytes([lo, buf[0]]))?;
             i = 1;
         }
         while i + 1 < n {
-            emit(i16::from_le_bytes([buf[i], buf[i + 1]]));
+            emit(i16::from_le_bytes([buf[i], buf[i + 1]]))?;
             i += 2;
         }
         if i < n {
@@ -663,6 +676,7 @@ impl Energy {
         let mut n_in_hop = 0usize;
         read_pcm_samples(wav, |sample| {
             rms_accumulate(sample, &mut sum, &mut n_in_hop, &mut rms);
+            Ok(())
         })?;
         if n_in_hop > 0 {
             rms.push((sum / n_in_hop as f64).sqrt() as f32);
@@ -886,7 +900,11 @@ mod tests {
             "/tests/fixtures/speech.wav"
         ));
         let mut samples = Vec::new();
-        let count = read_pcm_samples(path, |sample| samples.push(sample)).unwrap();
+        let count = read_pcm_samples(path, |sample| {
+            samples.push(sample);
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(count, samples.len() as u64);
         samples
     }
@@ -925,7 +943,7 @@ mod tests {
         samples.extend(speech_fixture_samples());
         samples.extend([0; 16_000]);
         let wav = test_wav(&samples);
-        let segments = earshot_vad(wav.path(), &Default::default()).unwrap();
+        let segments = earshot_vad(wav.path(), &Default::default(), &|| Ok(())).unwrap();
         assert_eq!(segments.len(), 1, "{segments:?}");
         assert!((segments[0].start - 1.0).abs() <= 0.35, "{segments:?}");
         assert!((segments[0].end - 3.4).abs() <= 0.35, "{segments:?}");
@@ -934,10 +952,24 @@ mod tests {
     }
 
     #[test]
+    fn vad_checks_control_during_pcm_scanning() {
+        let wav = test_wav(&vec![0; 16_000]);
+        let polls = std::cell::Cell::new(0);
+        let error = earshot_vad(wav.path(), &Default::default(), &|| {
+            polls.set(polls.get() + 1);
+            anyhow::ensure!(polls.get() < 2, "test cancellation");
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "test cancellation");
+        assert_eq!(polls.get(), 2);
+    }
+
+    #[test]
     fn earshot_silence_has_no_segments_including_a_partial_final_frame() {
         let wav = test_wav(&vec![0; 16_000]);
         assert!(
-            earshot_vad(wav.path(), &Default::default())
+            earshot_vad(wav.path(), &Default::default(), &|| Ok(()))
                 .unwrap()
                 .is_empty()
         );
@@ -953,7 +985,7 @@ mod tests {
             samples.extend_from_slice(&speech);
             samples.extend([0; 16_000]);
             let wav = test_wav(&samples);
-            let segments = earshot_vad(wav.path(), &Default::default()).unwrap();
+            let segments = earshot_vad(wav.path(), &Default::default(), &|| Ok(())).unwrap();
             assert_eq!(
                 segments.len(),
                 expected,
@@ -968,7 +1000,11 @@ mod tests {
         let wav = test_wav(&samples);
         let mut decoded = Vec::new();
         assert_eq!(
-            read_pcm_samples(wav.path(), |sample| decoded.push(sample)).unwrap(),
+            read_pcm_samples(wav.path(), |sample| {
+                decoded.push(sample);
+                Ok(())
+            })
+            .unwrap(),
             16_017
         );
         assert_eq!(decoded, samples);
@@ -988,8 +1024,11 @@ mod tests {
             max_speech: 20.0,
             ..asr.clone()
         };
-        assert_eq!(earshot_vad(wav.path(), &uncut).unwrap().len(), 1);
-        let segments = earshot_vad(wav.path(), &asr).unwrap();
+        assert_eq!(
+            earshot_vad(wav.path(), &uncut, &|| Ok(())).unwrap().len(),
+            1
+        );
+        let segments = earshot_vad(wav.path(), &asr, &|| Ok(())).unwrap();
         assert!(segments.len() >= 2);
         assert!(segments.iter().all(|seg| seg.end - seg.start <= 1.0));
         let mut samples = speech_fixture_samples();
@@ -1000,7 +1039,7 @@ mod tests {
             min_silence: 2.0,
             ..Default::default()
         };
-        assert_eq!(earshot_vad(wav.path(), &asr).unwrap().len(), 1);
+        assert_eq!(earshot_vad(wav.path(), &asr, &|| Ok(())).unwrap().len(), 1);
     }
 
     #[test]
@@ -1010,8 +1049,13 @@ mod tests {
             "你好世界。"
         );
         assert_eq!(sanitize_qwen_text("内容</asr_text>尾巴"), "内容");
-        // 语言名后跟多字节空白（全角空格）时不得在字符中间切片
-        assert_eq!(sanitize_qwen_text("language Chinese\u{3000}你好"), "你好");
+        for text in ["Language models help.", "language Chinese\u{3000}你好"] {
+            assert_eq!(sanitize_qwen_text(text), text);
+        }
+        assert_eq!(
+            sanitize_qwen_text("language English<asr_text>Language models help.</asr_text>"),
+            "Language models help."
+        );
     }
 
     #[test]
@@ -1038,7 +1082,95 @@ mod http_tests {
     use std::io::{Read, Write};
 
     #[test]
+    fn fast_responses_obey_cancellation_before_dispatch_and_checkpointing() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        if crate::runtime::which("ffmpeg").is_none() {
+            return;
+        }
+        for intent in [
+            None,
+            Some(crate::dispatch::Intent::Pause),
+            Some(crate::dispatch::Intent::Cancel),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let control = dir.path().join("control.json");
+            let _ledger =
+                crate::dispatch::install(dir.path(), Some(&control), &Default::default()).unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let api = Asr {
+                base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
+                concurrency: 1,
+                max_speech: 1.0,
+                ..Default::default()
+            };
+            let mut cp = crate::checkpoint::Checkpoint::open(
+                dir.path(),
+                false,
+                &crate::checkpoint::AsrIdentity::new(&api),
+            )
+            .unwrap();
+            let cancelled = AtomicBool::new(false);
+            let done = AtomicBool::new(false);
+            std::thread::scope(|scope| {
+                let server = scope.spawn(|| {
+                    let mut requests = 0;
+                    while !done.load(Ordering::Relaxed) {
+                        let mut stream = match listener.accept() {
+                            Ok((stream, _)) => stream,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(Duration::from_millis(1));
+                                continue;
+                            }
+                            Err(error) => panic!("{error}"),
+                        };
+                        stream.set_nonblocking(false).unwrap();
+                        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                        let mut request = Vec::new();
+                        let mut buffer = [0; 4096];
+                        loop {
+                            let n = stream.read(&mut buffer).unwrap();
+                            assert_ne!(n, 0);
+                            request.extend_from_slice(&buffer[..n]);
+                            if let Some(offset) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                                let head = String::from_utf8_lossy(&request[..offset]).to_ascii_lowercase();
+                                let length: usize = head.lines().find_map(|line| line.strip_prefix("content-length:")).unwrap().trim().parse().unwrap();
+                                if request.len() >= offset + 4 + length { break; }
+                            }
+                        }
+                        requests += 1;
+                        if let Some(intent) = intent {
+                            let value = crate::dispatch::Control { intent, ..Default::default() };
+                            crate::checkpoint::atomic_write(&control, &serde_json::to_vec(&value).unwrap()).unwrap();
+                        } else {
+                            cancelled.store(true, Ordering::Relaxed);
+                        }
+                        let body = r#"{"text":"Recognized."}"#;
+                        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    }
+                    requests
+                });
+                let result = run_api(
+                    &api,
+                    Path::new(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/tests/fixtures/speech.wav"
+                    )),
+                    &mut cp,
+                    &cancelled,
+                );
+                done.store(true, Ordering::Relaxed);
+                assert!(result.is_err(), "{intent:?}");
+                assert_eq!(server.join().unwrap(), 1, "{intent:?}");
+                assert!(cp.sorted_events().is_empty(), "{intent:?}");
+            });
+        }
+    }
+
+    #[test]
     fn dialects_send_optional_fields_before_audio_and_sanitize_responses() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         if crate::runtime::which("ffmpeg").is_none() {
             return;
         }
@@ -1179,74 +1311,92 @@ mod http_tests {
     }
 
     #[test]
-    fn language_names_fall_back_to_the_given_code() {
+    fn language_names_are_shared_by_chat_and_meta_requests() {
         let client = ureq::agent();
-        let target = ApiTarget {
-            client: &client,
-            url: "",
-            model: "",
-            key: "",
-            mode: AsrMode::Chat,
-            language: "xx-custom",
-            managed: false,
-        };
-        let (_, body) = transcription_request(&target, b"audio").unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(
-            body["messages"][0]["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .ends_with(" The speech is in xx-custom.")
-        );
+        for (code, name) in [
+            ("zh", "Chinese"),
+            ("pt", "Portuguese"),
+            ("pt-BR", "Portuguese"),
+            ("zh-Hant", "Traditional Chinese"),
+            ("xx-custom", "xx-custom"),
+        ] {
+            let mut target = ApiTarget {
+                client: &client,
+                url: "",
+                model: "",
+                key: "",
+                mode: AsrMode::Chat,
+                language: code,
+                managed: false,
+            };
+            let (_, body) = transcription_request(&target, b"audio").unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert!(
+                body["messages"][0]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with(&format!(" The speech is in {name}."))
+            );
+            target.mode = AsrMode::Meta;
+            let (_, body) = transcription_request(&target, b"audio").unwrap();
+            assert!(
+                String::from_utf8(body)
+                    .unwrap()
+                    .contains(&format!("\"languageBias\":[\"{name}\"]"))
+            );
+        }
     }
     #[cfg(unix)]
-    #[tokio::test]
-    async fn dropping_the_async_transcription_stops_its_blocking_adapter() {
-        if crate::runtime::which("ffmpeg").is_none() {
-            return;
-        }
-        let Some(python) = crate::runtime::which("python3") else {
-            return;
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let record = dir.path().join("adapter");
-        let mut cfg =
-            crate::options::resolve("video".into(), &Default::default(), &Default::default())
-                .unwrap();
-        cfg.out_dir = dir.path().join("work");
-        cfg.asr.command = vec![
-            python.display().to_string(),
-            "-u".into(),
-            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/asr_adapter.py").into(),
-            "--record".into(),
-            record.display().to_string(),
-            "--behavior".into(),
-            "hang".into(),
-        ];
-        let task = tokio::spawn(async move {
-            run(
-                &cfg,
-                Path::new(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/tests/fixtures/speech.wav"
-                )),
-            )
-            .await
+    #[test]
+    fn dropping_the_async_transcription_stops_its_blocking_adapter() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            if crate::runtime::which("ffmpeg").is_none() {
+                return;
+            }
+            let Some(python) = crate::runtime::which("python3") else {
+                return;
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let record = dir.path().join("adapter");
+            let mut cfg =
+                crate::options::resolve("video".into(), &Default::default(), &Default::default())
+                    .unwrap();
+            cfg.out_dir = dir.path().join("work");
+            cfg.asr.command = vec![
+                python.display().to_string(),
+                "-u".into(),
+                concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/asr_adapter.py").into(),
+                "--record".into(),
+                record.display().to_string(),
+                "--behavior".into(),
+                "hang".into(),
+            ];
+            let task = tokio::spawn(async move {
+                run(
+                    &cfg,
+                    Path::new(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/tests/fixtures/speech.wav"
+                    )),
+                )
+                .await
+            });
+            let gate = record.join("transcribing");
+            let start = Instant::now();
+            while !gate.is_file() && start.elapsed() < Duration::from_secs(10) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let reached_request = gate.is_file();
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            assert!(reached_request);
+            let start = Instant::now();
+            while !record.join("terminated").is_file() && start.elapsed() < Duration::from_secs(5) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(record.join("terminated").is_file());
+            assert!(!dir.path().join("work/.asr_done").exists());
         });
-        let gate = record.join("transcribing");
-        let start = Instant::now();
-        while !gate.is_file() && start.elapsed() < Duration::from_secs(10) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        let reached_request = gate.is_file();
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        assert!(reached_request);
-        let start = Instant::now();
-        while !record.join("terminated").is_file() && start.elapsed() < Duration::from_secs(5) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(record.join("terminated").is_file());
-        assert!(!dir.path().join("work/.asr_done").exists());
     }
 }

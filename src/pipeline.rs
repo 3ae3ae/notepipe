@@ -1430,6 +1430,7 @@ mod tests {
     /// 用损坏的本地视频让 pipeline 在 out_dir 确定之后（场景检测阶段）必然失败。
     #[test]
     fn failure_writes_diagnostic_run_json() {
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         // 缺任何一个工具都会在 out_dir 确定之前的预检失败（不写 run.json），跳过
         for tool in ["ffmpeg", "ffprobe"] {
             if crate::runtime::which(tool).is_none() {

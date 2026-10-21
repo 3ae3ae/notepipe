@@ -30,6 +30,8 @@ def stop(signum, frame):
 
 
 signal.signal(signal.SIGTERM, stop)
+if args.behavior == 'tree':
+    subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
 if args.behavior == 'stubborn':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     code = "import signal,time; from pathlib import Path; signal.signal(signal.SIGTERM, lambda *_: (Path(%r).write_text('SIGTERM'), exit(0))); Path(%r).write_text('ready'); time.sleep(30)" % (str(args.record / 'child-terminated'), str(args.record / 'child-ready'))
