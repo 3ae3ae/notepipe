@@ -300,6 +300,91 @@ fn explicit_subtitles_publish_plain_notes_and_replace_only_the_same_source() {
     assert!(note_dir.join("note.json").is_file());
 }
 
+#[cfg(unix)]
+#[test]
+fn ai_adapter_omits_an_unset_model_stops_and_reuses_responses_across_ports() {
+    use std::time::{Duration, Instant};
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let Ok(python) = which::which("python3").or_else(|_| which::which("python")) else {
+        return;
+    };
+    std::fs::write(
+        video.with_extension("srt"),
+        "1\n00:00:00,000 --> 00:00:02,000\nOriginal words.\n",
+    )
+    .unwrap();
+    let record = root.path().join("ai");
+    let mut cfg = config();
+    cfg["ai"] = json!({
+        "adapter": [python, concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ai_adapter.py"), "--record", record],
+        "base_url": "invalid ignored default",
+        "api_key": "adapter-key",
+        "stages": [{"name": "summary"}]
+    });
+    let mut reserved_port = None;
+    for _ in 0..2 {
+        let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
+        let completed = done(&output);
+        assert!(completed["warnings"].as_array().unwrap().is_empty());
+        let note = std::fs::read_to_string(completed["markdown"].as_str().unwrap()).unwrap();
+        assert!(note.contains("Adapter summary."));
+        let stages = events(&output);
+        for status in ["start", "done"] {
+            assert_eq!(
+                stages
+                    .iter()
+                    .filter(|event| event["type"] == "stage"
+                        && event["stage"] == "adapter/start"
+                        && event["status"] == status)
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(calls(&record), 1);
+        let body: Value = serde_json::from_str(
+            std::fs::read_to_string(record.join("calls"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        assert!(body.get("model").is_none());
+        assert_eq!(
+            std::fs::read_to_string(record.join("authorization")).unwrap(),
+            "Bearer adapter-key\n"
+        );
+        let pid: i32 = std::fs::read_to_string(record.join("pid"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let start = Instant::now();
+        while unsafe { libc::kill(pid, 0) } == 0 && start.elapsed() < Duration::from_secs(30) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "AI adapter survived the run"
+        );
+        assert!(record.join("terminated").is_file());
+        let port: u16 = std::fs::read_to_string(record.join("port"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        if let Some(listener) = &reserved_port {
+            assert_ne!(
+                port,
+                std::net::TcpListener::local_addr(listener).unwrap().port()
+            );
+        } else {
+            reserved_port = Some(std::net::TcpListener::bind(("127.0.0.1", port)).unwrap());
+            std::fs::remove_file(record.join("terminated")).unwrap();
+        }
+    }
+}
+
 #[test]
 fn broken_media_publishes_subtitles_with_matching_warnings_and_no_phantom_images() {
     if which::which("ffmpeg").ok().is_none() {

@@ -2,11 +2,13 @@
 
 The notepipe core turns a local media file into a note and talks to the outside world only through standard interfaces.
 Anything tied to a particular engine, vendor or website is an **adapter**: a separate program that notepipe runs. To
-attach one, install it; a speech adapter is also named in `config.toml`. To detach one, uninstall it or remove its line.
+attach one, install it; a speech or AI adapter is also named in `config.toml`. To detach one, uninstall it or remove its
+line.
 
-There are two kinds:
+There are three kinds:
 
 - **Speech adapters** serve an OpenAI-compatible transcription API on localhost for the duration of a run.
+- **AI adapters** serve an OpenAI-compatible chat API on localhost for the AI stages of a run.
 - **Download adapters** turn a URL into a local media file plus metadata and subtitles.
 
 Official adapters are extras of the `notepipe` package, for example `uv tool install "notepipe[llama]"`. Other adapters
@@ -132,6 +134,112 @@ args = parser.parse_args()
 HTTPServer((args.host, args.port), Handler).serve_forever()
 ```
 
+## AI adapters
+
+### Using one
+
+```toml
+[ai]
+adapter = ["my-ai-adapter", "--option"]
+
+[[ai.stages]]
+name = "summary"
+```
+
+When `adapter` is set and at least one stage does not set its own `base_url`, notepipe:
+
+1. starts the program with `--host 127.0.0.1 --port <free port>` appended to the configured arguments, before the first
+   stage that uses it;
+2. waits until `GET /health` answers `200` (up to 30 minutes);
+3. sends the requests of every stage without its own `base_url` to `http://127.0.0.1:<port>/v1/chat/completions`;
+4. stops the program and its child processes when the AI stages end, fail or are cancelled.
+
+`[ai].base_url` is ignored while `adapter` is set, and `model` becomes optional. Responses are cached by the adapter
+command and the request, so a later run with the same adapter reuses them even though the port changes.
+
+An AI adapter is the place for anything that is not a plain Chat Completions endpoint: a different API, such as the
+OpenAI Responses API; a provider with its own authentication; or access through a subscription you already have.
+
+### Contract
+
+Arguments, `GET /health` and process handling are the same as for [speech adapters](#contract).
+
+`POST /v1/chat/completions` takes a JSON body in the OpenAI Chat Completions format:
+
+| Field | Present | Content |
+|---|---|---|
+| `model` | when the stage has a model | the model name |
+| `messages` | always | a system message with the stage's prompt, then a user message with the input; the user content is a string, or for paragraph stages with `images = true` an array of `text` and `image_url` parts (JPEG data URLs) |
+| `response_format` | paragraph stages | `{"type": "json_object"}` |
+| other fields | when configured | everything in `[ai].request` and the stage's `request` |
+
+`stream` is never requested. Respond `200` with:
+
+```json
+{"choices": [{"message": {"content": "…"}}], "usage": {"prompt_tokens": 120, "completion_tokens": 40}}
+```
+
+`usage` is optional; when present, notepipe reports the counts. On failure respond with a non-2xx status and
+`{"error": {"message": "…"}}`; `429` and `5xx` responses are retried with backoff.
+
+An adapter may ignore `response_format`, because the prompt asks for JSON as well. If it rejects the field instead, it
+should answer `400` with a message that mentions `response_format`; notepipe then retries without it. When the stage has
+an API key (`api_key`, or `NOTEPIPE_AI_API_KEY`), requests carry `Authorization: Bearer <key>`; an adapter may check it
+or forward it.
+
+### Example
+
+A complete AI adapter in Python, using only the standard library:
+
+```python
+#!/usr/bin/env python3
+import argparse
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+def complete(request):
+    # request is the Chat Completions body; return the model's answer as text.
+    return "Call your model here."
+
+
+class Handler(BaseHTTPRequestHandler):
+    def reply(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self.reply(200, {"status": "ok"})
+        else:
+            self.reply(404, {"error": {"message": "not found"}})
+
+    def do_POST(self):
+        if self.path != "/v1/chat/completions":
+            return self.reply(404, {"error": {"message": "not found"}})
+        try:
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            request["messages"]
+        except Exception:
+            return self.reply(400, {"error": {"message": "expected a chat completions request"}})
+        try:
+            text = complete(request)
+        except Exception as error:
+            return self.reply(500, {"error": {"message": str(error)}})
+        self.reply(200, {"choices": [{"message": {"role": "assistant", "content": text}}]})
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--host", required=True)
+parser.add_argument("--port", type=int, required=True)
+args = parser.parse_args()
+HTTPServer((args.host, args.port), Handler).serve_forever()
+```
+
 ## Download adapters
 
 ### Using one
@@ -183,6 +291,6 @@ lines of standard error.
 
 ## Publishing an adapter
 
-Name the executable `notepipe-asr-<name>` or `notepipe-source-<name>`, and publish it as a package that installs that
-executable (a Python console script or a binary wheel works well), so that `uv tool install notepipe --with <package>`
-places it next to notepipe.
+Name the executable `notepipe-asr-<name>`, `notepipe-ai-<name>` or `notepipe-source-<name>`, and publish it as a package
+that installs that executable (a Python console script or a binary wheel works well), so that `uv tool install notepipe
+--with <package>` places it next to notepipe.

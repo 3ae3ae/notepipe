@@ -294,7 +294,7 @@ fn run_api(
     pb.finish();
     if let Some(e) = err {
         return Err(if let Some(adapter) = &adapter {
-            adapter.stderr.attach(e, "ASR adapter output")
+            adapter.stderr.attach(e, "Speech adapter output")
         } else {
             e
         });

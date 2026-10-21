@@ -345,9 +345,17 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         "No readable transcript"
     );
     let mut top = Vec::new();
+    let mut adapter = None::<crate::adapter::Adapter>;
     for stage in &cfg.llm.stages {
         runtime::check_cancelled()?;
-        let settings = cfg.llm.for_stage(stage)?;
+        let mut settings = cfg.llm.for_stage(stage)?;
+        if !settings.adapter.is_empty() {
+            if adapter.is_none() {
+                // shortcut: the adapter starts even when every response is cached; start it on the first cache miss if startup cost matters.
+                adapter = Some(start_ai_adapter(settings.adapter.clone()).await?);
+            }
+            settings.base_url = format!("{}/v1", adapter.as_ref().unwrap().base);
+        }
         progress::stage(&stage.name, "start");
         match stage.input {
             crate::llm::Input::Paragraphs => {
@@ -372,6 +380,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
         progress::stage(&stage.name, "done");
     }
+    drop(adapter);
     runtime::check_cancelled()?;
     progress::stage("render", "start");
     if let Some(path) = source_media {
@@ -410,6 +419,22 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         eprintln!("Notes ready: {}", note_dir.display());
     }
     Ok(())
+}
+
+async fn start_ai_adapter(argv: Vec<String>) -> Result<crate::adapter::Adapter> {
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _cancel_on_drop = runtime::CancelOnDrop(cancelled.clone());
+    tokio::task::spawn_blocking(move || {
+        let check_control = || {
+            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(runtime::Cancelled.into());
+            }
+            runtime::check_cancelled()
+        };
+        check_control()?;
+        crate::adapter::Adapter::start_with_control(&argv, &check_control)
+    })
+    .await?
 }
 
 fn on_complete(argv: &[String], note_dir: &Path, warnings: usize) -> Result<()> {
@@ -484,6 +509,47 @@ async fn paragraphs_with_rollback(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn dropping_ai_adapter_startup_stops_its_blocking_process() {
+        use std::time::{Duration, Instant};
+        let _dispatch = runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let Some(python) = runtime::which("python3").or_else(|| runtime::which("python")) else {
+            return;
+        };
+        let root = tempfile::tempdir().unwrap();
+        let argv = vec![
+            python.display().to_string(),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/asr_adapter.py").into(),
+            "--record".into(),
+            root.path().display().to_string(),
+            "--behavior".into(),
+            "never".into(),
+        ];
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let task = tokio::spawn(start_ai_adapter(argv));
+            let start = Instant::now();
+            while !root.path().join("pid").is_file() && start.elapsed() < Duration::from_secs(30) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            task.abort();
+            assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+            let pid: i32 = std::fs::read_to_string(root.path().join("pid"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            let start = Instant::now();
+            while unsafe { libc::kill(pid, 0) } == 0 && start.elapsed() < Duration::from_secs(30) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert_eq!(
+                unsafe { libc::kill(pid, 0) },
+                -1,
+                "AI adapter survived cancellation"
+            );
+        });
+    }
+
     #[test]
     fn source_and_stage_keys_ignore_unrelated_settings_but_track_inputs() {
         let temp = tempfile::tempdir().unwrap();

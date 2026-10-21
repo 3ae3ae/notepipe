@@ -78,7 +78,8 @@ live instead:
 |---|---|
 | Downloading from a website, sign-in, playlists | a download adapter |
 | A local speech model (llama.cpp, OpenVINO, Core ML …) | a speech adapter |
-| A vendor API that is not OpenAI-compatible | a speech adapter that translates the request |
+| A vendor API that is not OpenAI-compatible | a speech or AI adapter that translates the request |
+| AI through a different API, or through a subscription | an AI adapter |
 | Cleaning up one model's output quirks | that model's adapter |
 | A different summary, a translation, a glossary, study questions | a stage prompt in the configuration |
 | Another output format, syncing to a note app | the completion hook |

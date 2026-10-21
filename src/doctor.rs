@@ -126,6 +126,20 @@ pub fn run() -> Result<()> {
             } else {
                 out.push("- Speech recognition is not set up; it is needed only when there are no subtitles. Set [speech] in the configuration file.".into());
             }
+            if let Some(program) = cfg.ai.adapter.first() {
+                match crate::adapter::resolve_executable(program) {
+                    Ok(path) if path.is_file() => check(
+                        &mut out,
+                        true,
+                        "AI adapter",
+                        &format!("  {}", path.display()),
+                    ),
+                    _ => {
+                        failures += 1;
+                        check(&mut out, false, "AI adapter", &format!(" {program}"));
+                    }
+                }
+            }
         }
         Err(error) => {
             failures += 1;

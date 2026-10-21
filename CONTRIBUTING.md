@@ -60,7 +60,7 @@ change does not need. CLI messages are English; prompts are English defaults tha
 ## Writing an adapter
 
 See [docs/adapters.md](docs/adapters.md). Third-party adapters do not need to live in this repository; name the executable
-`notepipe-asr-<name>` or `notepipe-source-<name>` and publish it as a package.
+`notepipe-asr-<name>`, `notepipe-ai-<name>` or `notepipe-source-<name>` and publish it as a package.
 
 ## Commits and pull requests
 

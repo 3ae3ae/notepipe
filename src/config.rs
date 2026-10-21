@@ -289,7 +289,7 @@ impl PipelineConfig {
         } else {
             anyhow::ensure!(
                 !self.asr.command[0].trim().is_empty(),
-                "The ASR adapter command must name an executable."
+                "The speech adapter command must name an executable."
             );
         }
         Ok(())

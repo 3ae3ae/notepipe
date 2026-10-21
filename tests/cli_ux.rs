@@ -196,6 +196,22 @@ fn config_show_reports_the_defaults_conversion_uses() {
 }
 
 #[test]
+fn config_show_reports_ai_adapter_after_base_url() {
+    let cli = CliTest::new();
+    cli.config("[ai]\nadapter = ['my-ai-adapter', '--option']\n");
+    let result = cli.run(&["config", "show"]);
+    assert!(result.status.success());
+    let text = stdout(&result);
+    let ai = text.split_once("[ai]\n").unwrap().1;
+    let mut lines = ai.lines();
+    assert_eq!(lines.next().unwrap(), format!("  {:<17}: ", "base_url"));
+    assert_eq!(
+        lines.next().unwrap(),
+        format!("  {:<17}: [\"my-ai-adapter\", \"--option\"]", "adapter")
+    );
+}
+
+#[test]
 fn screenshot_mode_is_configurable_and_unknown_keys_are_rejected() {
     let cli = CliTest::new();
     let help = stdout(&cli.run(&["--help"]));
@@ -313,6 +329,29 @@ fn doctor_reports_missing_llm_settings_for_enabled_stages_offline() {
         );
         assert!(stderr(&result).contains("required-tool or configuration issues"));
     }
+}
+
+#[test]
+fn doctor_reports_ai_adapter_executable_after_speech() {
+    let cli = CliTest::new();
+    let program = env!("CARGO_BIN_EXE_notepipe");
+    cli.config(&serde_json::json!({"ai": {"adapter": [program]}}).to_string());
+    let result = cli.run(&["doctor"]);
+    let text = stdout(&result);
+    let speech = text.find("- Speech recognition").unwrap();
+    let adapter = text.find(&format!("✓ AI adapter  {program}")).unwrap();
+    assert!(adapter > speech, "{text}");
+
+    let program = "notepipe-test-missing-ai-adapter";
+    cli.config(&serde_json::json!({"ai": {"adapter": [program]}}).to_string());
+    let result = cli.run(&["doctor"]);
+    assert!(!result.status.success());
+    assert!(
+        stdout(&result).contains(&format!("✗ AI adapter {program}")),
+        "{}",
+        stdout(&result)
+    );
+    assert!(stderr(&result).contains("required-tool or configuration issues"));
 }
 
 #[test]

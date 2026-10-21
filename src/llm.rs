@@ -138,6 +138,7 @@ impl Stage {
 #[serde(default, deny_unknown_fields)]
 pub struct LlmSettings {
     pub base_url: String,
+    pub adapter: Vec<String>,
     pub api_key: String,
     pub model: String,
     pub concurrency: usize,
@@ -150,6 +151,7 @@ impl Default for LlmSettings {
     fn default() -> Self {
         Self {
             base_url: String::new(),
+            adapter: Vec::new(),
             api_key: String::new(),
             model: String::new(),
             concurrency: DEFAULT_CONCURRENCY,
@@ -169,6 +171,11 @@ impl LlmSettings {
                 .base_url
                 .clone()
                 .unwrap_or_else(|| self.base_url.clone()),
+            adapter: if stage.base_url.is_none() {
+                self.adapter.clone()
+            } else {
+                Vec::new()
+            },
             api_key: stage
                 .api_key
                 .clone()
@@ -178,6 +185,14 @@ impl LlmSettings {
             request,
             stages: Vec::new(),
         })
+    }
+
+    fn cache_identity(&self) -> String {
+        if self.adapter.is_empty() {
+            endpoint(&self.base_url)
+        } else {
+            format!("adapter:{}/chat/completions", self.adapter.join("\0"))
+        }
     }
 }
 
@@ -226,7 +241,9 @@ pub(crate) fn chat_body(
 ) -> Result<Value> {
     validate_request(&settings.request)?;
     let mut body = settings.request.clone();
-    body.insert("model".into(), settings.model.clone().into());
+    if settings.adapter.is_empty() || !settings.model.is_empty() {
+        body.insert("model".into(), settings.model.clone().into());
+    }
     body.insert("messages".into(), serde_json::json!([{"role":"system","content":system},{"role":"user","content":user.into()}]));
     if input == Input::Paragraphs {
         body.insert(
@@ -243,8 +260,18 @@ pub fn endpoint(base_url: &str) -> String {
 pub fn validate(settings: &LlmSettings) -> Result<()> {
     validate_request(&settings.request)?;
     validate_stage_names(&settings.stages)?;
+    anyhow::ensure!(
+        settings
+            .adapter
+            .first()
+            .is_none_or(|program| !program.is_empty()),
+        "The AI adapter command must name an executable"
+    );
     for stage in &settings.stages {
         let settings = settings.for_stage(stage)?;
+        if !settings.adapter.is_empty() {
+            continue;
+        }
         anyhow::ensure!(
             !settings.base_url.trim().is_empty(),
             "AI service URL is not set. Set [ai].base_url or the stage's base_url."
@@ -541,7 +568,7 @@ pub(crate) fn send_chat(
             }
             // Try the relaxed request once; the original was already retried MAX_ATTEMPTS times.
             let response = request_chat_once(agent, s, &relaxed, validate)?;
-            crate::dispatch::cache_validated_response(&endpoint(&s.base_url), body, &response)?;
+            crate::dispatch::cache_validated_response(&s.cache_identity(), body, &response)?;
             tracing::debug!("{}", "Retry succeeded without response_format");
             response
         }
@@ -571,7 +598,7 @@ fn request_chat_once(
 ) -> std::result::Result<serde_json::Value, crate::dispatch::Failure> {
     let url = endpoint(&s.base_url);
     crate::dispatch::cached_json_request(
-        &url,
+        &s.cache_identity(),
         body,
         || {
             let mut request = agent.post(&url).set("Content-Type", "application/json");
@@ -644,6 +671,116 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(&settings).is_ok());
+    }
+
+    #[test]
+    fn adapter_stages_allow_missing_service_and_model_but_explicit_services_do_not() {
+        let mut settings: LlmSettings = serde_json::from_value(serde_json::json!({
+            "adapter": ["ai-adapter", "--option"], "stages": [{"name": "summary"}]
+        }))
+        .unwrap();
+        validate(&settings).unwrap();
+        let effective = settings.for_stage(&settings.stages[0]).unwrap();
+        assert_eq!(effective.adapter, settings.adapter);
+        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
+        assert!(body.get("model").is_none());
+        settings.adapter.clear();
+        assert!(
+            validate(&settings)
+                .unwrap_err()
+                .to_string()
+                .contains("AI service URL is not set")
+        );
+        settings.adapter = vec!["".into()];
+        assert_eq!(
+            validate(&settings).unwrap_err().to_string(),
+            "The AI adapter command must name an executable"
+        );
+        settings.adapter = vec!["ai-adapter".into()];
+        settings.base_url = "invalid ignored default".into();
+        validate(&settings).unwrap();
+        settings.stages[0].base_url = Some("https://example.test/v1".into());
+        assert!(
+            validate(&settings)
+                .unwrap_err()
+                .to_string()
+                .contains("AI model is not set")
+        );
+        settings.stages[0].model = Some("stage-model".into());
+        validate(&settings).unwrap();
+        let effective = settings.for_stage(&settings.stages[0]).unwrap();
+        assert!(effective.adapter.is_empty());
+        assert_eq!(effective.base_url, "https://example.test/v1");
+        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
+        assert_eq!(body["model"], "stage-model");
+        settings.stages[0].base_url = None;
+        let effective = settings.for_stage(&settings.stages[0]).unwrap();
+        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
+        assert_eq!(body["model"], "stage-model");
+    }
+
+    #[test]
+    fn adapter_cache_identity_tracks_arguments_instead_of_the_port() {
+        let mut settings = LlmSettings {
+            adapter: vec!["ai-adapter".into(), "--option".into()],
+            base_url: "http://127.0.0.1:12345/v1".into(),
+            ..Default::default()
+        };
+        let identity = settings.cache_identity();
+        assert_eq!(identity, "adapter:ai-adapter\0--option/chat/completions");
+        assert!(!identity.contains("12345"));
+        settings.base_url = "http://127.0.0.1:54321/v1".into();
+        assert_eq!(settings.cache_identity(), identity);
+        settings.adapter.push("changed".into());
+        assert_ne!(settings.cache_identity(), identity);
+        settings.adapter.clear();
+        assert_eq!(settings.cache_identity(), endpoint(&settings.base_url));
+    }
+
+    #[test]
+    fn adapter_cache_survives_port_changes_including_response_format_fallbacks() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        use std::sync::atomic::Ordering;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        for fallback in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let _cache = crate::dispatch::install(root.path()).unwrap();
+            let first = MockAi::respond_with(move |_, body| {
+                Some(if fallback && body.get("response_format").is_some() {
+                    (422, json!({"error":{"param":"response_format"}}))
+                } else {
+                    (
+                        200,
+                        json!({"choices":[{"message":{"content":"Cached response."}}]}),
+                    )
+                })
+            });
+            let second = MockAi::respond_with(|_, _| {
+                Some((
+                    200,
+                    json!({"choices":[{"message":{"content":"Unexpected request."}}]}),
+                ))
+            });
+            let mut settings = LlmSettings {
+                adapter: vec!["ai-adapter".into()],
+                base_url: first.url.clone(),
+                ..Default::default()
+            };
+            let body = chat_body(&settings, "System", "User", Input::Paragraphs).unwrap();
+            for url in [&first.url, &second.url] {
+                settings.base_url.clone_from(url);
+                assert_eq!(
+                    send_chat(&chat_agent(), &settings, &body, "proofread", &|_| Ok(())).unwrap(),
+                    "Cached response."
+                );
+            }
+            assert_eq!(
+                first.calls.load(Ordering::SeqCst),
+                if fallback { 2 } else { 1 }
+            );
+            assert_eq!(second.calls.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[test]

@@ -73,9 +73,10 @@ Audio files have no screenshots.
 
 | Key | Option | Default | Meaning |
 |---|---|---|---|
-| `base_url` | `--ai-base-url` | `""` | OpenAI-compatible chat service used by every stage that does not set its own |
+| `base_url` | `--ai-base-url` | `""` | OpenAI-compatible chat service used by every stage that does not set its own; ignored when `adapter` is set |
+| `adapter` | — | `[]` | AI adapter to start for the run, as an argument list; stages without their own `base_url` use it. See [docs/adapters.md](adapters.md#ai-adapters) |
 | `api_key` | `--ai-api-key` | `""` | Sent as `Authorization: Bearer`; when empty, `NOTEPIPE_AI_API_KEY` is used |
-| `model` | `--ai-model` | `""` | Model for every stage that does not set its own |
+| `model` | `--ai-model` | `""` | Model for every stage that does not set its own; optional for stages that use the adapter |
 | `concurrency` | — | `8` | Parallel requests per stage, 1 to 16 |
 | `request` | — | `{}` | Extra fields merged into every request body, for example `{ reasoning_effort = "low" }` |
 

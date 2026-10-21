@@ -214,12 +214,13 @@ prompt = "List the decisions and action items in this meeting as a Markdown chec
 `--stages translate,summary` picks stages for one run, `--no-stages` skips them, and `--proofread-prompt` replaces the
 proofread prompt once. Any OpenAI-compatible chat service works, including OpenAI, Anthropic
 (`https://api.anthropic.com/v1`), Google Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`), OpenRouter,
-Groq, and local servers such as Ollama (`http://localhost:11434/v1`) or LM Studio.
+Groq, and local servers such as Ollama (`http://localhost:11434/v1`) or LM Studio. Anything else, such as the OpenAI
+Responses API or access through a subscription, connects through an [AI adapter](docs/adapters.md#ai-adapters).
 
 ## Adapters
 
-Adapters connect notepipe to things it does not do itself: downloading from websites, and speech engines or APIs that
-are not OpenAI-compatible. Each is a separate package with a small program that notepipe starts when needed. The
+Adapters connect notepipe to things it does not do itself: downloading from websites, and speech engines or AI services
+that are not OpenAI-compatible. Each is a separate package with a small program that notepipe starts when needed. The
 official adapters are extras of the `notepipe` package; install several at once with `uv tool install
 "notepipe[ytdlp,llama]"`.
 
@@ -309,8 +310,8 @@ model = "muse-voice-transcribe-1.0"  # the key comes from api_key or NOTEPIPE_SP
 ### Your own
 
 An adapter is any program that follows a short contract, so it can be written in any language; a complete example in
-Python takes a few dozen lines. [docs/adapters.md](docs/adapters.md) describes both kinds. Install one next to notepipe
-with `uv tool install notepipe --with <package>`, or put it on your `PATH`.
+Python takes a few dozen lines. [docs/adapters.md](docs/adapters.md) describes all three kinds: speech, AI and download.
+Install one next to notepipe with `uv tool install notepipe --with <package>`, or put it on your `PATH`.
 
 ## The note
 

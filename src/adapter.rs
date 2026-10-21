@@ -41,7 +41,7 @@ impl Adapter {
     ) -> Result<Self> {
         let program = argv
             .first()
-            .context("The ASR adapter command must name an executable.")?;
+            .context("The adapter command must name an executable.")?;
         let port = crate::runtime::free_port()?;
         let mut command = Command::new(resolve_executable(program)?);
         command
@@ -52,14 +52,14 @@ impl Adapter {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         crate::progress::stage("adapter/start", "start");
-        let mut child = crate::runtime::ManagedChild::spawn_tree("ASR adapter", &mut command)?;
+        let mut child = crate::runtime::ManagedChild::spawn_tree("adapter", &mut command)?;
         let stderr = crate::runtime::StderrTail::default();
         let mut drains = Vec::new();
         if let Some(pipe) = child.take_stderr() {
-            drains.push(stderr.drain(pipe, "asr_adapter stderr"));
+            drains.push(stderr.drain(pipe, "adapter stderr"));
         }
         if let Some(pipe) = child.take_stdout() {
-            drains.push(stderr.drain(pipe, "asr_adapter stdout"));
+            drains.push(stderr.drain(pipe, "adapter stdout"));
         }
         let mut adapter = Self {
             child,
@@ -79,11 +79,9 @@ impl Adapter {
             if error.downcast_ref::<crate::dispatch::Failure>().is_some() {
                 return Err(error);
             }
-            return Err(adapter
-                .stderr
-                .attach(error, "Could not start the ASR adapter"));
+            return Err(adapter.stderr.attach(error, "Could not start the adapter"));
         }
-        tracing::info!(secs = started.elapsed().as_secs_f64(), "ASR adapter ready");
+        tracing::info!(secs = started.elapsed().as_secs_f64(), "Adapter ready");
         crate::progress::stage("adapter/start", "done");
         Ok(adapter)
     }

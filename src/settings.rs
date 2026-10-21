@@ -415,6 +415,13 @@ const TEMPLATE: &str = r#"# notepipe configuration
 #   Ollama       http://localhost:11434/v1
 #base_url = "{LLM_BASE_URL}"
 
+# A program that serves the AI stages instead of base_url: for example an adapter that calls a
+# different API, such as the OpenAI Responses API, or one that uses a subscription you already have.
+# notepipe starts it for the run and stops it afterwards. Stages that set their own base_url still
+# go to that address. With an adapter, model is optional.
+#   adapter = ["my-ai-adapter", "--option"]
+#adapter = []
+
 # API key. Leave it empty to read the NOTEPIPE_AI_API_KEY environment variable instead.
 #api_key = ""
 
@@ -508,6 +515,7 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     );
     println!("[ai]");
     println!("  {:<17}: {}", "base_url", cfg.ai.base_url);
+    println!("  {:<17}: {:?}", "adapter", cfg.ai.adapter);
     println!("  {:<17}: {}", "api_key", hidden(&cfg.ai.api_key));
     println!("  {:<17}: {}", "model", cfg.ai.model);
     println!(
@@ -610,5 +618,6 @@ mod tests {
         assert_eq!(from_template.source, built_in.source);
         assert_eq!(from_template.asr, built_in.asr);
         assert_eq!(file.speech, super::Speech::default());
+        assert_eq!(file.ai.adapter, super::ConfigFile::default().ai.adapter);
     }
 }
