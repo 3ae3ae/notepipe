@@ -165,6 +165,20 @@ pub fn install(work_dir: &Path) -> Result<Guard> {
     Ok(Guard(cache))
 }
 
+/// Save an already validated fallback response under the original request's key too.
+pub(crate) fn cache_validated_response(endpoint: &str, body: &Value, value: &Value) -> Result<()> {
+    let cache = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None))).clone();
+    if let Some(cache) = cache {
+        runtime::check_cancelled()?;
+        let key = execution::digest(format!("{endpoint}\n{body}").as_bytes());
+        atomic_write(
+            &cache.dir.join(format!("{key}.json")),
+            &serde_json::to_vec(value)?,
+        )?;
+    }
+    Ok(())
+}
+
 pub fn cached_json_request(
     endpoint: &str,
     body: &Value,

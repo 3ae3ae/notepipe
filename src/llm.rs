@@ -828,6 +828,7 @@ pub(crate) fn send_chat(
             }
             // 降级请求只试一次：原请求已按 MAX_ATTEMPTS 重试过，这里只验证兼容性
             let response = request_chat_once(agent, s, &relaxed, validate)?;
+            crate::dispatch::cache_validated_response(&endpoint(&s.base_url), body, &response)?;
             tracing::debug!("{}", "Retry succeeded without response_format");
             response
         }

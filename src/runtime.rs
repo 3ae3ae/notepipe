@@ -39,6 +39,10 @@ pub fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
 }
 
 static CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(unix)]
+static ADAPTERS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+#[cfg(windows)]
+static ADAPTERS: Mutex<Vec<(u32, windows::Job)>> = Mutex::new(Vec::new());
 
 #[derive(Debug)]
 pub struct Cancelled;
@@ -70,6 +74,21 @@ pub async fn watch_cancelled() -> anyhow::Error {
     }
 }
 
+fn cancel_or_exit() {
+    if CANCELLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let mut adapters = lock_recover(&ADAPTERS);
+        #[cfg(unix)]
+        for pid in adapters.drain(..) {
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+        }
+        #[cfg(windows)]
+        adapters.clear(); // Closing each job kills its whole process tree.
+        std::process::exit(130);
+    }
+}
+
 pub fn install_signal_handlers() -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -79,20 +98,19 @@ pub fn install_signal_handlers() -> std::io::Result<()> {
         tokio::spawn(async move {
             loop {
                 tokio::select! { _ = interrupt.recv() => {}, _ = terminate.recv() => {} }
-                if CANCELLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    std::process::exit(130);
-                }
+                cancel_or_exit();
             }
         });
     }
-    #[cfg(not(unix))]
-    tokio::spawn(async {
-        while tokio::signal::ctrl_c().await.is_ok() {
-            if CANCELLED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                std::process::exit(130);
+    #[cfg(windows)]
+    {
+        let mut interrupt = tokio::signal::windows::ctrl_c()?;
+        tokio::spawn(async move {
+            while interrupt.recv().await.is_some() {
+                cancel_or_exit();
             }
-        }
-    });
+        });
+    }
     Ok(())
 }
 
@@ -101,8 +119,6 @@ pub struct ManagedChild {
     child: Child,
     name: &'static str,
     adapter: bool,
-    #[cfg(windows)]
-    job: Option<windows::Job>,
 }
 
 pub(crate) struct CancelOnDrop(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
@@ -129,8 +145,6 @@ impl ManagedChild {
             child,
             name,
             adapter: false,
-            #[cfg(windows)]
-            job: None,
         })
     }
 
@@ -147,13 +161,18 @@ impl ManagedChild {
             command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
             windows::Job::new()?
         };
+        // Register under the same lock as forced shutdown, including the spawn window.
+        let mut adapters = lock_recover(&ADAPTERS);
+        check_cancelled()?;
         let mut child = Self::spawn(name, command)?;
-        child.adapter = true;
         #[cfg(windows)]
         {
             job.assign_and_resume(&child)?;
-            child.job = Some(job);
+            adapters.push((child.id(), job));
         }
+        #[cfg(unix)]
+        adapters.push(child.id());
+        child.adapter = true;
         Ok(child)
     }
 
@@ -166,13 +185,15 @@ impl ManagedChild {
                     libc::kill(group, libc::SIGTERM);
                 }
                 let _ = self.wait_within(Duration::from_secs(2));
+                let mut adapters = lock_recover(&ADAPTERS);
                 // The leader may exit before its children; terminate the entire group.
                 unsafe {
                     libc::kill(group, libc::SIGKILL);
                 }
+                adapters.retain(|pid| *pid != self.id());
             }
             #[cfg(windows)]
-            drop(self.job.take());
+            lock_recover(&ADAPTERS).retain(|(pid, _)| *pid != self.id());
             self.adapter = false;
         }
         self.kill();

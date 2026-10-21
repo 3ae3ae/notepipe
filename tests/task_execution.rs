@@ -1136,6 +1136,52 @@ fn retryable_llm_failures_are_retried_without_persisting_error_bodies() {
     assert!(!request.work_dir.join("requests").exists());
 }
 
+#[test]
+fn response_format_fallback_is_cached_under_the_original_request() {
+    use std::sync::atomic::Ordering;
+    let mock = MockAi::respond_with(|_, body| {
+        Some(if body.get("response_format").is_some() {
+            (
+                422,
+                serde_json::json!({"error":{"param":"response_format","code":"unsupported_parameter"}}),
+            )
+        } else {
+            (
+                200,
+                serde_json::json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"Cached fallback."}]}"#}}]}),
+            )
+        })
+    });
+    let root = tempfile::tempdir().unwrap();
+    let settings = notepipe::llm::LlmSettings {
+        enabled: true,
+        base_url: mock.url.clone(),
+        model: "fixture".into(),
+        concurrency: 1,
+        ..Default::default()
+    };
+    for _ in 0..2 {
+        let _cache = notepipe::dispatch::install(root.path()).unwrap();
+        let mut sections = vec![notepipe::timeline::Section {
+            t: 0.,
+            end: 1.,
+            image: String::new(),
+            speech: vec![TranscriptEvent {
+                start: 0.,
+                end: 1.,
+                text: "Original transcript.".into(),
+                raw: None,
+                translation: None,
+            }],
+        }];
+        let report =
+            notepipe::llm::polish_sections_report(&mut sections, root.path(), &settings).unwrap();
+        assert_eq!(report.succeeded, 1, "{report:?}");
+        assert_eq!(sections[0].speech[0].text, "Cached fallback.");
+        assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
+    }
+}
+
 #[cfg(unix)]
 fn wait_for_file(child: &mut std::process::Child, path: &Path) {
     let start = std::time::Instant::now();
@@ -1239,16 +1285,20 @@ fn a_second_signal_exits_without_waiting_for_adapter_shutdown() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let elapsed = start.elapsed();
-    // Immediate exit intentionally skips Drop; the test owns the remaining fixture group.
-    unsafe {
-        libc::kill(-adapter_pid, libc::SIGKILL);
-    }
     let output = wait_for_cancelled(child);
     assert!(
         elapsed < Duration::from_secs(1),
         "second signal took {elapsed:?}"
     );
     assert!(output.stderr.is_empty());
+    let start = Instant::now();
+    while unsafe { libc::kill(adapter_pid, 0) } == 0 {
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "adapter was orphaned"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[cfg(unix)]
