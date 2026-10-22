@@ -1,37 +1,44 @@
 name: release
 
+# A release is a merge to main that changes the version in Cargo.toml. This workflow creates the tag; people do not
+# push tags. A manual run retries the release of main's version while that version has no tag yet.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    paths: [Cargo.toml]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to publish after every build passes (for example v0.1.0)'
-        required: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
-
-env:
-  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v4
-      - name: Verify release version
+      - name: Find the version to release
+        id: version
         run: |
-          python3 - <<'PYCODE'
-          import os, pathlib, tomllib
-          root = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
-          assert os.environ['VERSION'] == 'v' + root, root
-          PYCODE
+          version="v$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['package']['version'])")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" > /dev/null; then
+            echo "$version is already released."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     needs: validate
+    if: needs.validate.outputs.release == 'true'
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -114,6 +121,7 @@ jobs:
 
   sdist:
     needs: validate
+    if: needs.validate.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -130,6 +138,7 @@ jobs:
 
   speech-swift-adapter:
     needs: validate
+    if: needs.validate.outputs.release == 'true'
     runs-on: macos-26
     timeout-minutes: 90
     env:
@@ -145,7 +154,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: adapters/speech-swift
-      # Restores the Swift packages built by CI on main; a tag run can read the default branch's caches.
+      # Restores the Swift packages that earlier releases built on main.
       - uses: actions/cache@v4
         with:
           path: adapters/speech-swift/native/.build
@@ -209,6 +218,7 @@ jobs:
 
   python-adapters:
     needs: validate
+    if: needs.validate.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -230,10 +240,11 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build, sdist, speech-swift-adapter, python-adapters]
+    needs: [validate, build, sdist, speech-swift-adapter, python-adapters]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -286,10 +297,12 @@ jobs:
           skip-existing: true
 
   crates-io:
-    needs: release
+    needs: [validate, release]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: crates-io
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
     permissions:
       contents: read
       id-token: write
