@@ -13,10 +13,14 @@ Only the latest release receives security fixes while notepipe is at version 0.x
 
 notepipe is a local command-line tool. Keep these properties in mind when you evaluate a report:
 
-- **Configuration is trusted.** It names the programs notepipe runs (provider, download and filter programs) and
+- **Configuration is trusted.** It names the programs notepipe runs (provider, download and run programs) and
   the providers it sends audio and text to. Treat a configuration file, or configuration passed with `--config -`, like a script.
+- **`run` stages** run the commands written in the configuration, without a shell. Only the paths of the stage's
+  input and output files are put into their arguments; values from the internet, such as a downloaded title, never
+  are.
 - **Credentials** are read from the environment variables that providers name in `api_key_env`, and sent only to that
-  provider; they are never part of the configuration. notepipe does not write API keys to notes, caches or logs. A
+  provider; they are never part of the configuration. notepipe does not write API keys to notes, caches or logs, but
+  the programs it starts inherit its environment, keys included, and what they print is theirs. A
   credential written into a URL or into a program's arguments is part of that setting and can appear in the cache and in
   `notepipe doctor` output.
 - **Provider programs** started by notepipe listen on `127.0.0.1` while the stages that use them run. Other processes

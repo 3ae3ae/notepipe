@@ -16,8 +16,8 @@ or website that fits those interfaces works; none is built in.
 recognition and stages run wherever you point them: a cloud API, a server on your network, or a local engine started
 as a program.
 
-**Stay neutral.** The engine prefers no vendor, website, language or region: it names none in its code and contacts only
-what the configuration names. The configuration it creates uses OpenAI and yt-dlp so that a fresh install works, and it
+**Stay neutral.** The engine prefers no vendor, website, language or region: nothing in its code depends on one, and it
+contacts only what the configuration names. The configuration it creates uses OpenAI and yt-dlp so that a fresh install works, and it
 is a file you change like any other. Prompts are English defaults that you replace; notes follow the language of the
 recording, not of the tool. The CLI speaks English, the common language of developer tools.
 
@@ -29,57 +29,52 @@ Each change is the smallest one that fully solves its problem.
 
 ## How a note is made
 
+A run is a pipeline of stages. Each stage reads named files and writes one, in the source's work folder, so every step
+can be opened and checked; apart from the source's title, author, duration and link, nothing else passes between
+stages. With the default configuration:
+
 ```
-local file ───────────────────────┐
-URL ──► download stage ───────────┴──► media file
-                                           │
-                 ┌─────────────────────────┴──────────────┐
-                 ▼                                        ▼
-         screenshots stage                        transcript stage
-       (frames compared; kept when        (its sources in order: subtitles,
-        the picture changes)               then speech recognition)
-                 │                                        │
-                 └─────────────────────────┬──────────────┘
-                                           ▼
-                             sections and paragraphs
-                                           │
-                                           ▼
-                         llm and filter stages,
-                           in pipeline order
-                                           │
-                                           ▼
-                                   note stage
+source ─► download ─► media ─┬─► transcript ─► transcript.json ─┐
+                             └─► screenshots ─► images/ ────────┴─► draft ─► draft.json
+                                                                                 │
+                         note.md ◄─ markdown ◄─ summary.md ◄─ summary ◄─ proofread.json ◄─ proofread
 ```
 
-1. **Download.** A local file is used as is. A URL is handed to the download stage's program, which returns a media
-   file, metadata and any subtitles.
-2. **Screenshots.** Frames are sampled with ffmpeg and compared; a screenshot is kept when the picture changes and then
-   holds still. Audio-only input, or a pipeline without this stage, has none.
-3. **Transcript.** The transcript stage tries its sources in order. Subtitles come from files next to the media or from
-   the download; speech is located with earshot, a small neural voice detector compiled into notepipe, split into short
-   segments and sent to the stage's provider.
-4. **Sections and paragraphs.** Transcript fragments are grouped under the screenshot that was on screen and joined into
-   paragraphs, with word spacing that follows each writing system.
-5. **Processing.** `llm` stages send the paragraphs or the whole transcript, with their prompt, to their provider and
-   put the answer into the note; `filter` stages pass the note through a program.
-6. **Note.** `note.md`, `images/` and `note.json` are written to a staging folder and moved into place.
+1. **Download.** This stage runs first. A local file is used where it is. A URL is handed to the download stage's
+   program, which returns a media file, metadata and any subtitles.
+2. **Transcript.** The transcript stage tries its sources in order: subtitles found next to the file or delivered with
+   the download, then speech recognition. Speech is located with earshot, a small neural voice detector compiled into
+   notepipe, split into short segments and sent to the stage's provider.
+3. **Screenshots.** Frames are sampled with ffmpeg and compared; a screenshot is kept when the picture changes and then
+   holds still. Audio-only input has none. This runs at the same time as the transcript.
+4. **Document.** Transcript lines are grouped under the screenshot that was on screen and joined into paragraphs, with
+   word spacing that follows each writing system.
+5. **Processing.** `llm` stages send a file, with their prompt, to their provider: a document's paragraphs, rewritten
+   in place, or a whole transcript, document or Markdown file, answered with Markdown. `run` stages pass files through
+   any program.
+6. **Markdown.** The `markdown` stage joins documents and Markdown files into the note's text, in the order given.
+7. **Publishing.** When every stage has finished, the files the stages publish, and the screenshots they show, are
+   written to a staging folder and moved into place as the note folder; one can also go to standard output.
 
 ## Interfaces
 
 notepipe meets the outside world in a few places, and each has one shape:
 
-- **The pipeline.** The configuration lists the stages that run, in order, and each stage's settings live in its own
-  table. Every stage has the same shape: a name, a type and that type's keys. The types are fixed in the core, and their
-  order is checked before any work starts.
+- **The pipeline.** The configuration lists the stages that run, in order. Each stage's own table says what it does
+  (`type`), what it reads (`input`), what it writes (`output`) and what it publishes (`publish`). The core checks
+  that every input is written by an earlier stage, of a kind the stage reads, before any work starts.
+- **Files.** The kinds that pass between stages are a few documented formats: media, transcript, images, document and
+  Markdown. Apart from the source's details, which come from the download stage, stages share nothing else.
 - **Providers.** Every connection, whether a cloud API, a server on your network or a program that notepipe starts, is a
   provider, defined once with its address and the variable that holds its key. Stages name the provider they use and
   hold only what they ask of it, such as the model and the prompt. A provider does not know what it is used for.
 - **Programs.** notepipe runs three kinds of program, each named in one place with one small contract: provider
-  programs serve an OpenAI-compatible API, download programs fetch a URL, and filter programs change the note as
-  JSON.
+  programs serve an OpenAI-compatible API, download programs fetch a URL, and run programs read a stage's files and
+  write its output.
 - **Configuration and options.** The configuration is the complete statement of a run, and the file notepipe creates
   lists every value in effect. Command-line options change what a run does with the note, not where it connects.
-- **Output.** `note.md`, `note.json` and the `--json` events are the contract with programs that read notes.
+- **Output.** The note folder, standard output and the `--json` events are the contract with programs that read
+  notes.
 
 ## Where things belong
 
@@ -93,9 +88,11 @@ live instead:
 | A vendor API that is not OpenAI-compatible | a provider program that translates the request |
 | AI through a different API, or through a subscription | a provider program |
 | Cleaning up one model's output quirks | that model's provider program |
-| A different summary, a translation, a glossary, study questions | a stage prompt in the configuration |
-| Processing that needs no language model, such as fixed replacements | a filter stage |
-| Another output format, syncing to a note app | a program run after notepipe, on the note folder |
+| A different summary, a translation, a glossary, study questions | an `llm` stage's prompt in the configuration |
+| A different note layout | an `llm` or `run` stage that writes the Markdown |
+| Processing that needs no language model, such as fixed replacements | a `run` stage |
+| Another output format, such as Word or HTML | a `run` stage, for example with pandoc |
+| Syncing to a note app | a program run after notepipe, on the note folder |
 | A graphical interface | a separate program that drives the CLI |
 
 ## Guarantees

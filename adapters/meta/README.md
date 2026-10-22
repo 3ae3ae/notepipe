@@ -13,7 +13,7 @@ uv tool install "notepipe[meta]"
 
 ```toml
 [providers.meta]
-command = "notepipe-asr-meta"
+command = ["notepipe-asr-meta"]
 api_key_env = "META_API_KEY"
 
 [stages.transcript.speech]

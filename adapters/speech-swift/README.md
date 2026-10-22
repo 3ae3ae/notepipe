@@ -22,7 +22,7 @@ its Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); a plain `c
 
 ```toml
 [providers.speech-swift]
-command = "notepipe-asr-speech-swift"
+command = ["notepipe-asr-speech-swift"]
 concurrency = 1
 
 [stages.transcript.speech]

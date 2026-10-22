@@ -6,6 +6,41 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+Stages now read and write files, and say which: the configuration shows where every input comes from and where every
+output goes. Configurations from 0.3.0 must be rewritten; `notepipe config init --force` writes the new default file.
+
+### Added
+
+- `input`, `output` and `publish` on every stage. A stage reads files that earlier stages wrote and writes one file in
+  the source's work folder; `publish` copies it into the note folder, or to standard output with `"-"`. Names that
+  differ only in case count as the same, because many file systems treat them so.
+- `run` stages run any command-line program, such as pandoc or a script of your own, on a stage's files.
+- `document` stages: grouping the transcript under its screenshots, which happened implicitly before, is a stage.
+  Transcript lines with different extra fields, such as a speaker added by a `run` stage, start a new paragraph.
+- `out`, the folder that receives note folders.
+- The work folder is printed with `-v` and given in the `done` event as `work_dir`.
+
+### Changed
+
+- An `llm` stage's `output` decides what it does: `.json` rewrites each paragraph of a document, `.md` answers once for
+  a transcript, document or Markdown file. The default summary reads the proofread document.
+- The `markdown` stage writes the note's text from the files it is given, in order, and adds nothing else: no front
+  matter, title or headings of its own.
+- A failing `llm` stage stops the run, and nothing is published.
+- The note folder holds what stages publish, the screenshots those files show, and `.notepipe.json`, which marks the
+  source the folder belongs to; a folder without it is never replaced.
+- The download stage runs first; after it, stages that do not depend on each other run at the same time, and a
+  provider's `concurrency` is shared by all the stages that use it.
+- A provider's `command` and a download stage's `command` are argument lists; `args` is gone.
+- Subtitles next to a local file are found by the download stage.
+- `note.json` is schema 3, without `top`. The `done` event has `files` and `work_dir` instead of `markdown` and `json`.
+- Skipped stages print nothing and send no events.
+- Ctrl-C stops a run at once, without waiting for requests in flight, and removes downloaded media and extracted audio.
+
+### Removed
+
+- The `note` and `filter` stage types (replaced by `publish` and `run`), `keep`, and `reads`.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
