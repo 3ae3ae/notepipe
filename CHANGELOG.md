@@ -6,6 +6,27 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Added
+
+- `keep = true` on a stage, for debugging, writes its result into the note folder's `stages/`, named after the stage:
+  the downloaded media and subtitles, the transcript, the screenshots' times, the text after an `llm` stage, the
+  Markdown an `llm` stage wrote, or the note a filter returned.
+
+### Changed
+
+- The stage types `rewrite`, `add-below` and `add-top` are one type, `llm`, whose `reads` is `"paragraphs"` (the
+  answer replaces each paragraph) or `"transcript"` (the answer is added at the top).
+- `note.json` is schema 2: fragments no longer have `below`.
+- Stage names may use only letters, digits, `-` and `_`, because they name files in `stages/`.
+- The configuration file notepipe creates writes settings at their default as comments, so only required settings
+  and chosen values are active.
+
+### Removed
+
+- Adding a model's answer below each paragraph (`add-below`).
+- `hook` stages. To do something with each note, run it after notepipe; the `done` event and the last line of
+  output give the note folder.
+
 ## [0.2.0] - 2026-10-22
 
 The configuration is rebuilt: the whole run is a pipeline of named stages. Configurations from 0.1.0 must be rewritten;

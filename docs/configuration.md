@@ -13,8 +13,9 @@ notepipe config show    # show the configuration in effect
 
 The first run creates the file when there is none and says where it is; `config init` writes the same file, and the
 [README](../README.md#configuration) shows it. It uses OpenAI with the key in `OPENAI_API_KEY`, so it works as soon as
-that variable is set. Every value in it is in effect: change a value, take a stage out of the pipeline, or add your own.
-Settings that start empty are left out of it and described below.
+that variable is set. Settings at their default are written as comments, so the file shows every value in effect:
+remove the `#` to change one, take a stage out of the pipeline, or add your own. Settings that start empty are left out
+of it and described below.
 
 Values are taken from, in order: command-line options, the configuration, the defaults below. Unknown keys are errors,
 so a typo is reported instead of being ignored.
@@ -28,11 +29,12 @@ pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "no
 # …
 
 [stages.proofread]        # one table per stage; the table's key is the stage's name
-type = "rewrite"
+type = "llm"              # what the stage does
 # …
 ```
 
-A stage's settings live in its own table, and the only thing stages share is a provider. A stage whose name is not in
+The name is yours to choose: letters, digits, `-` and `_`. What a stage does depends only on its `type`, and the keys it
+accepts depend on the type. A stage's settings live in its own table, and the only thing stages share is a provider. A stage whose name is not in
 `pipeline` does not run, but its table stays and is still checked; `--skip NAMES` leaves stages out for one run.
 
 ## `pipeline`
@@ -40,8 +42,8 @@ A stage's settings live in its own table, and the only thing stages share is a p
 The names of the stages to run, in order. Before any work starts, notepipe checks that:
 
 - every name is a table in `[stages]`, listed once;
-- the stages come in this order: `download`; then `transcript` and `screenshots`, in either order; then `rewrite`,
-  `add-below`, `add-top` and `filter` stages, in any order; then `note`; then `hook` stages;
+- the stages come in this order: `download`; then `transcript` and `screenshots`, in either order; then `llm` and
+  `filter` stages, in any order; then `note`, last;
 - at most one `download`, `transcript` and `screenshots` stage runs, and exactly one `note` stage;
 - a `transcript` stage runs, unless `--subtitle FILE` supplies the transcript;
 - a URL source has a `download` stage.
@@ -64,9 +66,26 @@ that serves one (see [docs/adapters.md](adapters.md#provider-programs)).
 
 When a provider that a running stage uses names a variable that is not set, the run stops before any work starts.
 
+## Keeping stage results
+
+For debugging, a stage with `keep = true` writes its result into the note folder, under `stages/` and named after the
+stage:
+
+| Type | Kept as |
+|---|---|
+| `download` | `stages/NAME/`: the media file, its subtitles and `info.json`, the download program's result |
+| `transcript` | `stages/NAME.json`: the transcript the run used, as `{"events": [{"start", "end", "text"}, …]}` |
+| `screenshots` | `stages/NAME.json`: each screenshot's time and image, as `[{"t", "image"}, …]` |
+| `llm` | `stages/NAME.json`: the note's sections right after the stage (`reads = "paragraphs"`), or `stages/NAME.md`: the Markdown it wrote (`reads = "transcript"`) |
+| `filter` | `stages/NAME.json`: the note the program returned |
+
+By default (`keep = false`) nothing is kept, and the downloaded media file is deleted once the note is written. The
+`note` stage, which writes the note itself, has no `keep`; neither does a stage that does not run.
+
 ## `[stages.NAME]`
 
-Every stage has a `type`, and each type has its own keys.
+Every stage has a `type`, and each type has its own keys. `download`, `transcript`, `screenshots`, `llm` and `filter`
+stages also take `keep` (default `false`; see [Keeping stage results](#keeping-stage-results)).
 
 ### `download`
 
@@ -124,38 +143,39 @@ screenshots.
 | `settle` | `--settle` | `0.8` | In `stable` mode, seconds the picture must stay unchanged |
 | `region` | `--region` | the whole frame | Only this part of the frame is compared, as `left%,top%-right%,bottom%` (for example `"40%,0%-100%,100%"`) |
 
-### `rewrite`, `add-below` and `add-top`
+### `llm`
 
-Send the note to a model with a prompt and put the answer into the note:
+Sends the note to a model with a prompt and puts the answer into the note. `reads` decides what the model reads and
+where its answer goes:
 
-| Type | The model reads | Its answer |
+| `reads` | The model reads | Its answer |
 |---|---|---|
-| `rewrite` | each paragraph | replaces the paragraph |
-| `add-below` | each paragraph | is added below the paragraph |
-| `add-top` | the whole transcript, with times | is added at the top of the note, as Markdown |
+| `"paragraphs"` | each paragraph | replaces the paragraph; the original stays in `note.json` as `raw` |
+| `"transcript"` | the whole transcript, with times | is added at the top of the note, as Markdown |
 
-| Key | Types | Default | Meaning |
-|---|---|---|---|
-| `provider` | all | required | The provider to send requests to |
-| `model` | all | `""` | Sent only when set |
-| `prompt` | all | `""` | Instructions sent with the input |
-| `images` | `rewrite`, `add-below` | `false` | Also send the screenshot shown during each paragraph |
-| `batch_size` | `rewrite`, `add-below` | `20` | Paragraphs in one request, 1 to 100 |
-| `chunk_size` | `add-top` | `25000` | Characters of transcript in one request, 1000 to 1000000. A longer transcript is sent in parts, and one more request combines their answers |
-| `request` | all | `{}` | Extra fields for the request body, for example `{ reasoning_effort = "low" }` |
+| Key | Default | Meaning |
+|---|---|---|
+| `reads` | required | `"paragraphs"` or `"transcript"` |
+| `provider` | required | The provider to send requests to |
+| `model` | `""` | Sent only when set |
+| `prompt` | `""` | Instructions sent with the input |
+| `images` | `false` | `paragraphs` only: also send the screenshot shown during each paragraph |
+| `batch_size` | `20` | `paragraphs` only: paragraphs in one request, 1 to 100 |
+| `chunk_size` | `25000` | `transcript` only: characters of transcript in one request, 1000 to 1000000. A longer transcript is sent in parts, and one more request combines their answers |
+| `request` | `{}` | Extra fields for the request body, for example `{ reasoning_effort = "low" }` |
 
 notepipe adds instructions for the answer's format to the prompt, and sets `model`, `messages`, `stream` and
 `response_format` itself; `request` cannot change those. Nothing is sent by default for sampling or length limits. A
-failed request does not stop the run: the paragraphs it covered keep their text, an `add-top` stage adds nothing, and the
-note gets a warning. With `rewrite`, an empty answer removes the paragraph; if a stage would empty every paragraph, the
-text is kept and a warning is added. With `add-below`, an empty answer or one identical to the paragraph adds nothing.
+failed request does not stop the run: the paragraphs it covered keep their text, a `transcript` stage adds nothing, and
+the note gets a warning. When a `paragraphs` stage answers with empty text, the paragraph is removed; if a stage would
+empty every paragraph, the text is kept and a warning is added.
 
-The default file holds two such stages:
+The default file holds two `llm` stages:
 
-| Stage | Type | What its prompt asks for |
+| Stage | `reads` | What its prompt asks for |
 |---|---|---|
-| `proofread` | `rewrite` | Fixes recognition errors, filler and punctuation without changing meaning or language; writes formulas as LaTeX |
-| `summary` | `add-top` | A one-sentence overview, 3–6 key points and a timestamped outline, in the transcript's language |
+| `proofread` | `paragraphs` | Fixes recognition errors, filler and punctuation without changing meaning or language; writes formulas as LaTeX |
+| `summary` | `transcript` | A one-sentence overview, 3–6 key points and a timestamped outline, in the transcript's language |
 
 ### `filter`
 
@@ -169,21 +189,12 @@ Runs a program that changes the note, for processing that needs no language mode
 
 ### `note`
 
-Writes the note folder: `note.md`, `note.json` and `images/` (see [docs/cli.md](cli.md#output)).
+Writes the note, the output of the run: the note folder with `note.md`, `note.json` and `images/` (see
+[docs/cli.md](cli.md#output)).
 
 | Key | Option | Default | Meaning |
 |---|---|---|---|
 | `dir` | `-o`, `--out` | `"."` | Folder that receives the note folders; `~` is your home folder |
-
-### `hook`
-
-Runs a program after the note is written, for example to copy it elsewhere. See
-[docs/adapters.md](adapters.md#hook-programs).
-
-| Key | Default | Meaning |
-|---|---|---|
-| `command` | required | The program |
-| `args` | `[]` | Its arguments |
 
 ## Environment variables
 
@@ -195,11 +206,10 @@ Runs a program after the note is written, for example to copy it elsewhere. See
 
 ## Example
 
-Speech on a local engine, AI stages on a local Ollama, glossary terms fixed by a program of your own, and every note
-copied into a notes app:
+Speech on a local engine, AI stages on a local Ollama, and glossary terms fixed by a program of your own:
 
 ```toml
-pipeline = ["download", "transcript", "screenshots", "fix-terms", "proofread", "note", "copy"]
+pipeline = ["download", "transcript", "screenshots", "fix-terms", "proofread", "note"]
 
 [providers.llama]
 command = "notepipe-asr-llama"
@@ -231,7 +241,8 @@ command = "fix-terms"
 args = ["--glossary", "glossary.tsv"]
 
 [stages.proofread]
-type = "rewrite"
+type = "llm"
+reads = "paragraphs"
 provider = "ollama"
 model = "qwen3:14b"
 prompt = "Fix speech-recognition errors and filler in each item. Keep its meaning and language."
@@ -239,9 +250,4 @@ prompt = "Fix speech-recognition errors and filler in each item. Keep its meanin
 [stages.note]
 type = "note"
 dir = "~/notes"
-
-[stages.copy]
-type = "hook"
-command = "sh"
-args = ["-c", "cp -R \"$NOTEPIPE_NOTE_DIR\" ~/Documents/Notes/"]
 ```

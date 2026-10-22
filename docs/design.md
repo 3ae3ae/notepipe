@@ -44,11 +44,11 @@ URL ──► download stage ───────────┴──► media
                              sections and paragraphs
                                            │
                                            ▼
-                  rewrite, add-below, add-top and filter stages,
-                               in pipeline order
+                         llm and filter stages,
+                           in pipeline order
                                            │
                                            ▼
-                               note stage ──► hook stages
+                                   note stage
 ```
 
 1. **Download.** A local file is used as is. A URL is handed to the download stage's program, which returns a media
@@ -60,10 +60,9 @@ URL ──► download stage ───────────┴──► media
    segments and sent to the stage's provider.
 4. **Sections and paragraphs.** Transcript fragments are grouped under the screenshot that was on screen and joined into
    paragraphs, with word spacing that follows each writing system.
-5. **Processing.** `rewrite`, `add-below` and `add-top` stages send the paragraphs or the whole transcript, with their
-   prompt, to their provider and put the answer into the note; `filter` stages pass the note through a program.
-6. **Note.** `note.md`, `images/` and `note.json` are written to a staging folder and moved into place, then the hook
-   stages run.
+5. **Processing.** `llm` stages send the paragraphs or the whole transcript, with their prompt, to their provider and
+   put the answer into the note; `filter` stages pass the note through a program.
+6. **Note.** `note.md`, `images/` and `note.json` are written to a staging folder and moved into place.
 
 ## Interfaces
 
@@ -75,9 +74,9 @@ notepipe meets the outside world in a few places, and each has one shape:
 - **Providers.** Every connection, whether a cloud API, a server on your network or a program that notepipe starts, is a
   provider, defined once with its address and the variable that holds its key. Stages name the provider they use and
   hold only what they ask of it, such as the model and the prompt. A provider does not know what it is used for.
-- **Programs.** notepipe runs four kinds of program, each named in one place with one small contract: provider programs
-  serve an OpenAI-compatible API, download programs fetch a URL, filter programs change the note as JSON, and hook
-  programs run after the note is written.
+- **Programs.** notepipe runs three kinds of program, each named in one place with one small contract: provider
+  programs serve an OpenAI-compatible API, download programs fetch a URL, and filter programs change the note as
+  JSON.
 - **Configuration and options.** The configuration is the complete statement of a run, and the file notepipe creates
   lists every value in effect. Command-line options change what a run does with the note, not where it connects.
 - **Output.** `note.md`, `note.json` and the `--json` events are the contract with programs that read notes.
@@ -96,7 +95,7 @@ live instead:
 | Cleaning up one model's output quirks | that model's provider program |
 | A different summary, a translation, a glossary, study questions | a stage prompt in the configuration |
 | Processing that needs no language model, such as fixed replacements | a filter stage |
-| Another output format, syncing to a note app | a hook stage |
+| Another output format, syncing to a note app | a program run after notepipe, on the note folder |
 | A graphical interface | a separate program that drives the CLI |
 
 ## Guarantees
