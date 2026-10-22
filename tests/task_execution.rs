@@ -2314,7 +2314,7 @@ fn multiple_hooks_run_in_pipeline_order_and_see_prior_hook_warnings() {
         put_stage(
             &mut cfg,
             name,
-            json!({"type":"hook","command":python,"args":["-c","import os,sys; from pathlib import Path; p=Path(sys.argv[1]); p.open('a',newline='').write(sys.argv[2]+':'+os.environ['NOTEPIPE_WARNINGS']+'\\n'); assert Path.cwd()==Path(os.environ['NOTEPIPE_NOTE_DIR']); sys.exit(int(sys.argv[3]))",record,name,code.to_string()]}),
+            json!({"type":"hook","command":python,"args":["-c","import os,sys; from pathlib import Path; p=Path(sys.argv[1]); p.open('a',newline='').write(sys.argv[2]+':'+os.environ['NOTEPIPE_WARNINGS']+'\\n'); assert os.path.samefile(os.getcwd(), os.environ['NOTEPIPE_NOTE_DIR']); sys.exit(int(sys.argv[3]))",record,name,code.to_string()]}),
         );
     }
     let output = run(
