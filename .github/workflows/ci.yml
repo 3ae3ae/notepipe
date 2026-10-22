@@ -1,11 +1,9 @@
 name: ci
 
+# main only changes through pull requests that pass this workflow while up to date with main, so a merge needs no
+# second run.
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['**.md', 'docs/**']
   pull_request:
-    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
 
 concurrency:
@@ -148,3 +146,13 @@ jobs:
         working-directory: adapters/${{ matrix.adapter }}
         run: uv build
 
+  # The one required check: it passes when every job above passed or was not needed.
+  ci:
+    if: always()
+    needs: [changes, test, speech-swift-adapter, python-adapters]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the results
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
