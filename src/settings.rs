@@ -517,10 +517,7 @@ pub fn load() -> Result<ConfigFile> {
     if !path.is_file() {
         return parse(template());
     }
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("Cannot read configuration: {}", path.display()))?;
-    parse(&text)
-        .with_context(|| format!("Fix the configuration syntax and retry: {}", path.display()))
+    load_from(Some(&path))
 }
 pub fn load_from(path: Option<&Path>) -> Result<ConfigFile> {
     let Some(path) = path else {
@@ -535,13 +532,38 @@ pub fn load_from(path: Option<&Path>) -> Result<ConfigFile> {
         std::fs::read_to_string(path)
             .with_context(|| format!("Cannot read configuration: {}", path.display()))?
     };
-    parse(&text)
+    parse_at(&text, path)
 }
 pub fn parse(text: &str) -> Result<ConfigFile> {
+    parse_at(text, Path::new("-"))
+}
+fn parse_at(text: &str, path: &Path) -> Result<ConfigFile> {
     let mut cfg: ConfigFile = if text.trim_start().starts_with('{') {
-        serde_json::from_str(text).map_err(|_| anyhow::anyhow!("Invalid JSON configuration"))?
+        serde_json::from_str(text).map_err(|error: serde_json::Error| {
+            let message = error.to_string();
+            let suffix = format!(" at line {} column {}", error.line(), error.column());
+            let message = message.strip_suffix(&suffix).unwrap_or(&message);
+            anyhow::anyhow!(
+                "Fix the configuration and retry: {}: line {}: {message}",
+                path.display(),
+                error.line()
+            )
+        })?
     } else {
-        toml::from_str(text).map_err(|_| anyhow::anyhow!("Invalid TOML configuration"))?
+        toml::from_str(text).map_err(|error: toml::de::Error| {
+            let line = error.span().map_or(1, |span| {
+                text.as_bytes()[..span.start]
+                    .iter()
+                    .filter(|b| **b == b'\n')
+                    .count()
+                    + 1
+            });
+            anyhow::anyhow!(
+                "Fix the configuration and retry: {}: line {line}: {}",
+                path.display(),
+                error.message()
+            )
+        })?
     };
     for stage in cfg.stages.values_mut() {
         if let StageType::Llm(l) = &mut stage.kind {

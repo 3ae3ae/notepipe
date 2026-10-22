@@ -570,3 +570,64 @@ fn missing_or_empty_active_provider_keys_fail_before_source_or_cache_work() {
         assert!(!record.exists());
     }
 }
+
+#[test]
+fn configuration_errors_name_the_path_line_and_key_without_source_snippets() {
+    let cli = CliTest::new();
+    let cases = [
+        (
+            "pipeline = []\nout = 'private-test-value'\nunexpected = true\n",
+            3,
+            "unknown field `unexpected`",
+        ),
+        (
+            "pipeline = []\nout = 'private-test-value'\n[providers.p]\nconcurrency = 'wrong-type'\n",
+            4,
+            "invalid type: string",
+        ),
+        ("pipeline = [\n", 2, "invalid array"),
+        (
+            "{\n  \"pipeline\": [],\n  \"out\": \"private-test-value\",\n  \"unexpected\": true\n}\n",
+            4,
+            "unknown field `unexpected`",
+        ),
+        (
+            "{\n  \"pipeline\": [],\n  \"out\": false\n}",
+            3,
+            "invalid type: boolean",
+        ),
+        ("{\n  \"pipeline\": [\n", 3, "EOF while parsing a list"),
+    ];
+    for (text, line, message) in cases {
+        cli.config(text);
+        let ambient = stderr(&cli.run(&["config", "show"]));
+        assert!(
+            ambient.starts_with(&format!(
+                "Error: Fix the configuration and retry: {}: line {line}: ",
+                cli.path().display()
+            )),
+            "{ambient}"
+        );
+        assert!(ambient.contains(message), "{ambient}");
+        assert!(!ambient.contains("private-test-value"), "{ambient}");
+        assert!(!ambient.contains(" | "), "{ambient}");
+        let path = cli.dir.path().join("explicit.conf");
+        std::fs::write(&path, text).unwrap();
+        let explicit = json_error(&cli.run(&[
+            "https://example.test/media",
+            "--config",
+            "explicit.conf",
+            "--json",
+        ]));
+        let explicit = explicit["message"].as_str().unwrap();
+        assert!(
+            explicit.starts_with(&format!(
+                "Fix the configuration and retry: explicit.conf: line {line}: "
+            )),
+            "{explicit}"
+        );
+        assert!(explicit.contains(message), "{explicit}");
+        assert!(!explicit.contains("private-test-value"), "{explicit}");
+        assert!(!explicit.contains(" | "), "{explicit}");
+    }
+}
