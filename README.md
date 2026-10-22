@@ -50,8 +50,8 @@ component that other programs can build on.
 ## Why notepipe
 
 - **A pipeline you can read.** Every step, from downloading to writing the note, is a stage in the configuration, in
-  the order it runs. Take one out, change its settings, or add your own: what the AI does is a prompt you write, a
-  filter stage runs your own program on the note, and a hook stage runs one after it.
+  the order it runs. Take one out, change its settings, or add your own: what the AI does is a prompt you write, and
+  a filter stage runs your own program on the note.
 - **Extensible without forking.** Websites, local speech engines and vendor APIs are *adapters*: small separate programs
   with a documented contract, written in any language, installed as extras and named in the configuration.
 - **Portable.** A single binary for Linux and macOS on x86_64 and arm64 and for Windows on x86_64, and it builds on
@@ -138,10 +138,12 @@ notepipe config show    # show the configuration in effect
 
 The file is `~/.config/notepipe/config.toml`, or `%APPDATA%\notepipe\config.toml` on Windows (`$XDG_CONFIG_HOME/notepipe/`
 when that is set). `pipeline` lists the stages that run, in order; each stage's settings are in its own
-`[stages.NAME]` table, and `[providers.NAME]` holds the connections they share. Every default value is written out, so
-what the file says is what runs. This is the file notepipe creates, with the two prompts shortened:
+`[stages.NAME]` table, and `[providers.NAME]` holds the connections they share. Settings at their default are written
+as comments, so the file shows every value in effect; remove the `#` to change one. This is the file notepipe creates,
+with the two prompts shortened:
 
 ```toml
+# Lines starting with # show the defaults.
 # Every setting is described in https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
 
 pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "note"]
@@ -149,59 +151,68 @@ pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "no
 [providers.openai]
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
-concurrency = 4
+# concurrency = 4
 
 [stages.download]
 type = "download"
 command = "notepipe-source-ytdlp"
+# keep = false
 
 [stages.transcript]
 type = "transcript"
-language = "auto"
-sources = ["subtitles", "speech"]
+# language = "auto"
+# sources = ["subtitles", "speech"]
+# keep = false
 
 [stages.transcript.subtitles]
-sidecar = true
-downloaded = true
-automatic = true
+# sidecar = true
+# downloaded = true
+# automatic = true
 
 [stages.transcript.speech]
 provider = "openai"
-api = "transcriptions"
 model = "whisper-1"
-threshold = 0.5
-min_silence = 0.4
-max_segment = 20.0
+# api = "transcriptions"
+# threshold = 0.5
+# min_silence = 0.4
+# max_segment = 20.0
 
 [stages.screenshots]
 type = "screenshots"
-mode = "stable"
-sensitivity = 0.85
-frame_interval = 1.0
-min_gap = 10.0
-settle = 0.8
+# mode = "stable"
+# sensitivity = 0.85
+# frame_interval = 1.0
+# min_gap = 10.0
+# settle = 0.8
+# keep = false
 
 [stages.proofread]
-type = "rewrite"
+type = "llm"
+reads = "paragraphs"
 provider = "openai"
 model = "gpt-6-luna"
-batch_size = 20
+# batch_size = 20
+# keep = false
 prompt = '''…'''
 
 [stages.summary]
-type = "add-top"
+type = "llm"
+reads = "transcript"
 provider = "openai"
 model = "gpt-6-luna"
-chunk_size = 25000
+# chunk_size = 25000
+# keep = false
 prompt = '''…'''
 
 [stages.note]
 type = "note"
-dir = "."
+# dir = "."
 ```
 
-Take a stage out of `pipeline` to turn it off without losing its settings, or leave it out for one run with
-`--skip NAME`. [docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md) lists every setting.
+Stage names are yours to choose; what a stage does comes from its `type`. Take a stage out of `pipeline` to turn it off
+without losing its settings, or leave it out for one run with `--skip NAME`. For debugging, `keep = true` on a stage
+writes its result, such as the transcript or an `llm` stage's text, into the note folder's `stages/`.
+[docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md) lists every setting.
 
 ## Speech recognition
 
@@ -223,14 +234,13 @@ only.
 
 ## Stages and prompts
 
-A stage of type `rewrite`, `add-below` or `add-top` sends the note to an OpenAI-compatible chat model with a prompt and
-puts the answer back into the note:
+An `llm` stage sends the note to an OpenAI-compatible chat model with a prompt and puts the answer back into the note.
+`reads` decides what the model reads and where the answer goes:
 
-| Type | The model reads | Its answer |
+| `reads` | The model reads | Its answer |
 |---|---|---|
-| `rewrite` | each paragraph | replaces the paragraph |
-| `add-below` | each paragraph | is added below the paragraph |
-| `add-top` | the whole transcript | is added at the top of the note |
+| `"paragraphs"` | each paragraph | replaces the paragraph; the original stays in `note.json` |
+| `"transcript"` | the whole transcript | is added at the top of the note |
 
 The configuration starts with two: `proofread` corrects recognition errors and removes filler, and `summary` adds an
 overview, key points and a timed outline. They are ordinary stages, with their prompts written out in the file.
@@ -239,13 +249,15 @@ add your own in a few lines and list its name in `pipeline`:
 
 ```toml
 [stages.translate]
-type = "add-below"
+type = "llm"
+reads = "paragraphs"
 provider = "openai"
 model = "gpt-6-luna"
 prompt = "Translate each item into Korean. Keep names, code and formulas unchanged."
 
 [stages.action-items]
-type = "add-top"
+type = "llm"
+reads = "transcript"
 provider = "openai"
 model = "gpt-6-luna"
 prompt = "List the decisions and action items in this meeting as a Markdown checklist, with owners where named."
@@ -370,8 +382,8 @@ model = "muse-voice-transcribe-1.0"
 ### Your own
 
 An adapter is any program that follows a short contract, so it can be written in any language; a complete example in
-Python takes a few dozen lines. [docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md) describes every kind: provider, download, filter
-and hook programs.
+Python takes a few dozen lines. [docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md) describes every kind: provider, download and
+filter programs.
 Install one next to notepipe with `uv tool install notepipe --with <package>`, or put it on your `PATH`.
 
 ## The note
@@ -396,8 +408,8 @@ The command line is notepipe's integration interface. Pass settings on standard 
 notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 ```
 
-[docs/cli.md](https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md) documents the events, exit codes, `note.json` and caching.
-A [hook stage](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#hook-programs) runs your own program after each note is written.
+[docs/cli.md](https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md) documents the events, exit codes, `note.json` and caching. To do something with each note,
+such as copying it into a notes app, run it after notepipe: the `done` event gives the note folder.
 
 ## Project status
 

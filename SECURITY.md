@@ -13,7 +13,7 @@ Only the latest release receives security fixes while notepipe is at version 0.x
 
 notepipe is a local command-line tool. Keep these properties in mind when you evaluate a report:
 
-- **Configuration is trusted.** It names the programs notepipe runs (provider, download, filter and hook programs) and
+- **Configuration is trusted.** It names the programs notepipe runs (provider, download and filter programs) and
   the providers it sends audio and text to. Treat a configuration file, or configuration passed with `--config -`, like a script.
 - **Credentials** are read from the environment variables that providers name in `api_key_env`, and sent only to that
   provider; they are never part of the configuration. notepipe does not write API keys to notes, caches or logs. A

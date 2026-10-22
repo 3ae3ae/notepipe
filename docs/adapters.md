@@ -11,7 +11,6 @@ What a program must do depends on where it is named:
 | `[providers.NAME]` `command` | [provider program](#provider-programs) | serves an OpenAI-compatible API on localhost while stages use it |
 | a `download` stage | [download program](#download-programs) | turns a URL into a local media file plus metadata and subtitles |
 | a `filter` stage | [filter program](#filter-programs) | reads the note as JSON and prints it changed |
-| a `hook` stage | [hook program](#hook-programs) | runs after the note is written |
 
 Official adapters are extras of the `notepipe` package, for example `uv tool install "notepipe[llama]"`. Other adapters
 install next to notepipe with `uv tool install notepipe --with <package>`. notepipe looks for programs in its own
@@ -97,25 +96,25 @@ markers or formatting are the program's job to remove.
 
 ### Chat API
 
-`rewrite`, `add-below` and `add-top` stages send `POST <base_url>/chat/completions` with a JSON body in the OpenAI Chat
-Completions format:
+`llm` stages send `POST <base_url>/chat/completions` with a JSON body in the OpenAI Chat Completions format:
 
 | Field | Present | Content |
 |---|---|---|
 | `model` | when the stage has a model | the model name |
 | `messages` | always | a system message with the stage's prompt and notepipe's format instructions, then a user message with the input (below) |
-| `response_format` | `rewrite`, `add-below` | `{"type": "json_object"}` |
+| `response_format` | `reads = "paragraphs"` | `{"type": "json_object"}` |
 | other fields | when configured | everything in the stage's `request` |
 
 The input, and the answer notepipe expects in `content`:
 
-- **`rewrite` and `add-below`:** the user content is an array of parts. The first is a `text` part holding a JSON array
+- **`reads = "paragraphs"`:** the user content is an array of parts. The first is a `text` part holding a JSON array
   of up to `batch_size` paragraphs, `[{"id": 0, "text": "…"}, …]`; with `images = true` an `image_url` part with the
   screenshot follows, as a JPEG data URL. Answer with `{"segments": [{"id": 0, "text": "…"}, …]}`, one entry for every
   input `id`.
-- **`add-top`:** the user content is a string: the title and author when they are known, then the transcript, one line
-  per fragment starting with its start time, such as `[03:12]` or `[1:03:12]`. Answer with Markdown. A transcript longer
-  than `chunk_size` arrives in several requests, followed by one that asks to combine their results.
+- **`reads = "transcript"`:** the user content is a string: the title and author when they are known, then the
+  transcript, one line per fragment starting with its start time, such as `[03:12]` or `[1:03:12]`. Answer with
+  Markdown. A transcript longer than `chunk_size` arrives in several requests, followed by one that asks to combine
+  their results.
 
 `stream` is never requested. Respond `200` with:
 
@@ -303,7 +302,7 @@ notepipe writes the note as it stands to the program's standard input, as JSON i
 [`note.json` format](cli.md#output), and reads the changed note from its standard output. The program runs in the
 directory notepipe was started in, with a 10-minute limit.
 
-notepipe takes from the result the `top` list and, for every fragment in `sections[].speech`, its `text` and `below`.
+notepipe takes from the result the `top` list and, for every fragment in `sections[].speech`, its `text`.
 The result must have the same sections, with the same number of fragments each; everything else is ignored. When a
 fragment's `text` changes, the old text is kept in `raw`.
 
@@ -321,30 +320,6 @@ for section in note["sections"]:
         fragment["text"] = fragment["text"].replace("Kubernetis", "Kubernetes")
 json.dump(note, sys.stdout)
 ```
-
-## Hook programs
-
-A `hook` stage runs after the note is written, once per note:
-
-```toml
-[stages.copy]
-type = "hook"
-command = "sh"
-args = ["-c", "cp -R \"$NOTEPIPE_NOTE_DIR\" ~/Documents/Notes/"]
-```
-
-### Contract
-
-The program runs with the note folder as its working directory and a 10-minute limit, and receives:
-
-| Variable | Value |
-|---|---|
-| `NOTEPIPE_NOTE_DIR` | the note folder |
-| `NOTEPIPE_MARKDOWN` | path of `note.md` |
-| `NOTEPIPE_JSON` | path of `note.json` |
-| `NOTEPIPE_WARNINGS` | number of warnings so far: those in `note.json` and any from replacing the previous note |
-
-A failing hook produces a warning; the note and the exit status are unaffected.
 
 ## Publishing an adapter
 

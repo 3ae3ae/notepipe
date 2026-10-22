@@ -59,6 +59,7 @@ killing adapter processes.
 <out>/<title>/note.md
 <out>/<title>/images/0001.jpg …
 <out>/<title>/note.json
+<out>/<title>/stages/…        only for stages with keep = true (docs/configuration.md#keeping-stage-results)
 ```
 
 The folder name comes from the title. A run on the same source replaces that folder; a different source with the same
@@ -80,27 +81,26 @@ generator: "notepipe …"   # notepipe and its version
 ---
 ```
 
-`note.json` (schema 1) holds the same content:
+`note.json` (schema 2) holds the same content:
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "meta": {"title": "…", "author": "…", "duration": 123.4, "source": "…", "seek_url": "…"},
   "top": [{"stage": "summary", "text": "Markdown"}],
   "sections": [
     {"t": 0.0, "end": 42.0, "image": "images/0001.jpg",
-     "speech": [{"start": 0.5, "end": 7.0, "text": "…", "raw": "…",
-                 "below": [{"stage": "translate", "text": "…"}]}]}
+     "speech": [{"start": 0.5, "end": 7.0, "text": "…", "raw": "…"}]}
   ],
   "warnings": ["…"]
 }
 ```
 
 `image` is empty for sections without a screenshot (for example audio-only input). `raw` is present when a stage replaced
-the text, `below` when stages added text under it, and `seek_url` when the download adapter provided a link template.
+the text, and `seek_url` when the download adapter provided a link template.
 
 `note.json` lists the warnings known when the note was written. Warnings raised afterwards — cleaning up the previous
-note, or hook stages — appear only in the `done` event, whose `warnings` list is final.
+note — appear only in the `done` event, whose `warnings` list is final.
 
 ## Caches
 
