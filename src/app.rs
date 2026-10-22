@@ -61,11 +61,17 @@ pub(super) fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
         // Keep signal handling responsive while stdin, prompts, or HTTP workers block.
-        let mut work = tokio::task::spawn_blocking(main_inner);
+        let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pipeline_running = running.clone();
+        let mut work = tokio::task::spawn_blocking(move || main_inner(pipeline_running));
         tokio::select! {
             result = &mut work => result.unwrap_or(std::process::ExitCode::FAILURE),
             _ = crate::runtime::watch_cancelled() => {
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), work).await;
+                if running.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = work.await;
+                } else {
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), work).await;
+                }
                 std::process::ExitCode::from(130)
             }
         }
@@ -77,7 +83,7 @@ pub(super) fn main() -> std::process::ExitCode {
     code
 }
 
-fn main_inner() -> std::process::ExitCode {
+fn main_inner(running: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::process::ExitCode {
     let args: Vec<_> = std::env::args_os().collect();
     let json_requested = args
         .iter()
@@ -105,7 +111,7 @@ fn main_inner() -> std::process::ExitCode {
     }
     progress::set_quiet(quiet);
     init_logging(cli.opts.verbose, quiet, json);
-    match run(cli, args.len() == 1) {
+    match run(cli, args.len() == 1, &running) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             let message = format!("{error:#}");
@@ -119,7 +125,7 @@ fn main_inner() -> std::process::ExitCode {
     }
 }
 
-fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
+fn run(cli: Cli, no_args: bool, running: &std::sync::atomic::AtomicBool) -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Doctor) => doctor::run(),
         Some(Command::Config { cmd }) => {
@@ -194,6 +200,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             // Fail before probing tools or starting a source adapter.
             initial.validate()?;
             tracing::info!(out = %initial.out_dir.display(), mode = %initial.asr.mode, "start");
+            running.store(true, std::sync::atomic::Ordering::Relaxed);
             Ok(crate::runtime::block_on(pipeline::run(&initial))??)
         }
     }

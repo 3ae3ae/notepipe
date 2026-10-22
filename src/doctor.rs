@@ -16,6 +16,7 @@ fn tool_version(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Option<Strin
     command.args(args);
     let out = crate::runtime::run_bounded("doctor", &mut command, VERSION_TIMEOUT, None).ok()?;
     if !out.status.success() {
+        tracing::debug!("{}", out.stderr);
         return None;
     }
     Some(
@@ -82,16 +83,22 @@ pub fn run() -> Result<()> {
             }
             let mut programs = Vec::new();
             for provider in cfg.providers.values() {
-                if let Some(program) = &provider.command {
+                if let Some(program) = provider.command.as_ref().and_then(|argv| argv.first()) {
                     programs.push(("AI adapter", program));
                 }
             }
             for stage in cfg.stages.values() {
-                match stage {
-                    crate::settings::Stage::Download(p) => {
-                        programs.push(("Download adapter", &p.command))
+                match &stage.kind {
+                    crate::settings::StageType::Download(p) => {
+                        if let Some(program) = p.command.first() {
+                            programs.push(("Download adapter", program));
+                        }
                     }
-                    crate::settings::Stage::Filter(p) => programs.push(("Adapter", &p.command)),
+                    crate::settings::StageType::Run(p) => {
+                        if let Some(program) = p.command.first() {
+                            programs.push(("Adapter", program));
+                        }
+                    }
                     _ => {}
                 }
             }

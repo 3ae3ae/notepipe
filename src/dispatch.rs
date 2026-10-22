@@ -339,6 +339,53 @@ mod tests {
     }
 
     #[test]
+    fn an_abandoned_http_response_never_enters_the_cache() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+        let _serial = runtime::lock_recover(&TEST_LOCK);
+        let root = tempfile::tempdir().unwrap();
+        let _cache = install(root.path()).unwrap();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel = cancelled.clone();
+        let (release, gate) = std::sync::mpsc::channel();
+        let mock = crate::test_support::MockAi::respond_with(move |_, _| {
+            cancel.store(true, Ordering::Relaxed);
+            gate.recv_timeout(Duration::from_secs(5)).unwrap();
+            Some((200, serde_json::json!({"text":"Late success"})))
+        });
+        let (received, late) = std::sync::mpsc::channel();
+        let request = ureq::post(&mock.url);
+        let start = Instant::now();
+        let result = cached_json_request(
+            &mock.url,
+            &serde_json::json!({}),
+            || {
+                runtime::interruptible_http(
+                    &|| {
+                        if cancelled.load(Ordering::Relaxed) {
+                            return Err(runtime::Cancelled.into());
+                        }
+                        Ok(())
+                    },
+                    move || {
+                        let response = receive(request.send_json(serde_json::json!({})));
+                        let _ = received.send(());
+                        response
+                    },
+                )
+                .map_err(Failure::local)?
+            },
+            valid,
+        );
+        assert!(result.unwrap_err().to_string().contains("Cancelled"));
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(!root.path().join("llm").exists());
+        release.send(()).unwrap();
+        late.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!root.path().join("llm").exists());
+    }
+
+    #[test]
     fn receiving_preserves_the_response_cap_and_safe_transport_errors() {
         let oversized = "x".repeat(MAX_RESPONSE_BYTES as usize + 1);
         let response = ureq::Response::new(200, "OK", &oversized).unwrap();

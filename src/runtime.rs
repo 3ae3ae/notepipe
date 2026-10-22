@@ -23,17 +23,50 @@ pub fn lock_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// Runs an async block on a temporary Tokio runtime.
 pub fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
     let runtime = tokio::runtime::Runtime::new()?;
-    let result = runtime.block_on(async {
-        tokio::select! {
-            error = watch_cancelled() => Err(error),
-            value = f => Ok(value),
+    Ok(runtime.block_on(f))
+}
+
+static BLOCKING: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
+pub async fn spawn_blocking<F, T>(work: F) -> std::result::Result<T, tokio::task::JoinError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let active = BLOCKING.read().await;
+    tokio::task::spawn_blocking(move || {
+        let _active = active;
+        work()
+    })
+    .await
+}
+
+pub async fn finish_blocking() {
+    let _stopped = BLOCKING.write().await;
+}
+
+/// Abandoned HTTP workers own only the request and response, never cache writes or child programs.
+pub fn interruptible_http<T: Send + 'static>(
+    control: &dyn Fn() -> Result<()>,
+    send: impl FnOnce() -> T + Send + 'static,
+) -> Result<T> {
+    control()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new().spawn(move || {
+        let result = check_cancelled().map(|()| send());
+        let _ = tx.send(result);
+    })?;
+    loop {
+        control()?;
+        match rx.recv_timeout(WAIT_POLL_INTERVAL) {
+            Ok(result) => {
+                control()?;
+                return result;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(error) => return Err(error.into()),
         }
-    });
-    // Finish adapter cleanup without waiting indefinitely for blocking HTTP reads.
-    if is_cancelled() {
-        runtime.shutdown_timeout(Duration::from_secs(4));
     }
-    result
 }
 
 static CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -386,9 +419,13 @@ pub fn wait_ready(
                 timeout.as_secs_f64()
             );
         }
-        if let Ok(resp) = http_agent(Duration::from_secs(2)).get(&url).call()
-            && resp.status() == 200
-        {
+        let url = url.clone();
+        if interruptible_http(control.unwrap_or(&check_cancelled), move || {
+            http_agent(Duration::from_secs(2))
+                .get(&url)
+                .call()
+                .is_ok_and(|resp| resp.status() == 200)
+        })? {
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(300));
@@ -685,5 +722,40 @@ wait
         // kill -0 only checks existence: Drop has killed and reaped the process.
         let st = Command::new("kill").args(["-0", &pid]).status().unwrap();
         assert!(!st.success(), "pid {pid} was cleaned up by Drop");
+    }
+}
+
+/// One request budget shared by all stages of a provider.
+#[derive(Debug)]
+pub struct RequestLimit {
+    available: Mutex<usize>,
+    wake: std::sync::Condvar,
+}
+impl RequestLimit {
+    pub fn new(count: usize) -> Self {
+        Self {
+            available: Mutex::new(count),
+            wake: std::sync::Condvar::new(),
+        }
+    }
+    pub fn acquire(&self) -> Result<RequestPermit<'_>> {
+        let mut available = lock_recover(&self.available);
+        while *available == 0 {
+            check_cancelled()?;
+            available = self
+                .wake
+                .wait_timeout(available, Duration::from_millis(50))
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        *available -= 1;
+        Ok(RequestPermit(self))
+    }
+}
+pub struct RequestPermit<'a>(&'a RequestLimit);
+impl Drop for RequestPermit<'_> {
+    fn drop(&mut self) {
+        *lock_recover(&self.0.available) += 1;
+        self.0.wake.notify_one();
     }
 }

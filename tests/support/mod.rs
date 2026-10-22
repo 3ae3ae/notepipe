@@ -82,8 +82,13 @@ impl MockAi {
                     continue;
                 };
                 let response = serde_json::to_vec(&response).unwrap();
-                write!(stream,"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",response.len()).unwrap();
-                stream.write_all(&response).unwrap();
+                // A cancelled run may already have closed the connection.
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    response.len()
+                );
+                let _ = stream.write_all(&response);
             }
         });
         Self {

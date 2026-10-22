@@ -5,7 +5,7 @@
 //! - `stage`: stage, status (start/done)
 //! - `progress`: stage, current, total, optional message
 //! - `tokens`: stage, prompt, completion
-//! - `done`: note_dir, markdown, json, warnings
+//! - `done`: work_dir, note_dir, files, warnings
 //! - `error`: message
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -42,9 +42,14 @@ pub fn emit(ev: serde_json::Value) {
     let _ = emit_to(&mut lock, &ev);
 }
 
-pub fn done(note_dir: &std::path::Path, warnings: &[String]) {
+pub fn done(
+    work_dir: &std::path::Path,
+    note_dir: Option<&std::path::Path>,
+    files: &std::collections::BTreeMap<String, String>,
+    warnings: &[String],
+) {
     emit(
-        serde_json::json!({"type":"done","note_dir":note_dir,"markdown":note_dir.join("note.md"),"json":note_dir.join("note.json"),"warnings":warnings}),
+        serde_json::json!({"type":"done","note_dir":note_dir,"work_dir":work_dir,"files":files,"warnings":warnings}),
     );
 }
 
@@ -57,7 +62,7 @@ fn emit_to(mut w: impl std::io::Write, ev: &serde_json::Value) -> std::io::Resul
 /// so they always describe the current stage.
 pub fn stage(name: &str, status: &str) {
     if status == "start" {
-        reset_tokens();
+        reset_tokens(name);
     }
     emit(stage_event(name, status));
     if !is_json() && !is_quiet() && status == "start" {
@@ -67,7 +72,7 @@ pub fn stage(name: &str, status: &str) {
 
 pub fn stage_label(name: &str, status: &str, label: &str) {
     if status == "start" {
-        reset_tokens();
+        reset_tokens(name);
     }
     emit(stage_event(name, status));
     if !is_json() && !is_quiet() && status == "start" {
@@ -96,12 +101,12 @@ pub(crate) fn log_event(level: &str, message: &str) -> serde_json::Value {
     serde_json::json!({"type": "log", "level": level, "message": message})
 }
 
-/// Token usage of the current stage, summed across concurrent workers,
-/// so the reported value only grows; [`stage`] resets it.
-static TOKENS: Mutex<(u64, u64)> = Mutex::new((0, 0));
+/// Totals are separate for stages that run concurrently.
+static TOKENS: Mutex<std::collections::BTreeMap<String, (u64, u64)>> =
+    Mutex::new(std::collections::BTreeMap::new());
 
-fn reset_tokens() {
-    *crate::runtime::lock_recover(&TOKENS) = (0, 0);
+fn reset_tokens(stage: &str) {
+    crate::runtime::lock_recover(&TOKENS).remove(stage);
 }
 
 fn tokens_event(stage: &str, prompt: u64, completion: u64) -> serde_json::Value {
@@ -114,9 +119,10 @@ pub fn note_tokens(stage: &str, prompt: u64, completion: u64) {
         return;
     }
     let mut guard = crate::runtime::lock_recover(&TOKENS);
-    guard.0 += prompt;
-    guard.1 += completion;
-    emit(tokens_event(stage, guard.0, guard.1));
+    let total = guard.entry(stage.into()).or_default();
+    total.0 += prompt;
+    total.1 += completion;
+    emit(tokens_event(stage, total.0, total.1));
 }
 
 /// Emit throttled source-adapter download progress.
@@ -311,5 +317,21 @@ mod tests {
         let s = String::from_utf8(buf).unwrap();
         assert!(s.ends_with('\n'));
         assert_eq!(s.trim().parse::<serde_json::Value>().unwrap(), ev);
+    }
+}
+
+#[cfg(test)]
+mod concurrent_token_tests {
+    use super::*;
+    #[test]
+    fn simultaneous_stages_have_separate_token_totals() {
+        reset_tokens("token-one");
+        reset_tokens("token-two");
+        note_tokens("token-one", 2, 3);
+        note_tokens("token-two", 7, 11);
+        note_tokens("token-one", 5, 1);
+        let tokens = crate::runtime::lock_recover(&TOKENS);
+        assert_eq!(tokens["token-one"], (7, 4));
+        assert_eq!(tokens["token-two"], (7, 11));
     }
 }

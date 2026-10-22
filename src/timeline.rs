@@ -14,6 +14,8 @@ pub struct FrameEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TranscriptEvent {
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
     pub start: f64,
     pub end: f64,
     /// Displayed text; after a replacing stage it differs from `raw`.
@@ -23,18 +25,13 @@ pub struct TranscriptEvent {
     pub raw: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct StageText {
-    pub stage: String,
-    pub text: String,
-}
-
 /// One screenshot and the speech while it was shown.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
     pub t: f64,
     /// End of this section: the next screenshot's time, or the media duration for the last one.
-    #[serde(default)]
     pub end: f64,
     pub image: String,
     pub speech: Vec<TranscriptEvent>,
@@ -83,6 +80,7 @@ pub fn merge(
     let mut sections: Vec<Section> = frames
         .into_iter()
         .map(|f| Section {
+            extra: Default::default(),
             t: f.t,
             end: 0.0,
             image: f.image,
@@ -156,6 +154,7 @@ fn split_at_natural_boundaries(event: TranscriptEvent, boundaries: &[f64]) -> Ve
             let text: String = chars[start_char..end_char].iter().collect();
             start_char = end_char;
             TranscriptEvent {
+                extra: event.extra.clone(),
                 start: window[0],
                 end: window[1],
                 text,
@@ -199,12 +198,13 @@ pub fn coalesce_sections(sections: &mut [Section]) {
             }
 
             let should_break = current.as_ref().is_some_and(|paragraph| {
-                !continues_grapheme(&paragraph.text, text)
-                    && (event.start - paragraph.end > PARAGRAPH_GAP_SECS
-                        || paragraph_units(&paragraph.text)
-                            + paragraph_units(text)
-                            + usize::from(needs_space(&paragraph.text, text))
-                            > MAX_PARAGRAPH_UNITS)
+                paragraph.extra != event.extra
+                    || (!continues_grapheme(&paragraph.text, text)
+                        && (event.start - paragraph.end > PARAGRAPH_GAP_SECS
+                            || paragraph_units(&paragraph.text)
+                                + paragraph_units(text)
+                                + usize::from(needs_space(&paragraph.text, text))
+                                > MAX_PARAGRAPH_UNITS))
             });
             if should_break {
                 paragraphs.push(current.take().expect("paragraph exists when breaking"));
@@ -217,10 +217,8 @@ pub fn coalesce_sections(sections: &mut [Section]) {
                 }
                 None => {
                     current = Some(TranscriptEvent {
-                        start: event.start,
-                        end: event.end,
                         text: text.to_string(),
-                        raw: None,
+                        ..event
                     });
                 }
             }
@@ -323,6 +321,7 @@ mod tests {
 
     fn sp(start: f64, end: f64) -> TranscriptEvent {
         TranscriptEvent {
+            extra: Default::default(),
             start,
             end,
             text: format!("{start}-{end}"),
@@ -348,6 +347,7 @@ mod tests {
     fn merge_splits_at_punctuation_near_boundary() {
         let frames = vec![frame(0.0), frame(5.0)];
         let speech = vec![TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 10.0,
             text: "前半句，后半句。".into(),
@@ -365,6 +365,7 @@ mod tests {
     fn no_punctuation_means_keep_whole() {
         // No punctuation: the text stays whole however many boundaries there are.
         let ev = TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 10.0,
             text: "一二三四五六七八九十".into(),
@@ -376,6 +377,7 @@ mod tests {
 
         // A boundary within 0.3 s of either end does not split either.
         let ev2 = TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 1.0,
             text: "abc".into(),
@@ -388,6 +390,7 @@ mod tests {
     fn split_snaps_to_nearest_punctuation() {
         // The proportional cut is index 5; the nearest punctuation is the comma at index 3, so the cut falls after it.
         let ev = TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 10.0,
             text: "你好，世界很好。再见".into(),
@@ -400,6 +403,7 @@ mod tests {
 
         // English: move to the nearest space instead of cutting a word.
         let ev2 = TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 10.0,
             text: "compiler optimization lecture".into(),
@@ -414,6 +418,7 @@ mod tests {
     fn multi_boundary_all_or_nothing() {
         // Two boundaries, only one with punctuation: keep the event whole.
         let ev = TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 30.0,
             text: "零一，二三四五六七八九十".into(),
@@ -431,6 +436,7 @@ mod tests {
     #[test]
     fn coalesce_merges_fragments_into_paragraphs() {
         let sections = vec![Section {
+            extra: Default::default(),
             t: 0.0,
             end: 30.0,
             image: "f.jpg".into(),
@@ -454,6 +460,34 @@ mod tests {
     }
 
     #[test]
+    fn coalesce_merges_only_events_with_equal_extra_fields() {
+        for texts in [["First.", "Second."], ["e", "\u{301}clair"]] {
+            let mut first = sp(0., 1.);
+            first.text = texts[0].into();
+            first.extra.insert("speaker".into(), "alice".into());
+            let mut second = sp(1., 2.);
+            second.text = texts[1].into();
+            second.extra.insert("speaker".into(), "bob".into());
+            second.extra.insert("second_only".into(), true.into());
+            let mut third = second.clone();
+            third.start = 2.;
+            third.end = 3.;
+            let mut sections = vec![Section {
+                extra: Default::default(),
+                t: 0.,
+                end: 3.,
+                image: String::new(),
+                speech: vec![first.clone(), second.clone(), third],
+            }];
+            coalesce_sections(&mut sections);
+            assert_eq!(sections[0].speech.len(), 2);
+            assert_eq!(sections[0].speech[0], first);
+            assert_eq!(sections[0].speech[1].extra, second.extra);
+            assert_eq!(sections[0].speech[1].end, 3.);
+        }
+    }
+
+    #[test]
     fn coalesce_breaks_on_length_limit() {
         for (long_text, expected) in [
             ("word ".repeat(84), 1),
@@ -466,12 +500,14 @@ mod tests {
         ] {
             let speech = vec![
                 TranscriptEvent {
+                    extra: Default::default(),
                     start: 0.0,
                     end: 2.0,
                     text: long_text.clone(),
                     raw: None,
                 },
                 TranscriptEvent {
+                    extra: Default::default(),
                     start: 2.1,
                     end: 4.0,
                     text: long_text.clone(),
@@ -479,6 +515,7 @@ mod tests {
                 },
             ];
             let mut sections = vec![Section {
+                extra: Default::default(),
                 t: 0.0,
                 end: 10.0,
                 image: "f.jpg".into(),
@@ -498,6 +535,7 @@ mod tests {
         for prefix in [String::new(), "x".repeat(MAX_PARAGRAPH_UNITS)] {
             for start in [2.1, 10.0] {
                 let mut sections = vec![Section {
+                    extra: Default::default(),
                     t: 0.,
                     end: start + 1.,
                     image: String::new(),
@@ -525,6 +563,7 @@ mod tests {
     fn coalesce_preserves_all_nonempty_speech() {
         for text in ["um", "HMM!", "음", "嗯，", "えっと", "Ordinary words."] {
             let mut sections = vec![Section {
+                extra: Default::default(),
                 t: 0.,
                 end: 1.,
                 image: String::new(),
@@ -542,12 +581,14 @@ mod tests {
     fn coalesce_joins_english_with_space() {
         let speech = vec![
             TranscriptEvent {
+                extra: Default::default(),
                 start: 0.0,
                 end: 2.0,
                 text: "hello world".into(),
                 raw: None,
             },
             TranscriptEvent {
+                extra: Default::default(),
                 start: 2.2,
                 end: 4.0,
                 text: "next sentence".into(),
@@ -555,6 +596,7 @@ mod tests {
             },
         ];
         let mut sections = vec![Section {
+            extra: Default::default(),
             t: 0.0,
             end: 10.0,
             image: "f.jpg".into(),

@@ -28,8 +28,10 @@ pub struct Stage {
     pub chunk_size: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct LlmSettings {
+    pub limit: Option<std::sync::Arc<crate::runtime::RequestLimit>>,
+    pub cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub base_url: String,
     pub adapter: Vec<String>,
     pub api_key: String,
@@ -40,6 +42,8 @@ pub struct LlmSettings {
 impl Default for LlmSettings {
     fn default() -> Self {
         Self {
+            limit: None,
+            cancelled: Default::default(),
             base_url: String::new(),
             adapter: Vec::new(),
             api_key: String::new(),
@@ -52,6 +56,8 @@ impl Default for LlmSettings {
 impl LlmSettings {
     pub fn for_stage(provider: &crate::settings::Provider, stage: &Stage, key: String) -> Self {
         Self {
+            limit: None,
+            cancelled: Default::default(),
             base_url: provider.base_url.clone().unwrap_or_default(),
             adapter: provider.argv(),
             api_key: key,
@@ -67,6 +73,23 @@ impl LlmSettings {
         } else {
             format!("adapter:{}/chat/completions", self.adapter.join("\0"))
         }
+    }
+
+    fn check_cancelled(&self) -> Result<()> {
+        if self.cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(crate::runtime::Cancelled.into());
+        }
+        crate::runtime::check_cancelled()
+    }
+
+    fn acquire_permit(&self) -> Result<Option<crate::runtime::RequestPermit<'_>>> {
+        let permit = self
+            .limit
+            .as_ref()
+            .map(|limit| limit.acquire())
+            .transpose()?;
+        self.check_cancelled()?;
+        Ok(permit)
     }
 }
 
@@ -117,24 +140,14 @@ pub(crate) fn chat_agent() -> ureq::Agent {
 
 const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 
-#[derive(Default)]
-pub struct StageReport {
-    pub attempted: usize,
-    pub failed: usize,
-    /// The first failure, shortened for messages; None when nothing failed.
-    pub note: Option<String>,
-    pub warnings: Vec<String>,
-}
-
 pub fn paragraphs(
     sections: &mut [Section],
     frames_root: &Path,
     s: &LlmSettings,
     stage: &Stage,
-) -> Result<StageReport> {
-    let attempted = sections.iter().map(|section| section.speech.len()).sum();
-    if attempted == 0 {
-        return Ok(StageReport::default());
+) -> Result<Vec<String>> {
+    if !sections.iter().any(|section| !section.speech.is_empty()) {
+        return Ok(Vec::new());
     }
     let mut chunks: Vec<(Option<std::path::PathBuf>, usize, Vec<&mut TranscriptEvent>)> =
         Vec::new();
@@ -166,70 +179,34 @@ pub fn paragraphs(
     let pb = crate::progress::Bar::new(&stage.name, chunks.len() as u64)
         .with_template("{spinner:.green} llm {pos}/{len} [{bar:32.cyan/blue}] {msg}");
     let agent = chat_agent();
-    let first_error = std::sync::Mutex::new(None::<String>);
     let image_warnings = std::sync::Mutex::new(Vec::new());
-    let failures = crate::runtime::map_pool(
-        chunks,
-        s.concurrency,
-        |(image_path, section, mut chunk)| {
-            pb.inc(1);
-            let image = image_path.as_deref().and_then(|path| match section_image_b64(path) {
-                Ok(image) => Some(image),
-                Err(error) => {
-                    let warning = format!("{}: screenshot for section {section} could not be read; batch sent as text: {}: {error:#}", stage.name, path.display());
-                    let mut warnings = crate::runtime::lock_recover(&image_warnings);
-                    if !warnings.contains(&warning) {
-                        tracing::warn!("{warning}");
-                        warnings.push(warning);
-                    }
-                    None
-                }
-            });
-            let items: Vec<&str> = chunk.iter().map(|event| event.text.as_str()).collect();
-            match chat(&agent, s, stage, &items, image.as_deref()) {
-                Ok(results) => {
-                    apply_results(&mut chunk, &results);
-                    Ok(0)
-                }
-                Err(error) => {
-                    let mut first = crate::runtime::lock_recover(&first_error);
-                    if first.is_none() {
-                        tracing::warn!(
-                            "AI stage {} failed; original text retained: {error:#}",
-                            stage.name
-                        );
-                        *first = Some(brief(&format!("{error:#}")));
-                    }
-                    Ok(chunk.len())
-                }
+    crate::runtime::map_pool(chunks, s.concurrency, |(image_path, section, mut chunk)| {
+        pb.inc(1);
+        let image = image_path.as_deref().and_then(|path| match section_image_b64(path) {
+            Ok(image) => Some(image),
+            Err(error) => {
+                let warning = format!("{}: screenshot for section {section} could not be read; batch sent as text: {}: {error:#}", stage.name, path.display());
+                let mut warnings = crate::runtime::lock_recover(&image_warnings);
+                if !warnings.contains(&warning) { tracing::warn!("{warning}"); warnings.push(warning); }
+                None
             }
-        },
-    )?;
+        });
+        let items: Vec<&str> = chunk.iter().map(|event| event.text.as_str()).collect();
+        let results = chat(&agent, s, stage, &items, image.as_deref())?;
+        apply_results(&mut chunk, &results);
+        Ok(())
+    })?;
     pb.finish();
     // Remove paragraphs a replacing stage emptied, once all batches are done.
     for sec in sections.iter_mut() {
         sec.speech.retain(|e| !e.text.trim().is_empty());
     }
-    Ok(StageReport {
-        attempted,
-        failed: failures.into_iter().sum(),
-        note: crate::runtime::lock_recover(&first_error).take(),
-        warnings: crate::runtime::lock_recover(&image_warnings).clone(),
-    })
+    Ok(crate::runtime::lock_recover(&image_warnings).clone())
 }
 
 fn section_image_b64(path: &Path) -> Result<String> {
     use base64::Engine as _;
     Ok(base64::engine::general_purpose::STANDARD.encode(std::fs::read(path)?))
-}
-
-fn brief(msg: &str) -> String {
-    const MAX: usize = 160;
-    let mut s: String = msg.chars().take(MAX).collect();
-    if msg.chars().count() > MAX {
-        s.push('…');
-    }
-    s
 }
 
 /// Whether the result ids are exactly 0..expected, with none missing, repeated or out of range.
@@ -403,16 +380,28 @@ fn request_chat_once(
     body: &serde_json::Value,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> std::result::Result<serde_json::Value, crate::dispatch::Failure> {
+    s.check_cancelled()
+        .map_err(crate::dispatch::Failure::local)?;
     let url = endpoint(&s.base_url);
     crate::dispatch::cached_json_request(
         &s.cache_identity(),
         body,
         || {
+            let _permit = s
+                .acquire_permit()
+                .map_err(crate::dispatch::Failure::local)?;
             let mut request = agent.post(&url).set("Content-Type", "application/json");
             if !s.api_key.is_empty() {
                 request = request.set("Authorization", &format!("Bearer {}", s.api_key));
             }
-            crate::dispatch::receive(request.send_json(body))
+            let (settings, body) = (s.clone(), body.clone());
+            crate::runtime::interruptible_http(&|| s.check_cancelled(), move || {
+                settings
+                    .check_cancelled()
+                    .map_err(crate::dispatch::Failure::local)?;
+                crate::dispatch::receive(request.send_json(body))
+            })
+            .map_err(crate::dispatch::Failure::local)?
         },
         |value| {
             // A gateway may return HTTP 200 with an error object. Missing content is a
@@ -464,7 +453,7 @@ fn request_chat(
 #[cfg(test)]
 pub(crate) fn test_stage(name: &str, value: Value) -> Result<Stage> {
     let definition: crate::settings::Stage = serde_json::from_value(value)?;
-    let stage = definition.ai(name).expect("AI stage fixture");
+    let stage = definition.ai(name).context("Not an AI stage")?;
     validate_request(&stage.request)?;
     Ok(stage)
 }
@@ -474,13 +463,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cancellation_is_checked_after_waiting_for_a_provider_permit() {
+        use std::sync::{Arc, atomic::Ordering};
+        let limit = Arc::new(crate::runtime::RequestLimit::new(1));
+        let permit = limit.acquire().unwrap();
+        let settings = LlmSettings {
+            limit: Some(limit.clone()),
+            ..Default::default()
+        };
+        let (started, initial_check_passed) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                settings.check_cancelled().unwrap();
+                started.send(()).unwrap();
+                settings
+                    .acquire_permit()
+                    .err()
+                    .expect("post-permit cancellation")
+            });
+            initial_check_passed
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            settings.cancelled.store(true, Ordering::Relaxed);
+            drop(permit);
+            assert!(worker.join().unwrap().to_string().contains("Cancelled"));
+        });
+    }
+
+    #[test]
     fn stages_resolve_only_their_named_provider_and_allow_an_empty_model_and_prompt() {
         let service = crate::settings::Provider {
             base_url: Some("https://example.test/v1".into()),
             concurrency: 2,
             ..Default::default()
         };
-        let stage: Stage = crate::llm::test_stage("custom", serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"  ","request":{"temperature":0.7}})).unwrap();
+        let stage: Stage = crate::llm::test_stage("custom", serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"  ","request":{"temperature":0.7}})).unwrap();
         assert!(stage.prompt.is_empty());
         let effective = LlmSettings::for_stage(&service, &stage, String::new());
         assert_eq!(effective.base_url, service.base_url.unwrap());
@@ -611,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn truncated_paragraph_stage_retains_original_text_and_failure_note() {
+    fn truncated_paragraph_stage_fails() {
         use crate::test_support::MockAi;
         use serde_json::json;
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
@@ -622,12 +639,14 @@ mod tests {
             ))
         });
         let event = TranscriptEvent {
+            extra: Default::default(),
             start: 0.,
             end: 1.,
             text: "Original.".into(),
             raw: None,
         };
         let mut sections = vec![Section {
+            extra: Default::default(),
             t: 0.,
             end: 1.,
             image: String::new(),
@@ -644,15 +663,15 @@ mod tests {
             &settings,
             &crate::llm::test_stage(
                 "proofread",
-                serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
+                serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
             )
             .unwrap(),
         )
-        .unwrap();
-        assert_eq!((report.attempted, report.failed), (1, 1));
-        assert_eq!(
-            report.note.as_deref(),
-            Some("The model stopped at its output limit; raise the limit in the stage's request")
+        .unwrap_err();
+        assert!(
+            report
+                .to_string()
+                .contains("The model stopped at its output limit")
         );
         assert_eq!(sections[0].speech, vec![event]);
         assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -700,6 +719,7 @@ mod tests {
     #[test]
     fn polish_records_raw_text_and_mismatched_ids_are_rejected() {
         let event = |text: &str| TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 1.0,
             text: text.into(),
@@ -731,7 +751,7 @@ mod tests {
         let s = test_settings();
         let mut stage: Stage = crate::llm::test_stage(
             "proofread",
-            serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         let items = ["hello"];
@@ -768,7 +788,7 @@ mod tests {
         let settings = LlmSettings::default();
         let mut custom: Stage = crate::llm::test_stage(
             "annotate",
-            serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
@@ -784,7 +804,7 @@ mod tests {
         );
         let empty_prompt: Stage = crate::llm::test_stage(
             "custom",
-            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai"}),
+            serde_json::json!({"type":"llm","output":"test.md","provider":"ai"}),
         )
         .unwrap();
         assert!(empty_prompt.prompt.is_empty());
@@ -806,7 +826,7 @@ mod tests {
 
     #[test]
     fn stage_requests_merge_with_the_protocol_and_protected_keys_are_rejected() {
-        let stage: Stage = crate::llm::test_stage("summary", serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","model":"stage-model","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
+        let stage: Stage = crate::llm::test_stage("summary", serde_json::json!({"type":"llm","output":"test.md","provider":"ai","model":"stage-model","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
         let service = crate::settings::Provider {
             base_url: Some("https://example.test/v1".into()),
             ..Default::default()
@@ -830,7 +850,7 @@ mod tests {
             assert!(
                 crate::llm::test_stage(
                     "summary",
-                    serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","request":request})
+                    serde_json::json!({"type":"llm","output":"test.md","provider":"ai","request":request})
                 )
                 .is_err()
             );
@@ -908,11 +928,13 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(index, image)| crate::timeline::Section {
+                extra: Default::default(),
                 t: index as f64,
                 end: index as f64 + 1.,
                 image: image.into(),
                 speech: (0..21)
                     .map(|number| crate::timeline::TranscriptEvent {
+                        extra: Default::default(),
                         start: index as f64,
                         end: index as f64 + 1.,
                         text: format!("Original {number}."),
@@ -928,24 +950,23 @@ mod tests {
         };
         let mut stage = crate::llm::test_stage(
             "proofread",
-            serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         stage.name = "annotate".into();
         stage.images = true;
         stage.batch_size = 7;
-        let report = crate::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
-        assert_eq!((report.attempted, report.failed), (42, 0));
-        assert!(report.note.is_none());
+        let warnings =
+            crate::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
         assert_eq!(
-            report.warnings.len(),
+            warnings.len(),
             1,
             "one warning per section, even across batches"
         );
         assert!(
-            report.warnings[0].contains("annotate")
-                && report.warnings[0].contains("section 2")
-                && report.warnings[0].contains("missing.jpg")
+            warnings[0].contains("annotate")
+                && warnings[0].contains("section 2")
+                && warnings[0].contains("missing.jpg")
         );
         assert!(
             sections

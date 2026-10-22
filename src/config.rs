@@ -98,11 +98,8 @@ impl fmt::Display for ScreenshotMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub url: String,
-    pub download_name: Option<String>,
     pub transcript_name: Option<String>,
     pub screenshots_name: Option<String>,
-    pub note_name: String,
-    pub transcript: crate::settings::Transcript,
     pub source: crate::settings::Source,
     pub out_dir: PathBuf,
     pub similarity: f64,
@@ -117,6 +114,8 @@ pub struct PipelineConfig {
     pub no_resume: bool,
     pub subtitle: Option<PathBuf>,
     pub stages: Vec<(String, crate::settings::Stage)>,
+    pub skip: Vec<String>,
+    pub verbose: bool,
     pub providers: std::collections::BTreeMap<String, crate::settings::Provider>,
     /// HTTP transcription settings with CLI overrides applied.
     pub asr: crate::settings::Asr,
@@ -211,9 +210,6 @@ impl PipelineConfig {
         Ok(())
     }
 
-    pub fn audio_path(&self) -> PathBuf {
-        self.out_dir.join("audio.wav")
-    }
     pub fn frames_dir(&self) -> PathBuf {
         self.out_dir.join("frames")
     }
@@ -610,15 +606,15 @@ mod asr_tests {
         for field in ["vad_threshold", "min_silence"] {
             let mut file = ConfigFile::default();
             if field == "vad_threshold" {
-                let crate::settings::Stage::Transcript(t) =
-                    file.stages.get_mut("transcript").unwrap()
+                let crate::settings::StageType::Transcript(t) =
+                    &mut file.stages.get_mut("transcript").unwrap().kind
                 else {
                     unreachable!()
                 };
                 t.speech.threshold = 1.1;
             } else {
-                let crate::settings::Stage::Transcript(t) =
-                    file.stages.get_mut("transcript").unwrap()
+                let crate::settings::StageType::Transcript(t) =
+                    &mut file.stages.get_mut("transcript").unwrap().kind
                 else {
                     unreachable!()
                 };

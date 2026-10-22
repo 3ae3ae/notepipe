@@ -38,7 +38,13 @@ impl CliTest {
     }
 }
 fn config() -> Value {
-    json!({"pipeline":["transcript","screenshots","note"],"providers":{},"stages":{"transcript":{"type":"transcript","sources":["subtitles"]},"screenshots":{"type":"screenshots"},"note":{"type":"note"}}})
+    json!({"pipeline":["download","transcript","screenshots","draft","markdown"],"providers":{},"stages":{
+        "download":{"type":"download","input":"source","output":"media","command":["notepipe-source-ytdlp"]},
+        "transcript":{"type":"transcript","input":"media","output":"transcript.json","sources":["subtitles"]},
+        "screenshots":{"type":"screenshots","input":"media","output":"images"},
+        "draft":{"type":"document","input":["transcript.json","images"],"output":"draft.json","publish":"note.json"},
+        "markdown":{"type":"markdown","input":"draft.json","output":"note.md","publish":"note.md"}
+    }})
 }
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
@@ -100,7 +106,13 @@ fn no_arguments_or_help_succeed_with_guidance_and_only_supported_flags() {
     ] {
         assert!(text.contains(option), "{option}");
     }
-    for option in ["--stages", "--no-stages", "--transcript", "--max-segment"] {
+    for option in [
+        "--stages",
+        "--no-stages",
+        "--transcript",
+        "--max-segment",
+        "--print",
+    ] {
         assert!(!text.contains(option), "{option}");
         assert!(!cli.run(&["media.mp4", option, "value"]).status.success());
     }
@@ -135,7 +147,7 @@ fn config_path_init_and_show_share_the_literal_template() {
         parsed["stages"]["screenshots"]["settle"].as_float(),
         Some(0.8)
     );
-    assert_eq!(parsed["stages"]["note"]["dir"].as_str(), Some("."));
+    assert_eq!(parsed["out"].as_str(), Some("."));
     assert!(!path.exists());
     let created = cli.run(&["config", "init"]);
     assert!(created.status.success());
@@ -164,14 +176,14 @@ fn config_path_init_and_show_share_the_literal_template() {
 fn config_show_serializes_defaults_without_resolving_keys() {
     let cli = CliTest::new();
     let mut cfg = config();
-    cfg["providers"]["p"] = json!({"command":"program","api_key_env":"NOTEPIPE_UNSET_SHOW_KEY"});
+    cfg["providers"]["p"] = json!({"command":["program"],"api_key_env":"NOTEPIPE_UNSET_SHOW_KEY"});
     cfg["stages"]["screenshots"]["mode"] = json!("first");
     cli.config_value(&cfg);
     let output = cli.run(&["config", "show"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let value: toml::Value = toml::from_str(stdout(&output).split_once('\n').unwrap().1).unwrap();
     assert_eq!(value["providers"]["p"]["concurrency"].as_integer(), Some(4));
-    assert_eq!(value["providers"]["p"]["args"].as_array().unwrap().len(), 0);
+    assert!(value["providers"]["p"].get("args").is_none());
     assert_eq!(
         value["stages"]["screenshots"]["mode"].as_str(),
         Some("first")
@@ -213,12 +225,12 @@ fn validation_and_skip_errors_precede_source_work() {
             "--skip: no stage named unknown in the pipeline",
         ),
         (
-            vec!["--skip", "note"],
-            "pipeline: exactly one note stage must run",
+            vec!["--skip", "draft,markdown"],
+            "Nothing is published; set publish on a stage",
         ),
         (
             vec!["--skip", "transcript"],
-            "pipeline: a transcript stage must run, or pass --subtitle",
+            "--skip transcript: draft needs transcript.json",
         ),
     ] {
         let mut args = vec!["https://example.test/media", "--json"];
@@ -370,17 +382,17 @@ fn doctor_reports_programs_keys_and_required_tools_offline() {
     let cli = CliTest::new();
     let mut cfg = config();
     let program = env!("CARGO_BIN_EXE_notepipe");
-    cfg["providers"] = json!({"p":{"command":program},"unused":{"command":program}});
-    cfg["stages"]["transcript"] = json!({"type":"transcript","speech":{"provider":"p"}});
-    for kind in ["download", "filter"] {
-        cfg["stages"][kind] = json!({"type":kind,"command":format!("missing-{kind}-program")});
+    cfg["providers"] = json!({"p":{"command":[program]},"unused":{"command":[program]}});
+    cfg["stages"]["transcript"] = json!({"type":"transcript","input":"media","output":"transcript.json","speech":{"provider":"p"}});
+    for kind in ["download", "run"] {
+        cfg["stages"][kind] = json!({"type":kind,"input":if kind == "download" {json!("source")} else {json!([])},"output":kind,"command":[format!("missing-{kind}-program")]});
     }
     cli.config_value(&cfg);
     let output = cli.run(&["doctor"]);
     let text = stdout(&output);
     assert!(!output.status.success());
     assert_eq!(text.matches(&format!("✓ AI adapter  {program}")).count(), 1);
-    for kind in ["download", "filter"] {
+    for kind in ["download", "run"] {
         assert!(text.contains(&format!("missing-{kind}-program")), "{text}");
     }
     cfg["providers"]["p"]["api_key_env"] = json!("NOTEPIPE_UNSET_DOCTOR_KEY");
@@ -440,12 +452,8 @@ fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
         "fixture quality".into(),
     ];
     let mut cfg = config();
-    cfg["pipeline"]
-        .as_array_mut()
-        .unwrap()
-        .insert(0, serde_json::json!("download"));
     cfg["stages"]["download"] =
-        serde_json::json!({"type":"download","command":command[0],"args":command[1..]});
+        serde_json::json!({"type":"download","input":"source","output":"media","command":command});
     cli.config_value(&cfg);
     Some(record)
 }
@@ -453,7 +461,7 @@ fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
 #[test]
 fn urls_require_an_explicit_download_stage_without_path_discovery() {
     let cli = CliTest::new();
-    cli.config_value(&config());
+    cli.config_value(&json!({"pipeline":["custom"],"stages":{"custom":{"type":"run","output":"file","publish":"file","command":["must-not-start"]}}}));
     let error = source_json_error(&cli.run(&["https://example.test/media", "--json"]));
     assert_eq!(
         error["message"],
@@ -511,10 +519,15 @@ fn source_adapter_generates_notes_and_reuses_completed_output() {
         let done = all.last().unwrap();
         assert_eq!(done["type"], "done");
         assert_eq!(done["warnings"], json!([]));
-        let note = std::fs::read_to_string(done["markdown"].as_str().unwrap()).unwrap();
+        let note = std::fs::read_to_string(done["files"]["markdown"].as_str().unwrap()).unwrap();
         assert!(note.contains("Welcome to the source adapter."));
         assert!(!note.contains("Automatic captions."));
-        assert!(note.contains("Fixture author") && note.contains(url));
+        let doc: Value = serde_json::from_slice(
+            &std::fs::read(done["files"]["draft"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(doc["meta"]["author"], "Fixture author");
+        assert_eq!(doc["meta"]["source"], url);
     }
     let calls = std::fs::read_to_string(record.join("calls")).unwrap();
     let calls: Vec<Value> = calls
@@ -534,9 +547,8 @@ fn missing_or_empty_active_provider_keys_fail_before_source_or_cache_work() {
         };
         let mut cfg: Value = serde_json::from_slice(&std::fs::read(cli.path()).unwrap()).unwrap();
         cfg["providers"]["p"] =
-            json!({"command":"must-not-start","api_key_env":"NOTEPIPE_MISSING_EARLY_KEY"});
-        cfg["stages"]["transcript"] =
-            json!({"type":"transcript","sources":["speech"],"speech":{"provider":"p"}});
+            json!({"command":["must-not-start"],"api_key_env":"NOTEPIPE_MISSING_EARLY_KEY"});
+        cfg["stages"]["transcript"] = json!({"type":"transcript","input":"media","output":"transcript.json","sources":["speech"],"speech":{"provider":"p"}});
         cli.config_value(&cfg);
         let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
         command

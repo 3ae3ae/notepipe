@@ -1,10 +1,11 @@
-//! Apply CLI overrides, then validate the effective pipeline before source work.
+//! Apply CLI overrides, then validate file dependencies before source work.
 use crate::{
     cli::RunOpts,
     config,
-    settings::{self, Stage},
+    settings::{self, Kind, StageType},
 };
 use anyhow::Result;
+use std::collections::{BTreeMap, HashSet};
 
 pub fn resolve(
     source: String,
@@ -18,188 +19,285 @@ pub fn resolve(
             "--skip: no stage named {name} in the pipeline"
         );
     }
-    let mut names = std::collections::HashSet::new();
+    let mut names = HashSet::new();
     let mut stages = Vec::new();
-    for name in file
-        .pipeline
-        .iter()
-        .filter(|name| !opts.skip.contains(name))
-    {
-        let stage = file
+    let mut written = BTreeMap::new();
+    let mut absent = BTreeMap::new();
+    let mut download = settings::Source::default();
+    let mut downloads = 0;
+    for name in &file.pipeline {
+        let mut stage = file
             .stages
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("pipeline: no stage named {name} in [stages]"))?;
+            .ok_or_else(|| anyhow::anyhow!("pipeline: no stage named {name} in [stages]"))?
+            .clone();
         anyhow::ensure!(names.insert(name), "pipeline: {name} is listed twice");
-        stages.push((name.clone(), stage.clone()));
-    }
-    let mut download_name = None;
-    let mut transcript_name = None;
-    let mut screenshots_name = None;
-    let mut note_name = None;
-    let mut transcript = settings::Transcript::default();
-    let mut screenshots = settings::Screenshots::default();
-    let mut download = settings::Source::default();
-    let mut out_root = std::path::PathBuf::from(config::DEFAULT_OUT_DIR);
-    let violation = stages
-        .iter()
-        .enumerate()
-        .flat_map(|(index, earlier)| {
-            stages[index + 1..]
-                .iter()
-                .filter(move |later| earlier.1.rank() > later.1.rank())
-                .map(move |later| (earlier, later))
-        })
-        .min_by_key(|(_, later)| later.1.rank());
-    if let Some(((name, _), (other, _))) = violation {
-        anyhow::bail!("pipeline: {name} must come after {other}");
-    }
-    for (name, stage) in &stages {
-        let slot = match stage {
-            Stage::Download(p) => {
-                download.command = p.argv();
-                Some((&mut download_name, "download"))
-            }
-            Stage::Transcript(t) => {
-                transcript = t.clone();
-                Some((&mut transcript_name, "transcript"))
-            }
-            Stage::Screenshots(s) => {
-                screenshots = s.clone();
-                Some((&mut screenshots_name, "screenshots"))
-            }
-            Stage::Note(n) => {
-                anyhow::ensure!(
-                    note_name.is_none(),
-                    "pipeline: exactly one note stage must run"
-                );
-                note_name = Some(name.clone());
-                out_root = n.dir.clone();
-                None
-            }
-            _ => None,
-        };
-        if let Some((slot, kind)) = slot {
-            anyhow::ensure!(slot.is_none(), "pipeline: only one {kind} stage can run");
-            *slot = Some(name.clone());
+        if let StageType::Download(p) = &stage.kind
+            && !opts.skip.contains(name)
+        {
+            downloads += 1;
+            anyhow::ensure!(downloads <= 1, "pipeline: only one download stage can run");
+            download.command = p.command.clone();
         }
+        for input in &stage.input {
+            if input == "source" {
+                anyhow::ensure!(
+                    matches!(stage.kind, StageType::Download(_)),
+                    "Stage {name}: only a download stage reads source"
+                );
+                continue;
+            }
+            let kind = *written
+                .get(input)
+                .ok_or_else(|| anyhow::anyhow!("Stage {name}: no earlier stage writes {input}"))?;
+            let (typ, accepted): (&str, &[Kind]) = match &stage.kind {
+                StageType::Download(_) => ("download", &[]),
+                StageType::Transcript(_) => ("transcript", &[Kind::Media]),
+                StageType::Screenshots(_) => ("screenshots", &[Kind::Media]),
+                StageType::Document {} => ("document", &[Kind::Transcript, Kind::Images]),
+                StageType::Llm(_) if stage.output.ends_with(".json") => ("llm", &[Kind::Document]),
+                StageType::Llm(_) => ("llm", &[Kind::Transcript, Kind::Document, Kind::Markdown]),
+                StageType::Markdown {} => ("markdown", &[Kind::Document, Kind::Markdown]),
+                StageType::Run(_) => (
+                    "run",
+                    &[
+                        Kind::Media,
+                        Kind::Transcript,
+                        Kind::Images,
+                        Kind::Document,
+                        Kind::Markdown,
+                    ],
+                ),
+            };
+            anyhow::ensure!(
+                accepted.contains(&kind),
+                "Stage {name} reads {input}, which is {kind}; a {typ} stage reads {}",
+                accepted
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" or ")
+            );
+        }
+        let input_kinds = stage
+            .input
+            .iter()
+            .filter_map(|p| written.get(p).copied())
+            .collect::<Vec<_>>();
+        let (valid_count, rule) = match &stage.kind {
+            StageType::Download(_) => (stage.input == ["source"], "a download stage reads source"),
+            StageType::Transcript(_) => {
+                (stage.input.len() == 1, "a transcript stage reads one input")
+            }
+            StageType::Screenshots(_) => (
+                stage.input.len() == 1,
+                "a screenshots stage reads one input",
+            ),
+            StageType::Llm(_) => (stage.input.len() == 1, "a llm stage reads one input"),
+            StageType::Document {} => (
+                input_kinds
+                    .iter()
+                    .filter(|k| **k == Kind::Transcript)
+                    .count()
+                    == 1
+                    && input_kinds.iter().filter(|k| **k == Kind::Images).count() <= 1,
+                "a document stage reads one transcript and at most one images directory",
+            ),
+            StageType::Markdown {} => (
+                !stage.input.is_empty(),
+                "a markdown stage reads at least one input",
+            ),
+            StageType::Run(_) => (true, ""),
+        };
+        anyhow::ensure!(valid_count, "Stage {name}: {rule}");
+        if let StageType::Run(p) = &stage.kind {
+            anyhow::ensure!(
+                p.command.iter().any(|s| s == "{input}")
+                    || (stage.input.len() <= 1
+                        && !input_kinds
+                            .iter()
+                            .any(|k| matches!(k, Kind::Media | Kind::Images))),
+                "Stage {name}: standard input takes one file; use {{input}} in command for more"
+            );
+        }
+        let skipped = opts.skip.contains(name);
+        if !skipped || (matches!(stage.kind, StageType::Llm(_)) && stage.output.ends_with(".json"))
+        {
+            stage.input.retain(|input| {
+                if absent.contains_key(input) {
+                    !(matches!(stage.kind, StageType::Markdown {})
+                        || (matches!(stage.kind, StageType::Document {})
+                            && written[input] == Kind::Images))
+                } else {
+                    true
+                }
+            });
+            for input in &stage.input {
+                if let Some(skipped) = absent.get(input) {
+                    anyhow::bail!("--skip {skipped}: {name} needs {input}");
+                }
+            }
+            anyhow::ensure!(
+                !matches!(stage.kind, StageType::Markdown {}) || !stage.input.is_empty(),
+                "--skip leaves stage {name} with no input"
+            );
+        }
+        if skipped && !(matches!(stage.kind, StageType::Llm(_)) && stage.output.ends_with(".json"))
+        {
+            absent.insert(stage.output.clone(), name.clone());
+        }
+        match &mut stage.kind {
+            StageType::Transcript(t) => {
+                if let Some(language) = &opts.asr_language {
+                    t.language = language.clone();
+                }
+            }
+            StageType::Screenshots(s) => {
+                if let Some(v) = opts.screenshot_mode {
+                    s.mode = v;
+                }
+                if let Some(v) = opts.similarity {
+                    s.sensitivity = v;
+                }
+                if let Some(v) = opts.sample_interval {
+                    s.frame_interval = v;
+                }
+                if let Some(v) = opts.cooldown {
+                    s.min_gap = v;
+                }
+                if let Some(v) = opts.stable_secs {
+                    s.settle = v;
+                }
+                if let Some(v) = &opts.roi {
+                    s.region = Some(v.clone());
+                }
+            }
+            _ => {}
+        }
+        written.insert(stage.output.clone(), stage.output_kind());
+        stages.push((name.clone(), stage));
     }
-    let note_name =
-        note_name.ok_or_else(|| anyhow::anyhow!("pipeline: exactly one note stage must run"))?;
-    anyhow::ensure!(
-        transcript_name.is_some() || opts.subtitle.is_some(),
-        "pipeline: a transcript stage must run, or pass --subtitle"
-    );
-    for (option, given) in [
-        ("--screenshot-mode", opts.screenshot_mode.is_some()),
-        ("--sensitivity", opts.similarity.is_some()),
-        ("--frame-interval", opts.sample_interval.is_some()),
-        ("--min-gap", opts.cooldown.is_some()),
-        ("--settle", opts.stable_secs.is_some()),
-        ("--region", opts.roi.is_some()),
+    for (option, given, matching) in [
+        ("--subtitle", opts.subtitle.is_some(), false),
+        ("--language", opts.asr_language.is_some(), false),
+        ("--screenshot-mode", opts.screenshot_mode.is_some(), true),
+        ("--sensitivity", opts.similarity.is_some(), true),
+        ("--frame-interval", opts.sample_interval.is_some(), true),
+        ("--min-gap", opts.cooldown.is_some(), true),
+        ("--settle", opts.stable_secs.is_some(), true),
+        ("--region", opts.roi.is_some(), true),
     ] {
+        let kind = if matching {
+            "screenshots"
+        } else {
+            "transcript"
+        };
         anyhow::ensure!(
-            !given || screenshots_name.is_some(),
-            "{option} needs a screenshots stage in the pipeline"
+            !given
+                || stages.iter().any(|(name, s)| !opts.skip.contains(name)
+                    && if matching {
+                        matches!(s.kind, StageType::Screenshots(_))
+                    } else {
+                        matches!(s.kind, StageType::Transcript(_))
+                    }),
+            "{option} needs a {kind} stage in the pipeline"
         );
     }
-    if let Some(language) = &opts.asr_language {
-        transcript.language = language.clone();
+    let published = stages
+        .iter()
+        .filter(|(_, s)| !absent.contains_key(&s.output))
+        .filter_map(|(_, s)| s.publish.as_deref())
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !published.is_empty(),
+        "Nothing is published; set publish on a stage"
+    );
+    anyhow::ensure!(
+        !opts.json || !published.contains(&"-"),
+        "Publishing to standard output and --json both use standard output; use one of them"
+    );
+    if source.starts_with("http://") || source.starts_with("https://") {
+        anyhow::ensure!(
+            stages
+                .iter()
+                .any(|(n, s)| !opts.skip.contains(n) && matches!(s.kind, StageType::Download(_))),
+            "{}",
+            crate::source::ADAPTER_HINT
+        );
     }
-    let speech = &transcript.speech;
-    let provider = file.providers.get(&speech.provider);
-    let asr = settings::Asr {
-        mode: speech.api,
-        model: speech.model.clone(),
-        language: if transcript.language == "auto" {
-            String::new()
-        } else {
-            transcript.language.clone()
-        },
-        base_url: provider
-            .and_then(|p| p.base_url.clone())
-            .unwrap_or_default(),
-        concurrency: provider.map_or(4, |p| p.concurrency as usize),
-        command: provider.map_or_else(Vec::new, |p| p.argv()),
-        max_speech: speech.max_segment,
-        vad_threshold: speech.threshold,
-        min_silence: speech.min_silence,
-        ..Default::default()
-    };
-    let out_root = config::expand_tilde(opts.out.clone().unwrap_or(out_root));
+    let out_root = config::expand_tilde(opts.out.clone().unwrap_or_else(|| file.out.clone()));
+    let out_root = std::path::absolute(out_root)?;
     let cfg = config::PipelineConfig {
         url: source,
-        download_name,
-        transcript_name,
-        screenshots_name,
-        note_name,
-        transcript,
         source: download,
+        transcript_name: None,
+        screenshots_name: None,
         out_dir: out_root.clone(),
         out_root,
-        similarity: opts.similarity.unwrap_or(screenshots.sensitivity),
-        sample_interval: opts.sample_interval.unwrap_or(screenshots.frame_interval),
-        cooldown: opts.cooldown.unwrap_or(screenshots.min_gap),
-        screenshot_mode: opts.screenshot_mode.unwrap_or(screenshots.mode),
-        stable_secs: opts.stable_secs.unwrap_or(screenshots.settle),
-        roi: opts
-            .roi
-            .as_ref()
-            .or(screenshots.region.as_ref())
-            .map(|r| config::Roi::parse(r))
-            .transpose()?,
+        similarity: config::DEFAULT_SIMILARITY,
+        sample_interval: config::DEFAULT_SAMPLE_INTERVAL,
+        cooldown: config::DEFAULT_COOLDOWN,
+        screenshot_mode: Default::default(),
+        stable_secs: config::DEFAULT_STABLE_SECS,
+        roi: None,
         no_resume: opts.no_resume,
         subtitle: opts.subtitle.clone(),
         stages,
         providers: file.providers.clone(),
-        asr,
+        asr: Default::default(),
+        skip: opts.skip.clone(),
+        verbose: opts.verbose > 0,
     };
-    cfg.validate()?;
+    for (name, stage) in &cfg.stages {
+        stage_config(&cfg, name, stage)?.validate()?;
+    }
     Ok(cfg)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn overrides_reach_the_named_stages_and_speech_cache_identity() {
-        let file = settings::ConfigFile::default();
-        let opts = RunOpts {
-            out: Some("notes".into()),
-            no_resume: true,
-            asr_language: Some("ko".into()),
-            screenshot_mode: Some(config::ScreenshotMode::First),
-            similarity: Some(0.7),
-            sample_interval: Some(0.5),
-            cooldown: Some(3.0),
-            stable_secs: Some(0.4),
-            roi: Some("10%,0%-100%,100%".into()),
-            ..Default::default()
-        };
-        let cfg = resolve("video".into(), &opts, &file).unwrap();
-        assert_eq!(cfg.out_root, std::path::Path::new("notes"));
-        assert!(cfg.no_resume);
-        assert_eq!(cfg.transcript.language, "ko");
-        assert_eq!(crate::checkpoint::AsrIdentity::new(&cfg.asr).language, "ko");
-        assert_eq!(
-            (
-                cfg.similarity,
-                cfg.sample_interval,
-                cfg.cooldown,
-                cfg.stable_secs
-            ),
-            (0.7, 0.5, 3.0, 0.4)
-        );
-        assert_eq!(cfg.screenshot_mode, config::ScreenshotMode::First);
-        assert!(cfg.roi.is_some());
-        let cfg = resolve(
-            String::new(),
-            &RunOpts {
-                asr_language: Some("auto".into()),
+pub fn stage_config(
+    cfg: &config::PipelineConfig,
+    name: &str,
+    stage: &settings::Stage,
+) -> Result<config::PipelineConfig> {
+    let mut cfg = cfg.clone();
+    match &stage.kind {
+        StageType::Transcript(t) => {
+            cfg.transcript_name = Some(name.into());
+            let speech = &t.speech;
+            let provider = cfg.providers.get(&speech.provider);
+            cfg.asr = settings::Asr {
+                mode: speech.api,
+                model: speech.model.clone(),
+                language: if t.language == "auto" {
+                    String::new()
+                } else {
+                    t.language.clone()
+                },
+                base_url: provider
+                    .and_then(|p| p.base_url.clone())
+                    .unwrap_or_default(),
+                concurrency: provider.map_or(4, |p| p.concurrency as usize),
+                command: provider.map_or_else(Vec::new, |p| p.argv()),
+                max_speech: speech.max_segment,
+                vad_threshold: speech.threshold,
+                min_silence: speech.min_silence,
                 ..Default::default()
-            },
-            &file,
-        )
-        .unwrap();
-        assert!(cfg.asr.language.is_empty());
+            };
+        }
+        StageType::Screenshots(s) => {
+            cfg.screenshots_name = Some(name.into());
+            cfg.similarity = s.sensitivity;
+            cfg.sample_interval = s.frame_interval;
+            cfg.cooldown = s.min_gap;
+            cfg.screenshot_mode = s.mode;
+            cfg.stable_secs = s.settle;
+            cfg.roi = s
+                .region
+                .as_ref()
+                .map(|r| config::Roi::parse(r))
+                .transpose()?;
+        }
+        _ => {}
     }
+    Ok(cfg)
 }
