@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-23
+
 Stages now read and write files, and say which: the configuration shows where every input comes from and where every
 output goes. Configurations from 0.3.0 must be rewritten; `notepipe config init --force` writes the new default file.
 
