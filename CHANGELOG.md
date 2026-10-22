@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-22
+
 The configuration is rebuilt: the whole run is a pipeline of named stages. Configurations from 0.1.0 must be rewritten;
 `notepipe config init --force` writes the new default file.
 
