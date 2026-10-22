@@ -4,7 +4,7 @@ import sys
 
 print('filter fixture diagnostics', file=sys.stderr)
 note = json.load(sys.stdin)
-assert note['schema'] == 1
+assert note['schema'] == 2
 assert isinstance(note['warnings'], list)
 mode = sys.argv[1]
 if mode == 'exit':
@@ -22,7 +22,6 @@ else:
         section['image'] = '../ignored.jpg'
         for fragment in section['speech']:
             fragment['text'] = fragment['text'].upper()
-            fragment.setdefault('below', []).append({'stage': 'filter', 'text': 'Filter below'})
             fragment['start'] = -999
             fragment['raw'] = 'ignored raw'
     note['meta']['title'] = 'ignored title'

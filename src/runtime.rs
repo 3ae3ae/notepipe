@@ -567,17 +567,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("child-pid");
         let error = run_bounded(
-            "hook",
+            "filter",
             Command::new("sh")
                 .args([
                     "-c",
                     r#"trap 'wait; exit 0' TERM
 sleep 30 &
 printf '%s' "$!" > "$1"
-printf 'hook-timeout-diagnostic\n' >&2
+printf 'filter-timeout-diagnostic\n' >&2
 wait
 "#,
-                    "hook",
+                    "filter",
                 ])
                 .arg(&pid_file),
             Duration::from_millis(300),
@@ -587,12 +587,16 @@ wait
         .expect("the command must time out");
         let message = format!("{error:#}");
         assert!(message.contains("was stopped") && message.contains("time limit"));
-        assert!(message.contains("hook-timeout-diagnostic"));
+        assert!(message.contains("filter-timeout-diagnostic"));
         let pid = std::fs::read_to_string(pid_file)
             .unwrap()
             .parse::<i32>()
             .unwrap();
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "hook child was orphaned");
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "filter child was orphaned"
+        );
     }
 
     #[test]

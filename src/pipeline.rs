@@ -1,6 +1,6 @@
 //! Local media to a note folder, with independent stage caches for each source.
 use crate::{
-    artifact::{self, Document},
+    artifact::{self, Document, StageOutput},
     asr, checkpoint,
     config::{self, PipelineConfig},
     media, progress, runtime, scene,
@@ -234,21 +234,29 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     } else {
         Some(scene::Output::NoVideo)
     };
+    let keep_download = !local
+        && cfg
+            .stages
+            .iter()
+            .any(|(_, stage)| matches!(stage, crate::settings::Stage::Download(_)) && stage.keep());
+    if keep_download && source_media.is_none() {
+        source_media = artifact::retained_download(&cfg.out_root, &meta, &source_cache)?;
+    }
     let need_media = frames.is_none() || (transcript.is_none() && selected.is_none());
     if need_media {
         crate::error::require_cmd("ffmpeg")?;
         crate::error::require_cmd("ffprobe")?;
-        if !local && source_media.is_none() {
-            let resolved = source::resolve(
-                &cfg.url,
-                &cfg.source,
-                &source_cache,
-                cfg.download_name.as_deref().unwrap_or("download"),
-            )
-            .await?;
-            meta = resolved.meta;
-            source_media = Some(resolved.media);
-        }
+    }
+    if !local && source_media.is_none() && (need_media || keep_download) {
+        let resolved = source::resolve(
+            &cfg.url,
+            &cfg.source,
+            &source_cache,
+            cfg.download_name.as_deref().unwrap_or("download"),
+        )
+        .await?;
+        meta = resolved.meta;
+        source_media = Some(resolved.media);
     }
     let media_path = if local {
         Some(PathBuf::from(&cfg.url))
@@ -385,6 +393,30 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     if cfg.subtitle.is_none() {
         progress::stage(transcript_name, "done");
     }
+    let mut outputs = Vec::new();
+    for (name, stage) in &cfg.stages {
+        if !stage.keep() {
+            continue;
+        }
+        match stage {
+            crate::settings::Stage::Transcript(_) if cfg.subtitle.is_none() => {
+                outputs.push(StageOutput::Json(
+                    name.clone(),
+                    serde_json::json!({"events":speech}),
+                ));
+            }
+            crate::settings::Stage::Screenshots(_) => {
+                let screenshots = frames.iter().enumerate().map(|(index, frame)| {
+                    serde_json::json!({"t":frame.t,"image":format!("images/{:04}.jpg", index + 1)})
+                }).collect::<Vec<_>>();
+                outputs.push(StageOutput::Json(
+                    name.clone(),
+                    serde_json::json!(screenshots),
+                ));
+            }
+            _ => {}
+        }
+    }
     let mut sections = if frames.is_empty() {
         vec![timeline::Section {
             t: 0.,
@@ -406,16 +438,19 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         if let crate::settings::Stage::Filter(program) = definition {
             progress::stage(name, "start");
             let document = Document {
-                schema: 1,
+                schema: 2,
                 meta: meta.clone(),
                 sections,
                 top,
                 warnings: warnings.clone(),
             };
             let (program, filter_name) = (program.clone(), name.clone());
-            let document =
+            let (document, returned) =
                 tokio::task::spawn_blocking(move || filter(&filter_name, &program, document))
                     .await??;
+            if definition.keep() {
+                outputs.push(StageOutput::Json(name.clone(), returned));
+            }
             sections = document.sections;
             top = document.top;
             progress::stage(name, "done");
@@ -442,6 +477,12 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
                     paragraphs_with_rollback(sections, &frames_root, &settings, &stage).await?;
                 sections = processed;
                 report_warning(&mut warnings, name, &report);
+                if definition.keep() {
+                    outputs.push(StageOutput::Json(
+                        name.clone(),
+                        serde_json::to_value(artifact::note_sections(&sections))?,
+                    ));
+                }
             }
             crate::llm::Input::Transcript => {
                 let events = sections
@@ -449,10 +490,15 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
                     .flat_map(|section| section.speech.iter().cloned())
                     .collect::<Vec<_>>();
                 match crate::summarize::run(&settings, &stage, &events, &meta).await {
-                    Ok(text) => top.push(timeline::StageText {
-                        stage: name.clone(),
-                        text,
-                    }),
+                    Ok(text) => {
+                        if definition.keep() {
+                            outputs.push(StageOutput::Markdown(name.clone(), text.clone()));
+                        }
+                        top.push(timeline::StageText {
+                            stage: name.clone(),
+                            text,
+                        });
+                    }
                     Err(error) => warnings.push(format!("{name}: {error:#}")),
                 }
             }
@@ -464,36 +510,31 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     runtime::check_cancelled()?;
     progress::stage_label(&cfg.note_name, "start", "Writing notes");
     if let Some(path) = source_media {
-        remove_file(&path, &mut warnings);
+        if keep_download {
+            outputs.push(StageOutput::Download {
+                name: cfg.download_name.clone().unwrap(),
+                cache: source_cache,
+                media: path,
+            });
+        } else {
+            remove_file(&path, &mut warnings);
+        }
     }
     remove_file(&audio, &mut warnings);
     let document = Document {
-        schema: 1,
+        schema: 2,
         meta,
         sections,
         top,
         warnings,
     };
     let root = cfg.out_root.clone();
-    let (note_dir, mut warnings) =
-        tokio::task::spawn_blocking(move || artifact::publish(&root, &frames_root, document))
-            .await
-            .context("Note publication interrupted")??;
+    let (note_dir, warnings) = tokio::task::spawn_blocking(move || {
+        artifact::publish(&root, &frames_root, document, outputs)
+    })
+    .await
+    .context("Note publication interrupted")??;
     progress::stage_label(&cfg.note_name, "done", "Writing notes");
-    for (name, definition) in &cfg.stages {
-        if let crate::settings::Stage::Hook(program) = definition {
-            progress::stage(name, "start");
-            let (argv, directory, count) = (program.argv(), note_dir.clone(), warnings.len());
-            if let Err(error) = tokio::task::spawn_blocking(move || hook(&argv, &directory, count))
-                .await
-                .context("Completion hook interrupted")
-                .and_then(|result| result)
-            {
-                warnings.push(format!("{name}: {error:#}"));
-            }
-            progress::stage(name, "done");
-        }
-    }
     for warning in &warnings {
         eprintln!("Warning: {warning}");
     }
@@ -588,33 +629,11 @@ async fn start_ai_adapter(argv: Vec<String>, stage: String) -> Result<crate::ada
     .await?
 }
 
-fn hook(argv: &[String], note_dir: &Path, warnings: usize) -> Result<()> {
-    let program = crate::adapter::resolve_executable(&argv[0])?.canonicalize()?;
-    let output = runtime::run_bounded(
-        "hook",
-        std::process::Command::new(program)
-            .args(&argv[1..])
-            .current_dir(note_dir)
-            .env("NOTEPIPE_NOTE_DIR", note_dir)
-            .env("NOTEPIPE_MARKDOWN", note_dir.join("note.md"))
-            .env("NOTEPIPE_JSON", note_dir.join("note.json"))
-            .env("NOTEPIPE_WARNINGS", warnings.to_string()),
-        std::time::Duration::from_secs(10 * 60),
-        None,
-    )?;
-    anyhow::ensure!(
-        output.status.success(),
-        "{}",
-        crate::error::cmd_error("hook", output.status.code(), &output.stderr)
-    );
-    Ok(())
-}
-
 fn filter(
     name: &str,
     program: &crate::settings::Program,
     mut document: Document,
-) -> Result<Document> {
+) -> Result<(Document, serde_json::Value)> {
     let output = runtime::run_bounded(
         "filter",
         std::process::Command::new(crate::adapter::resolve_executable(&program.command)?)
@@ -622,13 +641,14 @@ fn filter(
         std::time::Duration::from_secs(10 * 60),
         Some(&serde_json::to_vec(&document)?),
     )?;
-    let apply = || -> Result<Document> {
+    let apply = || -> Result<(Document, serde_json::Value)> {
         anyhow::ensure!(
             output.status.success(),
             "{}",
             crate::error::cmd_error("filter", output.status.code(), &output.stderr)
         );
-        let changed: Document = serde_json::from_slice(&output.stdout)?;
+        let returned: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let changed: Document = serde_json::from_value(returned.clone())?;
         anyhow::ensure!(
             changed.sections.len() == document.sections.len()
                 && changed
@@ -645,10 +665,9 @@ fn filter(
                     old.raw = Some(old.text.clone());
                 }
                 old.text = new.text;
-                old.below = new.below;
             }
         }
-        Ok(document)
+        Ok((document, returned))
     };
     apply().with_context(|| {
         format!(
@@ -714,12 +733,18 @@ mod tests {
     fn a_provider_is_last_used_by_its_final_processing_stage() {
         let stage = |text: &str| toml::from_str::<crate::settings::Stage>(text).unwrap();
         let stages = vec![
-            ("a".to_owned(), stage("type = 'rewrite'\nprovider = 'one'")),
+            (
+                "a".to_owned(),
+                stage("type = 'llm'\nreads = 'paragraphs'\nprovider = 'one'"),
+            ),
             ("f".to_owned(), stage("type = 'filter'\ncommand = 'tool'")),
-            ("b".to_owned(), stage("type = 'add-top'\nprovider = 'two'")),
+            (
+                "b".to_owned(),
+                stage("type = 'llm'\nreads = 'transcript'\nprovider = 'two'"),
+            ),
             (
                 "c".to_owned(),
-                stage("type = 'add-below'\nprovider = 'one'"),
+                stage("type = 'llm'\nreads = 'paragraphs'\nprovider = 'one'"),
             ),
         ];
         assert_eq!(last_use(&stages, "one"), Some(3));
@@ -796,7 +821,7 @@ mod tests {
         let first = screenshot_key(&cfg).unwrap();
         cfg.stages.push((
             "summary".into(),
-            crate::settings::Stage::AddTop(Default::default()),
+            crate::settings::Stage::Llm(Default::default()),
         ));
         cfg.asr.model = "different".into();
         assert_eq!(screenshot_key(&cfg).unwrap(), first);

@@ -112,7 +112,7 @@ mod tests {
     fn transcript_contracts_do_not_override_user_instructions() {
         let mut stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"add-top","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
@@ -125,7 +125,6 @@ mod tests {
                 end: f64::from(index * 60 + 1),
                 text: "x".repeat(stage.chunk_size - 10),
                 raw: None,
-                below: Vec::new(),
             })
             .collect::<Vec<_>>();
         let chunks = chunks(&events, stage.chunk_size);
@@ -146,7 +145,7 @@ mod tests {
         };
         let stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"add-top","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         assert!(
@@ -189,7 +188,7 @@ mod tests {
         });
         let mut stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"add-top","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         stage.prompt = "EXTRACT ACTION ITEMS.".into();
@@ -205,7 +204,6 @@ mod tests {
                 end: f64::from(index * 60 + 1),
                 text: "x".repeat(15_000),
                 raw: None,
-                below: Vec::new(),
             })
             .collect::<Vec<_>>();
         let meta = crate::source::MediaMeta {

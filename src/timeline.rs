@@ -21,8 +21,6 @@ pub struct TranscriptEvent {
     /// Original text, kept for provenance once a stage replaced it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub below: Vec<StageText>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -162,7 +160,6 @@ fn split_at_natural_boundaries(event: TranscriptEvent, boundaries: &[f64]) -> Ve
                 end: window[1],
                 text,
                 raw: event.raw.clone(),
-                below: Vec::new(),
             }
         })
         .collect()
@@ -224,7 +221,6 @@ pub fn coalesce_sections(sections: &mut [Section]) {
                         end: event.end,
                         text: text.to_string(),
                         raw: None,
-                        below: Vec::new(),
                     });
                 }
             }
@@ -331,7 +327,6 @@ mod tests {
             end,
             text: format!("{start}-{end}"),
             raw: None,
-            below: Vec::new(),
         }
     }
 
@@ -357,7 +352,6 @@ mod tests {
             end: 10.0,
             text: "前半句，后半句。".into(),
             raw: None,
-            below: Vec::new(),
         }];
         let s = merge(frames, speech, 10.0);
         // A comma near the 5 s boundary: split there so text follows the screenshot.
@@ -375,7 +369,6 @@ mod tests {
             end: 10.0,
             text: "一二三四五六七八九十".into(),
             raw: None,
-            below: Vec::new(),
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[5.0]);
         assert_eq!(parts.len(), 1, "no punctuation, no split");
@@ -387,7 +380,6 @@ mod tests {
             end: 1.0,
             text: "abc".into(),
             raw: None,
-            below: Vec::new(),
         };
         assert_eq!(split_at_natural_boundaries(ev2, &[0.1]).len(), 1);
     }
@@ -400,7 +392,6 @@ mod tests {
             end: 10.0,
             text: "你好，世界很好。再见".into(),
             raw: None,
-            below: Vec::new(),
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[5.0]);
         assert_eq!(parts.len(), 2);
@@ -413,7 +404,6 @@ mod tests {
             end: 10.0,
             text: "compiler optimization lecture".into(),
             raw: None,
-            below: Vec::new(),
         };
         let parts2 = split_at_natural_boundaries(ev2, &[5.0]);
         assert_eq!(parts2[0].text, "compiler ");
@@ -428,7 +418,6 @@ mod tests {
             end: 30.0,
             text: "零一，二三四五六七八九十".into(),
             raw: None,
-            below: Vec::new(),
         };
         let parts = split_at_natural_boundaries(ev.clone(), &[10.0, 20.0]);
         assert_eq!(
@@ -481,14 +470,12 @@ mod tests {
                     end: 2.0,
                     text: long_text.clone(),
                     raw: None,
-                    below: Vec::new(),
                 },
                 TranscriptEvent {
                     start: 2.1,
                     end: 4.0,
                     text: long_text.clone(),
                     raw: None,
-                    below: Vec::new(),
                 },
             ];
             let mut sections = vec![Section {
@@ -559,14 +546,12 @@ mod tests {
                 end: 2.0,
                 text: "hello world".into(),
                 raw: None,
-                below: Vec::new(),
             },
             TranscriptEvent {
                 start: 2.2,
                 end: 4.0,
                 text: "next sentence".into(),
                 raw: None,
-                below: Vec::new(),
             },
         ];
         let mut sections = vec![Section {

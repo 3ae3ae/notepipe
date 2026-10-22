@@ -1,3 +1,4 @@
+# Lines starting with # show the defaults.
 # Every setting is described in https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
 
 pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "note"]
@@ -5,43 +6,48 @@ pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "no
 [providers.openai]
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
-concurrency = 4
+# concurrency = 4
 
 [stages.download]
 type = "download"
 command = "notepipe-source-ytdlp"
+# keep = false
 
 [stages.transcript]
 type = "transcript"
-language = "auto"
-sources = ["subtitles", "speech"]
+# language = "auto"
+# sources = ["subtitles", "speech"]
+# keep = false
 
 [stages.transcript.subtitles]
-sidecar = true
-downloaded = true
-automatic = true
+# sidecar = true
+# downloaded = true
+# automatic = true
 
 [stages.transcript.speech]
 provider = "openai"
-api = "transcriptions"
 model = "whisper-1"
-threshold = 0.5
-min_silence = 0.4
-max_segment = 20.0
+# api = "transcriptions"
+# threshold = 0.5
+# min_silence = 0.4
+# max_segment = 20.0
 
 [stages.screenshots]
 type = "screenshots"
-mode = "stable"
-sensitivity = 0.85
-frame_interval = 1.0
-min_gap = 10.0
-settle = 0.8
+# mode = "stable"
+# sensitivity = 0.85
+# frame_interval = 1.0
+# min_gap = 10.0
+# settle = 0.8
+# keep = false
 
 [stages.proofread]
-type = "rewrite"
+type = "llm"
+reads = "paragraphs"
 provider = "openai"
 model = "gpt-6-luna"
-batch_size = 20
+# batch_size = 20
+# keep = false
 prompt = '''
 You proofread transcripts of spoken recordings. Each input item is a stretch of continuous speech,
 already split at natural pauses. Fix obvious speech-recognition errors (misheard words, homophones,
@@ -57,10 +63,12 @@ on it.
 '''
 
 [stages.summary]
-type = "add-top"
+type = "llm"
+reads = "transcript"
 provider = "openai"
 model = "gpt-6-luna"
-chunk_size = 25000
+# chunk_size = 25000
+# keep = false
 prompt = '''
 You summarize recordings from their timestamped transcript. Use only what the transcript says: never
 invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a
@@ -73,4 +81,4 @@ language of the transcript.
 
 [stages.note]
 type = "note"
-dir = "."
+# dir = "."
