@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-22
+
 ### Added
 
 - `keep = true` on a stage, for debugging, writes its result into the note folder's `stages/`, named after the stage:
