@@ -507,6 +507,27 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn readme_shows_the_generated_file_with_shortened_prompts() {
+        let mut in_prompt = false;
+        let shortened: String = super::template()
+            .lines()
+            .filter_map(|line| {
+                if in_prompt {
+                    in_prompt = line != "'''";
+                    return None;
+                }
+                in_prompt = line == "prompt = '''";
+                Some(if in_prompt {
+                    "prompt = '''…'''\n".to_owned()
+                } else {
+                    format!("{line}\n")
+                })
+            })
+            .collect();
+        assert!(include_str!("../README.md").contains(&shortened));
+    }
+
+    #[test]
     fn old_sections_are_rejected() {
         assert!(super::parse("[asr]\nbase_url = 'https://example.test/v1'\n").is_err());
         assert!(super::parse("[[ai.stages]]\nname = 'summary'\n").is_err());

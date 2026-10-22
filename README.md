@@ -134,44 +134,63 @@ notepipe config show    # show the settings in effect
 The file is `~/.config/notepipe/config.toml`, or `%APPDATA%\notepipe\config.toml` on Windows (`$XDG_CONFIG_HOME/notepipe/`
 when that is set). The first run creates it and says where it is. Every default value is written out, so what the file
 says is what runs. A connection is written once under `[services]`, and speech recognition and each stage name the one
-they use. Set up for Korean lectures and OpenAI, the parts you would change look like this:
+they use. This is the file notepipe creates, with the two prompts shortened:
 
 ```toml
-[services.openai]                   # one connection, used by name below
-base_url = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"      # or api_key = "…"
+# Every setting is described in https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
+
+[services.speech]
+base_url = ""
+concurrency = 4
+
+[services.ai]
+base_url = ""
+concurrency = 4
 
 [output]
-dir = "~/notes"
+dir = "."
 
 [transcript]
-language = "ko"                     # empty: detect
+source = "auto"
 
-[speech]                            # used when there are no subtitles
-service = "openai"
-model = "gpt-4o-mini-transcribe"
+[speech]
+service = "speech"
+api = "transcriptions"
+model = ""
+
+[speech.detection]
+threshold = 0.5
+min_silence = 0.4
+max_segment = 20.0
 
 [screenshots]
-mode = "stable"                     # wait for animated slides to settle
+mode = "stable"
+sensitivity = 0.85
+frame_interval = 1.0
+min_gap = 10.0
+settle = 0.8
 
-[[stages]]                          # stages run in this order
+[[stages]]
 name = "proofread"
-service = "openai"
-model = "gpt-5.6-luna"
+service = "ai"
+model = ""
 input = "paragraphs"
 output = "replace"
-prompt = '''…'''                    # the prompt the file came with, or your own
+prompt = '''…'''
 
 [[stages]]
 name = "summary"
-service = "openai"
-model = "gpt-5.6-terra"             # each stage picks its own model
+service = "ai"
+model = ""
 input = "transcript"
 output = "top"
 prompt = '''…'''
-request = { reasoning_effort = "medium" }
 ```
 
+To start, give each service an address and each step a `model`: for OpenAI, `base_url = "https://api.openai.com/v1"`
+and `api_key_env = "OPENAI_API_KEY"` in both services, and models such as `gpt-4o-mini-transcribe` for speech and
+`gpt-5.6-luna` for the stages. A local engine takes an `adapter` instead of a `base_url`. Until a service has an address,
+the first run in a terminal asks for the speech service, and stages that use it are skipped with a warning.
 [docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md) lists every setting.
 
 ## Speech recognition
@@ -202,7 +221,7 @@ own in a few lines:
 ```toml
 [[stages]]
 name = "translate"
-service = "openai"
+service = "ai"
 model = "gpt-5.6-luna"
 input = "paragraphs"                # each paragraph …
 output = "below"                    # … gets the model's answer underneath
@@ -210,7 +229,7 @@ prompt = "Translate each item into Korean. Keep names, code and formulas unchang
 
 [[stages]]
 name = "action-items"
-service = "openai"
+service = "ai"
 model = "gpt-5.6-luna"
 input = "transcript"                # the whole transcript …
 output = "top"                      # … and the answer at the top of the note
