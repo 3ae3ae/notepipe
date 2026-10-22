@@ -15,7 +15,7 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   `config.toml` (see `notepipe config init`). Command-line options still override it.
 - `--subtitle FILE` supplies an SRT or VTT transcript; subtitle discovery and speech recognition are skipped. An
   unreadable or empty file is an error.
-- `--stages a,b` / `--no-stages` choose the AI stages for this run.
+- `--stages a,b` / `--no-stages` choose the stages for this run.
 - With `--json` notepipe never prompts. Missing settings are errors.
 
 API keys can be part of the configuration. `NOTEPIPE_SPEECH_API_KEY` and `NOTEPIPE_AI_API_KEY` fill keys that are empty,
@@ -29,13 +29,13 @@ With `--json`, standard output carries one JSON object per line. Every object ha
 |---|---|---|
 | `stage` | `stage`, `status` (`start` or `done`) | a pipeline stage began or ended |
 | `progress` | `stage`, `current`, `total` | progress within a stage |
-| `tokens` | `stage`, `prompt`, `completion` | token usage so far in an AI stage |
+| `tokens` | `stage`, `prompt`, `completion` | token usage so far in a stage |
 | `log` | `level` (`error`, `warn`, `info`, `debug`), `message` | diagnostics |
 | `done` | `note_dir`, `markdown`, `json`, `warnings` | the note was written |
 | `error` | `message` | the run failed |
 
-Stage names include `adapter/start`, `download`, `subtitle`, `scenes/scan`, `scenes/extract`, `audio`, `transcribe`,
-`summary` and `render`, plus the names of configured AI stages. Treat unknown stage names and extra fields as
+Stage names include `adapter/start`, `download`, `subtitle`, `scenes/scan`, `scenes/extract`, `audio`, `transcribe` and
+`render`, plus the names of configured stages. Treat unknown stage names and extra fields as
 informational; new ones may be added.
 
 ## Exit status
@@ -118,7 +118,7 @@ A failing hook produces a warning; the note and the exit status are unaffected.
 
 Downloads, screenshots, transcripts and AI responses are cached per source in `$XDG_CACHE_HOME/notepipe` when that is
 set, otherwise in `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and
-`~/.cache/notepipe` elsewhere. Media and extracted audio are deleted once the AI stages have run, just before the note
+`~/.cache/notepipe` elsewhere. Media and extracted audio are deleted once the stages have run, just before the note
 is written. A later run that needs them again, because screenshot settings changed or, when speech is recognized, speech
-settings changed, downloads the media again; one that changes only AI stages does not. The cache can be deleted whenever
+settings changed, downloads the media again; one that changes only stages does not. The cache can be deleted whenever
 notepipe is not running; `--no-resume` clears one source's entry.

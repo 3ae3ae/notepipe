@@ -69,7 +69,7 @@ component that other programs can build on.
 ## Contents
 
 [Installation](#installation) · [Quick start](#quick-start) · [Configuration](#configuration) ·
-[Speech recognition](#speech-recognition) · [AI stages and prompts](#ai-stages-and-prompts) · [Adapters](#adapters) ·
+[Speech recognition](#speech-recognition) · [Stages and prompts](#stages-and-prompts) · [Adapters](#adapters) ·
 [The note](#the-note) · [Using notepipe from other programs](#using-notepipe-from-other-programs) ·
 [Acknowledgements](#acknowledgements)
 
@@ -127,14 +127,15 @@ Otherwise speech is transcribed; the first run in a terminal asks which speech s
 ## Configuration
 
 ```sh
-notepipe config init    # create the configuration file, with every setting explained in comments
+notepipe config init    # create the configuration file with the default settings
 notepipe config path    # print where it is
 notepipe config show    # show the settings in effect
 ```
 
 The file is `~/.config/notepipe/config.toml`, or `%APPDATA%\notepipe\config.toml` on Windows (`$XDG_CONFIG_HOME/notepipe/`
-when that is set). Its sections follow the order in which a note is made, and every command-line option names the
-setting it overrides:
+when that is set). The first run creates it and says where it is. Every default value is written out, so what the file
+says is what runs. Its sections follow the order in which a note is made, and every command-line option names the
+setting it overrides. Set up for Korean lectures and OpenAI, the parts you would change look like this:
 
 ```toml
 [output]
@@ -150,16 +151,22 @@ model = "gpt-4o-mini-transcribe"
 [screenshots]
 mode = "stable"                     # wait for animated slides to settle
 
-[ai]                                # shared by every AI stage
+[ai]                                # the service the stages use
 base_url = "https://api.openai.com/v1"
 model = "gpt-5.6-luna"
 
-[[ai.stages]]                       # stages run in this order
+[[stages]]                          # stages run in this order
 name = "proofread"
+input = "paragraphs"
+output = "replace"
+prompt = '''…'''                    # the prompt the file came with, or your own
 
-[[ai.stages]]
+[[stages]]
 name = "summary"
-model = "gpt-5.6-terra"             # a stage can use its own model, service, key or prompt
+input = "transcript"
+output = "top"
+prompt = '''…'''
+model = "gpt-5.6-terra"             # a stage can use its own model, service, key or adapter
 request = { reasoning_effort = "medium" }
 ```
 
@@ -180,42 +187,39 @@ Speech is located on your machine, cut into short segments and sent to the servi
 | xAI, Meta | the [`xai`](#xai--xai-speech-to-text) or [`meta`](#meta--meta-speech-to-text) adapter |
 | llama.cpp, Intel NPU, Apple silicon (on your machine) | the [`llama`](#llama--llamacpp), [`openvino`](#openvino--intel-npu-cpu-or-gpu) or [`speech-swift`](#speech-swift--apple-silicon) adapter |
 
-## AI stages and prompts
+## Stages and prompts
 
-An AI stage sends the note to an OpenAI-compatible chat model with a prompt, and puts the answer back into the note.
-It reads either each paragraph or the whole transcript, and writes in place of each paragraph, below it, or at the top
-of the note. Stages run in the order you list them, each with its own model if you like.
+A stage sends the note to an OpenAI-compatible chat model with a prompt, and puts the answer back into the note. It
+reads either each paragraph or the whole transcript, and writes in place of each paragraph, below it, or at the top of
+the note. Stages run in the order you list them, each with its own model if you like.
 
-Two stages are built in: `proofread` corrects recognition errors and removes filler, and `summary` adds an overview, key
-points and a timed outline. **Every prompt is yours to change.** Give a built-in stage your own prompt:
-
-```toml
-[[ai.stages]]
-name = "summary"
-prompt = "Summarize this lecture for a student who missed it: the main argument, each new term with its definition, and what to review."
-```
-
-or write a stage of your own in a few lines:
+The configuration file starts with two: `proofread` corrects recognition errors and removes filler, and `summary` adds
+an overview, key points and a timed outline. They are ordinary stages, with their prompts written out in the file.
+**Every stage is yours to change:** rewrite a prompt, reorder the blocks, delete the ones you do not want, or add your
+own in a few lines:
 
 ```toml
-[[ai.stages]]
+[[stages]]
 name = "translate"
 input = "paragraphs"                # each paragraph …
 output = "below"                    # … gets the model's answer underneath
 prompt = "Translate each item into Korean. Keep names, code and formulas unchanged."
 
-[[ai.stages]]
+[[stages]]
 name = "action-items"
 input = "transcript"                # the whole transcript …
 output = "top"                      # … and the answer at the top of the note
 prompt = "List the decisions and action items in this meeting as a Markdown checklist, with owners where named."
 ```
 
-`--stages translate,summary` picks stages for one run, `--no-stages` skips them, and `--proofread-prompt` replaces the
-proofread prompt once. Any OpenAI-compatible chat service works, including OpenAI, Anthropic
-(`https://api.anthropic.com/v1`), Google Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`), OpenRouter,
-Groq, and local servers such as Ollama (`http://localhost:11434/v1`) or LM Studio. Anything else, such as the OpenAI
-Responses API or access through a subscription, connects through an [AI adapter](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#ai-adapters).
+Until `[ai]` names a service, the stages are skipped with a warning and the note is written without them. A stage does
+not have to use a language model: give it an `adapter`, and a program of your own handles it, whether that program calls
+another API or applies fixed rules ([docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#ai-adapters)).
+
+`--stages translate,summary` picks stages for one run, and `--no-stages` skips them. Any OpenAI-compatible chat service
+works, including OpenAI, Anthropic (`https://api.anthropic.com/v1`), Google Gemini
+(`https://generativelanguage.googleapis.com/v1beta/openai`), OpenRouter, Groq, and local servers such as Ollama
+(`http://localhost:11434/v1`) or LM Studio. Anything else, such as the OpenAI Responses API or access through a subscription, connects through an [AI adapter](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#ai-adapters).
 
 ## Adapters
 

@@ -13,7 +13,7 @@ language models, and two small, documented [adapter contracts](adapters.md) for 
 website that fits those interfaces works; none is built in.
 
 **Stay light.** The default installation contains no speech recognition or language models and no platform SDKs. Speech
-recognition and AI stages run wherever you point them: a cloud API, a server on your network, or a local engine started
+recognition and stages run wherever you point them: a cloud API, a server on your network, or a local engine started
 as an adapter.
 
 **Stay neutral.** No vendor, website, language or region is preferred. Prompts are English defaults that you replace;
@@ -50,7 +50,7 @@ URL ──► download adapter ───┴──► media file
                       timeline: sections and paragraphs
                                       │
                                       ▼
-                       AI stages, in configured order
+                          stages, in configured order
                                       │
                                       ▼
                                  note folder ──► completion hook
@@ -64,8 +64,8 @@ URL ──► download adapter ───┴──► media file
    detector compiled into notepipe, split into short segments and sent to the configured speech endpoint.
 4. **Timeline.** Transcript fragments are grouped under the screenshot that was on screen and joined into paragraphs,
    with word spacing that follows each writing system.
-5. **AI stages.** Each configured stage sends the paragraphs or the whole transcript to a language model with its prompt,
-   and replaces paragraphs, adds text below them or adds Markdown at the top.
+5. **Stages.** Each configured stage sends the paragraphs or the whole transcript to a language model with its prompt,
+   or to an adapter, and replaces paragraphs, adds text below them or adds Markdown at the top.
 6. **Note.** `note.md`, `images/` and `note.json` are written to a staging folder and moved into place, then the
    completion hook runs.
 

@@ -6,13 +6,18 @@ notepipe reads `config.toml` from `$XDG_CONFIG_HOME/notepipe/` when that variabl
 JSON with the same structure.
 
 ```sh
-notepipe config init    # create the file, with every setting explained in comments
+notepipe config init    # create the file with the default settings
 notepipe config path    # print where it is
 notepipe config show    # show the settings in effect
 ```
 
-Values are taken from, in order: command-line options, the configuration, built-in defaults. Unknown keys are errors, so
-a typo is reported instead of being ignored. The sections follow the order in which a note is made.
+The first run creates the file when there is none and says where it is; `config init` writes the same file. It holds
+every setting that has a value by default, with that value, and the stages `proofread` and `summary` with their prompts.
+What the file says is what runs: change a value, delete a stage or add your own. Settings that start empty are left out
+of it and described below.
+
+Values are taken from, in order: command-line options, the configuration, the defaults below. Unknown keys are errors,
+so a typo is reported instead of being ignored. The sections follow the order in which a note is made.
 
 ## `[output]`
 
@@ -69,12 +74,14 @@ recordings.
 
 Audio files have no screenshots.
 
-## `[ai]` — AI stages
+## `[ai]` — AI service
+
+The service that stages use unless they set their own `base_url` or `adapter`.
 
 | Key | Option | Default | Meaning |
 |---|---|---|---|
 | `base_url` | `--ai-base-url` | `""` | OpenAI-compatible chat service used by every stage that does not set its own; ignored when `adapter` is set |
-| `adapter` | — | `[]` | AI adapter to start for the run, as an argument list; stages without their own `base_url` use it. See [docs/adapters.md](adapters.md#ai-adapters) |
+| `adapter` | — | `[]` | AI adapter to start for the run, as an argument list; stages without their own `base_url` or `adapter` use it. See [docs/adapters.md](adapters.md#ai-adapters) |
 | `api_key` | `--ai-api-key` | `""` | Sent as `Authorization: Bearer`; when empty, `NOTEPIPE_AI_API_KEY` is used |
 | `model` | `--ai-model` | `""` | Model for every stage that does not set its own; optional for stages that use the adapter |
 | `concurrency` | — | `8` | Parallel requests per stage, 1 to 16 |
@@ -84,30 +91,36 @@ Nothing is sent by default for sampling or length limits; add fields such as `te
 `request` if your model needs them. `model`, `messages`, `stream` and `response_format` are set by notepipe and cannot be
 set through `request`.
 
-### `[[ai.stages]]`
+## `[[stages]]`
 
-Each block adds a stage; stages run in the order of the blocks. No stage runs unless one is configured or selected with
-`--stages`.
+Each block adds a stage; stages run in the order of the blocks once the transcript is ready. A stage sends each
+paragraph, or the whole transcript, to the AI service with its prompt, or to an adapter, and puts the answer into the
+note. notepipe has no stages of its own: the two in the file it creates are ordinary stages like any you add.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `name` | required | `proofread` and `summary` are built in; any other name defines a stage of your own. Names must be unique. |
-| `input` | built-in or required | `paragraphs`: the note's paragraphs, in batches; `transcript`: the whole timestamped transcript |
-| `output` | built-in or required | For `paragraphs`: `replace` or `below`. For `transcript`: `top` |
-| `prompt` | built-in or required | Instructions for the model. For a built-in stage, replaces its prompt. |
+| `name` | required | Names the stage in progress output, warnings and `--stages`; names must be unique |
+| `input` | required | `paragraphs`: the note's paragraphs, in batches; `transcript`: the whole timestamped transcript |
+| `output` | required | For `paragraphs`: `replace` or `below`. For `transcript`: `top` |
+| `prompt` | required without `adapter` | Instructions for the model |
 | `images` | `false` | `paragraphs` only: also send the screenshot shown during each paragraph |
-| `base_url`, `api_key`, `model` | inherited | Override the `[ai]` connection for this stage |
+| `adapter` | `[]` | A program that handles this stage instead of the AI service, as an argument list; it need not use a language model. See [docs/adapters.md](adapters.md#ai-adapters) |
+| `base_url`, `api_key`, `model` | inherited | Override the `[ai]` connection for this stage; `base_url` and `adapter` cannot both be set |
 | `request` | `{}` | Merged after `[ai].request` |
 
-| Stage | Input → output | Default prompt |
+The file notepipe creates holds these two:
+
+| Stage | Input → output | What its prompt asks for |
 |---|---|---|
 | `proofread` | `paragraphs` → `replace` | Fixes recognition errors, filler and punctuation without changing meaning or language; writes formulas as LaTeX |
 | `summary` | `transcript` → `top` | A one-sentence overview, 3–6 key points and a timestamped outline, in the transcript's language |
 
+A stage with nowhere to send its input, because neither it nor `[ai]` sets a `base_url` or `adapter`, is skipped with a
+warning. The created file therefore works before an AI service is set; delete the stages you do not want.
+
 With `replace`, an empty result removes the paragraph; if a stage would empty every paragraph, the text is kept and a
 warning is added. With `below`, an empty result or one identical to the paragraph adds nothing. `--stages a,b` runs the
-named built-in or configured stages for one run, `--no-stages` runs none, and `--proofread-prompt` replaces the
-`proofread` prompt for one run.
+named stages of the configuration for one run, and `--no-stages` runs none.
 
 ## `[download]`
 
@@ -141,11 +154,14 @@ model = "whisper-large-v3-turbo"
 base_url = "http://localhost:11434/v1"   # Ollama
 model = "qwen3:14b"
 
-[[ai.stages]]
+[[stages]]
 name = "proofread"
+input = "paragraphs"
+output = "replace"
 images = true
+prompt = "Fix speech-recognition errors and filler in each item. Keep its meaning and language."
 
-[[ai.stages]]
+[[stages]]
 name = "glossary"
 input = "transcript"
 output = "top"

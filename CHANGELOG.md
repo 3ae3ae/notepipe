@@ -6,6 +6,25 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Added
+
+- `adapter` on a stage: a program that handles that stage instead of the AI service. It need not use a language model,
+  and such a stage needs no `prompt`.
+
+### Changed
+
+- Stages are top-level `[[stages]]` blocks instead of `[[ai.stages]]`; `[ai]` is the service they use by default.
+  Configurations from 0.1.0 must move their stages.
+- `proofread` and `summary` are no longer built in. They are ordinary stages in the configuration file, with their
+  prompts written out, and every stage sets `input`, `output` and `prompt`.
+- A run without a configuration file creates one and says where it is. It and `config init` write every default value
+  and the two stages, and leave out settings that start empty.
+- A stage with no AI service or adapter is skipped with a warning instead of stopping the run.
+
+### Removed
+
+- `--proofread-prompt`; edit the stage's prompt instead.
+
 ## [0.1.0] - 2026-10-22
 
 The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizorewww; this entry lists the differences.
