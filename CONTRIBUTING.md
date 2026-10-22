@@ -77,9 +77,7 @@ of adapters that are already on PyPI are skipped, so bump an adapter's version w
 publishes from its own GitHub environment, `pypi` for notepipe and `pypi-<package>` for an adapter, and its trusted
 publisher on PyPI names that environment.
 
-The same workflow publishes the crate to crates.io from the `crates-io` environment, unless that version is already
-there. crates.io accepts trusted publishing only for a crate that exists, so the first version is published with a
-`CARGO_REGISTRY_TOKEN` secret in that environment; after it, configure trusted publishing for `release.yml` and the
-`crates-io` environment on crates.io and delete the secret.
+The same workflow publishes the crate to crates.io from the `crates-io` environment through trusted publishing, unless
+that version is already there.
 
 By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).
