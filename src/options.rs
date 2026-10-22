@@ -1,255 +1,205 @@
-//! Merge file settings with CLI overrides.
-use crate::cli::RunOpts;
-use crate::{config, llm, settings};
+//! Apply CLI overrides, then validate the effective pipeline before source work.
+use crate::{
+    cli::RunOpts,
+    config,
+    settings::{self, Stage},
+};
+use anyhow::Result;
 
-fn resolve_stages(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<Vec<llm::Stage>> {
-    let mut stages = file.stages.clone();
-    if opts.no_stages {
-        stages.clear();
-    } else if let Some(names) = &opts.stages {
-        stages = names
-            .iter()
-            .map(|name| {
-                file.stages
-                    .iter()
-                    .find(|stage| stage.name == *name)
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("Unknown stage: {name}; the configuration has no [[stages]] block with that name"))
-            })
-            .collect::<anyhow::Result<_>>()?;
-    }
-    Ok(stages)
-}
-
-/// Precedence: explicit options, then the file, then built-in defaults.
 pub fn resolve(
     source: String,
     opts: &RunOpts,
     file: &settings::ConfigFile,
-) -> anyhow::Result<config::PipelineConfig> {
-    for (name, service) in &file.services {
-        service.validate(name)?;
+) -> Result<config::PipelineConfig> {
+    file.validate()?;
+    for name in &opts.skip {
+        anyhow::ensure!(
+            file.pipeline.contains(name),
+            "--skip: no stage named {name} in the pipeline"
+        );
     }
-    llm::validate(&file.stages, &file.services)?;
+    let mut names = std::collections::HashSet::new();
+    let mut stages = Vec::new();
+    for name in file
+        .pipeline
+        .iter()
+        .filter(|name| !opts.skip.contains(name))
+    {
+        let stage = file
+            .stages
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("pipeline: no stage named {name} in [stages]"))?;
+        anyhow::ensure!(names.insert(name), "pipeline: {name} is listed twice");
+        stages.push((name.clone(), stage.clone()));
+    }
+    let mut download_name = None;
+    let mut transcript_name = None;
+    let mut screenshots_name = None;
+    let mut note_name = None;
+    let mut transcript = settings::Transcript::default();
+    let mut screenshots = settings::Screenshots::default();
+    let mut download = settings::Source::default();
+    let mut out_root = std::path::PathBuf::from(config::DEFAULT_OUT_DIR);
+    let violation = stages
+        .iter()
+        .enumerate()
+        .flat_map(|(index, earlier)| {
+            stages[index + 1..]
+                .iter()
+                .filter(move |later| earlier.1.rank() > later.1.rank())
+                .map(move |later| (earlier, later))
+        })
+        .min_by_key(|(_, later)| later.1.rank());
+    if let Some(((name, _), (other, _))) = violation {
+        anyhow::bail!("pipeline: {name} must come after {other}");
+    }
+    for (name, stage) in &stages {
+        let slot = match stage {
+            Stage::Download(p) => {
+                download.command = p.argv();
+                Some((&mut download_name, "download"))
+            }
+            Stage::Transcript(t) => {
+                transcript = t.clone();
+                Some((&mut transcript_name, "transcript"))
+            }
+            Stage::Screenshots(s) => {
+                screenshots = s.clone();
+                Some((&mut screenshots_name, "screenshots"))
+            }
+            Stage::Note(n) => {
+                anyhow::ensure!(
+                    note_name.is_none(),
+                    "pipeline: exactly one note stage must run"
+                );
+                note_name = Some(name.clone());
+                out_root = n.dir.clone();
+                None
+            }
+            _ => None,
+        };
+        if let Some((slot, kind)) = slot {
+            anyhow::ensure!(slot.is_none(), "pipeline: only one {kind} stage can run");
+            *slot = Some(name.clone());
+        }
+    }
+    let note_name =
+        note_name.ok_or_else(|| anyhow::anyhow!("pipeline: exactly one note stage must run"))?;
     anyhow::ensure!(
-        file.speech.service.is_empty() || file.services.contains_key(&file.speech.service),
-        "[speech].service: no service named {} in [services]",
-        file.speech.service
+        transcript_name.is_some() || opts.subtitle.is_some(),
+        "pipeline: a transcript stage must run, or pass --subtitle"
     );
-    let screenshots = &file.screenshots;
-    use config::ScreenshotMode;
-    let out_root = opts
-        .out
-        .clone()
-        .or_else(|| file.output.dir.clone())
-        .map(config::expand_tilde)
-        .unwrap_or_else(|| config::DEFAULT_OUT_DIR.into());
-    Ok(config::PipelineConfig {
+    for (option, given) in [
+        ("--screenshot-mode", opts.screenshot_mode.is_some()),
+        ("--sensitivity", opts.similarity.is_some()),
+        ("--frame-interval", opts.sample_interval.is_some()),
+        ("--min-gap", opts.cooldown.is_some()),
+        ("--settle", opts.stable_secs.is_some()),
+        ("--region", opts.roi.is_some()),
+    ] {
+        anyhow::ensure!(
+            !given || screenshots_name.is_some(),
+            "{option} needs a screenshots stage in the pipeline"
+        );
+    }
+    if let Some(language) = &opts.asr_language {
+        transcript.language = language.clone();
+    }
+    let speech = &transcript.speech;
+    let provider = file.providers.get(&speech.provider);
+    let asr = settings::Asr {
+        mode: speech.api,
+        model: speech.model.clone(),
+        language: if transcript.language == "auto" {
+            String::new()
+        } else {
+            transcript.language.clone()
+        },
+        base_url: provider
+            .and_then(|p| p.base_url.clone())
+            .unwrap_or_default(),
+        concurrency: provider.map_or(4, |p| p.concurrency as usize),
+        command: provider.map_or_else(Vec::new, |p| p.argv()),
+        max_speech: speech.max_segment,
+        vad_threshold: speech.threshold,
+        min_silence: speech.min_silence,
+        ..Default::default()
+    };
+    let out_root = config::expand_tilde(opts.out.clone().unwrap_or(out_root));
+    let cfg = config::PipelineConfig {
         url: source,
-        config_path: opts.config.clone(),
-        on_complete: file.output.on_complete.clone(),
-        source: file.download.clone(),
-        // The pipeline assigns the per-source work directory before processing.
+        download_name,
+        transcript_name,
+        screenshots_name,
+        note_name,
+        transcript,
+        source: download,
         out_dir: out_root.clone(),
         out_root,
-        similarity: opts
-            .similarity
-            .or(screenshots.sensitivity)
-            .unwrap_or(config::DEFAULT_SIMILARITY),
-        sample_interval: opts
-            .sample_interval
-            .or(screenshots.frame_interval)
-            .unwrap_or(config::DEFAULT_SAMPLE_INTERVAL),
-        cooldown: opts
-            .cooldown
-            .or(screenshots.min_gap)
-            .unwrap_or(config::DEFAULT_COOLDOWN),
-        screenshot_mode: opts
-            .screenshot_mode
-            .or(screenshots.mode)
-            .unwrap_or(ScreenshotMode::Stable),
-        stable_secs: opts
-            .stable_secs
-            .or(screenshots.settle)
-            .unwrap_or(config::DEFAULT_STABLE_SECS),
+        similarity: opts.similarity.unwrap_or(screenshots.sensitivity),
+        sample_interval: opts.sample_interval.unwrap_or(screenshots.frame_interval),
+        cooldown: opts.cooldown.unwrap_or(screenshots.min_gap),
+        screenshot_mode: opts.screenshot_mode.unwrap_or(screenshots.mode),
+        stable_secs: opts.stable_secs.unwrap_or(screenshots.settle),
         roi: opts
             .roi
             .as_ref()
-            .or_else(|| {
-                screenshots
-                    .region
-                    .as_ref()
-                    .filter(|region| !region.is_empty())
-            })
-            .map(|region| config::Roi::parse(region))
+            .or(screenshots.region.as_ref())
+            .map(|r| config::Roi::parse(r))
             .transpose()?,
         no_resume: opts.no_resume,
         subtitle: opts.subtitle.clone(),
-        stages: resolve_stages(opts, file)?,
-        services: file.services.clone(),
-        asr: resolve_asr(opts, file),
-        transcript_source: opts
-            .transcript_source
-            .or(file.transcript.source)
-            .unwrap_or_default(),
-    })
-}
-
-/// Resolve the speech connection without reading environment credentials.
-fn resolve_asr(opts: &RunOpts, file: &settings::ConfigFile) -> crate::settings::Asr {
-    let speech = &file.speech;
-    let service = file
-        .services
-        .get(&speech.service)
-        .cloned()
-        .unwrap_or_default();
-    let mut a = settings::Asr {
-        service: speech.service.clone(),
-        api_key_env: service.api_key_env,
-        mode: speech.mode,
-        base_url: service.base_url,
-        api_key: service.api_key,
-        model: speech.model.clone(),
-        language: file.transcript.language.clone(),
-        concurrency: service.concurrency as usize,
-        command: service.adapter,
-        max_speech: speech.detection.max_segment,
-        vad_threshold: speech.detection.threshold,
-        min_silence: speech.detection.min_silence,
+        stages,
+        providers: file.providers.clone(),
+        asr,
     };
-    if let Some(v) = &opts.asr_language {
-        a.language = v.clone();
-    }
-    if let Some(v) = opts.max_speech {
-        a.max_speech = v;
-    }
-    a
+    cfg.validate()?;
+    Ok(cfg)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn stage_flags_override_config_in_order() {
-        let mut file = settings::ConfigFile::default();
-        file.services.insert("ai".into(), Default::default());
-        let mut proofread = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
-        proofread.images = true;
-        file.stages = vec![proofread, serde_json::from_value(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap()];
-        assert_eq!(
-            resolve("video".into(), &RunOpts::default(), &file)
-                .unwrap()
-                .stages,
-            file.stages
-        );
-        let opts = RunOpts {
-            stages: Some(vec!["summary".into(), "proofread".into()]),
-            ..Default::default()
-        };
-        let cfg = resolve("video".into(), &opts, &file).unwrap();
-        assert_eq!(
-            cfg.stages
-                .iter()
-                .map(|stage| stage.name.as_str())
-                .collect::<Vec<_>>(),
-            ["summary", "proofread"]
-        );
-        assert!(cfg.stages[1].images);
-        let opts = RunOpts {
-            no_stages: true,
-            ..Default::default()
-        };
-        assert!(
-            resolve("video".into(), &opts, &file)
-                .unwrap()
-                .stages
-                .is_empty()
-        );
-        let opts = RunOpts {
-            stages: Some(vec!["missing".into()]),
-            ..Default::default()
-        };
-        assert!(resolve("video".into(), &opts, &file).is_err());
-        assert!(
-            resolve("video".into(), &RunOpts::default(), &Default::default())
-                .unwrap()
-                .stages
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn options_pass_through_and_invalid_values_are_not_clamped() {
+    fn overrides_reach_the_named_stages_and_speech_cache_identity() {
         let file = settings::ConfigFile::default();
         let opts = RunOpts {
+            out: Some("notes".into()),
             no_resume: true,
-            stable_secs: Some(-1.0),
+            asr_language: Some("ko".into()),
+            screenshot_mode: Some(config::ScreenshotMode::First),
+            similarity: Some(0.7),
+            sample_interval: Some(0.5),
+            cooldown: Some(3.0),
+            stable_secs: Some(0.4),
+            roi: Some("10%,0%-100%,100%".into()),
             ..Default::default()
         };
         let cfg = resolve("video".into(), &opts, &file).unwrap();
+        assert_eq!(cfg.out_root, std::path::Path::new("notes"));
         assert!(cfg.no_resume);
-        assert_eq!(cfg.stable_secs, -1.0);
-        assert!(cfg.validate().is_err());
-        let opts = RunOpts {
-            roi: Some(String::new()),
-            ..Default::default()
-        };
-        assert!(resolve("video".into(), &opts, &file).is_err());
-    }
-
-    #[test]
-    fn subtitle_configuration_does_not_require_api_credentials() {
-        let opts = RunOpts {
-            transcript_source: Some(config::TranscriptSource::Subtitle),
-            ..Default::default()
-        };
-        resolve("video".into(), &opts, &Default::default())
-            .unwrap()
-            .validate()
-            .unwrap();
-    }
-}
-
-#[cfg(test)]
-mod asr_tests {
-    use super::*;
-    use clap::Parser;
-
-    #[test]
-    fn transcript_language_and_detection_settings_reach_the_cache_identity() {
-        let file: settings::ConfigFile = toml::from_str(
-            "[transcript]\nlanguage = 'ko'\n[speech.detection]\nthreshold = 0.6\nmin_silence = 0.5\nmax_segment = 30.0\n",
+        assert_eq!(cfg.transcript.language, "ko");
+        assert_eq!(crate::checkpoint::AsrIdentity::new(&cfg.asr).language, "ko");
+        assert_eq!(
+            (
+                cfg.similarity,
+                cfg.sample_interval,
+                cfg.cooldown,
+                cfg.stable_secs
+            ),
+            (0.7, 0.5, 3.0, 0.4)
+        );
+        assert_eq!(cfg.screenshot_mode, config::ScreenshotMode::First);
+        assert!(cfg.roi.is_some());
+        let cfg = resolve(
+            String::new(),
+            &RunOpts {
+                asr_language: Some("auto".into()),
+                ..Default::default()
+            },
+            &file,
         )
         .unwrap();
-        let cfg = resolve("video".into(), &RunOpts::default(), &file).unwrap();
-        let identity = crate::checkpoint::AsrIdentity::new(&cfg.asr);
-        assert_eq!(identity.language, "ko");
-        assert_eq!(identity.vad_threshold, 0.6);
-        assert_eq!(identity.min_silence, 0.5);
-        assert_eq!(identity.max_speech, 30.0);
-    }
-
-    #[test]
-    fn speech_uses_its_service_and_retains_language_and_detection_flags() {
-        let cli = crate::cli::Cli::try_parse_from([
-            "notepipe",
-            "video",
-            "--language",
-            "ko",
-            "--max-segment",
-            "12",
-        ])
-        .unwrap();
-        let file: settings::ConfigFile = toml::from_str("[services.remote]\nbase_url = 'https://example.test/v1'\napi_key = 'key'\nconcurrency = 2\n[speech]\nservice = 'remote'\nmodel = 'model'\napi = 'chat'\n").unwrap();
-        let cfg = resolve("video".into(), &cli.opts, &file).unwrap();
-        assert_eq!(cfg.asr.concurrency, 2);
-        assert!(cfg.asr.command.is_empty());
-        assert_eq!(cfg.asr.base_url, "https://example.test/v1");
-        assert_eq!(cfg.asr.api_key, "key");
-        assert_eq!(cfg.asr.model, "model");
-        assert_eq!(cfg.asr.mode, settings::AsrMode::Chat);
-        assert_eq!(cfg.asr.language, "ko");
-        assert_eq!(cfg.asr.max_speech, 12.0);
+        assert!(cfg.asr.language.is_empty());
     }
 }

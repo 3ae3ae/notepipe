@@ -16,7 +16,6 @@ pub(crate) const TRANSCRIPT_MERGE_USER: &str = r#"Below are results for consecut
 {}
 
 Combine them into one result for the whole recording, following the same instructions."#;
-const CHUNK_CHAR_LIMIT: usize = 25_000;
 
 fn system(stage: &Stage) -> String {
     format!("{} {TRANSCRIPT_CONTRACT}", stage.prompt)
@@ -45,12 +44,12 @@ fn context(meta: &MediaMeta) -> String {
     context
 }
 // shortcut: a single paragraph can exceed the chunk limit, split paragraphs if model context limits require it.
-fn chunks(events: &[TranscriptEvent]) -> Vec<String> {
+fn chunks(events: &[TranscriptEvent], chunk_size: usize) -> Vec<String> {
     let (mut chunks, mut text, mut chars) = (Vec::new(), String::new(), 0);
     for event in events {
         let line = format!("[{}] {}\n", crate::render::fmt_ts(event.start), event.text);
         let count = line.chars().count();
-        if !text.is_empty() && chars + count > CHUNK_CHAR_LIMIT {
+        if !text.is_empty() && chars + count > chunk_size {
             chunks.push(std::mem::take(&mut text));
             chars = 0;
         }
@@ -76,7 +75,7 @@ pub async fn run(
         settings.clone(),
         stage.clone(),
         context(meta),
-        chunks(events),
+        chunks(events, stage.chunk_size),
     );
     tokio::task::spawn_blocking(move || {
         let agent = llm::chat_agent();
@@ -111,20 +110,25 @@ mod tests {
     use super::*;
     #[test]
     fn transcript_contracts_do_not_override_user_instructions() {
-        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
+        let mut stage = crate::llm::test_stage(
+            "summary",
+            serde_json::json!({"type":"add-top","provider":"ai","prompt":"CUSTOM"}),
+        )
+        .unwrap();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
         stage.name = "outline".into();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
+        stage.chunk_size = 1000;
         let events = (0..3)
             .map(|index| TranscriptEvent {
                 start: f64::from(index * 60),
                 end: f64::from(index * 60 + 1),
-                text: "x".repeat(CHUNK_CHAR_LIMIT - 10),
+                text: "x".repeat(stage.chunk_size - 10),
                 raw: None,
                 below: Vec::new(),
             })
             .collect::<Vec<_>>();
-        let chunks = chunks(&events);
+        let chunks = chunks(&events, stage.chunk_size);
         assert_eq!(chunks.len(), 3);
         assert!(chunks[0].starts_with("[00:00] "));
         assert!(chunks[1].starts_with("[01:00] "));
@@ -140,7 +144,11 @@ mod tests {
             duration: 0.,
             seek_url: None,
         };
-        let stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
+        let stage = crate::llm::test_stage(
+            "summary",
+            serde_json::json!({"type":"add-top","provider":"ai","prompt":"CUSTOM"}),
+        )
+        .unwrap();
         assert!(
             run(&LlmSettings::default(), &stage, &[], &meta)
                 .await
@@ -179,7 +187,11 @@ mod tests {
             };
             Some((200, json!({"choices":[{"message":{"content":content}}]})))
         });
-        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
+        let mut stage = crate::llm::test_stage(
+            "summary",
+            serde_json::json!({"type":"add-top","provider":"ai","prompt":"CUSTOM"}),
+        )
+        .unwrap();
         stage.prompt = "EXTRACT ACTION ITEMS.".into();
         let settings = crate::llm::LlmSettings {
             base_url: mock.url.clone(),

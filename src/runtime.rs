@@ -314,7 +314,7 @@ impl StderrTail {
 /// Output of a bounded command; stdout and stderr are captured through temporary files, not pipes.
 pub struct BoundedOutput {
     pub status: ExitStatus,
-    pub stdout: String,
+    pub stdout: Vec<u8>,
     pub stderr: String,
 }
 
@@ -324,11 +324,21 @@ pub fn run_bounded(
     name: &'static str,
     cmd: &mut Command,
     timeout: Duration,
+    input: Option<&[u8]>,
 ) -> Result<BoundedOutput> {
     use std::io::{Read, Seek};
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;
-    cmd.stdin(Stdio::null())
+    let stdin = if let Some(input) = input {
+        use std::io::Write;
+        let mut file = tempfile::tempfile()?;
+        file.write_all(input)?;
+        file.rewind()?;
+        Stdio::from(file)
+    } else {
+        Stdio::null()
+    };
+    cmd.stdin(stdin)
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
     let mut child = ManagedChild::spawn_tree(name, cmd)?;
@@ -340,7 +350,6 @@ pub fn run_bounded(
     let mut err = Vec::new();
     stdout.take(64 * 1024 * 1024).read_to_end(&mut out)?;
     stderr.take(64 * 1024 * 1024).read_to_end(&mut err)?;
-    let out = String::from_utf8_lossy(&out).into_owned();
     let err = String::from_utf8_lossy(&err).into_owned();
     let status = status
         .with_context(|| format!("{name} was stopped:\n{}", crate::error::tail_lines(&err, 5)))?;
@@ -558,7 +567,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("child-pid");
         let error = run_bounded(
-            "on_complete",
+            "hook",
             Command::new("sh")
                 .args([
                     "-c",
@@ -572,6 +581,7 @@ wait
                 ])
                 .arg(&pid_file),
             Duration::from_millis(300),
+            None,
         )
         .err()
         .expect("the command must time out");

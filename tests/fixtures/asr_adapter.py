@@ -94,7 +94,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             response = b'{}'
         else:
             self.send_response(200)
-            response = json.dumps({'text': 'Fixture transcript.'}).encode()
+            response = json.dumps({'choices': [{'message': {'content': 'Fixture summary.'}}]} if self.path == '/v1/chat/completions' else {'text': 'Fixture transcript.'}).encode()
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))
         self.end_headers()

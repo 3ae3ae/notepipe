@@ -37,6 +37,7 @@ fn resolve_from(program: &str, directory: &Path) -> Result<PathBuf> {
 impl Adapter {
     pub(crate) fn start_with_control(
         argv: &[String],
+        stage: &str,
         control: &dyn Fn() -> Result<()>,
     ) -> Result<Self> {
         let program = argv
@@ -51,7 +52,7 @@ impl Adapter {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        crate::progress::stage("adapter/start", "start");
+        crate::progress::stage_label(&format!("{stage}/provider"), "start", "Starting adapter");
         let mut child = crate::runtime::ManagedChild::spawn_tree("adapter", &mut command)?;
         let stderr = crate::runtime::StderrTail::default();
         let mut drains = Vec::new();
@@ -82,7 +83,7 @@ impl Adapter {
             return Err(adapter.stderr.attach(error, "Could not start the adapter"));
         }
         tracing::info!(secs = started.elapsed().as_secs_f64(), "Adapter ready");
-        crate::progress::stage("adapter/start", "done");
+        crate::progress::stage_label(&format!("{stage}/provider"), "done", "Starting adapter");
         Ok(adapter)
     }
 
@@ -129,7 +130,9 @@ mod tests {
         let Some(argv) = argv(dir.path(), "healthy") else {
             return;
         };
-        let adapter = Adapter::start_with_control(&argv, &crate::runtime::check_cancelled).unwrap();
+        let adapter =
+            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
+                .unwrap();
         assert!(
             std::fs::read_to_string(dir.path().join("health-checks"))
                 .unwrap()
@@ -152,9 +155,10 @@ mod tests {
         let Some(argv) = argv(dir.path(), "exit") else {
             return;
         };
-        let error = Adapter::start_with_control(&argv, &crate::runtime::check_cancelled)
-            .err()
-            .unwrap();
+        let error =
+            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
+                .err()
+                .unwrap();
         let error = format!("{error:#}");
         assert!(error.contains("adapter stderr"), "{error}");
         assert!(error.contains("adapter stdout"), "{error}");
@@ -168,7 +172,7 @@ mod tests {
         };
         let polls = std::cell::Cell::new(0);
         let start = Instant::now();
-        let result = Adapter::start_with_control(&argv, &|| {
+        let result = Adapter::start_with_control(&argv, "transcript", &|| {
             polls.set(polls.get() + 1);
             // Cancel only once the fixture has installed its SIGTERM handler, which it announces with its pid.
             anyhow::ensure!(
@@ -207,7 +211,9 @@ mod tests {
         let Some(argv) = argv(dir.path(), "stubborn") else {
             return;
         };
-        let adapter = Adapter::start_with_control(&argv, &crate::runtime::check_cancelled).unwrap();
+        let adapter =
+            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
+                .unwrap();
         let pid = adapter.child.id();
         let child: i32 = std::fs::read_to_string(dir.path().join("child-pid"))
             .unwrap()
@@ -243,7 +249,8 @@ mod tests {
             return;
         };
         let mut adapter =
-            Adapter::start_with_control(&argv, &crate::runtime::check_cancelled).unwrap();
+            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
+                .unwrap();
         let pid = std::fs::read_to_string(dir.path().join("child-pid"))
             .unwrap()
             .parse()

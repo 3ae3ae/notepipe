@@ -61,18 +61,16 @@ pub fn stage(name: &str, status: &str) {
     }
     emit(stage_event(name, status));
     if !is_json() && !is_quiet() && status == "start" {
-        let label = match name {
-            "adapter/start" => "Starting adapter",
-            "fetch" => "Reading media information",
-            "subtitle" => "Looking for subtitles",
-            "download" => "Downloading media",
-            "scenes/scan" => "Scanning video frames",
-            "scenes/extract" => "Saving screenshots",
-            "audio" => "Extracting audio",
-            "transcribe" => "Transcribing speech",
-            "render" => "Writing notes",
-            _ => &format!("Running {name}"),
-        };
+        eprintln!("Running {name}…");
+    }
+}
+
+pub fn stage_label(name: &str, status: &str, label: &str) {
+    if status == "start" {
+        reset_tokens();
+    }
+    emit(stage_event(name, status));
+    if !is_json() && !is_quiet() && status == "start" {
         eprintln!("{label}…");
     }
 }
@@ -122,7 +120,7 @@ pub fn note_tokens(stage: &str, prompt: u64, completion: u64) {
 }
 
 /// Emit throttled source-adapter download progress.
-pub fn download_progress(current: u64, total: u64) {
+pub fn download_progress(stage: &str, current: u64, total: u64) {
     static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     let mut last = crate::runtime::lock_recover(&LAST);
     if current != total && last.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(200))
@@ -131,7 +129,7 @@ pub fn download_progress(current: u64, total: u64) {
     }
     *last = Some(std::time::Instant::now());
     drop(last);
-    emit(progress_event("download", current, total, ""));
+    emit(progress_event(stage, current, total, ""));
 }
 
 /// Shared progress bar style; the templates are constants, so a parse failure is a bug.

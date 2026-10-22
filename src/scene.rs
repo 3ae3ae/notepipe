@@ -125,8 +125,14 @@ async fn sample_timestamps(
     // or two frames off, which the label tolerates. Candidate selection
     // happens within this scan.
     let estimate = (info.duration / interval).round().max(1.0) as u64;
-    let pb = crate::progress::Bar::new("scenes/scan", estimate)
-        .with_template("{spinner:.green} sample {pos}/{len} frames {msg}");
+    let pb = crate::progress::Bar::new(
+        format!(
+            "{}/scan",
+            cfg.screenshots_name.as_deref().unwrap_or("screenshots")
+        ),
+        estimate,
+    )
+    .with_template("{spinner:.green} sample {pos}/{len} frames {msg}");
     pb.set_position(0);
 
     // Detection never pauses; cooldown only limits how often a screenshot is taken, so nothing is missed.
@@ -235,14 +241,41 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
     let frames_dir = cfg.frames_dir();
     tokio::fs::create_dir_all(&frames_dir).await?;
     let t0 = std::time::Instant::now();
-    crate::progress::stage("scenes/scan", "start");
+    crate::progress::stage_label(
+        &format!(
+            "{}/scan",
+            cfg.screenshots_name.as_deref().unwrap_or("screenshots")
+        ),
+        "start",
+        "Scanning video frames",
+    );
     let times = sample_timestamps(cfg, media, &info).await?;
-    crate::progress::stage("scenes/scan", "done");
+    crate::progress::stage_label(
+        &format!(
+            "{}/scan",
+            cfg.screenshots_name.as_deref().unwrap_or("screenshots")
+        ),
+        "done",
+        "Scanning video frames",
+    );
     anyhow::ensure!(!times.is_empty(), "No frames sampled");
 
-    crate::progress::stage("scenes/extract", "start");
-    let pb = crate::progress::Bar::new("scenes/extract", times.len() as u64)
-        .with_template("{spinner:.green} extract {pos}/{len} [{bar:32.cyan/blue}] {msg}");
+    crate::progress::stage_label(
+        &format!(
+            "{}/extract",
+            cfg.screenshots_name.as_deref().unwrap_or("screenshots")
+        ),
+        "start",
+        "Saving screenshots",
+    );
+    let pb = crate::progress::Bar::new(
+        format!(
+            "{}/extract",
+            cfg.screenshots_name.as_deref().unwrap_or("screenshots")
+        ),
+        times.len() as u64,
+    )
+    .with_template("{spinner:.green} extract {pos}/{len} [{bar:32.cyan/blue}] {msg}");
     // Emit before launching ffmpeg: the first image may take a long time.
     pb.set_position(0);
     // Extract with at most EXTRACT_CONCURRENCY ffmpeg processes.
@@ -293,7 +326,14 @@ pub async fn run(cfg: &PipelineConfig, media: &Path) -> Result<Output> {
         "screenshots extracted"
     );
     pb.finish();
-    crate::progress::stage("scenes/extract", "done");
+    crate::progress::stage_label(
+        &format!(
+            "{}/extract",
+            cfg.screenshots_name.as_deref().unwrap_or("screenshots")
+        ),
+        "done",
+        "Saving screenshots",
+    );
     Ok(Output::Frames(frames))
 }
 

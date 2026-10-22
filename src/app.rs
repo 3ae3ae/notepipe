@@ -171,7 +171,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                 Ok(created) => {
                     if created && !progress::is_quiet() {
                         let message = format!(
-                            "Created {} with the default settings. Edit it to change how notes are made.",
+                            "Created {}. Speech recognition and the proofread and summary stages use OpenAI with the key in OPENAI_API_KEY; edit the file to change that.",
                             settings::config_path().display()
                         );
                         if progress::is_json() {
@@ -187,7 +187,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                         "Could not create {}: {error}. Continuing with the default settings.",
                         settings::config_path().display()
                     );
-                    settings::ConfigFile::default()
+                    settings::parse(settings::template())?
                 }
             };
             let initial = crate::options::resolve(source.clone(), &cli.opts, &file)?;

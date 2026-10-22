@@ -85,16 +85,6 @@ pub enum ScreenshotMode {
     First,
 }
 
-impl fmt::Display for TranscriptSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Auto => "auto",
-            Self::Subtitle => "subtitles",
-            Self::Asr => "speech",
-        })
-    }
-}
-
 impl fmt::Display for ScreenshotMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -104,32 +94,15 @@ impl fmt::Display for ScreenshotMode {
     }
 }
 
-/// Where the transcript comes from.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TranscriptSource {
-    /// Subtitles when there are any, otherwise speech recognition
-    #[default]
-    Auto,
-    /// Subtitles only; fail when there are none
-    #[serde(rename = "subtitles")]
-    #[value(name = "subtitles")]
-    Subtitle,
-    /// Speech recognition only, even when subtitles exist
-    #[serde(rename = "speech")]
-    #[value(name = "speech")]
-    Asr,
-}
-
 /// Effective settings of a run, resolved from options, the configuration and defaults.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub url: String,
-    /// Configuration selected by the CLI; '-' disables interactive setup.
-    #[serde(default)]
-    pub config_path: Option<PathBuf>,
-    #[serde(default)]
-    pub on_complete: Vec<String>,
+    pub download_name: Option<String>,
+    pub transcript_name: Option<String>,
+    pub screenshots_name: Option<String>,
+    pub note_name: String,
+    pub transcript: crate::settings::Transcript,
     pub source: crate::settings::Source,
     pub out_dir: PathBuf,
     pub similarity: f64,
@@ -143,12 +116,10 @@ pub struct PipelineConfig {
     /// Clear this source's cache before starting.
     pub no_resume: bool,
     pub subtitle: Option<PathBuf>,
-    pub stages: Vec<crate::llm::Stage>,
-    pub services: std::collections::BTreeMap<String, crate::settings::Service>,
+    pub stages: Vec<(String, crate::settings::Stage)>,
+    pub providers: std::collections::BTreeMap<String, crate::settings::Provider>,
     /// HTTP transcription settings with CLI overrides applied.
     pub asr: crate::settings::Asr,
-    /// Transcript source: subtitles first, subtitles only, or speech recognition only.
-    pub transcript_source: TranscriptSource,
     /// Root containing published note folders.
     pub out_root: PathBuf,
 }
@@ -222,65 +193,18 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
 impl PipelineConfig {
     /// Checks all settings up front, so every configuration error appears before downloads or other expensive work.
     pub fn validate(&self) -> AnyhowResult<()> {
-        // Services and the references to them are checked against the whole file in options::resolve.
-        let finite = |name: &str, v: f64| -> AnyhowResult<()> {
-            anyhow::ensure!(
-                v.is_finite(),
-                "{name} must be a finite number (received {v})"
-            );
-            Ok(())
-        };
-        finite("screenshots.sensitivity", self.similarity)?;
-        finite("screenshots.frame_interval", self.sample_interval)?;
-        finite("screenshots.min_gap", self.cooldown)?;
-        finite("screenshots.settle", self.stable_secs)?;
-        finite("speech.detection.max_segment", self.asr.max_speech as f64)?;
-        finite("speech.detection.threshold", self.asr.vad_threshold as f64)?;
-        finite("speech.detection.min_silence", self.asr.min_silence as f64)?;
-
-        anyhow::ensure!(
-            self.similarity > 0.0 && self.similarity <= 1.0,
-            "--sensitivity (screenshots.sensitivity) must be greater than 0 and at most 1 (received {})",
-            self.similarity
-        );
-        anyhow::ensure!(
-            self.sample_interval >= 0.2,
-            "--frame-interval (screenshots.frame_interval) must be at least 0.2 seconds (received {})",
-            self.sample_interval
-        );
-        anyhow::ensure!(
-            self.cooldown >= 0.0,
-            "--min-gap (screenshots.min_gap) must be at least 0 seconds (received {})",
-            self.cooldown
-        );
-        anyhow::ensure!(
-            self.stable_secs >= 0.0,
-            "--settle (screenshots.settle) must be at least 0 seconds (received {})",
-            self.stable_secs
-        );
-        anyhow::ensure!(
-            (0.0..=1.0).contains(&self.asr.vad_threshold),
-            "speech.detection.threshold must be between 0 and 1."
-        );
-        anyhow::ensure!(
-            self.asr.min_silence >= 0.0,
-            "speech.detection.min_silence must be non-negative."
-        );
-        // The lower bound keeps split_smart's clamp(min, max) valid; 0 would panic.
-        anyhow::ensure!(
-            self.asr.max_speech >= 1.0 && self.asr.max_speech <= 600.0,
-            "--max-segment (speech.detection.max_segment) must be between 1 and 600 seconds (received {})",
-            self.asr.max_speech
-        );
-
-        Ok(())
+        validate_tuning(
+            self.similarity,
+            self.sample_interval,
+            self.cooldown,
+            self.stable_secs,
+            self.asr.max_speech,
+            self.asr.vad_threshold,
+            self.asr.min_silence,
+        )
     }
 
     pub fn validate_asr(&self) -> AnyhowResult<()> {
-        anyhow::ensure!(
-            self.asr.is_configured(),
-            "Speech recognition is not set up. Point [speech].service at a service in [services] that has a base_url or adapter."
-        );
         if self.asr.command.is_empty() {
             ensure_http_url(&asr_endpoint(&self.asr)?)?;
         }
@@ -293,6 +217,68 @@ impl PipelineConfig {
     pub fn frames_dir(&self) -> PathBuf {
         self.out_dir.join("frames")
     }
+}
+
+pub(crate) fn validate_tuning(
+    similarity: f64,
+    sample_interval: f64,
+    cooldown: f64,
+    stable_secs: f64,
+    max_speech: f32,
+    vad_threshold: f32,
+    min_silence: f32,
+) -> AnyhowResult<()> {
+    let finite = |name: &str, v: f64| -> AnyhowResult<()> {
+        anyhow::ensure!(
+            v.is_finite(),
+            "{name} must be a finite number (received {v})"
+        );
+        Ok(())
+    };
+    finite("screenshots.sensitivity", similarity)?;
+    finite("screenshots.frame_interval", sample_interval)?;
+    finite("screenshots.min_gap", cooldown)?;
+    finite("screenshots.settle", stable_secs)?;
+    finite("speech.max_segment", max_speech as f64)?;
+    finite("speech.threshold", vad_threshold as f64)?;
+    finite("speech.min_silence", min_silence as f64)?;
+
+    anyhow::ensure!(
+        similarity > 0.0 && similarity <= 1.0,
+        "--sensitivity (screenshots.sensitivity) must be greater than 0 and at most 1 (received {})",
+        similarity
+    );
+    anyhow::ensure!(
+        sample_interval >= 0.2,
+        "--frame-interval (screenshots.frame_interval) must be at least 0.2 seconds (received {})",
+        sample_interval
+    );
+    anyhow::ensure!(
+        cooldown >= 0.0,
+        "--min-gap (screenshots.min_gap) must be at least 0 seconds (received {})",
+        cooldown
+    );
+    anyhow::ensure!(
+        stable_secs >= 0.0,
+        "--settle (screenshots.settle) must be at least 0 seconds (received {})",
+        stable_secs
+    );
+    anyhow::ensure!(
+        (0.0..=1.0).contains(&vad_threshold),
+        "speech.threshold must be between 0 and 1."
+    );
+    anyhow::ensure!(
+        min_silence >= 0.0,
+        "speech.min_silence must be non-negative."
+    );
+    // The lower bound keeps split_smart's clamp(min, max) valid; 0 would panic.
+    anyhow::ensure!(
+        (1.0..=600.0).contains(&max_speech),
+        "speech.max_segment must be between 1 and 600 seconds (received {})",
+        max_speech
+    );
+
+    Ok(())
 }
 
 /// The home directory: HOME, or USERPROFILE on Windows when HOME is unset.
@@ -526,26 +512,7 @@ mod tests {
     }
 
     fn valid_cfg() -> PipelineConfig {
-        PipelineConfig {
-            url: "https://example.test/media".into(),
-            config_path: None,
-            on_complete: Vec::new(),
-            out_dir: "out".into(),
-            out_root: "out".into(),
-            similarity: DEFAULT_SIMILARITY,
-            sample_interval: DEFAULT_SAMPLE_INTERVAL,
-            cooldown: DEFAULT_COOLDOWN,
-            screenshot_mode: ScreenshotMode::Stable,
-            stable_secs: DEFAULT_STABLE_SECS,
-            roi: None,
-            no_resume: false,
-            subtitle: None,
-            stages: Vec::new(),
-            services: Default::default(),
-            source: Default::default(),
-            asr: Default::default(),
-            transcript_source: TranscriptSource::Auto,
-        }
+        crate::options::resolve("video".into(), &Default::default(), &Default::default()).unwrap()
     }
 
     #[test]
@@ -633,8 +600,8 @@ mod asr_tests {
         let mut cfg =
             crate::options::resolve("video".into(), &Default::default(), &Default::default())
                 .unwrap();
-        let error = cfg.validate_asr().unwrap_err().to_string();
-        assert!(error.contains("[speech].service") && error.contains("[services]"));
+        cfg.asr.base_url.clear();
+        assert!(cfg.validate_asr().is_err());
         cfg.asr.base_url = "http://localhost:8000/v1".into();
         cfg.validate_asr().unwrap();
         cfg.asr.base_url = "invalid ignored URL".into();
@@ -643,12 +610,21 @@ mod asr_tests {
         for field in ["vad_threshold", "min_silence"] {
             let mut file = ConfigFile::default();
             if field == "vad_threshold" {
-                file.speech.detection.threshold = 1.1;
+                let crate::settings::Stage::Transcript(t) =
+                    file.stages.get_mut("transcript").unwrap()
+                else {
+                    unreachable!()
+                };
+                t.speech.threshold = 1.1;
             } else {
-                file.speech.detection.min_silence = -0.1;
+                let crate::settings::Stage::Transcript(t) =
+                    file.stages.get_mut("transcript").unwrap()
+                else {
+                    unreachable!()
+                };
+                t.speech.min_silence = -0.1;
             }
-            let cfg = crate::options::resolve("video".into(), &Default::default(), &file).unwrap();
-            assert!(cfg.validate().is_err());
+            assert!(crate::options::resolve("video".into(), &Default::default(), &file).is_err());
         }
     }
 }

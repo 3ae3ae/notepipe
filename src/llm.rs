@@ -1,7 +1,6 @@
 //! Prompt-driven paragraph and transcript stages over OpenAI-compatible HTTP.
 use crate::timeline::{Section, StageText, TranscriptEvent};
 use anyhow::{Context, Result};
-use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use std::{path::Path, time::Duration};
 
@@ -9,96 +8,32 @@ pub(crate) const PARAGRAPHS_CONTRACT: &str = r#"Output a JSON object {"segments"
 pub(crate) const IMAGE_NOTE: &str =
     r#" Each request includes the screenshot shown during this passage."#;
 
-const BATCH: usize = 20;
 const MAX_ATTEMPTS: u32 = 3;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
     Paragraphs,
     Transcript,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Output {
     Replace,
     Below,
     Top,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Stage {
     pub name: String,
-    pub service: String,
+    pub provider: String,
     pub model: String,
     pub input: Input,
     pub output: Output,
     pub prompt: String,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub images: bool,
-    #[serde(skip_serializing_if = "Map::is_empty")]
     pub request: Map<String, Value>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StageFields {
-    name: String,
-    #[serde(default)]
-    service: String,
-    #[serde(default)]
-    model: String,
-    input: Option<Input>,
-    output: Option<Output>,
-    prompt: Option<String>,
-    #[serde(default)]
-    images: bool,
-    #[serde(default, deserialize_with = "deserialize_request")]
-    request: Map<String, Value>,
-}
-
-impl<'de> Deserialize<'de> for Stage {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-        use serde::de::Error;
-        let fields = StageFields::deserialize(deserializer)?;
-        let stage = Self {
-            name: fields.name,
-            service: fields.service,
-            model: fields.model,
-            input: fields
-                .input
-                .ok_or_else(|| D::Error::custom("Stages need input"))?,
-            output: fields
-                .output
-                .ok_or_else(|| D::Error::custom("Stages need output"))?,
-            prompt: fields.prompt.unwrap_or_default().trim().to_owned(),
-            images: fields.images,
-            request: fields.request,
-        };
-        stage.validate().map_err(D::Error::custom)?;
-        Ok(stage)
-    }
-}
-impl Stage {
-    fn validate(&self) -> Result<()> {
-        anyhow::ensure!(
-            !self.name.trim().is_empty(),
-            "Stage names must not be empty"
-        );
-        anyhow::ensure!(
-            matches!(
-                (self.input, self.output),
-                (Input::Paragraphs, Output::Replace | Output::Below)
-                    | (Input::Transcript, Output::Top)
-            ),
-            "Invalid stage input/output combination"
-        );
-        anyhow::ensure!(
-            !self.images || self.input == Input::Paragraphs,
-            "Only paragraphs stages support images"
-        );
-        validate_request(&self.request)
-    }
+    pub batch_size: usize,
+    pub chunk_size: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,21 +52,21 @@ impl Default for LlmSettings {
             adapter: Vec::new(),
             api_key: String::new(),
             model: String::new(),
-            concurrency: crate::settings::Service::default().concurrency as usize,
+            concurrency: crate::settings::Provider::default().concurrency as usize,
             request: Map::new(),
         }
     }
 }
 impl LlmSettings {
-    pub fn for_stage(service: &crate::settings::Service, stage: &Stage) -> Result<Self> {
-        Ok(Self {
-            base_url: service.base_url.clone(),
-            adapter: service.adapter.clone(),
-            api_key: service.key(&stage.service)?,
+    pub fn for_stage(provider: &crate::settings::Provider, stage: &Stage, key: String) -> Self {
+        Self {
+            base_url: provider.base_url.clone().unwrap_or_default(),
+            adapter: provider.argv(),
+            api_key: key,
             model: stage.model.clone(),
-            concurrency: service.concurrency as usize,
+            concurrency: provider.concurrency as usize,
             request: stage.request.clone(),
-        })
+        }
     }
 
     fn cache_identity(&self) -> String {
@@ -143,7 +78,7 @@ impl LlmSettings {
     }
 }
 
-fn validate_request(request: &Map<String, Value>) -> Result<()> {
+pub(crate) fn validate_request(request: &Map<String, Value>) -> Result<()> {
     // The engine owns the protocol and output contract.
     anyhow::ensure!(
         !["model", "messages", "stream", "response_format"]
@@ -153,33 +88,6 @@ fn validate_request(request: &Map<String, Value>) -> Result<()> {
     );
     Ok(())
 }
-fn deserialize_request<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<Map<String, Value>, D::Error> {
-    let request = Map::deserialize(deserializer)?;
-    validate_request(&request).map_err(serde::de::Error::custom)?;
-    Ok(request)
-}
-
-fn validate_stage_names(stages: &[Stage]) -> Result<()> {
-    let mut names = std::collections::HashSet::new();
-    for stage in stages {
-        anyhow::ensure!(
-            names.insert(&stage.name),
-            "Duplicate stage name: {}",
-            stage.name
-        );
-    }
-    Ok(())
-}
-pub(crate) fn deserialize_stages<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<Vec<Stage>, D::Error> {
-    let stages = Vec::deserialize(deserializer)?;
-    validate_stage_names(&stages).map_err(serde::de::Error::custom)?;
-    Ok(stages)
-}
-
 pub(crate) fn chat_body(
     settings: &LlmSettings,
     system: &str,
@@ -204,28 +112,6 @@ pub(crate) fn chat_body(
 pub fn endpoint(base_url: &str) -> String {
     crate::config::append_endpoint_suffix(base_url.trim(), "/chat/completions")
 }
-pub fn validate(
-    stages: &[Stage],
-    services: &std::collections::BTreeMap<String, crate::settings::Service>,
-) -> Result<()> {
-    validate_stage_names(stages)?;
-    for stage in stages {
-        stage.validate()?;
-        anyhow::ensure!(
-            !stage.service.is_empty(),
-            "Stage {} needs a service",
-            stage.name
-        );
-        anyhow::ensure!(
-            services.contains_key(&stage.service),
-            "Stage {}: no service named {} in [services]",
-            stage.name,
-            stage.service
-        );
-    }
-    Ok(())
-}
-
 /// HTTP agent shared by all stages of a run, so they reuse one connection pool.
 /// A response that sends nothing for [`STALL_TIMEOUT`] has stalled; it is
 /// abandoned then instead of holding the task for the whole request budget.
@@ -270,7 +156,7 @@ pub fn paragraphs(
             let image = (!sec.image.is_empty()).then(|| frames_root.join(&sec.image));
             let mut refs: Vec<_> = sec.speech.iter_mut().collect();
             while !refs.is_empty() {
-                let rest = refs.split_off(refs.len().min(BATCH));
+                let rest = refs.split_off(refs.len().min(stage.batch_size));
                 chunks.push((image.clone(), index + 1, std::mem::replace(&mut refs, rest)));
             }
         }
@@ -281,7 +167,7 @@ pub fn paragraphs(
             .collect();
         while !refs.is_empty() {
             crate::runtime::check_cancelled()?;
-            let rest = refs.split_off(refs.len().min(BATCH));
+            let rest = refs.split_off(refs.len().min(stage.batch_size));
             chunks.push((None, 0, std::mem::replace(&mut refs, rest)));
         }
     }
@@ -556,7 +442,7 @@ fn request_chat_once(
             );
             anyhow::ensure!(
                 value["choices"][0]["finish_reason"] != "length",
-                "The model stopped at its output limit; raise it with a max_tokens field in request"
+                "The model stopped at its output limit; raise the limit in the stage's request"
             );
             let content = value["choices"][0]["message"]["content"]
                 .as_str()
@@ -595,22 +481,29 @@ fn request_chat(
 }
 
 #[cfg(test)]
+pub(crate) fn test_stage(name: &str, value: Value) -> Result<Stage> {
+    let definition: crate::settings::Stage = serde_json::from_value(value)?;
+    let stage = definition.ai(name).expect("AI stage fixture");
+    validate_request(&stage.request)?;
+    Ok(stage)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn stages_resolve_only_their_named_service_and_allow_an_empty_model_and_prompt() {
-        let service = crate::settings::Service {
-            base_url: "https://example.test/v1".into(),
-            api_key: "key".into(),
+    fn stages_resolve_only_their_named_provider_and_allow_an_empty_model_and_prompt() {
+        let service = crate::settings::Provider {
+            base_url: Some("https://example.test/v1".into()),
             concurrency: 2,
             ..Default::default()
         };
-        let stage: Stage = serde_json::from_value(serde_json::json!({"name":"custom","service":"ai","input":"transcript","output":"top","prompt":"  ","request":{"temperature":0.7}})).unwrap();
+        let stage: Stage = crate::llm::test_stage("custom", serde_json::json!({"type":"add-top","provider":"ai","prompt":"  ","request":{"temperature":0.7}})).unwrap();
         assert!(stage.prompt.is_empty());
-        let effective = LlmSettings::for_stage(&service, &stage).unwrap();
-        assert_eq!(effective.base_url, service.base_url);
-        assert_eq!(effective.api_key, "key");
+        let effective = LlmSettings::for_stage(&service, &stage, String::new());
+        assert_eq!(effective.base_url, service.base_url.unwrap());
+        assert!(effective.api_key.is_empty());
         assert_eq!(effective.concurrency, 2);
         let body = chat_body(&effective, &stage.prompt, "User", stage.input).unwrap();
         assert!(body.get("model").is_none());
@@ -721,7 +614,7 @@ mod tests {
             assert!(!failure.unsupported_response_format);
             assert_eq!(
                 error.to_string(),
-                "The model stopped at its output limit; raise it with a max_tokens field in request"
+                "The model stopped at its output limit; raise the limit in the stage's request"
             );
             assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
             assert_eq!(validations.get(), 0);
@@ -769,15 +662,17 @@ mod tests {
             &mut sections,
             root.path(),
             &settings,
-            &serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap(),
+            &crate::llm::test_stage(
+                "proofread",
+                serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!((report.attempted, report.failed), (1, 1));
         assert_eq!(
             report.note.as_deref(),
-            Some(
-                "The model stopped at its output limit; raise it with a max_tokens field in request"
-            )
+            Some("The model stopped at its output limit; raise the limit in the stage's request")
         );
         assert_eq!(sections[0].speech, vec![event]);
         assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -835,7 +730,15 @@ mod tests {
         let mut refs = vec![&mut a, &mut b];
         let polished = [(0, "今天讲编译原理".into()), (1, String::new())];
         assert!(segment_ids_match(&polished, refs.len()));
-        apply_results(&mut refs, &polished, &serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap());
+        apply_results(
+            &mut refs,
+            &polished,
+            &crate::llm::test_stage(
+                "proofread",
+                serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
+            )
+            .unwrap(),
+        );
         assert_eq!(a.raw, None, "unchanged text keeps no raw copy");
         assert_eq!(b.text, "", "filler is emptied and removed by the caller");
         assert_eq!(b.raw.as_deref(), Some("啊"), "the original is kept in raw");
@@ -855,7 +758,11 @@ mod tests {
     #[test]
     fn chat_body_text_vs_vision() {
         let s = test_settings();
-        let mut stage: Stage = serde_json::from_value(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
+        let mut stage: Stage = crate::llm::test_stage(
+            "proofread",
+            serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
+        )
+        .unwrap();
         let items = ["hello"];
         let text_only = build_chat_body(&s, &stage, &items, None).unwrap();
         assert_eq!(text_only["response_format"]["type"], "json_object");
@@ -886,9 +793,13 @@ mod tests {
     }
 
     #[test]
-    fn stages_require_explicit_fields_and_keep_their_declared_contracts() {
+    fn stages_keep_their_declared_contracts() {
         let settings = LlmSettings::default();
-        let mut custom: Stage = serde_json::from_value(serde_json::json!({"name":"annotate","service":"ai","input":"paragraphs","output":"below","prompt":"CUSTOM"})).unwrap();
+        let mut custom: Stage = crate::llm::test_stage(
+            "annotate",
+            serde_json::json!({"type":"add-below","provider":"ai","prompt":"CUSTOM"}),
+        )
+        .unwrap();
         let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
         assert_eq!(
             body["messages"][0]["content"],
@@ -900,21 +811,9 @@ mod tests {
                 .unwrap()
                 .contains("LaTeX")
         );
-        for (field, error) in [
-            ("input", "Stages need input"),
-            ("output", "Stages need output"),
-        ] {
-            let mut fields = serde_json::to_value(&custom).unwrap();
-            fields.as_object_mut().unwrap().remove(field);
-            assert_eq!(
-                serde_json::from_value::<Stage>(fields.clone())
-                    .unwrap_err()
-                    .to_string(),
-                error
-            );
-        }
-        let empty_prompt: Stage = serde_json::from_value(
-            serde_json::json!({"name":"custom","service":"ai","input":"transcript","output":"top"}),
+        let empty_prompt: Stage = crate::llm::test_stage(
+            "custom",
+            serde_json::json!({"type":"add-top","provider":"ai"}),
         )
         .unwrap();
         assert!(empty_prompt.prompt.is_empty());
@@ -932,38 +831,16 @@ mod tests {
                 format!("CUSTOM {PARAGRAPHS_CONTRACT}")
             );
         }
-        for (input, output, images) in [
-            ("paragraphs", "top", false),
-            ("transcript", "below", false),
-            ("transcript", "top", true),
-        ] {
-            assert!(serde_json::from_value::<Stage>(serde_json::json!({"name":"custom","service":"ai","input":input,"output":output,"prompt":"CUSTOM","images":images})).is_err());
-        }
     }
 
     #[test]
-    fn duplicate_stage_names_are_rejected_at_load_and_runtime_validation() {
-        let config = "[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n";
-        let error = toml::from_str::<crate::settings::ConfigFile>(config).unwrap_err();
-        assert!(error.to_string().contains("Duplicate stage name: summary"));
-        let stage: Stage = serde_json::from_value(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace"})).unwrap();
-        let stages = vec![stage.clone(), stage];
-        assert!(
-            validate(&stages, &Default::default())
-                .unwrap_err()
-                .to_string()
-                .contains("Duplicate stage name: proofread")
-        );
-    }
-
-    #[test]
-    fn stage_requests_merge_with_the_protocol_and_protected_keys_are_rejected_at_load() {
-        let stage: Stage = serde_json::from_value(serde_json::json!({"name":"summary","service":"ai","model":"stage-model","input":"transcript","output":"top","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
-        let service = crate::settings::Service {
-            base_url: "https://example.test/v1".into(),
+    fn stage_requests_merge_with_the_protocol_and_protected_keys_are_rejected() {
+        let stage: Stage = crate::llm::test_stage("summary", serde_json::json!({"type":"add-top","provider":"ai","model":"stage-model","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
+        let service = crate::settings::Provider {
+            base_url: Some("https://example.test/v1".into()),
             ..Default::default()
         };
-        let effective = LlmSettings::for_stage(&service, &stage).unwrap();
+        let effective = LlmSettings::for_stage(&service, &stage, String::new());
         let body = chat_body(&effective, "System", "User", stage.input).unwrap();
         assert_eq!(body["model"], "stage-model");
         assert_eq!(body["temperature"], 0.7);
@@ -979,13 +856,23 @@ mod tests {
             serde_json::json!("text"),
             serde_json::json!(1),
         ] {
-            assert!(serde_json::from_value::<Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","request":request})).is_err());
+            assert!(
+                crate::llm::test_stage(
+                    "summary",
+                    serde_json::json!({"type":"add-top","provider":"ai","request":request})
+                )
+                .is_err()
+            );
         }
     }
 
     #[test]
     fn below_outputs_skip_empty_or_equal_text_and_keep_stage_order() {
-        let mut stage: Stage = serde_json::from_value(serde_json::json!({"name":"notes","service":"ai","input":"paragraphs","output":"below","prompt":"Annotate"})).unwrap();
+        let mut stage: Stage = crate::llm::test_stage(
+            "notes",
+            serde_json::json!({"type":"add-below","provider":"ai","prompt":"Annotate"}),
+        )
+        .unwrap();
         let mut events = ["First", "Second", "Third"].map(|text| TranscriptEvent {
             start: 0.,
             end: 1.,
@@ -1117,9 +1004,14 @@ mod tests {
             model: "fixture".into(),
             ..Default::default()
         };
-        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
+        let mut stage = crate::llm::test_stage(
+            "proofread",
+            serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
+        )
+        .unwrap();
         stage.name = "annotate".into();
         stage.images = true;
+        stage.batch_size = 7;
         let report = crate::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
         assert_eq!((report.attempted, report.failed), (42, 0));
         assert!(report.note.is_none());
@@ -1160,6 +1052,6 @@ mod tests {
                 .iter()
                 .all(|header| !header.to_ascii_lowercase().contains("authorization:"))
         );
-        assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+        assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 6);
     }
 }

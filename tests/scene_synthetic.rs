@@ -57,8 +57,6 @@ fn sections(
             "--config",
             "-",
             "--json",
-            "--transcript",
-            "subtitles",
             "--sensitivity",
             "0.9",
             "--frame-interval",
@@ -75,7 +73,7 @@ fn sections(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"{}").unwrap();
+    child.stdin.take().unwrap().write_all(br#"{"pipeline":["transcript","screenshots","note"],"stages":{"transcript":{"type":"transcript","sources":["subtitles"]},"screenshots":{"type":"screenshots"},"note":{"type":"note"}}}"#).unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
@@ -264,7 +262,7 @@ fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
         .unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_notepipe"))
             .arg(&media)
-            .args(["--transcript", "subtitles", "--json", "--config", "-"])
+            .args(["--json", "--config", "-"])
             .current_dir(root.path())
             .env("XDG_CACHE_HOME", root.path().join("cache"))
             .stdin(std::process::Stdio::piped())
@@ -273,7 +271,7 @@ fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
             .spawn()
             .and_then(|mut child| {
                 use std::io::Write;
-                child.stdin.take().unwrap().write_all(b"{}")?;
+                child.stdin.take().unwrap().write_all(br#"{"pipeline":["transcript","screenshots","note"],"stages":{"transcript":{"type":"transcript","sources":["subtitles"]},"screenshots":{"type":"screenshots"},"note":{"type":"note"}}}"#)?;
                 child.wait_with_output()
             })
             .unwrap();
@@ -290,7 +288,7 @@ fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
         assert!(!events.iter().any(|event| {
             event["stage"]
                 .as_str()
-                .is_some_and(|stage| stage.starts_with("scenes/"))
+                .is_some_and(|stage| stage.starts_with("screenshots/"))
         }));
         let done = events.last().unwrap();
         assert_eq!(done["type"], "done");

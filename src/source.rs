@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
-pub const ADAPTER_HINT: &str = "URLs need a download adapter: install one, for example `uv tool install \"notepipe[ytdlp]\"`, or set [download].adapter";
+pub const ADAPTER_HINT: &str = "URLs need a download stage in the pipeline; install one with uv tool install \"notepipe[ytdlp]\"";
 const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
 /// Public, vendor-neutral note metadata.
@@ -128,8 +128,10 @@ impl Output {
         &self,
         cache: &Path,
         language: &str,
+        automatic: bool,
     ) -> Result<Option<PathBuf>> {
         let mut tracks = self.tracks(&cache.join("files"))?;
+        tracks.retain(|track| automatic || track.kind != subtitle::SubtitleKind::Automatic);
         subtitle::sort_tracks(&mut tracks, language, self.language.as_deref());
         Ok(tracks.into_iter().next().map(|track| track.path))
     }
@@ -144,89 +146,17 @@ impl Output {
     }
 }
 
-/// An explicit command wins; otherwise discover exactly one adapter, preferring sibling executables.
+/// Resolve the configured command exactly, preferring sibling executables, then PATH.
 pub fn command(source: &Source) -> Result<(PathBuf, &[String])> {
-    if let Some((program, args)) = source.command.split_first() {
-        ensure!(
-            !program.trim().is_empty(),
-            "The download adapter command must name an executable"
-        );
-        let path = crate::adapter::resolve_executable(program).context(ADAPTER_HINT)?;
-        ensure!(path.is_file(), "{ADAPTER_HINT}");
-        return Ok((path, args));
-    }
-    let executable = std::env::current_exe()?.canonicalize()?;
-    let search_path = std::env::var_os("PATH");
-    let directories = std::iter::once(
-        executable
-            .parent()
-            .context("Missing executable directory")?
-            .to_path_buf(),
-    )
-    .chain(search_path.iter().flat_map(std::env::split_paths));
-    Ok((discover(directories)?, &[]))
-}
-
-fn discover(directories: impl IntoIterator<Item = PathBuf>) -> Result<PathBuf> {
-    let mut found = std::collections::BTreeMap::new();
-    let cwd = std::env::current_dir()?;
-    let pathext = std::env::var("PATHEXT").ok();
-    for directory in directories
-        .into_iter()
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        let directory = cwd.join(directory);
-        let Ok(entries) = std::fs::read_dir(&directory) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            if cfg!(windows) && !windows_executable(name, pathext.as_deref()) {
-                continue;
-            }
-            let key = if cfg!(windows) {
-                Path::new(name)
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-            } else {
-                name.into()
-            };
-            if key.starts_with("notepipe-source-")
-                && let Ok(path) = which::which_in(name, Some(directory.as_os_str()), &directory)
-            {
-                found.entry(key).or_insert(path);
-            }
-        }
-    }
-    ensure!(!found.is_empty(), "{ADAPTER_HINT}");
+    let (program, args) = source.command.split_first().context(ADAPTER_HINT)?;
     ensure!(
-        found.len() == 1,
-        "Multiple download adapters found: {}. Choose one with [download].adapter.",
-        found.keys().cloned().collect::<Vec<_>>().join(", ")
+        !program.trim().is_empty(),
+        "The download adapter command must name an executable"
     );
-    Ok(found.into_values().next().unwrap())
+    Ok((crate::adapter::resolve_executable(program)?, args))
 }
 
-fn windows_executable(name: &str, pathext: Option<&str>) -> bool {
-    let Some(extension) = Path::new(name).extension().and_then(|value| value.to_str()) else {
-        return false;
-    };
-    pathext
-        .unwrap_or(".COM;.EXE;.BAT;.CMD")
-        .split(';')
-        .any(|value| {
-            value
-                .strip_prefix('.')
-                .is_some_and(|value| value.eq_ignore_ascii_case(extension))
-        })
-}
-
-fn accept_line(line: &[u8], last: &mut Option<Output>) -> Result<()> {
+fn accept_line(stage: &str, line: &[u8], last: &mut Option<Output>) -> Result<()> {
     ensure!(
         line.len() as u64 <= MAX_LINE_BYTES,
         "Download adapter output line exceeds 1 MiB"
@@ -238,7 +168,7 @@ fn accept_line(line: &[u8], last: &mut Option<Output>) -> Result<()> {
             .as_f64()
             .filter(|value| (0.0..=1.0).contains(value))
             .context("Invalid download adapter progress")?;
-        crate::progress::download_progress((progress * 10000.).round() as u64, 10000);
+        crate::progress::download_progress(stage, (progress * 10000.).round() as u64, 10000);
         *last = None;
     } else {
         *last = Some(serde_json::from_value(value).context("Invalid download adapter result")?);
@@ -247,7 +177,7 @@ fn accept_line(line: &[u8], last: &mut Option<Output>) -> Result<()> {
 }
 
 /// Tokio reads stdout while the shared process guard retains ownership of the whole tree.
-pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolved> {
+pub async fn resolve(url: &str, source: &Source, cache: &Path, stage: &str) -> Result<Resolved> {
     runtime::check_cancelled()?;
     crate::config::ensure_http_url(url)?;
     std::fs::create_dir_all(cache)?;
@@ -306,7 +236,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
     let mut eof = false;
     let poll = Duration::from_millis(50);
     let mut exited = tokio::time::interval_at(tokio::time::Instant::now() + poll, poll);
-    crate::progress::stage("download", "start");
+    crate::progress::stage_label(stage, "start", "Downloading media");
     let result = async {
         let status = loop {
             let mut bounded = (&mut stdout).take(MAX_LINE_BYTES + 1 - line.len() as u64);
@@ -315,7 +245,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
                 error = runtime::watch_cancelled() => return Err(error),
                 count = bounded.read_until(b'\n', &mut line), if !eof => {
                     if count? == 0 { eof = true; }
-                    else { accept_line(&line, &mut last)?; line.clear(); }
+                    else { accept_line(stage, &line, &mut last)?; line.clear(); }
                 },
                 _ = exited.tick() => if let Some(status) = child.try_wait() {
                     break status;
@@ -330,12 +260,12 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
             if bounded.read_until(b'\n', &mut line).await? == 0 {
                 eof = true;
             } else {
-                accept_line(&line, &mut last)?;
+                accept_line(stage, &line, &mut last)?;
                 line.clear();
             }
         }
         if !line.is_empty() {
-            accept_line(&line, &mut last)?;
+            accept_line(stage, &line, &mut last)?;
         }
         Ok(status)
     }
@@ -352,7 +282,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path) -> Result<Resolve
             Ok(resolved)
         })
         .map_err(|error| stderr.attach(error, "Download adapter diagnostics"))?;
-    crate::progress::stage("download", "done");
+    crate::progress::stage_label(stage, "done", "Downloading media");
     Ok(result)
 }
 
@@ -448,16 +378,16 @@ mod tests {
         runtime::block_on(async {
             let cache = root.path().join("cache");
             assert!(
-                resolve("https://example.test/media", &broken, &cache)
+                resolve("https://example.test/media", &broken, &cache, "download")
                     .await
                     .is_err()
             );
             assert!(!cache.join("complete.json").exists());
             let source = command(&record, "files").unwrap();
-            let first = resolve("https://example.test/media", &source, &cache)
+            let first = resolve("https://example.test/media", &source, &cache, "download")
                 .await
                 .unwrap();
-            let again = resolve("https://example.test/media", &source, &cache)
+            let again = resolve("https://example.test/media", &source, &cache, "download")
                 .await
                 .unwrap();
             assert_eq!(first.media, again.media);
@@ -482,7 +412,7 @@ mod tests {
         };
         runtime::block_on(async {
             let cache = root.path().join("cache");
-            let first = resolve("https://example.test/media", &source, &cache)
+            let first = resolve("https://example.test/media", &source, &cache, "download")
                 .await
                 .unwrap();
             let tracks = Output::read(&cache)
@@ -492,7 +422,7 @@ mod tests {
                 .unwrap();
             for path in [&first.media, &tracks[0].path] {
                 std::fs::remove_file(path).unwrap();
-                let again = resolve("https://example.test/media", &source, &cache)
+                let again = resolve("https://example.test/media", &source, &cache, "download")
                     .await
                     .unwrap();
                 assert!(again.media.is_file());
@@ -529,6 +459,7 @@ mod tests {
                     "https://example.test/media",
                     &source,
                     &root.path().join("cache"),
+                    "download",
                 )
                 .await
                 .is_ok()
@@ -538,6 +469,7 @@ mod tests {
                 "https://example.test/media",
                 &source,
                 &root.path().join("oversized-cache"),
+                "download",
             )
             .await
             .err()
@@ -561,6 +493,7 @@ mod tests {
                     "https://example.test/media",
                     &source,
                     &root.path().join("cache"),
+                    "download",
                 ),
             )
             .await
@@ -580,7 +513,7 @@ mod tests {
         runtime::block_on(async {
             for number in 0..3 {
                 let cache = root.path().join(format!("cache-{number}"));
-                let resolved = resolve("https://example.test/media", &source, &cache)
+                let resolved = resolve("https://example.test/media", &source, &cache, "download")
                     .await
                     .unwrap();
                 assert_eq!(resolved.meta.title.len(), 131072);
@@ -600,76 +533,6 @@ mod tests {
         .unwrap();
     }
 
-    #[test]
-    fn windows_discovery_only_accepts_executable_extensions() {
-        for extension in ["com", "EXE", "Bat", "cMd"] {
-            assert!(windows_executable(
-                &format!("notepipe-source-test.{extension}"),
-                None
-            ));
-        }
-        for name in [
-            "notepipe-source-test",
-            "notepipe-source-test.txt",
-            "notepipe-source-test.pdb",
-            "notepipe-source-test.exe.manifest",
-        ] {
-            assert!(!windows_executable(name, None), "{name}");
-        }
-        assert!(windows_executable(
-            "notepipe-source-test.PY",
-            Some(".Py;.EXE")
-        ));
-        assert!(!windows_executable(
-            "notepipe-source-test.cmd",
-            Some(".Py;.EXE")
-        ));
-        assert!(!windows_executable("notepipe-source-test.exe", Some("")));
-    }
-
-    #[test]
-    fn discovery_handles_none_one_and_multiple_adapters_and_prefers_siblings() {
-        let root = tempfile::tempdir_in(".").unwrap();
-        let sibling = root.path().join("sibling");
-        let path = root.path().join("path");
-        std::fs::create_dir(&sibling).unwrap();
-        std::fs::create_dir(&path).unwrap();
-        let directories = [sibling.clone(), path.clone()];
-        assert!(
-            discover(directories.clone())
-                .unwrap_err()
-                .to_string()
-                .contains(ADAPTER_HINT)
-        );
-        let executable = |directory: &Path, name: &str| {
-            let path = directory.join(if cfg!(windows) {
-                format!("{name}.cmd")
-            } else {
-                name.into()
-            });
-            std::fs::write(&path, "fixture").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
-            std::env::current_dir().unwrap().join(path)
-        };
-        let first = executable(&sibling, "notepipe-source-first");
-        assert_eq!(discover(directories.clone()).unwrap(), first);
-        executable(&path, "notepipe-source-first");
-        assert_eq!(discover(directories.clone()).unwrap(), first);
-        executable(&path, "notepipe-source-second");
-        let error = discover(directories).unwrap_err().to_string();
-        for text in [
-            "notepipe-source-first",
-            "notepipe-source-second",
-            "[download].adapter",
-        ] {
-            assert!(error.contains(text), "{error}");
-        }
-    }
-
     #[cfg(unix)]
     #[test]
     fn dropping_resolution_stops_the_adapter_and_its_children() {
@@ -682,7 +545,7 @@ mod tests {
         runtime::block_on(async {
             let cache = root.path().join("cache");
             let task = tokio::spawn(async move {
-                resolve("https://example.test/media", &source, &cache).await
+                resolve("https://example.test/media", &source, &cache, "download").await
             });
             let start = std::time::Instant::now();
             while !record.join("child-ready").exists() {
@@ -704,5 +567,43 @@ mod tests {
             assert!(!root.path().join("cache/complete.json").exists());
         })
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod caption_tests {
+    use super::*;
+    #[test]
+    fn automatic_captions_can_be_excluded_without_changing_human_ranking() {
+        let root = tempfile::tempdir().unwrap();
+        let files = root.path().join("files");
+        std::fs::create_dir(&files).unwrap();
+        for name in ["automatic.srt", "human.srt"] {
+            std::fs::write(files.join(name), "captions").unwrap();
+        }
+        let mut output:Output = serde_json::from_value(serde_json::json!({"media":"unused","subtitles":[{"path":"automatic.srt","language":"en","automatic":true}]})).unwrap();
+        assert_eq!(
+            output.preferred_subtitle(root.path(), "en", true).unwrap(),
+            Some(files.join("automatic.srt").canonicalize().unwrap())
+        );
+        assert!(
+            output
+                .preferred_subtitle(root.path(), "en", false)
+                .unwrap()
+                .is_none()
+        );
+        output.subtitles.push(Caption {
+            path: "human.srt".into(),
+            language: Some("en".into()),
+            automatic: false,
+        });
+        for automatic in [true, false] {
+            assert_eq!(
+                output
+                    .preferred_subtitle(root.path(), "en", automatic)
+                    .unwrap(),
+                Some(files.join("human.srt").canonicalize().unwrap())
+            );
+        }
     }
 }

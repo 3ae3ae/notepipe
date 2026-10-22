@@ -2,7 +2,7 @@
 use crate::{
     artifact::{self, Document},
     asr, checkpoint,
-    config::{self, PipelineConfig, TranscriptSource},
+    config::{self, PipelineConfig},
     media, progress, runtime, scene,
     source::{self, MediaMeta},
     subtitle, timeline,
@@ -23,14 +23,7 @@ fn source_key(source: &str, adapter: &crate::settings::Source) -> Result<String>
             &serde_json::json!({"path":path,"size":metadata.len(),"mtime":metadata.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_nanos()}),
         )?
     } else {
-        let discovered = if adapter.command.is_empty() {
-            Some(source::command(adapter)?.0)
-        } else {
-            None
-        };
-        serde_json::to_vec(
-            &serde_json::json!({"url":source,"command":adapter.command,"discovered":discovered}),
-        )?
+        serde_json::to_vec(&serde_json::json!({"url":source,"command":adapter.command}))?
     };
     Ok(runtime::digest(&identity)[..16].into())
 }
@@ -88,18 +81,24 @@ fn selected_transcript(path: &Path) -> Result<(String, Vec<timeline::TranscriptE
 }
 
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
-    let mut warnings = artifact::recover(&cfg.out_root)?;
     let mut cfg = cfg.clone();
     cfg.validate().context("Invalid settings")?;
+    let mut keys = std::collections::BTreeMap::new();
+    for (_, stage) in &cfg.stages {
+        if cfg.subtitle.is_some() && matches!(stage, crate::settings::Stage::Transcript(_)) {
+            continue;
+        }
+        if let Some(provider) = stage.used_provider() {
+            keys.insert(provider.to_owned(), cfg.providers[provider].key(provider)?);
+        }
+    }
+    if let Some(key) = keys.get(&cfg.transcript.speech.provider) {
+        cfg.asr.api_key = key.clone();
+    }
     if let Some(path) = &cfg.subtitle {
         selected_transcript(path)?;
     }
-    if cfg.subtitle.is_none()
-        && cfg.transcript_source == TranscriptSource::Asr
-        && !crate::wizard::is_first_run(&cfg)
-    {
-        cfg.validate_asr()?;
-    }
+    let mut warnings = artifact::recover(&cfg.out_root)?;
     let local = Path::new(&cfg.url).is_file();
     if local {
         cfg.url = Path::new(&cfg.url)
@@ -108,6 +107,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             .into_owned();
     } else {
         config::ensure_http_url(&cfg.url)?;
+        anyhow::ensure!(cfg.download_name.is_some(), "{}", source::ADAPTER_HINT);
     }
     let cache_root = config::cache_dir();
     let work_root = cache_root.join("work");
@@ -124,7 +124,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let audio = cfg.audio_path();
     let _dispatch = crate::dispatch::install(&work)?;
     let source_cache = work.join("source");
-    progress::stage("fetch", "start");
+    progress::stage_label("media", "start", "Reading media information");
     let mut source_media = None;
     let mut output = if local {
         None
@@ -133,9 +133,14 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     };
     if !local && output.is_none() {
         source_media = Some(
-            source::resolve(&cfg.url, &cfg.source, &source_cache)
-                .await?
-                .media,
+            source::resolve(
+                &cfg.url,
+                &cfg.source,
+                &source_cache,
+                cfg.download_name.as_deref().unwrap_or("download"),
+            )
+            .await?
+            .media,
         );
         output = source::Output::read(&source_cache)?;
     }
@@ -177,52 +182,40 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             meta.duration = saved.duration;
         }
     }
-    progress::stage("fetch", "done");
-    progress::stage("subtitle", "start");
-    let selected = if let Some(path) = &cfg.subtitle {
-        Some(path.clone())
-    } else if cfg.transcript_source == TranscriptSource::Asr {
-        None
-    } else if let Some(cached) = &output {
-        match cached.preferred_subtitle(&source_cache, &cfg.asr.language) {
-            Ok(path) => path,
-            Err(error)
-                if error
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
-            {
-                source_media = Some(
-                    source::resolve(&cfg.url, &cfg.source, &source_cache)
-                        .await?
-                        .media,
-                );
-                output = source::Output::read(&source_cache)?;
-                output
-                    .as_ref()
-                    .context("Missing completed source output")?
-                    .preferred_subtitle(&source_cache, &cfg.asr.language)?
-            }
-            Err(error) => return Err(error),
-        }
-    } else {
-        subtitle::sidecar_subtitle(Path::new(&cfg.url), &cfg.asr.language)
-    };
+    progress::stage_label("media", "done", "Reading media information");
+    let transcript_name = cfg.transcript_name.as_deref().unwrap_or("transcript");
+    if cfg.subtitle.is_none() {
+        progress::stage(transcript_name, "start");
+    }
+    let mut selected = cfg.subtitle.clone();
     if selected.is_none() {
+        if cfg
+            .transcript
+            .sources
+            .first()
+            .is_some_and(|source| source == "subtitles")
+        {
+            selected =
+                find_subtitle(&cfg, &source_cache, local, &mut output, &mut source_media).await?;
+            if let Some(path) = &selected {
+                let events = subtitle::parse_subtitle(&subtitle::read_subtitle_text(path)?);
+                if !timeline::has_readable_events(&events) {
+                    selected = None;
+                }
+            }
+        }
         anyhow::ensure!(
-            cfg.transcript_source != TranscriptSource::Subtitle,
+            selected.is_some()
+                || cfg
+                    .transcript
+                    .sources
+                    .iter()
+                    .any(|source| source == "speech"),
             "No subtitles found. Select existing subtitles, or use speech recognition."
         );
-        if crate::wizard::is_first_run(&cfg) {
-            cfg.asr = crate::wizard::run(&cfg)?;
-        }
-        cfg.validate_asr()?;
     }
     if selected.is_none() {
-        cfg.asr.api_key = crate::settings::resolve_api_key(
-            &cfg.asr.service,
-            &cfg.asr.api_key,
-            &cfg.asr.api_key_env,
-        )?;
+        cfg.validate_asr()?;
     }
     let selected = selected.as_deref().map(selected_transcript).transpose()?;
     let transcript_key = if let Some((key, _)) = &selected {
@@ -236,14 +229,23 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let transcript = read_transcript(&transcript_path)?;
     let asr_root = work.join(format!("asr-{transcript_key}"));
     let frames_root = work.join(format!("frames-{}", screenshot_key(&cfg)?));
-    let frames = read_frames(&frames_root)?;
-    progress::stage("subtitle", "done");
+    let frames = if cfg.screenshots_name.is_some() {
+        read_frames(&frames_root)?
+    } else {
+        Some(scene::Output::NoVideo)
+    };
     let need_media = frames.is_none() || (transcript.is_none() && selected.is_none());
     if need_media {
         crate::error::require_cmd("ffmpeg")?;
         crate::error::require_cmd("ffprobe")?;
         if !local && source_media.is_none() {
-            let resolved = source::resolve(&cfg.url, &cfg.source, &source_cache).await?;
+            let resolved = source::resolve(
+                &cfg.url,
+                &cfg.source,
+                &source_cache,
+                cfg.download_name.as_deref().unwrap_or("download"),
+            )
+            .await?;
             meta = resolved.meta;
             source_media = Some(resolved.media);
         }
@@ -264,11 +266,18 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     frame_cfg.out_dir = frames_root.clone();
     let mut asr_cfg = cfg.clone();
     asr_cfg.out_dir = asr_root.clone();
+    if let Some(name) = &cfg.screenshots_name {
+        progress::stage(name, "start");
+    }
+    // A provider program stops after the last stage that uses it, so local engines do not hold memory needlessly.
+    let last_use = |provider: &str| last_use(&cfg.stages, provider);
+    let mut adapters = std::collections::HashMap::<String, crate::adapter::Adapter>::new();
     let (frames, transcript) = tokio::join!(
         async {
             if let Some(frames) = frames {
                 return Ok(frames);
             }
+
             let frames = scene::run(
                 &frame_cfg,
                 media_path.as_deref().context("Missing source media")?,
@@ -282,22 +291,63 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             Ok::<_, anyhow::Error>(frames)
         },
         async {
+            let mut cache_path = transcript_path.clone();
             let events = if let Some(cache) = transcript {
                 return Ok(cache.events);
             } else if let Some((_, events)) = selected {
                 events
             } else {
-                progress::stage("audio", "start");
+                progress::stage_label(
+                    &format!("{transcript_name}/audio"),
+                    "start",
+                    "Extracting audio",
+                );
                 media::extract_audio(
                     media_path.as_deref().context("Missing source media")?,
                     &audio,
                 )
                 .await?;
-                progress::stage("audio", "done");
+                progress::stage_label(
+                    &format!("{transcript_name}/audio"),
+                    "done",
+                    "Extracting audio",
+                );
                 runtime::check_cancelled()?;
-                progress::stage("transcribe", "start");
-                let events = asr::run(&asr_cfg, &audio).await?;
-                progress::stage("transcribe", "done");
+                progress::stage_label(
+                    &format!("{transcript_name}/speech"),
+                    "start",
+                    "Transcribing speech",
+                );
+                let (mut events, adapter) = asr::run(&asr_cfg, &audio).await?;
+                if let Some(adapter) = adapter
+                    && last_use(&cfg.transcript.speech.provider).is_some()
+                {
+                    adapters.insert(cfg.transcript.speech.provider.clone(), adapter);
+                }
+                if !timeline::has_readable_events(&events)
+                    && cfg
+                        .transcript
+                        .sources
+                        .first()
+                        .is_some_and(|source| source == "speech")
+                    && cfg
+                        .transcript
+                        .sources
+                        .iter()
+                        .any(|source| source == "subtitles")
+                    && let Some(path) =
+                        find_subtitle(&cfg, &source_cache, local, &mut output, &mut source_media)
+                            .await?
+                {
+                    let (key, fallback) = selected_transcript(&path)?;
+                    events = fallback;
+                    cache_path = work.join(format!("transcript-{key}.json"));
+                }
+                progress::stage_label(
+                    &format!("{transcript_name}/speech"),
+                    "done",
+                    "Transcribing speech",
+                );
                 anyhow::ensure!(
                     timeline::has_readable_events(&events),
                     "No speech was recognized in the recording"
@@ -307,7 +357,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
             subtitle::validate_events(&events)?;
             runtime::check_cancelled()?;
             checkpoint::atomic_write(
-                &transcript_path,
+                &cache_path,
                 &serde_json::to_vec(&TranscriptCache {
                     events: events.clone(),
                 })?,
@@ -316,6 +366,9 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
     );
     runtime::check_cancelled()?;
+    if let Some(name) = &cfg.screenshots_name {
+        progress::stage(name, "done");
+    }
     let frames = match frames {
         Ok(scene::Output::Frames(frames)) if !frames.is_empty() => frames,
         Ok(scene::Output::Frames(_)) => {
@@ -329,6 +382,9 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
     };
     let speech = transcript?;
+    if cfg.subtitle.is_none() {
+        progress::stage(transcript_name, "done");
+    }
     let mut sections = if frames.is_empty() {
         vec![timeline::Section {
             t: 0.,
@@ -345,53 +401,68 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         "No readable transcript"
     );
     let mut top = Vec::new();
-    let mut adapters = std::collections::HashMap::<String, crate::adapter::Adapter>::new();
-    for stage in &cfg.stages {
+    for (index, (name, definition)) in cfg.stages.iter().enumerate() {
         runtime::check_cancelled()?;
-        let service = &cfg.services[&stage.service];
-        if !service.is_connected() {
-            warnings.push(format!(
-                "{}: skipped; service {} has no base_url or adapter.",
-                stage.name, stage.service
-            ));
+        if let crate::settings::Stage::Filter(program) = definition {
+            progress::stage(name, "start");
+            let document = Document {
+                schema: 1,
+                meta: meta.clone(),
+                sections,
+                top,
+                warnings: warnings.clone(),
+            };
+            let (program, filter_name) = (program.clone(), name.clone());
+            let document =
+                tokio::task::spawn_blocking(move || filter(&filter_name, &program, document))
+                    .await??;
+            sections = document.sections;
+            top = document.top;
+            progress::stage(name, "done");
             continue;
         }
-        let mut settings = crate::llm::LlmSettings::for_stage(service, stage)?;
+        let Some(stage) = definition.ai(name) else {
+            continue;
+        };
+        progress::stage(name, "start");
+        let provider = &cfg.providers[&stage.provider];
+        let mut settings =
+            crate::llm::LlmSettings::for_stage(provider, &stage, keys[&stage.provider].clone());
         if !settings.adapter.is_empty() {
-            if !adapters.contains_key(&stage.service) {
-                // shortcut: the adapter starts even when every response is cached; start it on the first cache miss if startup cost matters.
-                let adapter = start_ai_adapter(settings.adapter.clone()).await?;
-                adapters.insert(stage.service.clone(), adapter);
+            if !adapters.contains_key(&stage.provider) {
+                // shortcut: cached AI responses still start the provider; defer startup to cache misses if startup cost matters.
+                let adapter = start_ai_adapter(settings.adapter.clone(), name.clone()).await?;
+                adapters.insert(stage.provider.clone(), adapter);
             }
-            settings.base_url = format!("{}/v1", adapters[&stage.service].base);
+            settings.base_url = format!("{}/v1", adapters[&stage.provider].base);
         }
-        progress::stage(&stage.name, "start");
         match stage.input {
             crate::llm::Input::Paragraphs => {
                 let (processed, report) =
-                    paragraphs_with_rollback(sections, &frames_root, &settings, stage).await?;
+                    paragraphs_with_rollback(sections, &frames_root, &settings, &stage).await?;
                 sections = processed;
-                report_warning(&mut warnings, &stage.name, &report);
+                report_warning(&mut warnings, name, &report);
             }
             crate::llm::Input::Transcript => {
                 let events = sections
                     .iter()
                     .flat_map(|section| section.speech.iter().cloned())
                     .collect::<Vec<_>>();
-                match crate::summarize::run(&settings, stage, &events, &meta).await {
+                match crate::summarize::run(&settings, &stage, &events, &meta).await {
                     Ok(text) => top.push(timeline::StageText {
-                        stage: stage.name.clone(),
+                        stage: name.clone(),
                         text,
                     }),
-                    Err(error) => warnings.push(format!("{}: {error:#}", stage.name)),
+                    Err(error) => warnings.push(format!("{name}: {error:#}")),
                 }
             }
         }
-        progress::stage(&stage.name, "done");
+        progress::stage(name, "done");
+        adapters.retain(|provider, _| last_use(provider).is_some_and(|last| last > index));
     }
     drop(adapters);
     runtime::check_cancelled()?;
-    progress::stage("render", "start");
+    progress::stage_label(&cfg.note_name, "start", "Writing notes");
     if let Some(path) = source_media {
         remove_file(&path, &mut warnings);
     }
@@ -408,16 +479,19 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         tokio::task::spawn_blocking(move || artifact::publish(&root, &frames_root, document))
             .await
             .context("Note publication interrupted")??;
-    progress::stage("render", "done");
-    if !cfg.on_complete.is_empty() {
-        let (argv, directory, count) = (cfg.on_complete.clone(), note_dir.clone(), warnings.len());
-        if let Err(error) =
-            tokio::task::spawn_blocking(move || on_complete(&argv, &directory, count))
+    progress::stage_label(&cfg.note_name, "done", "Writing notes");
+    for (name, definition) in &cfg.stages {
+        if let crate::settings::Stage::Hook(program) = definition {
+            progress::stage(name, "start");
+            let (argv, directory, count) = (program.argv(), note_dir.clone(), warnings.len());
+            if let Err(error) = tokio::task::spawn_blocking(move || hook(&argv, &directory, count))
                 .await
                 .context("Completion hook interrupted")
                 .and_then(|result| result)
-        {
-            warnings.push(format!("on_complete: {error:#}"));
+            {
+                warnings.push(format!("{name}: {error:#}"));
+            }
+            progress::stage(name, "done");
         }
     }
     for warning in &warnings {
@@ -430,7 +504,75 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     Ok(())
 }
 
-async fn start_ai_adapter(argv: Vec<String>) -> Result<crate::adapter::Adapter> {
+async fn find_subtitle(
+    cfg: &PipelineConfig,
+    cache: &Path,
+    local: bool,
+    output: &mut Option<source::Output>,
+    media: &mut Option<PathBuf>,
+) -> Result<Option<PathBuf>> {
+    let step = format!(
+        "{}/subtitles",
+        cfg.transcript_name.as_deref().unwrap_or("transcript")
+    );
+    progress::stage_label(&step, "start", "Looking for subtitles");
+    let selected = if local && cfg.transcript.subtitles.sidecar {
+        subtitle::sidecar_subtitle(Path::new(&cfg.url), &cfg.asr.language)
+    } else if cfg.transcript.subtitles.downloaded {
+        if let Some(cached) = output {
+            match cached.preferred_subtitle(
+                cache,
+                &cfg.asr.language,
+                cfg.transcript.subtitles.automatic,
+            ) {
+                Ok(path) => path,
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    *media = Some(
+                        source::resolve(
+                            &cfg.url,
+                            &cfg.source,
+                            cache,
+                            cfg.download_name.as_deref().unwrap_or("download"),
+                        )
+                        .await?
+                        .media,
+                    );
+                    *output = source::Output::read(cache)?;
+                    output
+                        .as_ref()
+                        .context("Missing completed source output")?
+                        .preferred_subtitle(
+                            cache,
+                            &cfg.asr.language,
+                            cfg.transcript.subtitles.automatic,
+                        )?
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    progress::stage_label(&step, "done", "Looking for subtitles");
+    Ok(selected)
+}
+
+/// The index of the last processing stage that sends requests to `provider`.
+fn last_use(stages: &[(String, crate::settings::Stage)], provider: &str) -> Option<usize> {
+    stages.iter().rposition(|(name, definition)| {
+        definition
+            .ai(name)
+            .is_some_and(|stage| stage.provider == provider)
+    })
+}
+
+async fn start_ai_adapter(argv: Vec<String>, stage: String) -> Result<crate::adapter::Adapter> {
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let _cancel_on_drop = runtime::CancelOnDrop(cancelled.clone());
     tokio::task::spawn_blocking(move || {
@@ -441,15 +583,15 @@ async fn start_ai_adapter(argv: Vec<String>) -> Result<crate::adapter::Adapter> 
             runtime::check_cancelled()
         };
         check_control()?;
-        crate::adapter::Adapter::start_with_control(&argv, &check_control)
+        crate::adapter::Adapter::start_with_control(&argv, &stage, &check_control)
     })
     .await?
 }
 
-fn on_complete(argv: &[String], note_dir: &Path, warnings: usize) -> Result<()> {
+fn hook(argv: &[String], note_dir: &Path, warnings: usize) -> Result<()> {
     let program = crate::adapter::resolve_executable(&argv[0])?.canonicalize()?;
     let output = runtime::run_bounded(
-        "on_complete",
+        "hook",
         std::process::Command::new(program)
             .args(&argv[1..])
             .current_dir(note_dir)
@@ -458,13 +600,63 @@ fn on_complete(argv: &[String], note_dir: &Path, warnings: usize) -> Result<()> 
             .env("NOTEPIPE_JSON", note_dir.join("note.json"))
             .env("NOTEPIPE_WARNINGS", warnings.to_string()),
         std::time::Duration::from_secs(10 * 60),
+        None,
     )?;
     anyhow::ensure!(
         output.status.success(),
         "{}",
-        crate::error::cmd_error("on_complete", output.status.code(), &output.stderr)
+        crate::error::cmd_error("hook", output.status.code(), &output.stderr)
     );
     Ok(())
+}
+
+fn filter(
+    name: &str,
+    program: &crate::settings::Program,
+    mut document: Document,
+) -> Result<Document> {
+    let output = runtime::run_bounded(
+        "filter",
+        std::process::Command::new(crate::adapter::resolve_executable(&program.command)?)
+            .args(&program.args),
+        std::time::Duration::from_secs(10 * 60),
+        Some(&serde_json::to_vec(&document)?),
+    )?;
+    let apply = || -> Result<Document> {
+        anyhow::ensure!(
+            output.status.success(),
+            "{}",
+            crate::error::cmd_error("filter", output.status.code(), &output.stderr)
+        );
+        let changed: Document = serde_json::from_slice(&output.stdout)?;
+        anyhow::ensure!(
+            changed.sections.len() == document.sections.len()
+                && changed
+                    .sections
+                    .iter()
+                    .zip(&document.sections)
+                    .all(|(new, old)| new.speech.len() == old.speech.len()),
+            "Filter {name}: the result must keep every section and paragraph"
+        );
+        document.top = changed.top;
+        for (old, new) in document.sections.iter_mut().zip(changed.sections) {
+            for (old, new) in old.speech.iter_mut().zip(new.speech) {
+                if old.text != new.text && old.raw.is_none() {
+                    old.raw = Some(old.text.clone());
+                }
+                old.text = new.text;
+                old.below = new.below;
+            }
+        }
+        Ok(document)
+    };
+    apply().with_context(|| {
+        format!(
+            "{}\n{}",
+            program.command,
+            crate::error::tail_lines(&output.stderr, 5)
+        )
+    })
 }
 
 fn remove_file(path: &Path, warnings: &mut Vec<String>) {
@@ -518,6 +710,22 @@ async fn paragraphs_with_rollback(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_provider_is_last_used_by_its_final_processing_stage() {
+        let stage = |text: &str| toml::from_str::<crate::settings::Stage>(text).unwrap();
+        let stages = vec![
+            ("a".to_owned(), stage("type = 'rewrite'\nprovider = 'one'")),
+            ("f".to_owned(), stage("type = 'filter'\ncommand = 'tool'")),
+            ("b".to_owned(), stage("type = 'add-top'\nprovider = 'two'")),
+            (
+                "c".to_owned(),
+                stage("type = 'add-below'\nprovider = 'one'"),
+            ),
+        ];
+        assert_eq!(last_use(&stages, "one"), Some(3));
+        assert_eq!(last_use(&stages, "two"), Some(2));
+        assert_eq!(last_use(&stages, "speech-only"), None);
+    }
     #[cfg(unix)]
     #[test]
     fn dropping_ai_adapter_startup_stops_its_blocking_process() {
@@ -536,7 +744,7 @@ mod tests {
             "never".into(),
         ];
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let task = tokio::spawn(start_ai_adapter(argv));
+            let task = tokio::spawn(start_ai_adapter(argv, "summary".into()));
             let start = Instant::now();
             while !root.path().join("pid").is_file() && start.elapsed() < Duration::from_secs(30) {
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -586,8 +794,10 @@ mod tests {
         )
         .unwrap();
         let first = screenshot_key(&cfg).unwrap();
-        cfg.stages
-            .push(serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap());
+        cfg.stages.push((
+            "summary".into(),
+            crate::settings::Stage::AddTop(Default::default()),
+        ));
         cfg.asr.model = "different".into();
         assert_eq!(screenshot_key(&cfg).unwrap(), first);
         cfg.similarity = 0.5;

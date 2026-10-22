@@ -97,14 +97,21 @@ impl EmptyResultTracker {
     }
 }
 
-pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent>> {
+pub async fn run(
+    cfg: &PipelineConfig,
+    wav: &Path,
+) -> Result<(Vec<TranscriptEvent>, Option<crate::adapter::Adapter>)> {
     cfg.validate_asr()?;
     let api = cfg.asr.clone();
     let wav = wav.to_path_buf();
+    let stage = cfg
+        .transcript_name
+        .clone()
+        .unwrap_or_else(|| "transcript".into());
     let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir)?;
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let _cancel_on_drop = crate::runtime::CancelOnDrop(cancelled.clone());
-    tokio::task::spawn_blocking(move || run_api(&api, &wav, &mut cp, &cancelled))
+    tokio::task::spawn_blocking(move || run_api(&api, &wav, &mut cp, &stage, &cancelled))
         .await
         .context("Speech recognition task did not complete")?
 }
@@ -120,8 +127,9 @@ fn run_api(
     api: &crate::settings::Asr,
     wav: &Path,
     cp: &mut crate::checkpoint::Checkpoint,
+    stage: &str,
     cancelled: &std::sync::atomic::AtomicBool,
-) -> Result<Vec<TranscriptEvent>> {
+) -> Result<(Vec<TranscriptEvent>, Option<crate::adapter::Adapter>)> {
     let check_control = || {
         anyhow::ensure!(
             !cancelled.load(std::sync::atomic::Ordering::Relaxed),
@@ -137,7 +145,7 @@ fn run_api(
     check_control()?;
     tracing::info!(segs = segs.len(), endpoint = %api.base_url, model = %api.model, "api vad");
     if segs.is_empty() {
-        return Ok(no_speech_events());
+        return Ok((no_speech_events(), None));
     }
 
     // Resume: give the workers only the chunks that are not done yet.
@@ -145,7 +153,7 @@ fn run_api(
         .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))
         .collect();
     if pending.is_empty() {
-        return Ok(cp.sorted_events());
+        return Ok((cp.sorted_events(), None));
     }
 
     let tmp = tempfile::Builder::new()
@@ -156,12 +164,13 @@ fn run_api(
     let mut adapter = if api.command.is_empty() {
         None
     } else {
-        let adapter = crate::adapter::Adapter::start_with_control(&api.command, &check_control)?;
+        let adapter =
+            crate::adapter::Adapter::start_with_control(&api.command, stage, &check_control)?;
         api.base_url = format!("{}/v1", adapter.base);
         Some(adapter)
     };
     let url = crate::config::asr_endpoint(&api)?;
-    let pb = crate::progress::Bar::new("transcribe", segs.len() as u64).with_template(
+    let pb = crate::progress::Bar::new(format!("{stage}/speech"), segs.len() as u64).with_template(
         "{spinner:.green} asr {pos}/{len} [{bar:32.cyan/blue}] {elapsed} {eta} {msg}",
     );
 
@@ -283,7 +292,7 @@ fn run_api(
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
         "asr done"
     );
-    Ok(events)
+    Ok((events, adapter))
 }
 
 /// Bounded retries: retryable errors back off with [`crate::runtime::retry_backoff`] (cancellable while waiting),
@@ -670,6 +679,7 @@ mod http_tests {
                         "/tests/fixtures/speech.wav"
                     )),
                     &mut cp,
+                    "transcript",
                     &cancelled,
                 );
                 done.store(true, Ordering::Relaxed);
@@ -873,7 +883,7 @@ mod http_tests {
             }
             let reached_request = gate.is_file();
             task.abort();
-            assert!(task.await.unwrap_err().is_cancelled());
+            assert!(matches!(task.await, Err(error) if error.is_cancelled()));
             assert!(reached_request);
             let start = Instant::now();
             while !record.join("terminated").is_file() && start.elapsed() < Duration::from_secs(30)

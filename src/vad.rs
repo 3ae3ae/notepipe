@@ -321,7 +321,7 @@ pub fn cut_wav(src: &Path, start: f64, end: f64, dest: &Path) -> Result<()> {
     .arg(src)
     .args(["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
     .arg(dest);
-    let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, CUT_TIMEOUT)?;
+    let out = crate::runtime::run_bounded("ffmpeg", &mut cmd, CUT_TIMEOUT, None)?;
     if !out.status.success() {
         anyhow::bail!("ffmpeg could not split audio");
     }

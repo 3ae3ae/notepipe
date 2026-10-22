@@ -10,16 +10,16 @@ pub(super) fn after_help() -> String {
     };
     format!(
         r#"Examples:
-  notepipe lecture.mp4                     A note for a local video, in the current folder
-  notepipe interview.m4a -o ~/notes        A note for an audio file, under ~/notes
-  notepipe talk.mp4 --subtitle talk.srt    Use your own transcript
-  notepipe lecture.mp4 --stages summary    Add an AI summary at the top
-  notepipe https://youtu.be/VIDEO_ID       A URL (install "notepipe[ytdlp]" first)
+  notepipe lecture.mp4                           A note for a local video, in the current folder
+  notepipe interview.m4a -o ~/notes              A note for an audio file, under ~/notes
+  notepipe talk.mp4 --subtitle talk.srt          Use your own transcript
+  notepipe lecture.mp4 --skip proofread,summary  Notes without the AI stages
+  notepipe https://youtu.be/VIDEO_ID             A URL (install "notepipe[ytdlp]" first)
 
 Transcripts:
-  Subtitles are used when they exist: lecture.srt or lecture.vtt next to the file, or those found by the
-  download adapter. Otherwise speech is sent to the service that [speech] names; the first run in a
-  terminal asks for it and saves it.
+  The transcript stage tries its sources in order: subtitles next to the file or from the download, then
+  speech recognition through its provider. --subtitle FILE uses your own transcript instead.
+  See notepipe config show for the pipeline in effect.
 
 Settings:
   Options override the configuration file, which overrides the built-in defaults.
@@ -64,7 +64,7 @@ pub struct Cli {
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct RunOpts {
-    /// Folder that receives the note folders (default: the current folder; config: output.dir)
+    /// Folder that receives the note folders (default: the current folder; config: the note stage's dir)
     #[arg(short, long, value_name = "DIR", help_heading = "Output")]
     pub out: Option<PathBuf>,
 
@@ -76,40 +76,23 @@ pub struct RunOpts {
     #[arg(long, help_heading = "Output")]
     pub no_resume: bool,
 
-    /// Where the transcript comes from (default: auto; config: transcript.source)
-    #[arg(
-        long = "transcript",
-        value_enum,
-        value_name = "SOURCE",
-        help_heading = "Transcript"
-    )]
-    pub transcript_source: Option<crate::config::TranscriptSource>,
-
     /// Use this SRT or VTT file as the transcript
     #[arg(long, value_name = "FILE", help_heading = "Transcript")]
     pub subtitle: Option<PathBuf>,
 
-    /// Spoken language, such as en or ko; also picks the subtitle language (default: detect; config: transcript.language)
+    /// Spoken language, such as en or ko; also picks the subtitle language (default: auto; config: the transcript stage's language)
     #[arg(long = "language", value_name = "CODE", help_heading = "Transcript")]
     pub asr_language: Option<String>,
 
-    /// Longest piece of speech sent in one request, 1 to 600 (default: 20; config: speech.detection.max_segment)
-    #[arg(
-        long = "max-segment",
-        value_name = "SECONDS",
-        help_heading = "Speech recognition"
-    )]
-    pub max_speech: Option<f32>,
-
-    /// When to take a screenshot after the picture changes (default: stable; config: screenshots.mode)
+    /// When to take a screenshot after the picture changes (default: stable; config: the screenshots stage's mode)
     #[arg(long, value_enum, value_name = "MODE", help_heading = "Screenshots")]
     pub screenshot_mode: Option<crate::config::ScreenshotMode>,
 
-    /// How small a change triggers a screenshot; higher takes more (default: 0.85; config: screenshots.sensitivity)
+    /// How small a change triggers a screenshot; higher takes more (default: 0.85; config: the screenshots stage's sensitivity)
     #[arg(long = "sensitivity", value_name = "0-1", help_heading = "Screenshots")]
     pub similarity: Option<f64>,
 
-    /// Seconds between the frames that are compared, at least 0.2 (default: 1; config: screenshots.frame_interval)
+    /// Seconds between the frames that are compared, at least 0.2 (default: 1; config: the screenshots stage's frame_interval)
     #[arg(
         long = "frame-interval",
         value_name = "SECONDS",
@@ -117,33 +100,28 @@ pub struct RunOpts {
     )]
     pub sample_interval: Option<f64>,
 
-    /// Least time between two screenshots (default: 10; config: screenshots.min_gap)
+    /// Least time between two screenshots (default: 10; config: the screenshots stage's min_gap)
     #[arg(long = "min-gap", value_name = "SECONDS", help_heading = "Screenshots")]
     pub cooldown: Option<f64>,
 
-    /// In stable mode, how long the picture must stay still (default: 0.8; config: screenshots.settle)
+    /// In stable mode, how long the picture must stay still (default: 0.8; config: the screenshots stage's settle)
     #[arg(long = "settle", value_name = "SECONDS", help_heading = "Screenshots")]
     pub stable_secs: Option<f64>,
 
-    /// Watch only part of the frame, as left%,top%-right%,bottom% (config: screenshots.region)
+    /// Watch only part of the frame, as left%,top%-right%,bottom% (config: the screenshots stage's region)
     ///
     /// For example, 40%,0%-100%,100% ignores the left 40% of the frame, where a speaker's video might be.
     #[arg(long = "region", value_name = "AREA", help_heading = "Screenshots")]
     pub roi: Option<String>,
 
-    /// Stages to run, in order, such as proofread,summary (default: the [[stages]] in the configuration)
+    /// Leave these stages out of the pipeline for this run, such as proofread,summary
     #[arg(
         long,
         value_name = "NAMES",
         value_delimiter = ',',
-        conflicts_with = "no_stages",
         help_heading = "Stages"
     )]
-    pub stages: Option<Vec<String>>,
-
-    /// Run no stages
-    #[arg(long, help_heading = "Stages")]
-    pub no_stages: bool,
+    pub skip: Vec<String>,
 
     /// Show more detail; -vv for debugging
     #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Terminal")]

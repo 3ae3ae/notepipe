@@ -14,12 +14,12 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 fn tool_version(cmd: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Option<String> {
     let mut command = Command::new(cmd);
     command.args(args);
-    let out = crate::runtime::run_bounded("doctor", &mut command, VERSION_TIMEOUT).ok()?;
+    let out = crate::runtime::run_bounded("doctor", &mut command, VERSION_TIMEOUT, None).ok()?;
     if !out.status.success() {
         return None;
     }
     Some(
-        out.stdout
+        String::from_utf8_lossy(&out.stdout)
             .lines()
             .next()
             .unwrap_or("")
@@ -61,17 +61,6 @@ pub fn run() -> Result<()> {
     out.push("\nOptional tools by use".into());
     let path = crate::settings::config_path();
     let loaded = crate::settings::load();
-    let default_source = crate::settings::Source::default();
-    let source = loaded.as_ref().map_or(&default_source, |cfg| &cfg.download);
-    match crate::source::command(source) {
-        Ok((path, _)) => check(
-            &mut out,
-            true,
-            "Download adapter",
-            &format!("  {}", path.display()),
-        ),
-        Err(error) => out.push(format!("- Download adapter unavailable. {error:#}")),
-    }
     out.push("\nConfiguration".into());
     match &loaded {
         Ok(cfg) => {
@@ -91,46 +80,28 @@ pub fn run() -> Result<()> {
                     check(&mut out, false, "Settings values", &format!("  {error:#}"));
                 }
             }
-            if let Some(service) = cfg
-                .services
-                .get(&cfg.speech.service)
-                .filter(|service| service.is_connected())
-            {
-                match crate::options::resolve(String::new(), &Default::default(), cfg)
-                    .and_then(|cfg| cfg.validate_asr())
-                {
-                    Ok(()) => {
-                        if service.adapter.is_empty() {
-                            check(
-                                &mut out,
-                                true,
-                                "Speech service",
-                                &format!("  {} ({})", service.base_url, cfg.speech.mode),
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        failures += 1;
-                        check(&mut out, false, "Speech service", &format!("  {error:#}"));
-                    }
+            let mut programs = Vec::new();
+            for provider in cfg.providers.values() {
+                if let Some(program) = &provider.command {
+                    programs.push(("AI adapter", program));
                 }
-            } else {
-                out.push("Speech recognition is not set up. Point [speech].service at a service in [services] that has a base_url or adapter.".into());
+            }
+            for stage in cfg.stages.values() {
+                match stage {
+                    crate::settings::Stage::Download(p) => {
+                        programs.push(("Download adapter", &p.command))
+                    }
+                    crate::settings::Stage::Filter(p) | crate::settings::Stage::Hook(p) => {
+                        programs.push(("Adapter", &p.command))
+                    }
+                    _ => {}
+                }
             }
             let mut checked = std::collections::HashSet::new();
-            for (name, service) in &cfg.services {
-                let Some(program) = service
-                    .adapter
-                    .first()
-                    .filter(|program| checked.insert(*program))
-                else {
+            for (label, program) in programs {
+                if !checked.insert(program) {
                     continue;
-                };
-                let label = if *name == cfg.speech.service {
-                    "Speech adapter"
-                } else {
-                    "AI adapter"
-                };
+                }
                 match crate::adapter::resolve_executable(program) {
                     Ok(path) if path.is_file() => {
                         check(&mut out, true, label, &format!("  {}", path.display()))
@@ -139,6 +110,15 @@ pub fn run() -> Result<()> {
                         failures += 1;
                         check(&mut out, false, label, &format!(" {program}"));
                     }
+                }
+            }
+            for name in &cfg.pipeline {
+                if let Some(provider) = cfg.stages.get(name).and_then(|stage| stage.used_provider())
+                    && let Some(connection) = cfg.providers.get(provider)
+                    && let Err(error) = connection.key(provider)
+                {
+                    failures += 1;
+                    check(&mut out, false, "Settings values", &format!("  {error:#}"));
                 }
             }
         }
