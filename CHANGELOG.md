@@ -6,33 +6,43 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+The configuration is rebuilt: the whole run is a pipeline of named stages. Configurations from 0.1.0 must be rewritten;
+`notepipe config init --force` writes the new default file.
+
 ### Added
 
-- `[services.NAME]`: a connection, either a `base_url` or an `adapter` that notepipe starts, with its key and
-  `concurrency`, defined once. Speech recognition and each stage name the service they use, and a stage's service can
-  be an adapter that is not a language model.
-- `api_key_env` reads a service's key from the environment variable it names.
+- `pipeline`, the stages that run, in order, and one `[stages.NAME]` table per stage, with a `type`: `download`,
+  `transcript`, `screenshots`, `rewrite`, `add-below`, `add-top`, `filter`, `note` or `hook`. The order is checked
+  before any work starts.
+- `[providers.NAME]`: a connection that stages share, either an API's `base_url` or a `command` that notepipe starts,
+  with the variable that holds its key (`api_key_env`) and its `concurrency`.
+- `filter` stages: a program reads the note as JSON on standard input and prints it changed.
+- Notes without screenshots for videos, by leaving the screenshots stage out.
+- The transcript stage's `sources` order and subtitle choices (`sidecar`, `downloaded`, `automatic`), and the
+  `batch_size` and `chunk_size` of AI stages, which were fixed before.
+- `--skip NAMES` leaves stages out for one run.
 
 ### Changed
 
-- The configuration is rebuilt around services, and configurations from 0.1.0 must be rewritten:
-  - `[speech]` names its `service` and keeps `api`, `model` and `[speech.detection]`; its connection and `concurrency`
-    move to the service.
-  - Stages are top-level `[[stages]]` blocks instead of `[[ai.stages]]`, each naming its `service` and `model`; `[ai]`
-    is gone.
-- `proofread` and `summary` are no longer built in. They are ordinary stages in the configuration file, with their
-  prompts written out. Every stage sets `input` and `output`; `prompt` and `model` are sent when set.
-- A run without a configuration file creates one and says where it is. It and `config init` write every default value,
-  the services `speech` and `ai` waiting for an address, and the two stages, and leave out settings that start empty.
-- A stage whose service has no address is skipped with a warning instead of stopping the run.
-- Requests to a service are limited by its `concurrency`, 4 by default, instead of 4 for speech and 8 for stages.
+- The default configuration works out of the box with OpenAI: `whisper-1` for speech recognition and `gpt-6-luna` for
+  the `proofread` and `summary` stages, with the key in `OPENAI_API_KEY`. A run without a configuration file creates it
+  and says so; the file lists every value in effect, with the two prompts written out.
+- `proofread` and `summary` are no longer built in; they are ordinary stages in the file.
+- AI stages say what they do to the note (`rewrite`, `add-below`, `add-top`) instead of `input` and `output`.
+- `on_complete` is a `hook` stage, and the output folder is the `note` stage's `dir`.
+- `--json` stage events use the names of the pipeline's stages, such as `transcript` and `note`, with steps such as
+  `screenshots/scan`; `media` replaces `fetch`.
+- `notepipe config show` prints the configuration in effect as TOML.
 
 ### Removed
 
-- `--proofread-prompt`; edit the stage's prompt instead.
-- `--speech-base-url`, `--speech-api-key`, `--speech-model`, `--speech-api`, `--ai-base-url`, `--ai-api-key` and
-  `--ai-model`. Connections and models are set in the configuration, or with `--config -` for one run.
-- `NOTEPIPE_SPEECH_API_KEY` and `NOTEPIPE_AI_API_KEY`; use `api_key_env`.
+- The sections `[output]`, `[transcript]`, `[speech]`, `[screenshots]`, `[ai]` and `[download]`, and
+  `[[ai.stages]]`.
+- The first-run setup prompt; notepipe never prompts.
+- API keys in the configuration (`api_key`) and `NOTEPIPE_SPEECH_API_KEY` / `NOTEPIPE_AI_API_KEY`; use `api_key_env`.
+- Finding a download adapter by its name; the download stage names its program.
+- `--stages`, `--no-stages`, `--transcript`, `--max-segment`, `--proofread-prompt`, and the `--speech-*` and `--ai-*`
+  connection options.
 
 ## [0.1.0] - 2026-10-22
 

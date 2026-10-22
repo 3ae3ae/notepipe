@@ -12,14 +12,14 @@ uv tool install "notepipe[xai]"
 ## Use
 
 ```toml
-[services.xai]
-adapter = ["notepipe-asr-xai"]
-api_key_env = "XAI_API_KEY"    # or api_key = "…"
+[providers.xai]
+command = "notepipe-asr-xai"
+api_key_env = "XAI_API_KEY"
 
-[speech]
-service = "xai"
+[stages.transcript.speech]
+provider = "xai"
 model = "grok-voice-transcribe-2.0"
 ```
 
-notepipe's API key is forwarded as is. `[transcript].language` is sent as xAI's `language` field. `--base-url` overrides
+notepipe's API key is forwarded as is. The transcript stage's `language` is sent as xAI's `language` field. `--base-url` overrides
 the default `https://api.x.ai/v1`.

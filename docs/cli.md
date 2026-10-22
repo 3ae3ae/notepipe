@@ -9,17 +9,18 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 
 ## Input
 
-- `SOURCE` is a local video or audio file, or an `http(s)` URL (resolved by a [download adapter](adapters.md#download-adapters)).
+- `SOURCE` is a local video or audio file, or an `http(s)` URL (fetched by the pipeline's `download` stage).
 - `--config FILE` reads the configuration from `FILE` instead of the user's config file; `--config -` reads it from
   standard input. The content is TOML, or JSON when its first non-space character is `{`. It has the same structure as
   `config.toml` (see `notepipe config init`). Command-line options still override it.
-- `--subtitle FILE` supplies an SRT or VTT transcript; subtitle discovery and speech recognition are skipped. An
-  unreadable or empty file is an error.
-- `--stages a,b` / `--no-stages` choose the stages for this run.
-- With `--json` notepipe never prompts. Missing settings are errors.
+- `--subtitle FILE` supplies an SRT or VTT transcript; the transcript stage is skipped. An unreadable or empty file is an
+  error.
+- `--skip a,b` leaves those stages out of the pipeline for this run.
+- notepipe never prompts.
 
-API keys can be part of the configuration, or come from the environment variables that services name in
-`api_key_env`; a program that starts notepipe can pass them in the child's environment.
+API keys come from the environment variables that providers name in `api_key_env`; a program that starts notepipe
+passes them in the child's environment. The configuration is checked, and every key is looked up, before any work
+starts.
 
 ## Events
 
@@ -34,9 +35,11 @@ With `--json`, standard output carries one JSON object per line. Every object ha
 | `done` | `note_dir`, `markdown`, `json`, `warnings` | the note was written |
 | `error` | `message` | the run failed |
 
-Stage names include `adapter/start`, `download`, `subtitle`, `scenes/scan`, `scenes/extract`, `audio`, `transcribe` and
-`render`, plus the names of configured stages. Treat unknown stage names and extra fields as
-informational; new ones may be added.
+`stage` is the name of a stage in the pipeline, or `NAME/STEP` for a step inside it: `TRANSCRIPT/subtitles`,
+`TRANSCRIPT/audio` and `TRANSCRIPT/speech` in the transcript stage, `SCREENSHOTS/scan` and `SCREENSHOTS/extract` in the
+screenshots stage, and `NAME/provider` while a stage starts a provider program. `media` is reading the source's media
+information, before the pipeline's stages. Treat unknown names and extra fields as informational; new ones may be
+added.
 
 ## Exit status
 
@@ -97,22 +100,7 @@ generator: "notepipe …"   # notepipe and its version
 the text, `below` when stages added text under it, and `seek_url` when the download adapter provided a link template.
 
 `note.json` lists the warnings known when the note was written. Warnings raised afterwards — cleaning up the previous
-note, or the completion hook — appear only in the `done` event, whose `warnings` list is final.
-
-## Completion hook
-
-`[output].on_complete = ["program", "arg", …]` runs once after a note is written, without a shell, with the note folder
-as its working directory and a 10-minute limit. A bare program name is looked up next to the notepipe executable, then on
-`PATH`; a relative path is resolved from the directory notepipe was started in. It receives:
-
-| Variable | Value |
-|---|---|
-| `NOTEPIPE_NOTE_DIR` | the note folder |
-| `NOTEPIPE_MARKDOWN` | path of `note.md` |
-| `NOTEPIPE_JSON` | path of `note.json` |
-| `NOTEPIPE_WARNINGS` | number of warnings so far: those in `note.json` and any from replacing the previous note |
-
-A failing hook produces a warning; the note and the exit status are unaffected.
+note, or hook stages — appear only in the `done` event, whose `warnings` list is final.
 
 ## Caches
 

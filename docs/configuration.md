@@ -8,103 +8,112 @@ JSON with the same structure.
 ```sh
 notepipe config init    # create the file with the default settings
 notepipe config path    # print where it is
-notepipe config show    # show the settings in effect
+notepipe config show    # show the configuration in effect
 ```
 
-The first run creates the file when there is none and says where it is; `config init` writes the same file. It holds
-every setting that has a value by default, with that value; the services `speech` and `ai`, waiting for an address; and
-the stages `proofread` and `summary` with their prompts. What the file says is what runs: change a value, delete a stage
-or add your own. Settings that start empty are left out of it and described below.
+The first run creates the file when there is none and says where it is; `config init` writes the same file, and the
+[README](../README.md#configuration) shows it. It uses OpenAI with the key in `OPENAI_API_KEY`, so it works as soon as
+that variable is set. Every value in it is in effect: change a value, take a stage out of the pipeline, or add your own.
+Settings that start empty are left out of it and described below.
 
 Values are taken from, in order: command-line options, the configuration, the defaults below. Unknown keys are errors,
 so a typo is reported instead of being ignored.
 
-## How the parts fit
-
-A connection to something outside notepipe is written once, under `[services]`, and every step that needs one names it:
-`[speech]` for speech recognition, and each of the `[[stages]]`. The service says where requests go and how they are
-authenticated; the step says what it asks for, such as the API, the model and the prompt.
+## Structure
 
 ```toml
-[services.openai]
-base_url = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"
+pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "note"]   # what runs, in order
 
-[speech]
-service = "openai"
-model = "gpt-4o-mini-transcribe"
+[providers.openai]        # connections that stages share
+# …
 
-[[stages]]
-name = "summary"
-service = "openai"
-model = "gpt-5.6-luna"
-input = "transcript"
-output = "top"
-prompt = "Summarize the recording in five bullet points."
+[stages.proofread]        # one table per stage; the table's key is the stage's name
+type = "rewrite"
+# …
 ```
 
-A service can also be an [adapter](adapters.md#service-adapters): a program that notepipe starts and that answers in the
-same format. That is how local engines are attached, and how a stage can be handled by something that is not a language
-model at all.
+A stage's settings live in its own table, and the only thing stages share is a provider. A stage whose name is not in
+`pipeline` does not run, but its table stays and is still checked; `--skip NAMES` leaves stages out for one run.
 
-Command-line options change what a run does with the note: its input, transcript, screenshots, stages and output. Where
-requests go is set only in the configuration; `--config -` passes one for a single run.
+## `pipeline`
 
-## `[services.NAME]`
+The names of the stages to run, in order. Before any work starts, notepipe checks that:
+
+- every name is a table in `[stages]`, listed once;
+- the stages come in this order: `download`; then `transcript` and `screenshots`, in either order; then `rewrite`,
+  `add-below`, `add-top` and `filter` stages, in any order; then `note`; then `hook` stages;
+- at most one `download`, `transcript` and `screenshots` stage runs, and exactly one `note` stage;
+- a `transcript` stage runs, unless `--subtitle FILE` supplies the transcript;
+- a URL source has a `download` stage.
+
+The `transcript` and `screenshots` stages work at the same time, because neither needs the other's result. The note's
+sections and paragraphs are built from their results before the next stage starts.
+
+## `[providers.NAME]`
+
+A provider is a service that stages send requests to: an OpenAI-compatible API, or a program that notepipe starts and
+that serves one (see [docs/adapters.md](adapters.md#provider-programs)).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `base_url` | `""` | Service root (for example `https://api.groq.com/openai/v1`) or the full endpoint of an OpenAI-compatible API |
-| `adapter` | `[]` | Program to start instead, as an argument list; see [docs/adapters.md](adapters.md#service-adapters) |
-| `api_key` | `""` | Sent as `Authorization: Bearer <key>` |
-| `api_key_env` | `""` | Name of an environment variable that holds the key, such as `OPENAI_API_KEY`; read when a step uses the service |
-| `concurrency` | `4` | Requests sent to it at the same time, 1 to 16. Local engines usually want `1` |
+| `base_url` | — | API root, such as `https://api.openai.com/v1`; stages add the path they call |
+| `command` | — | A program to start instead of `base_url`; a provider has one of the two |
+| `args` | `[]` | Arguments for `command` |
+| `api_key_env` | `""` | Environment variable that holds the key, sent as `Authorization: Bearer <key>`; none when empty |
+| `concurrency` | `4` | Requests sent to the provider at the same time, 1 to 16. Local engines usually want `1` |
 
-A service is connected when it has a `base_url` or an `adapter`, but not both. One with neither stays in the file for you
-to fill in: a stage that uses it is skipped with a warning, and speech recognition asks for it in a terminal and fails
-elsewhere. Naming a service that does not exist is an error, and so is setting both `api_key` and `api_key_env`, or
-naming a variable that is not set.
+When a provider that a running stage uses names a variable that is not set, the run stops before any work starts.
 
-## `[output]`
+## `[stages.NAME]`
 
-| Key | Option | Default | Meaning |
-|---|---|---|---|
-| `dir` | `-o`, `--out` | `"."` | Folder that receives the note folders; `~` is your home folder |
-| `on_complete` | — | `[]` | Program run after each note is written, as an argument list; see [docs/cli.md](cli.md#completion-hook) |
+Every stage has a `type`, and each type has its own keys.
 
-## `[transcript]`
+### `download`
 
-| Key | Option | Default | Meaning |
-|---|---|---|---|
-| `source` | `--transcript` | `"auto"` | `auto`: subtitles when there are any, otherwise speech recognition; `subtitles`: subtitles only; `speech`: speech recognition only |
-| `language` | `--language` | `""` | Spoken language as a code such as `en` or `ko`; sent to speech recognition and used to choose among subtitles. Empty: detect |
+Fetches the media of a URL with a [download program](adapters.md#download-programs). Local files skip this stage.
 
-Subtitles are `NAME.srt` or `NAME.vtt` next to a local `NAME.mp4`, or those a download adapter delivers. `--subtitle FILE`
-takes precedence over all three sources. Subtitles that are found but cannot be read are an error.
+| Key | Default | Meaning |
+|---|---|---|
+| `command` | required | The program, such as `notepipe-source-ytdlp` (installed with `uv tool install "notepipe[ytdlp]"`) |
+| `args` | `[]` | Its arguments; for yt-dlp, arguments after `"--"` go to yt-dlp itself |
 
-## `[speech]` — speech recognition
+### `transcript`
+
+Makes the transcript. It tries its sources in order and uses the first that gives one.
 
 | Key | Option | Default | Meaning |
 |---|---|---|---|
-| `service` | — | `""` | The service that recognizes speech |
-| `api` | — | `"transcriptions"` | `transcriptions`: OpenAI-compatible `/audio/transcriptions`; `chat`: audio input to `/chat/completions` |
-| `model` | — | `""` | Sent only when set |
+| `language` | `--language` | `"auto"` | Spoken language as a code such as `en` or `ko`; it picks the subtitle language and is sent to speech recognition. `auto`: no preference, and the provider detects it |
+| `sources` | — | `["subtitles", "speech"]` | `subtitles`, `speech` or both, in the order to try |
 
-When a run in a terminal needs speech recognition and the service is not connected, notepipe asks for the connection and
-saves it to that service, or to a new service named `speech` when `[speech].service` is empty.
+`[stages.NAME.subtitles]`: which subtitles count. Among them, those in `language` come first, then those in the
+recording's original language, and human captions before machine-generated ones.
 
-### `[speech.detection]`
+| Key | Default | Meaning |
+|---|---|---|
+| `sidecar` | `true` | `NAME.srt` or `NAME.vtt` next to a local `NAME.mp4`, including language variants such as `NAME.en.srt` |
+| `downloaded` | `true` | Subtitles that the download stage delivered |
+| `automatic` | `true` | Machine-generated captions may be used |
 
-Speech is located with a voice activity detector and cut into segments before it is sent. The defaults suit most
-recordings.
+`[stages.NAME.speech]`: speech recognition. Speech is located on your machine with a voice activity detector, cut into
+segments and sent to the provider.
 
-| Key | Option | Default | Meaning |
-|---|---|---|---|
-| `threshold` | — | `0.5` | Speech confidence from 0 to 1; lower keeps quieter speech |
-| `min_silence` | — | `0.4` | Pauses shorter than this many seconds do not split segments |
-| `max_segment` | `--max-segment` | `20.0` | Longest stretch of speech in one request, 1 to 600 seconds; up to 0.25 s of silence is added on each side |
+| Key | Default | Meaning |
+|---|---|---|
+| `provider` | required | The provider to send speech to |
+| `api` | `"transcriptions"` | `transcriptions`: `/audio/transcriptions`; `chat`: audio input to `/chat/completions` |
+| `model` | `""` | Sent only when set |
+| `threshold` | `0.5` | Speech confidence from 0 to 1; lower keeps quieter speech |
+| `min_silence` | `0.4` | Pauses shorter than this many seconds do not split segments |
+| `max_segment` | `20.0` | Longest stretch of speech in one request, 1 to 600 seconds; up to 0.25 s of silence is added on each side |
 
-## `[screenshots]`
+`--subtitle FILE` supplies the transcript directly; the transcript stage is skipped. Subtitles that are found but cannot
+be read are an error.
+
+### `screenshots`
+
+Takes a screenshot when the picture changes. Without this stage, notes have text only; audio files never have
+screenshots.
 
 | Key | Option | Default | Meaning |
 |---|---|---|---|
@@ -113,96 +122,126 @@ recordings.
 | `frame_interval` | `--frame-interval` | `1.0` | Seconds between compared frames, at least 0.2 |
 | `min_gap` | `--min-gap` | `10.0` | Least seconds between screenshots; a final screenshot at the end of the recording may come sooner |
 | `settle` | `--settle` | `0.8` | In `stable` mode, seconds the picture must stay unchanged |
-| `region` | `--region` | `""` | Only this part of the frame is compared, as `left%,top%-right%,bottom%` (for example `"40%,0%-100%,100%"`) |
+| `region` | `--region` | the whole frame | Only this part of the frame is compared, as `left%,top%-right%,bottom%` (for example `"40%,0%-100%,100%"`) |
 
-Audio files have no screenshots.
+### `rewrite`, `add-below` and `add-top`
 
-## `[[stages]]`
+Send the note to a model with a prompt and put the answer into the note:
 
-Each block adds a stage; stages run in the order of the blocks once the transcript is ready. A stage sends each
-paragraph, or the whole transcript, to its service and puts the answer into the note. notepipe has no stages of its own:
-the two in the file it creates are ordinary stages like any you add.
+| Type | The model reads | Its answer |
+|---|---|---|
+| `rewrite` | each paragraph | replaces the paragraph |
+| `add-below` | each paragraph | is added below the paragraph |
+| `add-top` | the whole transcript, with times | is added at the top of the note, as Markdown |
+
+| Key | Types | Default | Meaning |
+|---|---|---|---|
+| `provider` | all | required | The provider to send requests to |
+| `model` | all | `""` | Sent only when set |
+| `prompt` | all | `""` | Instructions sent with the input |
+| `images` | `rewrite`, `add-below` | `false` | Also send the screenshot shown during each paragraph |
+| `batch_size` | `rewrite`, `add-below` | `20` | Paragraphs in one request, 1 to 100 |
+| `chunk_size` | `add-top` | `25000` | Characters of transcript in one request, 1000 to 1000000. A longer transcript is sent in parts, and one more request combines their answers |
+| `request` | all | `{}` | Extra fields for the request body, for example `{ reasoning_effort = "low" }` |
+
+notepipe adds instructions for the answer's format to the prompt, and sets `model`, `messages`, `stream` and
+`response_format` itself; `request` cannot change those. Nothing is sent by default for sampling or length limits. A
+failed request does not stop the run: the paragraphs it covered keep their text, an `add-top` stage adds nothing, and the
+note gets a warning. With `rewrite`, an empty answer removes the paragraph; if a stage would empty every paragraph, the
+text is kept and a warning is added. With `add-below`, an empty answer or one identical to the paragraph adds nothing.
+
+The default file holds two such stages:
+
+| Stage | Type | What its prompt asks for |
+|---|---|---|
+| `proofread` | `rewrite` | Fixes recognition errors, filler and punctuation without changing meaning or language; writes formulas as LaTeX |
+| `summary` | `add-top` | A one-sentence overview, 3–6 key points and a timestamped outline, in the transcript's language |
+
+### `filter`
+
+Runs a program that changes the note, for processing that needs no language model. See
+[docs/adapters.md](adapters.md#filter-programs).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `name` | required | Names the stage in progress output, warnings and `--stages`; names must be unique |
-| `service` | required | The service the stage sends its input to |
-| `model` | `""` | Sent only when set |
-| `input` | required | `paragraphs`: the note's paragraphs, in batches; `transcript`: the whole timestamped transcript |
-| `output` | required | For `paragraphs`: `replace` or `below`. For `transcript`: `top` |
-| `prompt` | `""` | Instructions sent with the input |
-| `images` | `false` | `paragraphs` only: also send the screenshot shown during each paragraph |
-| `request` | `{}` | Extra fields merged into each request body, for example `{ reasoning_effort = "low" }` |
+| `command` | required | The program |
+| `args` | `[]` | Its arguments |
 
-Nothing is sent by default for sampling or length limits; add fields such as `temperature` or `max_tokens` through
-`request` if your model needs them. `model`, `messages`, `stream` and `response_format` are set by notepipe and cannot be
-set through `request`.
+### `note`
 
-The file notepipe creates holds these two, both using the service `ai`:
+Writes the note folder: `note.md`, `note.json` and `images/` (see [docs/cli.md](cli.md#output)).
 
-| Stage | Input → output | What its prompt asks for |
-|---|---|---|
-| `proofread` | `paragraphs` → `replace` | Fixes recognition errors, filler and punctuation without changing meaning or language; writes formulas as LaTeX |
-| `summary` | `transcript` → `top` | A one-sentence overview, 3–6 key points and a timestamped outline, in the transcript's language |
+| Key | Option | Default | Meaning |
+|---|---|---|---|
+| `dir` | `-o`, `--out` | `"."` | Folder that receives the note folders; `~` is your home folder |
 
-A stage whose service is not connected is skipped with a warning, so the created file works before you set up an AI
-service; delete the stages you do not want.
+### `hook`
 
-With `replace`, an empty result removes the paragraph; if a stage would empty every paragraph, the text is kept and a
-warning is added. With `below`, an empty result or one identical to the paragraph adds nothing. `--stages a,b` runs the
-named stages of the configuration for one run, and `--no-stages` runs none.
-
-## `[download]`
+Runs a program after the note is written, for example to copy it elsewhere. See
+[docs/adapters.md](adapters.md#hook-programs).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `adapter` | `[]` | Download adapter for URLs, as an argument list. When empty, the one installed program named `notepipe-source-*` is used. See [docs/adapters.md](adapters.md#download-adapters). |
+| `command` | required | The program |
+| `args` | `[]` | Its arguments |
 
 ## Environment variables
 
 | Variable | Meaning |
 |---|---|
-| the names in `api_key_env` | API keys of services |
+| the names in `api_key_env` | API keys of providers |
 | `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` | Configuration and cache locations |
 | `RUST_LOG` | Log filter for `-v` diagnostics |
 
 ## Example
 
-Speech through Groq, stages through a local Ollama:
+Speech on a local engine, AI stages on a local Ollama, glossary terms fixed by a program of your own, and every note
+copied into a notes app:
 
 ```toml
-[services.groq]
-base_url = "https://api.groq.com/openai/v1"
-api_key_env = "GROQ_API_KEY"
+pipeline = ["download", "transcript", "screenshots", "fix-terms", "proofread", "note", "copy"]
 
-[services.ollama]
+[providers.llama]
+command = "notepipe-asr-llama"
+args = ["-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+concurrency = 1
+
+[providers.ollama]
 base_url = "http://localhost:11434/v1"
 concurrency = 1
 
-[output]
-dir = "~/notes"
+[stages.download]
+type = "download"
+command = "notepipe-source-ytdlp"
 
-[transcript]
+[stages.transcript]
+type = "transcript"
 language = "en"
+sources = ["subtitles", "speech"]
 
-[speech]
-service = "groq"
-model = "whisper-large-v3-turbo"
+[stages.transcript.speech]
+provider = "llama"
 
-[[stages]]
-name = "proofread"
-service = "ollama"
+[stages.screenshots]
+type = "screenshots"
+
+[stages.fix-terms]
+type = "filter"
+command = "fix-terms"
+args = ["--glossary", "glossary.tsv"]
+
+[stages.proofread]
+type = "rewrite"
+provider = "ollama"
 model = "qwen3:14b"
-input = "paragraphs"
-output = "replace"
-images = true
 prompt = "Fix speech-recognition errors and filler in each item. Keep its meaning and language."
 
-[[stages]]
-name = "glossary"
-service = "ollama"
-model = "qwen3:14b"
-input = "transcript"
-output = "top"
-prompt = "List the technical terms used in this recording with a one-line explanation of each, as a Markdown list under a level-2 heading named Glossary."
+[stages.note]
+type = "note"
+dir = "~/notes"
+
+[stages.copy]
+type = "hook"
+command = "sh"
+args = ["-c", "cp -R \"$NOTEPIPE_NOTE_DIR\" ~/Documents/Notes/"]
 ```

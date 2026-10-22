@@ -21,16 +21,16 @@ its Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); a plain `c
 ## Use
 
 ```toml
-[services.speech-swift]
-adapter = ["notepipe-asr-speech-swift"]
+[providers.speech-swift]
+command = "notepipe-asr-speech-swift"
 concurrency = 1
 
-[speech]
-service = "speech-swift"
+[stages.transcript.speech]
+provider = "speech-swift"
 ```
 
 `--model` selects `qwen3-1.7b` (default), `qwen3-0.6b` or `whisper`. The first run downloads the model.
-`[transcript].language` is passed to the model.
+The transcript stage's `language` is passed to the model.
 
-The Qwen models write at most 448 tokens per segment, roughly a minute of speech. Keep
-`[speech.detection].max_segment` at its default of 20 seconds, or below 60, so that long segments are not cut short.
+The Qwen models write at most 448 tokens per segment, roughly a minute of speech. Keep the speech `max_segment` at its
+default of 20 seconds, or below 60, so that long segments are not cut short.

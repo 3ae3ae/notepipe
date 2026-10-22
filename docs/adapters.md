@@ -2,18 +2,21 @@
 
 The notepipe core turns a local media file into a note and talks to the outside world only through standard interfaces.
 Anything tied to a particular engine, vendor or website is an **adapter**: a separate program that notepipe runs. To
-attach one, install it and name it in `config.toml`; to detach one, uninstall it or remove its line.
+attach one, install it and name it in `config.toml`; to detach one, uninstall it or remove it from the configuration.
 
-There are two kinds:
+What a program must do depends on where it is named:
 
-- **Service adapters** serve an OpenAI-compatible API on localhost while a step needs them: the transcription API for
-  speech recognition, the chat API for stages, or both. A [service](configuration.md#servicesname) names one in
-  `adapter`.
-- **Download adapters** turn a URL into a local media file plus metadata and subtitles.
+| Named in | Kind | It |
+|---|---|---|
+| `[providers.NAME]` `command` | [provider program](#provider-programs) | serves an OpenAI-compatible API on localhost while stages use it |
+| a `download` stage | [download program](#download-programs) | turns a URL into a local media file plus metadata and subtitles |
+| a `filter` stage | [filter program](#filter-programs) | reads the note as JSON and prints it changed |
+| a `hook` stage | [hook program](#hook-programs) | runs after the note is written |
 
 Official adapters are extras of the `notepipe` package, for example `uv tool install "notepipe[llama]"`. Other adapters
-install next to notepipe with `uv tool install notepipe --with <package>`.
-notepipe looks for adapter programs in its own directory first, then on `PATH`.
+install next to notepipe with `uv tool install notepipe --with <package>`. notepipe looks for programs in its own
+directory first, then on `PATH`; a relative path is resolved from the directory notepipe was started in. Programs run
+without a shell.
 
 ## Official adapters
 
@@ -27,99 +30,92 @@ notepipe looks for adapter programs in its own directory first, then on `PATH`.
 | `meta` | [`notepipe-asr-meta`](../adapters/meta) | speech | Forwards to Meta's speech-to-text API |
 
 
-## Service adapters
+## Provider programs
 
 ### Using one
 
 ```toml
-[services.llama]
-adapter = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+[providers.llama]
+command = "notepipe-asr-llama"
+args = ["-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
 concurrency = 1
 
-[speech]
-service = "llama"
+[stages.transcript.speech]
+provider = "llama"
 ```
 
-When a step uses a service that has an `adapter`, notepipe:
+When a stage uses a provider that has a `command`, notepipe:
 
-1. starts the program with `--host 127.0.0.1 --port <free port>` appended to the configured arguments;
+1. starts the program with `args` and then `--host 127.0.0.1 --port <free port>`;
 2. waits until `GET /health` answers `200` (up to 30 minutes, because a first run may download a model);
-3. sends the step's requests to `http://127.0.0.1:<port>/v1`;
-4. stops the program and its child processes when the step ends, fails or is cancelled.
+3. sends the stage's requests to `http://127.0.0.1:<port>/v1`;
+4. stops the program and its child processes after the last stage that uses it, or when the run fails or is cancelled.
 
-Speech recognition is one step and the stages together are another, so stages that use the same service share one
-process. The service's key is sent as for any endpoint. Responses are cached by the adapter command and the request, so
-a later run reuses them even though the port changes. Local engines usually handle one request at a time, so give their
-service `concurrency = 1`.
+All stages that use the same provider share that one process, including the transcript stage. Responses are cached by
+the command and the request, so a later run reuses them even though the port changes. Local engines usually
+handle one request at a time, so give their provider `concurrency = 1`. A server you run yourself needs no program:
+give the provider its `base_url`.
 
-A server you run yourself needs no adapter: give the service its `base_url`.
-
-An adapter is the place for anything that is not a plain OpenAI-compatible endpoint: a local engine, a different API
-such as the OpenAI Responses API, a provider with its own authentication, or access through a subscription you already
-have. A chat adapter need not use a language model at all. A stage can be handled by a program that applies fixed
-rules, replaces terms from a glossary or calls any other tool, as long as it answers in the format below:
-
-```toml
-[services.terms]
-adapter = ["my-term-fixer"]
-
-[[stages]]
-name = "fix-terms"
-service = "terms"
-input = "paragraphs"
-output = "replace"
-```
+A provider program is the place for anything that is not a plain OpenAI-compatible endpoint: a local engine, a
+different API such as the OpenAI Responses API, a provider with its own authentication, or access through a
+subscription you already have.
 
 ### Contract
 
-An adapter is any executable that accepts these arguments and serves the API its step uses.
+A provider program accepts these arguments and serves the API that its stages call.
 
 | Argument | Meaning |
 |---|---|
 | `--host HOST` | Address to listen on; bind only to it (notepipe passes `127.0.0.1`). |
 | `--port PORT` | Port to listen on. |
 
-Other arguments are the adapter's own; users write them in `adapter`.
+Arguments before them are the program's own; users write them in `args`.
 
-`GET /health` returns `200` once the adapter can answer; before that, return `503` or refuse connections. If the
+`GET /health` returns `200` once the program can answer; before that, return `503` or refuse connections. If the
 process exits, notepipe reports its last output lines.
 
-On failure respond with a non-2xx status and `{"error": {"message": "…"}}`. When the service has a key, requests carry
-`Authorization: Bearer <key>`; an adapter may check it or forward it.
+On failure respond with a non-2xx status and `{"error": {"message": "…"}}`. When the provider has a key, requests carry
+`Authorization: Bearer <key>`; a program may check it or forward it.
+
+## Requests that stages send
+
+These requests go to every provider, whether it is a remote API or a program.
 
 ### Transcription API
 
-Speech recognition sends each speech segment to `POST /v1/audio/transcriptions` as `multipart/form-data`, compatible
-with OpenAI's endpoint (or, with `[speech].api = "chat"`, to the chat API as audio input):
+The transcript stage sends each speech segment to `POST <base_url>/audio/transcriptions` as `multipart/form-data`,
+compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as audio input):
 
 | Field | Required | Content |
 |---|---|---|
-| `model` | no | `[speech].model`, when set |
-| `language` | no | `[transcript].language`, when set, as written in the configuration (for example `ko`) |
-| `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, about `[speech.detection].max_segment` seconds or less (20 by default) plus up to half a second of padding; always the last part |
+| `model` | no | the speech `model`, when set |
+| `language` | no | the transcript stage's `language` as written in the configuration (for example `ko`); not sent for `auto` |
+| `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, about `max_segment` seconds or less (20 by default) plus up to half a second of padding; always the last part |
 
 Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. Return clean text: model-specific
-markers or formatting are the adapter's job to remove.
+markers or formatting are the program's job to remove.
 
 ### Chat API
 
-Stages send `POST /v1/chat/completions` with a JSON body in the OpenAI Chat Completions format:
+`rewrite`, `add-below` and `add-top` stages send `POST <base_url>/chat/completions` with a JSON body in the OpenAI Chat
+Completions format:
 
 | Field | Present | Content |
 |---|---|---|
 | `model` | when the stage has a model | the model name |
-| `messages` | always | a system message with the stage's prompt and notepipe's output instructions, then a user message with the input (below) |
-| `response_format` | paragraph stages | `{"type": "json_object"}` |
+| `messages` | always | a system message with the stage's prompt and notepipe's format instructions, then a user message with the input (below) |
+| `response_format` | `rewrite`, `add-below` | `{"type": "json_object"}` |
 | other fields | when configured | everything in the stage's `request` |
 
 The input, and the answer notepipe expects in `content`:
 
-- **Paragraph stages:** the user content is an array of parts. The first is a `text` part holding a JSON array of up to
-  20 paragraphs, `[{"id": 0, "text": "…"}, …]`; with `images = true` an `image_url` part with the screenshot follows, as
-  a JPEG data URL. Answer with `{"segments": [{"id": 0, "text": "…"}, …]}`, one entry for every input `id`.
-- **Transcript stages:** the user content is a string: the title and author when they are known, then the transcript,
-  one line per fragment starting with its start time, such as `[03:12]` or `[1:03:12]`. Answer with Markdown. A long
-  transcript arrives in several requests, followed by one that asks to combine their results.
+- **`rewrite` and `add-below`:** the user content is an array of parts. The first is a `text` part holding a JSON array
+  of up to `batch_size` paragraphs, `[{"id": 0, "text": "…"}, …]`; with `images = true` an `image_url` part with the
+  screenshot follows, as a JPEG data URL. Answer with `{"segments": [{"id": 0, "text": "…"}, …]}`, one entry for every
+  input `id`.
+- **`add-top`:** the user content is a string: the title and author when they are known, then the transcript, one line
+  per fragment starting with its start time, such as `[03:12]` or `[1:03:12]`. Answer with Markdown. A transcript longer
+  than `chunk_size` arrives in several requests, followed by one that asks to combine their results.
 
 `stream` is never requested. Respond `200` with:
 
@@ -129,12 +125,12 @@ The input, and the answer notepipe expects in `content`:
 
 `usage` is optional; when present, notepipe reports the counts. `429` and `5xx` responses are retried with backoff.
 
-An adapter may ignore `response_format`, because the system message asks for JSON as well. If it rejects the field
+A program may ignore `response_format`, because the system message asks for JSON as well. If it rejects the field
 instead, it should answer `400` with a message that mentions `response_format`; notepipe then retries without it.
 
 ### Examples
 
-A transcription adapter in Python, using only the standard library:
+A transcription program in Python, using only the standard library:
 
 ```python
 #!/usr/bin/env python3
@@ -190,7 +186,7 @@ args = parser.parse_args()
 HTTPServer((args.host, args.port), Handler).serve_forever()
 ```
 
-A chat adapter in Python, using only the standard library:
+A chat program in Python, using only the standard library:
 
 ```python
 #!/usr/bin/env python3
@@ -241,31 +237,30 @@ args = parser.parse_args()
 HTTPServer((args.host, args.port), Handler).serve_forever()
 ```
 
-## Download adapters
+## Download programs
 
 ### Using one
 
-For an `http(s)` source, notepipe runs `[download].adapter`. When it is not set, notepipe looks for executables whose
-names start with `notepipe-source-`: if it finds exactly one it uses it, and if it finds several it asks you to choose
-with `[download].adapter`.
-
 ```toml
-[download]
-adapter = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
+[stages.download]
+type = "download"
+command = "notepipe-source-ytdlp"
+args = ["--", "--cookies-from-browser", "firefox"]
 ```
 
-Results are cached per URL and adapter. Media is deleted just before the note is written, so a later run that only
-changes stages reuses the cached screenshots and transcript, while one that needs the media again downloads it again.
+A `download` stage runs only for `http(s)` sources. Results are cached per URL and command. Media is deleted just before
+the note is written, so a later run that only changes later stages reuses the cached screenshots and transcript, while
+one that needs the media again downloads it again.
 
 ### Contract
 
 notepipe runs:
 
 ```
-<command…> <URL> --out <DIR>
+<command> <args…> <URL> --out <DIR>
 ```
 
-`DIR` is an empty directory owned by notepipe. The adapter downloads the media, and any subtitles, into it.
+`DIR` is an empty directory owned by notepipe. The program downloads the media, and any subtitles, into it.
 
 Standard output carries JSON objects, one per line, each at most 1 MiB. Optional progress lines look like
 `{"progress": 0.42}` (0 to 1). The last line is the result:
@@ -290,9 +285,70 @@ open the item at a given time; without it, notes link to the source URL.
 Write diagnostics to standard error. Exit with status 0 on success and anything else on failure; notepipe shows the last
 lines of standard error.
 
+
+## Filter programs
+
+A `filter` stage changes the note without a language model, for example to replace terms from a glossary:
+
+```toml
+[stages.fix-terms]
+type = "filter"
+command = "fix-terms"
+args = ["--glossary", "glossary.tsv"]
+```
+
+### Contract
+
+notepipe writes the note as it stands to the program's standard input, as JSON in the
+[`note.json` format](cli.md#output), and reads the changed note from its standard output. The program runs in the
+directory notepipe was started in, with a 10-minute limit.
+
+notepipe takes from the result the `top` list and, for every fragment in `sections[].speech`, its `text` and `below`.
+The result must have the same sections, with the same number of fragments each; everything else is ignored. When a
+fragment's `text` changes, the old text is kept in `raw`.
+
+Write diagnostics to standard error. Exit with status 0 on success. A failure, invalid JSON or a result with different
+sections stops the run, and notepipe shows the last lines of standard error.
+
+```python
+#!/usr/bin/env python3
+import json
+import sys
+
+note = json.load(sys.stdin)
+for section in note["sections"]:
+    for fragment in section["speech"]:
+        fragment["text"] = fragment["text"].replace("Kubernetis", "Kubernetes")
+json.dump(note, sys.stdout)
+```
+
+## Hook programs
+
+A `hook` stage runs after the note is written, once per note:
+
+```toml
+[stages.copy]
+type = "hook"
+command = "sh"
+args = ["-c", "cp -R \"$NOTEPIPE_NOTE_DIR\" ~/Documents/Notes/"]
+```
+
+### Contract
+
+The program runs with the note folder as its working directory and a 10-minute limit, and receives:
+
+| Variable | Value |
+|---|---|
+| `NOTEPIPE_NOTE_DIR` | the note folder |
+| `NOTEPIPE_MARKDOWN` | path of `note.md` |
+| `NOTEPIPE_JSON` | path of `note.json` |
+| `NOTEPIPE_WARNINGS` | number of warnings so far: those in `note.json` and any from replacing the previous note |
+
+A failing hook produces a warning; the note and the exit status are unaffected.
+
 ## Publishing an adapter
 
 Name the executable `notepipe-asr-<name>` when it serves the transcription API, `notepipe-ai-<name>` when it serves the
-chat API, or `notepipe-source-<name>` for a download adapter, and publish it as a package that installs that executable
+chat API, or `notepipe-source-<name>` for a download program, and publish it as a package that installs that executable
 (a Python console script or a binary wheel works well), so that `uv tool install notepipe --with <package>` places it
-next to notepipe.
+next to notepipe. The names are a convention; notepipe runs only the programs the configuration names.

@@ -9,15 +9,17 @@ A [notepipe](https://github.com/3ae3ae/notepipe) source adapter that downloads m
 uv tool install "notepipe[ytdlp]"
 ```
 
-notepipe finds the adapter by its name; no configuration is needed. ffmpeg is required to merge formats and convert
-subtitles.
+The configuration notepipe creates already uses it in its download stage. ffmpeg is required to merge formats and
+convert subtitles.
 
 ## Behavior
 
 - Your yt-dlp configuration files apply. Extra yt-dlp options go after `--`:
   ```toml
-  [download]
-  adapter = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox", "-f", "bv*[height<=720]+ba/b"]
+  [stages.download]
+  type = "download"
+  command = "notepipe-source-ytdlp"
+  args = ["--", "--cookies-from-browser", "firefox", "-f", "bv*[height<=720]+ba/b"]
   ```
 - Subtitles: manual subtitles in every language and automatic captions only in the media's original language, never
   machine-translated ones; all are delivered as SRT or VTT.

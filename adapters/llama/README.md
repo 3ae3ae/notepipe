@@ -17,14 +17,15 @@ uv tool install "notepipe[llama]"
 ## Use
 
 ```toml
-[services.llama]
-adapter = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+[providers.llama]
+command = "notepipe-asr-llama"
+args = ["-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
 concurrency = 1
 
-[speech]
-service = "llama"
+[stages.transcript.speech]
+provider = "llama"
 ```
 
 Every argument other than `--host`, `--port` and `--llama-server PATH` is passed to `llama-server` unchanged, so you can
-add options such as `-ngl 0` (CPU only). The first run downloads the model. `[transcript].language` is passed to the
-model as a hint.
+add options such as `-ngl 0` (CPU only). The first run downloads the model. The transcript stage's `language` is passed
+to the model as a hint.

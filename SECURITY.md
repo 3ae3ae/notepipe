@@ -13,14 +13,14 @@ Only the latest release receives security fixes while notepipe is at version 0.x
 
 notepipe is a local command-line tool. Keep these properties in mind when you evaluate a report:
 
-- **Configuration is trusted.** It names the programs notepipe runs (adapters and the completion hook) and the endpoints it
-  sends audio and text to. Treat a configuration file, or configuration passed with `--config -`, like a script.
-- **Credentials** are read from the configuration, or from the environment variables it names in `api_key_env`, and
-  sent only to the service they belong to. notepipe does not write API keys to notes, caches or logs. A credential written into a
-  URL or into an adapter's arguments is part of that setting and can appear in the cache and in `notepipe doctor`
-  output.
-- **Service adapters** started by notepipe listen on `127.0.0.1` while the step that uses them runs. Other processes on
-  the same machine can reach that port while it is open.
+- **Configuration is trusted.** It names the programs notepipe runs (provider, download, filter and hook programs) and
+  the providers it sends audio and text to. Treat a configuration file, or configuration passed with `--config -`, like a script.
+- **Credentials** are read from the environment variables that providers name in `api_key_env`, and sent only to that
+  provider; they are never part of the configuration. notepipe does not write API keys to notes, caches or logs. A
+  credential written into a URL or into a program's arguments is part of that setting and can appear in the cache and in
+  `notepipe doctor` output.
+- **Provider programs** started by notepipe listen on `127.0.0.1` while the stages that use them run. Other processes
+  on the same machine can reach that port while it is open.
 - **Media and subtitles** from the internet are untrusted input to ffmpeg and to notepipe's parsers; problems there are in
   scope.
 - **Notes** are written with your user's default permissions (umask). Protect the output directory if notes are private.
