@@ -13,7 +13,7 @@ uv tool install "notepipe[xai]"
 
 ```toml
 [providers.xai]
-command = "notepipe-asr-xai"
+command = ["notepipe-asr-xai"]
 api_key_env = "XAI_API_KEY"
 
 [stages.transcript.speech]

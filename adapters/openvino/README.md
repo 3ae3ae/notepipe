@@ -13,7 +13,7 @@ uv tool install "notepipe[openvino]"
 
 ```toml
 [providers.openvino]
-command = "notepipe-asr-openvino"
+command = ["notepipe-asr-openvino"]
 concurrency = 1
 
 [stages.transcript.speech]

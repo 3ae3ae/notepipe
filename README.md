@@ -29,29 +29,17 @@ notepipe lecture.mp4
 ```
 
 ```text
-Introduction to Compilers/
-├── note.md        # YAML front matter + Markdown note
-├── note.json      # the same content as structured data
+Introduction-to-Compilers/
+├── note.md        # the note: summary, then screenshots and paragraphs
+├── note.json      # the proofread transcript and screenshots as structured data
 └── images/        # 0001.jpg, 0002.jpg, …
 ```
 
 ```markdown
----
-title: "Introduction to Compilers"
-source: "https://www.youtube.com/watch?v=…"
-author: "Example University"
-duration: "1:12:40"
-created: "2026-10-21T09:30:00Z"
----
-
-# Introduction to Compilers
-
 ## Overview
 A compiler translates a program in stages, from characters to tokens, trees and finally machine code.
 
-## [03:12](https://www.youtube.com/watch?v=…&t=192s)
-
-![03:12](images/0002.jpg)
+![](<images/0001.jpg>)
 
 The first stage is lexical analysis. The scanner reads characters and groups them into tokens such as identifiers,
 numbers and operators.
@@ -59,25 +47,27 @@ numbers and operators.
 
 ## Highlights
 
-- 🧩 **Nothing hard-wired.** Downloading, transcription, screenshots, AI prompts, custom filters and note generation
-  are stages in one TOML file, in the order they run. Rename, reorder, remove, skip or add stages at will.
+- 🧩 **A pipeline you can see.** Downloading, transcription, screenshots, every AI step and the note's layout are
+  stages in one TOML file. Each stage names the files it reads and the file it writes, so the whole flow is on the page,
+  and every intermediate file is there to open. Rename, reorder, remove, skip or add stages at will.
 - 🔌 **Any model, cloud or local.** Works out of the box with OpenAI (`whisper-1` and `gpt-6-luna`). Point
   `[providers]` at Anthropic, Gemini, Groq, Mistral, OpenRouter, Ollama, LM Studio or your own server — or run speech
   recognition locally with llama.cpp, OpenVINO (Intel NPU, CPU or GPU) or Apple silicon.
-- 🛠️ **Extensible in any language, without forking.** Providers, downloaders and filters are separate programs with
-  small, documented contracts: an OpenAI-compatible HTTP API on `localhost`, a URL fetcher, or `note.json` over
-  standard input and output.
-- 🧱 **A CLI tool and an engine at once.** Run it interactively in a terminal, or drive it from your own application
-  with `--config -`, streaming JSON progress lines (`--json`), documented exit codes and `note.json`.
+- 🛠️ **Extensible in any language, without forking.** Any command-line tool can be a stage, reading a stage's files and
+  writing its output: pandoc, `jq` or a script of your own. Local engines and other APIs plug in as programs with small,
+  documented contracts.
+- 🧱 **A CLI tool and an engine at once.** Run it in a terminal, send a note to standard output for the next command,
+  or drive it from your own application with `--config -`, JSON progress lines (`--json`), documented exit codes and
+  `note.json`.
 - 📦 **Runs anywhere.** One small Rust binary prebuilt for Linux and macOS (`x86_64`, `arm64`) and Windows (`x86_64`),
   tested on all three in CI, and buildable on Android in Termux. Its only runtime dependency is `ffmpeg`.
-- 🛡️ **Atomic, cached and resumable.** A note is built in full before it replaces the previous one — never half-written
-  or lost. Downloads, screenshots, transcripts and AI responses are cached, interrupted transcriptions resume where
+- 🛡️ **Safe, cached and resumable.** A note is built in full before it replaces the previous one, and a replacement
+  cut short is completed or undone on the next run, so a note is never half-written or lost. Downloads, screenshots, transcripts and AI responses are cached, interrupted transcriptions resume where
   they stopped, and `Ctrl-C` stops every process notepipe started.
 - 🔒 **Private.** No telemetry. Audio and text go only to the providers you configure, or nowhere at all with local
   engines.
 - 📝 **Plain, durable output.** An ordinary folder of Markdown, JPEG screenshots and JSON that any editor, notes app or
-  script can read, with section timestamps linked to that moment in the recording when the source allows it.
+  script can read, laid out the way your stages write it.
 
 ## Install
 
@@ -109,39 +99,47 @@ notepipe lecture.mp4                              # local video -> ./<title>/not
 notepipe https://youtu.be/VIDEO_ID                # URL, with notepipe[ytdlp]
 notepipe interview.m4a -o ~/notes                 # audio-only input; write under ~/notes
 notepipe talk.mp4 --subtitle talk.srt             # use an existing .srt or .vtt transcript
-notepipe lecture.mp4 --skip proofread,summary     # skip the AI stages for this run
+notepipe lecture.mp4 --skip proofread,summary     # no proofreading or summary for this run
 ```
 
 The first run creates `config.toml` and prints its path. When subtitles exist — `lecture.srt` or `lecture.vtt` next to
 a local file, or captions from the URL — notepipe uses them automatically. Otherwise speech is transcribed with
-OpenAI's `whisper-1`, and the note is proofread and summarized with `gpt-6-luna`.
+OpenAI's `whisper-1`, and the note is proofread and summarized with `gpt-6-luna`. The key is checked before any work
+starts for every stage that might use it, including speech recognition as the transcript's fallback; to make a note
+without any key, give the transcript yourself and skip the model stages:
+`notepipe talk.mp4 --subtitle talk.srt --skip proofread,summary`.
 
-Each note is written to a folder named after its title (`note.md`, `note.json`, `images/`). Re-running on the same
-recording replaces its folder atomically; a different recording with the same title gets a `-2`, `-3`, … suffix. Run
-`notepipe doctor` to check your setup and `notepipe --help` to see all options.
+Each note is written to a folder named after its title, with what the stages publish: by default `note.md`,
+`note.json` and `images/`. Re-running on the same recording replaces its folder whole; a different recording with
+the same title gets a `-2`, `-3`, … suffix. Run `notepipe doctor` to check your setup and `notepipe --help` to see all
+options.
 
 ## How it works
 
+Every stage reads files and writes one, and its table in `config.toml` says which. With the default configuration:
+
 ```text
-download ─► transcript ─┐
-            screenshots ─┴─► paragraphs ─► llm and filter stages ─► note
+source ─► download ─► media ─┬─► transcript ─► transcript.json ─┐
+                             └─► screenshots ─► images/ ────────┴─► draft ─► draft.json
+                                                                                 │
+                         note.md ◄─ markdown ◄─ summary.md ◄─ summary ◄─ proofread.json ◄─ proofread
 ```
 
-Every run executes a pipeline of stages defined in `config.toml`. What a stage does comes from its `type`:
+The files live in the recording's work folder, where you can open each one (`-v` prints where). A stage's `publish`
+copies its output into the note folder, or to standard output. What a stage does comes from its `type`:
 
-| Type | What it does |
-|---|---|
-| `download` | Fetches a URL's media, subtitles and metadata with a download program (`notepipe-source-ytdlp` by default) |
-| `transcript` | Uses subtitles when available, or recognizes speech through a provider |
-| `screenshots` | Captures a frame each time the picture changes and settles |
-| `llm` | Sends each paragraph, or the whole transcript, to a model with your prompt (proofread, summarize, translate, …) |
-| `filter` | Pipes the note as JSON through a program of your own |
-| `note` | Writes `note.md`, `note.json` and `images/` into the note folder |
+| Type | Reads → writes | What it does |
+|---|---|---|
+| `download` | the file or URL → media | Fetches a URL's media, subtitles and details with a download program (`notepipe-source-ytdlp` by default); a local file is used where it is |
+| `transcript` | media → transcript | Uses subtitles when available, or recognizes speech through a provider |
+| `screenshots` | media → images | Captures a frame each time the picture changes and settles |
+| `document` | transcript + images → document | Groups the transcript under its screenshots, in paragraphs |
+| `llm` | a file → `.json` or `.md` | Sends a file to a model with your prompt: writing `.json` rewrites each paragraph of a document (proofread, translate, …); writing `.md` answers once (summary, action items, a new layout, …) |
+| `markdown` | documents and Markdown → Markdown | Joins them, in order, into the note's text |
+| `run` | any files → a file | Runs any command-line program, such as pandoc or a script of your own |
 
-`transcript` and `screenshots` run in parallel; their results are aligned into timestamped sections and paragraphs
-before the `llm` and `filter` stages run in pipeline order. See
-[docs/design.md](https://github.com/3ae3ae/notepipe/blob/main/docs/design.md) for the architecture and design
-principles.
+Stages that do not depend on each other, such as the transcript and the screenshots, run at the same time. See
+[docs/design.md](https://github.com/3ae3ae/notepipe/blob/main/docs/design.md) for the architecture and design principles.
 
 ## Configuration
 
@@ -153,7 +151,8 @@ notepipe config show    # show the configuration in effect
 
 notepipe reads `~/.config/notepipe/config.toml`, or `%APPDATA%\notepipe\config.toml` on Windows
 (`$XDG_CONFIG_HOME/notepipe/config.toml` when set). `pipeline` lists the stages that run, in order; each stage has its
-own `[stages.NAME]` table, and `[providers.NAME]` defines the API endpoints or local adapter commands they share.
+own `[stages.NAME]` table with what it reads (`input`), writes (`output`) and publishes (`publish`), and
+`[providers.NAME]` defines the API endpoints or local adapter commands they share.
 
 Settings at their default are written as `#` comments so you can see every value in effect at a glance. The default
 prompts for `proofread` and `summary` are written out in full in the file and are yours to edit. Here is the generated
@@ -163,7 +162,8 @@ file with the two prompts shortened:
 # Lines starting with # show the defaults.
 # Every setting is described in https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
 
-pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "note"]
+pipeline = ["download", "transcript", "screenshots", "draft", "proofread", "summary", "markdown"]
+# out = "."
 
 [providers.openai]
 base_url = "https://api.openai.com/v1"
@@ -172,18 +172,18 @@ api_key_env = "OPENAI_API_KEY"
 
 [stages.download]
 type = "download"
-command = "notepipe-source-ytdlp"
-# keep = false
+input = "source"
+output = "media"
+command = ["notepipe-source-ytdlp"]
 
 [stages.transcript]
 type = "transcript"
+input = "media"
+output = "transcript.json"
 # language = "auto"
 # sources = ["subtitles", "speech"]
-# keep = false
 
 [stages.transcript.subtitles]
-# sidecar = true
-# downloaded = true
 # automatic = true
 
 [stages.transcript.speech]
@@ -196,65 +196,85 @@ model = "whisper-1"
 
 [stages.screenshots]
 type = "screenshots"
+input = "media"
+output = "images"
 # mode = "stable"
 # sensitivity = 0.85
 # frame_interval = 1.0
 # min_gap = 10.0
 # settle = 0.8
-# keep = false
+
+[stages.draft]
+type = "document"
+input = ["transcript.json", "images"]
+output = "draft.json"
 
 [stages.proofread]
 type = "llm"
-reads = "paragraphs"
+input = "draft.json"
+output = "proofread.json"
+publish = "note.json"
 provider = "openai"
 model = "gpt-6-luna"
+# images = false
 # batch_size = 20
-# keep = false
 prompt = '''…'''
 
 [stages.summary]
 type = "llm"
-reads = "transcript"
+input = "proofread.json"
+output = "summary.md"
 provider = "openai"
 model = "gpt-6-luna"
 # chunk_size = 25000
-# keep = false
 prompt = '''…'''
 
-[stages.note]
-type = "note"
-# dir = "."
+[stages.markdown]
+type = "markdown"
+input = ["summary.md", "proofread.json"]
+output = "note.md"
+publish = "note.md"
 ```
 
-Stage names are free; behavior comes from `type`. Remove a stage from `pipeline` to disable it while keeping its
-table, or pass `--skip NAMES` to leave stages out for a single run. Setting `keep = true` on a stage writes its
-intermediate output into the note folder's `stages/` directory for inspection. Every setting is documented in
-[docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md).
+Stage names and file names are yours to choose; behavior comes from `type`, and the kind of each file from the stage
+that writes it. Remove a stage from `pipeline` to disable it while keeping its table, or pass `--skip NAMES` to leave
+stages out for a single run: a skipped `proofread` hands `draft.json` on unchanged, and a skipped `summary` leaves the
+summary out. Every setting is documented in [docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md).
 
 ### Adding your own stages
 
-Add a `[stages.NAME]` table and list its name in `pipeline`:
+Add a `[stages.NAME]` table, point its `input` at an earlier stage's `output`, and list its name in `pipeline`:
 
 ```toml
-[stages.translate]                  # rewrites each paragraph in place (original kept in note.json)
+[stages.translate]                  # rewrites each paragraph; `raw` keeps the original text
 type = "llm"
-reads = "paragraphs"
+input = "proofread.json"
+output = "translated.json"
 provider = "openai"
 model = "gpt-6-luna"
 prompt = "Translate each item into Korean. Keep names, code and formulas unchanged."
 
-[stages.action-items]               # adds a Markdown section at the top of the note
+[stages.action-items]               # one Markdown answer for the whole recording
 type = "llm"
-reads = "transcript"
+input = "proofread.json"
+output = "actions.md"
 provider = "openai"
 model = "gpt-6-luna"
 prompt = "List the decisions and action items in this meeting as a Markdown checklist, with owners where named."
+
+[stages.docx]                       # a Word copy of the note, made by pandoc
+type = "run"
+input = "note.md"
+output = "note.docx"
+publish = "note.docx"
+command = ["pandoc", "{input}", "-o", "{output}"]
 ```
 
-`reads = "paragraphs"` replaces each paragraph with the model's response while preserving the unedited text in
-`note.json`; `reads = "transcript"` places the response at the top of the note. For deterministic transformations that
-need no model — such as replacing terms from a glossary — add a `filter` stage that runs a script or binary over the
-note JSON ([docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#filter-programs)).
+Then put `actions.md` into the markdown stage's `input`, in the place where it should appear. An `llm` stage that
+writes `.json` rewrites each paragraph and keeps times and screenshots; one that writes `.md` answers once. To lay the
+note out your own way, let an `llm` or `run` stage write the Markdown instead of the `markdown` stage. A `run` stage
+can also change a document without a model, such as replacing terms from a glossary
+([docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#run-programs)).
 
 ### Switching models and providers
 
@@ -283,7 +303,7 @@ standalone program that notepipe runs. Three contracts cover every extension poi
 1. **Provider programs** start on demand and serve an OpenAI-compatible HTTP API on `localhost` (for local speech
    engines or custom API translators).
 2. **Download programs** turn a URL into a local media file, metadata and subtitles.
-3. **Filter programs** read the note as JSON on `stdin` and write the modified note to `stdout`.
+3. **Run programs** read a stage's input files and write its output, through arguments or standard input and output.
 
 Official adapters are published as Python extras of `notepipe`:
 
@@ -300,8 +320,7 @@ To use a speech adapter, set `command` on a provider instead of `base_url`:
 
 ```toml
 [providers.llama]
-command = "notepipe-asr-llama"
-args = ["-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+command = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
 concurrency = 1
 
 [stages.transcript.speech]
@@ -322,8 +341,9 @@ JSON lines on `stdout`:
 notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 ```
 
-The `done` event gives the path to the finished note folder, `note.md` and `note.json`. Event schemas, exit codes, the
-`note.json` format and caching rules are documented in
+The `done` event gives the note folder, each published file and the work folder. A stage with `publish = "-"` writes
+its output to standard output instead, after the note is saved, so `notepipe talk.mp4 | glow` can show it in the
+terminal. Event schemas, exit codes, the `note.json` format and caching rules are documented in
 [docs/cli.md](https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md).
 
 ## Project status

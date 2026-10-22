@@ -18,8 +18,7 @@ uv tool install "notepipe[llama]"
 
 ```toml
 [providers.llama]
-command = "notepipe-asr-llama"
-args = ["-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
+command = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
 concurrency = 1
 
 [stages.transcript.speech]
