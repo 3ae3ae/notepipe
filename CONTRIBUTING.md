@@ -76,9 +76,11 @@ See [docs/adapters.md](docs/adapters.md). Third-party adapters do not need to li
 A release is a pull request that changes the version in `Cargo.toml` (and moves `Unreleased` in the changelog under
 that version). When it merges, `.github/workflows/release.yml` builds the CLI binaries and wheels and every adapter,
 creates the tag `vX.Y.Z` and a GitHub release with the files and their checksums, and publishes the packages to PyPI
-through trusted publishing. A version that already has a tag is not released again; running the workflow by hand
-retries the release of `main`'s version until it has one. Versions of adapters that are already on PyPI are skipped, so
-bump an adapter's version when it changes; adapters are published with the next release of notepipe. Each PyPI project
+through trusted publishing. Only that workflow can create tags: it pushes them with the `RELEASE_DEPLOY_KEY` deploy
+key, the one exception to the tag rules. A version that already has a tag is not released again. When a release fails,
+re-run its failed jobs; running the workflow by hand releases `main`'s version if it has no tag yet. Versions of
+adapters that are already on PyPI are skipped, so bump an adapter's version when it changes; adapters are published
+with the next release of notepipe. Each PyPI project
 publishes from its own GitHub environment, `pypi` for notepipe and `pypi-<package>` for an adapter, and its trusted
 publisher on PyPI names that environment.
 

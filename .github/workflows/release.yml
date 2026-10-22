@@ -246,7 +246,17 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
+      # Only a deploy key may create tags (the tag ruleset), so the tag is pushed with the release key.
       - uses: actions/checkout@v4
+        with:
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - name: Create the tag
+        run: |
+          # A re-run of a failed release finds the tag it already pushed.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$VERSION" > /dev/null; then
+            git tag "$VERSION" "$GITHUB_SHA"
+            git push origin "refs/tags/$VERSION"
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: dist
