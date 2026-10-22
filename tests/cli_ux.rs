@@ -271,7 +271,14 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
         "{} already exists. Run `notepipe config init --force` to replace it.",
         path.display()
     )));
-    let file = std::fs::read_to_string(cli.dir.path().join("config/notepipe/config.toml")).unwrap();
+    let file = std::fs::read_to_string(
+        cli.dir
+            .path()
+            .join("config")
+            .join("notepipe")
+            .join("config.toml"),
+    )
+    .unwrap();
     assert!(file.contains("sensitivity = 0.7"));
 }
 
@@ -279,7 +286,12 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
 fn runs_create_the_default_configuration_once_and_explicit_configs_create_nothing() {
     for mode in ["", "--json", "--quiet"] {
         let cli = CliTest::new();
-        let path = cli.dir.path().join("config/notepipe/config.toml");
+        let path = cli
+            .dir
+            .path()
+            .join("config")
+            .join("notepipe")
+            .join("config.toml");
         let notice = format!(
             "Created {} with the default settings. Edit it to change how notes are made.",
             path.display()
@@ -336,7 +348,7 @@ fn failed_default_configuration_creation_warns_and_uses_defaults() {
     let text = stderr(&output);
     assert!(text.contains(&format!(
         "Could not create {}:",
-        cli.dir.path().join("config/notepipe/config.toml").display()
+        cli.dir.path().join("config").join("notepipe").join("config.toml").display()
     )));
     assert!(text.contains(". Continuing with the default settings."));
     assert!(text.contains("--frame-interval"));
