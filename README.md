@@ -1,7 +1,7 @@
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/wordmark-dark.svg">
-    <img src="docs/wordmark-light.svg" alt="notepipe" width="360">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/3ae3ae/notepipe/main/docs/wordmark-dark.svg">
+    <img src="https://raw.githubusercontent.com/3ae3ae/notepipe/main/docs/wordmark-light.svg" alt="notepipe" width="360">
   </picture>
 </h1>
 
@@ -15,7 +15,7 @@
   <a href="https://github.com/3ae3ae/notepipe/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/3ae3ae/notepipe/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://pypi.org/project/notepipe/"><img alt="PyPI" src="https://img.shields.io/pypi/v/notepipe"></a>
   <a href="https://crates.io/crates/notepipe"><img alt="crates.io" src="https://img.shields.io/crates/v/notepipe"></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://github.com/3ae3ae/notepipe/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
 ```sh
@@ -64,7 +64,7 @@ component that other programs can build on.
 - **Private.** No telemetry. Audio and text go only to the services you configure, or nowhere at all with local
   adapters.
 
-[docs/design.md](docs/design.md) describes the design and the principles behind it.
+[docs/design.md](https://github.com/3ae3ae/notepipe/blob/main/docs/design.md) describes the design and the principles behind it.
 
 ## Contents
 
@@ -164,7 +164,7 @@ request = { reasoning_effort = "medium" }
 ```
 
 API keys can stay out of the file: `NOTEPIPE_SPEECH_API_KEY` and `NOTEPIPE_AI_API_KEY` are used when it has none.
-[docs/configuration.md](docs/configuration.md) lists every setting.
+[docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md) lists every setting.
 
 ## Speech recognition
 
@@ -215,7 +215,7 @@ prompt = "List the decisions and action items in this meeting as a Markdown chec
 proofread prompt once. Any OpenAI-compatible chat service works, including OpenAI, Anthropic
 (`https://api.anthropic.com/v1`), Google Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`), OpenRouter,
 Groq, and local servers such as Ollama (`http://localhost:11434/v1`) or LM Studio. Anything else, such as the OpenAI
-Responses API or access through a subscription, connects through an [AI adapter](docs/adapters.md#ai-adapters).
+Responses API or access through a subscription, connects through an [AI adapter](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#ai-adapters).
 
 ## Adapters
 
@@ -310,7 +310,7 @@ model = "muse-voice-transcribe-1.0"  # the key comes from api_key or NOTEPIPE_SP
 ### Your own
 
 An adapter is any program that follows a short contract, so it can be written in any language; a complete example in
-Python takes a few dozen lines. [docs/adapters.md](docs/adapters.md) describes all three kinds: speech, AI and download.
+Python takes a few dozen lines. [docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md) describes all three kinds: speech, AI and download.
 Install one next to notepipe with `uv tool install notepipe --with <package>`, or put it on your `PATH`.
 
 ## The note
@@ -335,18 +335,18 @@ The command line is notepipe's integration interface. Pass settings on standard 
 notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 ```
 
-[docs/cli.md](docs/cli.md) documents the events, exit codes, `note.json`, caching, and the completion hook that runs your
+[docs/cli.md](https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md) documents the events, exit codes, `note.json`, caching, and the completion hook that runs your
 own program after each note is written.
 
 ## Project status
 
 notepipe is young (0.x). The configuration format, the command-line interface and `note.json` may still change; every
-change is recorded in the [changelog](CHANGELOG.md).
+change is recorded in the [changelog](https://github.com/3ae3ae/notepipe/blob/main/CHANGELOG.md).
 
 ## Contributing
 
-Issues and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test and propose a
-change. Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome; [CONTRIBUTING.md](https://github.com/3ae3ae/notepipe/blob/main/CONTRIBUTING.md) explains how to build, test and propose a
+change. Please report security problems privately, as described in [SECURITY.md](https://github.com/3ae3ae/notepipe/blob/main/SECURITY.md).
 
 ## Acknowledgements
 
@@ -365,5 +365,5 @@ detection, and, through its adapters, [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 
 ## License
 
-notepipe is released under the [MIT License](LICENSE), which keeps course2md's copyright notice alongside notepipe's
+notepipe is released under the [MIT License](https://github.com/3ae3ae/notepipe/blob/main/LICENSE), which keeps course2md's copyright notice alongside notepipe's
 own.
