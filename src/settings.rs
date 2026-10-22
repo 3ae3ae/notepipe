@@ -303,11 +303,7 @@ pub fn template() -> String {
     })
 }
 
-const TEMPLATE: &str = r#"# notepipe configuration
-#
-# Every value below is in effect. Change it here, or for one run with a command-line option.
-# Other settings start empty; all of them are described in
-# https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
+const TEMPLATE: &str = r#"# Every setting is described in https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
 
 [output]
 dir = "{OUT}"
@@ -331,20 +327,15 @@ frame_interval = {SAMPLE_INTERVAL}
 min_gap = {COOLDOWN}
 settle = {STABLE_SECS}
 
-# The AI service for the stages below. They are skipped until base_url and model are set.
 [ai]
 base_url = "{LLM_BASE_URL}"
 model = "{LLM_MODEL}"
 concurrency = {LLM_CONCURRENCY}
 
-# Stages run in this order once the transcript is ready. Edit, reorder or delete them, or add
-# your own. A stage can set its own base_url and model, or an adapter program that handles it
-# instead of the AI service.
-
 [[stages]]
 name = "proofread"
-input = "paragraphs"    # each paragraph of the note
-output = "replace"      # the answer replaces the paragraph
+input = "paragraphs"
+output = "replace"
 prompt = '''
 You proofread transcripts of spoken recordings. Each input item is a stretch of continuous speech,
 already split at natural pauses. Fix obvious speech-recognition errors (misheard words, homophones,
@@ -361,8 +352,8 @@ on it.
 
 [[stages]]
 name = "summary"
-input = "transcript"    # the whole transcript, with times
-output = "top"          # the answer goes at the top of the note
+input = "transcript"
+output = "top"
 prompt = '''
 You summarize recordings from their timestamped transcript. Use only what the transcript says: never
 invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a
