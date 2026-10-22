@@ -16,6 +16,43 @@ pub struct Document {
     pub warnings: Vec<String>,
 }
 
+pub enum StageOutput {
+    Json(String, serde_json::Value),
+    Markdown(String, String),
+    Download {
+        name: String,
+        cache: PathBuf,
+        media: PathBuf,
+    },
+}
+
+pub fn note_sections(sections: &[Section]) -> Vec<Section> {
+    let mut sections = sections.to_vec();
+    let mut images = BTreeMap::new();
+    for section in &mut sections {
+        if !section.image.is_empty() {
+            let number = images.len() + 1;
+            section.image = images
+                .entry(section.image.clone())
+                .or_insert_with(|| format!("images/{number:04}.jpg"))
+                .clone();
+        }
+    }
+    sections
+}
+
+pub fn retained_download(root: &Path, meta: &MediaMeta, cache: &Path) -> Result<Option<PathBuf>> {
+    if !root.is_dir() {
+        return Ok(None);
+    }
+    let note = destination(root, meta)?;
+    let output = crate::source::Output::read(cache)?;
+    match output {
+        Some(output) => output.retained_media(cache, &note),
+        None => Ok(None),
+    }
+}
+
 pub fn safe_asset_path(root: &Path, relative: &str) -> Result<PathBuf> {
     let path = Path::new(relative);
     anyhow::ensure!(
@@ -277,6 +314,7 @@ pub fn publish(
     root: &Path,
     frames_root: &Path,
     mut document: Document,
+    outputs: Vec<StageOutput>,
 ) -> Result<(PathBuf, Vec<String>)> {
     runtime::check_cancelled()?;
     anyhow::ensure!(
@@ -313,27 +351,42 @@ pub fn publish(
         old: previous.file_name().unwrap().to_string_lossy().into_owned(),
         phase: Phase::Staged,
     };
-    let mut images: BTreeMap<String, String> = BTreeMap::new();
-    for section in &mut document.sections {
+    let normalized = note_sections(&document.sections);
+    for (section, normalized) in document.sections.iter_mut().zip(normalized) {
         runtime::check_cancelled()?;
-        if section.image.is_empty() {
-            continue;
+        if !section.image.is_empty() {
+            let target = staging.path().join(&normalized.image);
+            if !target.is_file() {
+                let image = safe_asset_path(frames_root, &section.image)?;
+                std::fs::create_dir_all(target.parent().unwrap())?;
+                std::io::copy(
+                    &mut std::fs::File::open(image)?,
+                    &mut std::fs::File::create(target)?,
+                )?;
+            }
         }
-        let number = images.len() + 1;
-        let name = if let Some(name) = images.get(&section.image) {
-            name.clone()
-        } else {
-            let image = safe_asset_path(frames_root, &section.image)?;
-            let name = format!("images/{number:04}.jpg");
-            std::fs::create_dir_all(staging.path().join("images"))?;
-            std::io::copy(
-                &mut std::fs::File::open(image)?,
-                &mut std::fs::File::create(staging.path().join(&name))?,
-            )?;
-            images.insert(section.image.clone(), name.clone());
-            name
-        };
-        section.image = name;
+        section.image = normalized.image;
+    }
+    if !outputs.is_empty() {
+        let stages = staging.path().join("stages");
+        std::fs::create_dir(&stages)?;
+        for output in outputs {
+            runtime::check_cancelled()?;
+            match output {
+                StageOutput::Json(name, value) => std::fs::write(
+                    stages.join(format!("{name}.json")),
+                    serde_json::to_vec_pretty(&value)?,
+                )?,
+                StageOutput::Markdown(name, text) => {
+                    std::fs::write(stages.join(format!("{name}.md")), text)?
+                }
+                StageOutput::Download { name, cache, media } => {
+                    crate::source::Output::read(&cache)?
+                        .context("Missing completed source output")?
+                        .save(&cache, &media, &stages.join(name))?;
+                }
+            }
+        }
     }
     let markdown = render::render_markdown(&document.meta, &document.sections, &document.top)?;
     std::fs::write(staging.path().join("note.md"), markdown)?;
@@ -353,7 +406,7 @@ mod tests {
     use super::*;
     fn document(source: &str) -> Document {
         Document {
-            schema: 1,
+            schema: 2,
             meta: MediaMeta {
                 title: "Shared title".into(),
                 source: source.into(),
@@ -370,7 +423,6 @@ mod tests {
                     end: 1.,
                     text: "Original body".into(),
                     raw: None,
-                    below: Vec::new(),
                 }],
             }],
             top: Vec::new(),
@@ -378,7 +430,7 @@ mod tests {
         }
     }
     fn publish(root: &Path, frames: &Path, document: &Document) -> Result<(PathBuf, Vec<String>)> {
-        super::publish(root, frames, document.clone())
+        super::publish(root, frames, document.clone(), Vec::new())
     }
 
     fn transaction(name: &str, phase: Phase) -> Transaction {
@@ -438,7 +490,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
         assert!(recover(root.path()).is_err());
-        assert!(super::publish(root.path(), root.path(), document("one")).is_err());
+        assert!(super::publish(root.path(), root.path(), document("one"), Vec::new()).is_err());
         drop(lock);
         recover(root.path()).unwrap();
         publish(root.path(), root.path(), &document("one")).unwrap();

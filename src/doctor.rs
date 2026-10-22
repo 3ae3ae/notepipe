@@ -91,9 +91,7 @@ pub fn run() -> Result<()> {
                     crate::settings::Stage::Download(p) => {
                         programs.push(("Download adapter", &p.command))
                     }
-                    crate::settings::Stage::Filter(p) | crate::settings::Stage::Hook(p) => {
-                        programs.push(("Adapter", &p.command))
-                    }
+                    crate::settings::Stage::Filter(p) => programs.push(("Adapter", &p.command)),
                     _ => {}
                 }
             }

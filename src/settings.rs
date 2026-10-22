@@ -146,6 +146,8 @@ pub struct Program {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub keep: bool,
 }
 impl Program {
     pub fn argv(&self) -> Vec<String> {
@@ -154,7 +156,6 @@ impl Program {
             .collect()
     }
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Subtitles {
@@ -196,6 +197,7 @@ impl Default for Speech {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Transcript {
+    pub keep: bool,
     pub language: String,
     pub sources: Vec<String>,
     pub subtitles: Subtitles,
@@ -204,6 +206,7 @@ pub struct Transcript {
 impl Default for Transcript {
     fn default() -> Self {
         Self {
+            keep: false,
             language: "auto".into(),
             sources: vec!["subtitles".into(), "speech".into()],
             subtitles: Subtitles::default(),
@@ -214,6 +217,7 @@ impl Default for Transcript {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Screenshots {
+    pub keep: bool,
     pub mode: crate::config::ScreenshotMode,
     pub sensitivity: f64,
     pub frame_interval: f64,
@@ -225,6 +229,7 @@ pub struct Screenshots {
 impl Default for Screenshots {
     fn default() -> Self {
         Self {
+            keep: false,
             mode: Default::default(),
             sensitivity: crate::config::DEFAULT_SIMILARITY,
             frame_interval: crate::config::DEFAULT_SAMPLE_INTERVAL,
@@ -234,47 +239,36 @@ impl Default for Screenshots {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+const DEFAULT_BATCH_SIZE: i64 = 20;
+const DEFAULT_CHUNK_SIZE: i64 = 25_000;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct Paragraphs {
+pub struct Llm {
+    #[serde(deserialize_with = "read_mode")]
+    pub reads: String,
     pub provider: String,
     pub model: String,
     pub prompt: String,
-    pub images: bool,
-    pub batch_size: i64,
+    pub keep: bool,
+    #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub images: Option<bool>,
+    #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<i64>,
+    #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub chunk_size: Option<i64>,
     pub request: serde_json::Map<String, serde_json::Value>,
 }
-impl Default for Paragraphs {
-    fn default() -> Self {
-        Self {
-            provider: String::new(),
-            model: String::new(),
-            prompt: String::new(),
-            images: false,
-            batch_size: 20,
-            request: Default::default(),
-        }
-    }
+fn read_mode<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value.as_str().unwrap_or_default().to_owned())
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct Top {
-    pub provider: String,
-    pub model: String,
-    pub prompt: String,
-    pub chunk_size: i64,
-    pub request: serde_json::Map<String, serde_json::Value>,
-}
-impl Default for Top {
-    fn default() -> Self {
-        Self {
-            provider: String::new(),
-            model: String::new(),
-            prompt: String::new(),
-            chunk_size: 25_000,
-            request: Default::default(),
-        }
-    }
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
@@ -294,21 +288,17 @@ pub enum Stage {
     Download(Program),
     Transcript(Transcript),
     Screenshots(Screenshots),
-    Rewrite(Paragraphs),
-    AddBelow(Paragraphs),
-    AddTop(Top),
+    Llm(Llm),
     Filter(Program),
     Note(Note),
-    Hook(Program),
 }
 impl Stage {
     pub fn rank(&self) -> u8 {
         match self {
             Self::Download(_) => 0,
             Self::Transcript(_) | Self::Screenshots(_) => 1,
-            Self::Rewrite(_) | Self::AddBelow(_) | Self::AddTop(_) | Self::Filter(_) => 2,
+            Self::Llm(_) | Self::Filter(_) => 2,
             Self::Note(_) => 3,
-            Self::Hook(_) => 4,
         }
     }
     pub fn provider(&self) -> Option<&str> {
@@ -318,8 +308,7 @@ impl Stage {
             {
                 Some(&t.speech.provider)
             }
-            Self::Rewrite(p) | Self::AddBelow(p) => Some(&p.provider),
-            Self::AddTop(t) => Some(&t.provider),
+            Self::Llm(p) => Some(&p.provider),
             _ => None,
         }
     }
@@ -330,49 +319,31 @@ impl Stage {
         }
         self.provider()
     }
+    pub fn keep(&self) -> bool {
+        match self {
+            Self::Download(p) | Self::Filter(p) => p.keep,
+            Self::Transcript(t) => t.keep,
+            Self::Screenshots(s) => s.keep,
+            Self::Llm(l) => l.keep,
+            Self::Note(_) => false,
+        }
+    }
     pub fn ai(&self, name: &str) -> Option<crate::llm::Stage> {
-        use crate::llm::{Input, Output};
-        let (provider, model, prompt, images, batch_size, chunk_size, request, input, output) =
-            match self {
-                Self::Rewrite(p) | Self::AddBelow(p) => (
-                    &p.provider,
-                    &p.model,
-                    &p.prompt,
-                    p.images,
-                    p.batch_size as usize,
-                    25_000,
-                    &p.request,
-                    Input::Paragraphs,
-                    if matches!(self, Self::Rewrite(_)) {
-                        Output::Replace
-                    } else {
-                        Output::Below
-                    },
-                ),
-                Self::AddTop(t) => (
-                    &t.provider,
-                    &t.model,
-                    &t.prompt,
-                    false,
-                    20,
-                    t.chunk_size as usize,
-                    &t.request,
-                    Input::Transcript,
-                    Output::Top,
-                ),
-                _ => return None,
-            };
+        let Self::Llm(l) = self else { return None };
         Some(crate::llm::Stage {
             name: name.into(),
-            provider: provider.clone(),
-            model: model.clone(),
-            prompt: prompt.trim().into(),
-            images,
-            batch_size,
-            chunk_size,
-            request: request.clone(),
-            input,
-            output,
+            provider: l.provider.clone(),
+            model: l.model.clone(),
+            prompt: l.prompt.trim().into(),
+            images: l.images.unwrap_or(false),
+            batch_size: l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE) as usize,
+            chunk_size: l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE) as usize,
+            request: l.request.clone(),
+            input: if l.reads == "paragraphs" {
+                crate::llm::Input::Paragraphs
+            } else {
+                crate::llm::Input::Transcript
+            },
         })
     }
 }
@@ -396,6 +367,29 @@ impl ConfigFile {
             provider.validate(name)?;
         }
         for (name, stage) in &self.stages {
+            anyhow::ensure!(
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')),
+                "Stage names may use only letters, digits, \"-\" and \"_\": {name}"
+            );
+            if let Stage::Llm(l) = stage {
+                anyhow::ensure!(
+                    matches!(l.reads.as_str(), "paragraphs" | "transcript"),
+                    "Stage {name}: reads must be \"paragraphs\" or \"transcript\""
+                );
+                for (key, present, mode) in [
+                    ("images", l.images.is_some(), "paragraphs"),
+                    ("batch_size", l.batch_size.is_some(), "paragraphs"),
+                    ("chunk_size", l.chunk_size.is_some(), "transcript"),
+                ] {
+                    anyhow::ensure!(
+                        !present || l.reads == mode,
+                        "Stage {name}: {key} applies only when reads = \"{mode}\""
+                    );
+                }
+            }
             if let Some(provider) = stage.provider() {
                 anyhow::ensure!(!provider.is_empty(), "Stage {name} needs a provider");
                 anyhow::ensure!(
@@ -417,15 +411,21 @@ impl ConfigFile {
                     validate_tuning(&Screenshots::default(), &t.speech)?;
                 }
                 Stage::Screenshots(s) => validate_tuning(s, &Speech::default())?,
-                Stage::Rewrite(p) | Stage::AddBelow(p) => anyhow::ensure!(
-                    (1..=100).contains(&p.batch_size),
-                    "Stage {name}: batch_size must be 1 to 100"
-                ),
-                Stage::AddTop(t) => anyhow::ensure!(
-                    (1000..=1_000_000).contains(&t.chunk_size),
-                    "Stage {name}: chunk_size must be 1000 to 1000000"
-                ),
-                Stage::Download(p) | Stage::Filter(p) | Stage::Hook(p) => anyhow::ensure!(
+                Stage::Llm(l) => {
+                    if l.reads == "paragraphs" {
+                        anyhow::ensure!(
+                            (1..=100).contains(&l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE)),
+                            "Stage {name}: batch_size must be 1 to 100"
+                        );
+                    } else {
+                        anyhow::ensure!(
+                            (1000..=1_000_000)
+                                .contains(&l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE)),
+                            "Stage {name}: chunk_size must be 1000 to 1000000"
+                        );
+                    }
+                }
+                Stage::Download(p) | Stage::Filter(p) => anyhow::ensure!(
                     !p.command.trim().is_empty(),
                     "The adapter command must name an executable."
                 ),
@@ -484,11 +484,27 @@ pub fn load_from(path: Option<&Path>) -> Result<ConfigFile> {
 }
 pub fn parse(text: &str) -> Result<ConfigFile> {
     // Parse errors can quote credentials from the input; report only the format.
-    if text.trim_start().starts_with('{') {
-        serde_json::from_str(text).map_err(|_| anyhow::anyhow!("Invalid JSON configuration"))
+    let mut cfg: ConfigFile = if text.trim_start().starts_with('{') {
+        serde_json::from_str(text).map_err(|_| anyhow::anyhow!("Invalid JSON configuration"))?
     } else {
-        toml::from_str(text).map_err(|_| anyhow::anyhow!("Invalid TOML configuration"))
+        toml::from_str(text).map_err(|_| anyhow::anyhow!("Invalid TOML configuration"))?
+    };
+    // Fill only the selected mode's defaults, preserving wrong-mode keys for validation.
+    for stage in cfg.stages.values_mut() {
+        if let Stage::Llm(l) = stage {
+            match l.reads.as_str() {
+                "paragraphs" => {
+                    l.images.get_or_insert(false);
+                    l.batch_size.get_or_insert(DEFAULT_BATCH_SIZE);
+                }
+                "transcript" => {
+                    l.chunk_size.get_or_insert(DEFAULT_CHUNK_SIZE);
+                }
+                _ => {}
+            }
+        }
     }
+    Ok(cfg)
 }
 pub fn template() -> &'static str {
     include_str!("config.toml")
@@ -553,18 +569,54 @@ mod tests {
             cfg.stages["screenshots"],
             Stage::Screenshots(Screenshots::default())
         );
-        let Stage::Rewrite(p) = &cfg.stages["proofread"] else {
+        let Stage::Llm(p) = &cfg.stages["proofread"] else {
             panic!()
         };
-        assert_eq!(p.batch_size, Paragraphs::default().batch_size);
-        let Stage::AddTop(top) = &cfg.stages["summary"] else {
+        assert_eq!(p.batch_size, Some(20));
+        let Stage::Llm(top) = &cfg.stages["summary"] else {
             panic!()
         };
-        assert_eq!(top.chunk_size, Top::default().chunk_size);
+        assert_eq!(top.chunk_size, Some(25_000));
         assert_eq!(
             cfg.providers["openai"].concurrency,
             Provider::default().concurrency
         );
+        cfg.validate().unwrap();
+        assert!(!cfg.stages["download"].keep());
+        let uncommented = template()
+            .lines()
+            .map(|line| {
+                match line
+                    .strip_prefix("# ")
+                    .and_then(|text| text.split_once(" = "))
+                {
+                    Some((key, value))
+                        if key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') =>
+                    {
+                        if key == "keep" {
+                            assert_eq!(value, "false");
+                        }
+                        &line[2..]
+                    }
+                    _ => line,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let explicit = parse(&uncommented).unwrap();
+        explicit.validate().unwrap();
+        assert_eq!(explicit, cfg);
+        for definition in [
+            json!({"type":"download","command":"adapter"}),
+            json!({"type":"transcript"}),
+            json!({"type":"screenshots"}),
+            json!({"type":"llm","reads":"paragraphs"}),
+            json!({"type":"llm","reads":"transcript"}),
+            json!({"type":"filter","command":"adapter"}),
+        ] {
+            let stage: Stage = serde_json::from_value(definition).unwrap();
+            assert!(!stage.keep());
+        }
         let serialized = toml::to_string_pretty(&cfg).unwrap();
         assert_eq!(parse(&serialized).unwrap(), cfg);
         assert_eq!(parse(&serde_json::to_string(&cfg).unwrap()).unwrap(), cfg);
@@ -620,9 +672,12 @@ mod tests {
     #[test]
     fn stage_validation_includes_inactive_tables() {
         for (stage, expected) in [
-            (json!({"type":"rewrite"}), "Stage test needs a provider"),
             (
-                json!({"type":"add-top","provider":"missing"}),
+                json!({"type":"llm","reads":"paragraphs"}),
+                "Stage test needs a provider",
+            ),
+            (
+                json!({"type":"llm","reads":"transcript","provider":"missing"}),
                 "Stage test: no provider named missing in [providers]",
             ),
             (
@@ -630,19 +685,19 @@ mod tests {
                 "Stage test: no provider named missing in [providers]",
             ),
             (
-                json!({"type":"rewrite","provider":"p","batch_size":0}),
+                json!({"type":"llm","reads":"paragraphs","provider":"p","batch_size":0}),
                 "Stage test: batch_size must be 1 to 100",
             ),
             (
-                json!({"type":"add-below","provider":"p","batch_size":101}),
+                json!({"type":"llm","reads":"paragraphs","provider":"p","batch_size":101}),
                 "Stage test: batch_size must be 1 to 100",
             ),
             (
-                json!({"type":"add-top","provider":"p","chunk_size":999}),
+                json!({"type":"llm","reads":"transcript","provider":"p","chunk_size":999}),
                 "Stage test: chunk_size must be 1000 to 1000000",
             ),
             (
-                json!({"type":"add-top","provider":"p","chunk_size":1000001}),
+                json!({"type":"llm","reads":"transcript","provider":"p","chunk_size":1000001}),
                 "Stage test: chunk_size must be 1000 to 1000000",
             ),
             (
@@ -673,6 +728,58 @@ mod tests {
         }
     }
     #[test]
+    fn llm_reads_and_mode_specific_keys_are_validated() {
+        for reads in [
+            None,
+            Some(json!("")),
+            Some(json!("other")),
+            Some(json!(false)),
+            Some(json!(1)),
+            Some(json!({})),
+            Some(json!(null)),
+        ] {
+            let mut cfg = minimal();
+            cfg["stages"]["test"] = json!({"type":"llm","provider":"p"});
+            if let Some(reads) = reads {
+                cfg["stages"]["test"]["reads"] = reads;
+            }
+            assert_eq!(
+                error(cfg),
+                "Stage test: reads must be \"paragraphs\" or \"transcript\""
+            );
+        }
+        for (key, value, mode, wrong) in [
+            ("images", json!(false), "paragraphs", "transcript"),
+            ("batch_size", json!(20), "paragraphs", "transcript"),
+            ("chunk_size", json!(25000), "transcript", "paragraphs"),
+        ] {
+            let mut cfg = minimal();
+            cfg["stages"]["test"] = json!({"type":"llm","reads":wrong,"provider":"p"});
+            cfg["stages"]["test"][key] = value;
+            assert_eq!(
+                error(cfg),
+                format!("Stage test: {key} applies only when reads = \"{mode}\"")
+            );
+        }
+    }
+    #[test]
+    fn stage_names_are_validated_in_inactive_tables_too() {
+        for name in ["", "../bad", "a.b", "a b", "a/b", "a\\b", "한글"] {
+            let mut cfg = minimal();
+            cfg["stages"][name] = json!({"type":"note"});
+            assert_eq!(
+                error(cfg),
+                format!("Stage names may use only letters, digits, \"-\" and \"_\": {name}")
+            );
+        }
+        let mut cfg = minimal();
+        cfg["stages"]["A-z_09"] = json!({"type":"note"});
+        serde_json::from_value::<ConfigFile>(cfg)
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+    #[test]
     fn pipeline_rules_and_skip_are_validated_on_the_effective_pipeline() {
         for (names, expected) in [
             (
@@ -700,6 +807,10 @@ mod tests {
             cfg["pipeline"] = json!(names);
             assert_eq!(error(cfg), expected);
         }
+        let mut cfg = minimal();
+        cfg["stages"]["last"] = json!({"type":"filter","command":"adapter"});
+        cfg["pipeline"] = json!(["transcript", "note", "last"]);
+        assert_eq!(error(cfg), "pipeline: note must come after last");
         for (kind, definition, names) in [
             (
                 "download",
@@ -780,12 +891,9 @@ mod tests {
             "download",
             "transcript",
             "screenshots",
-            "rewrite",
-            "add-below",
-            "add-top",
+            "llm",
             "filter",
             "note",
-            "hook",
         ] {
             let mut cfg = minimal();
             cfg["stages"]["bad"] = json!({"type":kind,"nonsense":true,"command":"adapter"});
@@ -814,12 +922,22 @@ mod tests {
             cfg["stages"]["transcript"][field] = json!({"unknown":true});
             assert!(serde_json::from_value::<ConfigFile>(cfg).is_err());
         }
-        for stage in [
-            json!({"type":"add-top","images":true}),
-            json!({"type":"rewrite","chunk_size":1000}),
-            json!({"type":"add-top","batch_size":1}),
-            json!({"type":"rewrite","input":"paragraphs"}),
-        ] {
+        assert!(serde_json::from_value::<Stage>(json!({"type":"note","keep":true})).is_err());
+        let error = serde_json::from_value::<Stage>(json!({"type":"unknown"}))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(
+            "expected one of `download`, `transcript`, `screenshots`, `llm`, `filter`, `note`"
+        ));
+        assert!(
+            serde_json::from_value::<Stage>(
+                json!({"type":"llm","reads":"paragraphs","input":"paragraphs"})
+            )
+            .is_err()
+        );
+        for key in ["images", "batch_size", "chunk_size"] {
+            let mut stage = json!({"type":"llm","reads":"paragraphs"});
+            stage[key] = json!(null);
             assert!(serde_json::from_value::<Stage>(stage).is_err());
         }
         assert!(parse("{}").is_err());

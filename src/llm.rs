@@ -1,5 +1,5 @@
 //! Prompt-driven paragraph and transcript stages over OpenAI-compatible HTTP.
-use crate::timeline::{Section, StageText, TranscriptEvent};
+use crate::timeline::{Section, TranscriptEvent};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 use std::{path::Path, time::Duration};
@@ -15,20 +15,12 @@ pub enum Input {
     Paragraphs,
     Transcript,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Output {
-    Replace,
-    Below,
-    Top,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stage {
     pub name: String,
     pub provider: String,
     pub model: String,
     pub input: Input,
-    pub output: Output,
     pub prompt: String,
     pub images: bool,
     pub request: Map<String, Value>,
@@ -196,7 +188,7 @@ pub fn paragraphs(
             let items: Vec<&str> = chunk.iter().map(|event| event.text.as_str()).collect();
             match chat(&agent, s, stage, &items, image.as_deref()) {
                 Ok(results) => {
-                    apply_results(&mut chunk, &results, stage);
+                    apply_results(&mut chunk, &results);
                     Ok(0)
                 }
                 Err(error) => {
@@ -215,10 +207,8 @@ pub fn paragraphs(
     )?;
     pb.finish();
     // Remove paragraphs a replacing stage emptied, once all batches are done.
-    if stage.output == Output::Replace {
-        for sec in sections.iter_mut() {
-            sec.speech.retain(|e| !e.text.trim().is_empty());
-        }
+    for sec in sections.iter_mut() {
+        sec.speech.retain(|e| !e.text.trim().is_empty());
     }
     Ok(StageReport {
         attempted,
@@ -248,22 +238,13 @@ fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
     polished.len() == expected && ids.len() == expected && (0..expected).all(|id| ids.contains(&id))
 }
 
-fn apply_results(chunk: &mut [&mut TranscriptEvent], results: &[(usize, String)], stage: &Stage) {
+fn apply_results(chunk: &mut [&mut TranscriptEvent], results: &[(usize, String)]) {
     for (id, text) in results {
         // chat validates every id before applying a batch.
         let event = &mut chunk[*id];
-        match stage.output {
-            Output::Replace if *text != event.text => {
-                event.raw.get_or_insert_with(|| event.text.clone());
-                event.text = text.clone();
-            }
-            Output::Below if !text.trim().is_empty() && text.trim() != event.text.trim() => {
-                event.below.push(StageText {
-                    stage: stage.name.clone(),
-                    text: text.clone(),
-                });
-            }
-            _ => {}
+        if *text != event.text {
+            event.raw.get_or_insert_with(|| event.text.clone());
+            event.text = text.clone();
         }
     }
 }
@@ -499,7 +480,7 @@ mod tests {
             concurrency: 2,
             ..Default::default()
         };
-        let stage: Stage = crate::llm::test_stage("custom", serde_json::json!({"type":"add-top","provider":"ai","prompt":"  ","request":{"temperature":0.7}})).unwrap();
+        let stage: Stage = crate::llm::test_stage("custom", serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"  ","request":{"temperature":0.7}})).unwrap();
         assert!(stage.prompt.is_empty());
         let effective = LlmSettings::for_stage(&service, &stage, String::new());
         assert_eq!(effective.base_url, service.base_url.unwrap());
@@ -645,7 +626,6 @@ mod tests {
             end: 1.,
             text: "Original.".into(),
             raw: None,
-            below: Vec::new(),
         };
         let mut sections = vec![Section {
             t: 0.,
@@ -664,7 +644,7 @@ mod tests {
             &settings,
             &crate::llm::test_stage(
                 "proofread",
-                serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
+                serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
             )
             .unwrap(),
         )
@@ -724,21 +704,12 @@ mod tests {
             end: 1.0,
             text: text.into(),
             raw: None,
-            below: Vec::new(),
         };
         let (mut a, mut b) = (event("今天讲编译原理"), event("啊"));
         let mut refs = vec![&mut a, &mut b];
         let polished = [(0, "今天讲编译原理".into()), (1, String::new())];
         assert!(segment_ids_match(&polished, refs.len()));
-        apply_results(
-            &mut refs,
-            &polished,
-            &crate::llm::test_stage(
-                "proofread",
-                serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
-            )
-            .unwrap(),
-        );
+        apply_results(&mut refs, &polished);
         assert_eq!(a.raw, None, "unchanged text keeps no raw copy");
         assert_eq!(b.text, "", "filler is emptied and removed by the caller");
         assert_eq!(b.raw.as_deref(), Some("啊"), "the original is kept in raw");
@@ -760,7 +731,7 @@ mod tests {
         let s = test_settings();
         let mut stage: Stage = crate::llm::test_stage(
             "proofread",
-            serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         let items = ["hello"];
@@ -797,7 +768,7 @@ mod tests {
         let settings = LlmSettings::default();
         let mut custom: Stage = crate::llm::test_stage(
             "annotate",
-            serde_json::json!({"type":"add-below","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
@@ -813,7 +784,7 @@ mod tests {
         );
         let empty_prompt: Stage = crate::llm::test_stage(
             "custom",
-            serde_json::json!({"type":"add-top","provider":"ai"}),
+            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai"}),
         )
         .unwrap();
         assert!(empty_prompt.prompt.is_empty());
@@ -835,7 +806,7 @@ mod tests {
 
     #[test]
     fn stage_requests_merge_with_the_protocol_and_protected_keys_are_rejected() {
-        let stage: Stage = crate::llm::test_stage("summary", serde_json::json!({"type":"add-top","provider":"ai","model":"stage-model","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
+        let stage: Stage = crate::llm::test_stage("summary", serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","model":"stage-model","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
         let service = crate::settings::Provider {
             base_url: Some("https://example.test/v1".into()),
             ..Default::default()
@@ -859,59 +830,11 @@ mod tests {
             assert!(
                 crate::llm::test_stage(
                     "summary",
-                    serde_json::json!({"type":"add-top","provider":"ai","request":request})
+                    serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","request":request})
                 )
                 .is_err()
             );
         }
-    }
-
-    #[test]
-    fn below_outputs_skip_empty_or_equal_text_and_keep_stage_order() {
-        let mut stage: Stage = crate::llm::test_stage(
-            "notes",
-            serde_json::json!({"type":"add-below","provider":"ai","prompt":"Annotate"}),
-        )
-        .unwrap();
-        let mut events = ["First", "Second", "Third"].map(|text| TranscriptEvent {
-            start: 0.,
-            end: 1.,
-            text: text.into(),
-            raw: None,
-            below: Vec::new(),
-        });
-        let mut refs = events.iter_mut().collect::<Vec<_>>();
-        apply_results(
-            &mut refs,
-            &[
-                (0, " First ".into()),
-                (1, " ".into()),
-                (2, " Different ".into()),
-            ],
-            &stage,
-        );
-        stage.name = "more".into();
-        apply_results(
-            &mut refs,
-            &[(0, "".into()), (1, "Second".into()), (2, "Another".into())],
-            &stage,
-        );
-        assert!(events[0].below.is_empty() && events[1].below.is_empty());
-        assert_eq!(events[2].text, "Third");
-        assert!(events[2].raw.is_none());
-        assert_eq!(
-            events[2].below,
-            vec![
-                StageText {
-                    stage: "notes".into(),
-                    text: " Different ".into()
-                },
-                StageText {
-                    stage: "more".into(),
-                    text: "Another".into()
-                }
-            ]
-        );
     }
 
     #[test]
@@ -994,7 +917,6 @@ mod tests {
                         end: index as f64 + 1.,
                         text: format!("Original {number}."),
                         raw: None,
-                        below: Vec::new(),
                     })
                     .collect(),
             })
@@ -1006,7 +928,7 @@ mod tests {
         };
         let mut stage = crate::llm::test_stage(
             "proofread",
-            serde_json::json!({"type":"rewrite","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         stage.name = "annotate".into();

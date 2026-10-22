@@ -372,7 +372,7 @@ fn doctor_reports_programs_keys_and_required_tools_offline() {
     let program = env!("CARGO_BIN_EXE_notepipe");
     cfg["providers"] = json!({"p":{"command":program},"unused":{"command":program}});
     cfg["stages"]["transcript"] = json!({"type":"transcript","speech":{"provider":"p"}});
-    for kind in ["download", "filter", "hook"] {
+    for kind in ["download", "filter"] {
         cfg["stages"][kind] = json!({"type":kind,"command":format!("missing-{kind}-program")});
     }
     cli.config_value(&cfg);
@@ -380,7 +380,7 @@ fn doctor_reports_programs_keys_and_required_tools_offline() {
     let text = stdout(&output);
     assert!(!output.status.success());
     assert_eq!(text.matches(&format!("✓ AI adapter  {program}")).count(), 1);
-    for kind in ["download", "filter", "hook"] {
+    for kind in ["download", "filter"] {
         assert!(text.contains(&format!("missing-{kind}-program")), "{text}");
     }
     cfg["providers"]["p"]["api_key_env"] = json!("NOTEPIPE_UNSET_DOCTOR_KEY");

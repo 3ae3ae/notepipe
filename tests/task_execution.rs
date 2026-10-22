@@ -16,7 +16,6 @@ fn put_stage(cfg: &mut Value, name: &str, stage: Value) {
         "download" => 0,
         "transcript" | "screenshots" => 1,
         "note" => 3,
-        "hook" => 4,
         _ => 2,
     };
     let pipeline = cfg["pipeline"].as_array().unwrap();
@@ -304,6 +303,7 @@ fn explicit_subtitles_publish_plain_notes_and_replace_only_the_same_source() {
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect::<Vec<_>>();
     assert_eq!(names.len(), 3);
+    assert!(!note_dir.join("stages").exists());
     std::fs::write(
         &subtitle,
         "1\n00:00:00,000 --> 00:00:02,000\nUpdated selected words.\n",
@@ -357,7 +357,7 @@ fn distinct_stage_adapters_start_once_each_and_stop_after_the_stages() {
         put_stage(
             &mut cfg,
             &format!("stage{index}"),
-            json!({"type":"add-top",
+            json!({"type":"llm","reads":"transcript",
             "provider":format!("service{}", index % 2)}),
         );
     }
@@ -409,7 +409,7 @@ fn ai_adapter_omits_an_unset_model_stops_and_reuses_responses_across_ports() {
     put_stage(
         &mut cfg,
         "summary",
-        json!({"type":"add-top","provider":"ai","prompt":"SUMMARY"}),
+        json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"SUMMARY"}),
     );
     let mut reserved_port = None;
     for _ in 0..2 {
@@ -669,7 +669,7 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
     put_stage(
         &mut cfg,
         "summary",
-        json!({"type":"add-top","provider":"ai","prompt":"SUMMARY"}),
+        json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"SUMMARY"}),
     );
     cfg["providers"]["ai"]["base_url"] = json!(mock.url.clone());
     cfg["stages"]["summary"]["model"] = json!("fixture");
@@ -842,9 +842,18 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
     put_stage(&mut cfg, "download", program("download", json!(source)));
     cfg["providers"]["speech"] = provider_program(json!(asr));
     cfg["stages"]["transcript"]["sources"] = json!(["speech"]);
+    cfg["stages"]["screenshots"]["keep"] = json!(true);
     let url = "https://example.test/audio";
     let first = run(root.path(), url, &cfg, &[]);
     assert!(done(&first)["warnings"].as_array().unwrap().is_empty());
+    let note_dir = done(&first)["note_dir"].as_str().unwrap().to_owned();
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &std::fs::read(Path::new(&note_dir).join("stages/screenshots.json")).unwrap()
+        )
+        .unwrap(),
+        json!([])
+    );
     let asr_calls = calls(&asr_record);
     assert!(asr_calls > 0);
     let cached = files(&root.path().join("cache/notepipe/work"));
@@ -871,7 +880,7 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
     put_stage(
         &mut cfg,
         "proofread",
-        json!({"type":"rewrite","provider":"ai","prompt":"PROOFREAD","images":true}),
+        json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"PROOFREAD","images":true}),
     );
     cfg["providers"]["ai"]["base_url"] = json!(mock.url.clone());
     cfg["stages"]["proofread"]["model"] = json!("fixture");
@@ -896,159 +905,6 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
     assert_eq!(calls(&asr_record), asr_calls);
     assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(marker.metadata().unwrap().modified().unwrap(), modified);
-}
-
-#[cfg(unix)]
-#[test]
-fn completion_hooks_receive_note_paths_and_warning_counts_once_per_publication() {
-    use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
-    if which::which("ffmpeg").ok().is_none() {
-        return;
-    }
-    let media = root.path().join("broken.mp4");
-    std::fs::write(&media, "broken media").unwrap();
-    let subtitle = media.with_extension("srt");
-    std::fs::write(
-        &subtitle,
-        "1\n00:00:00,000 --> 00:00:02,000\nComplete note.\n",
-    )
-    .unwrap();
-    let hook = root.path().join("completion hook.sh");
-    std::fs::write(&hook, r#"#!/bin/sh
-printf '%s\n' "$PWD" "$NOTEPIPE_NOTE_DIR" "$NOTEPIPE_MARKDOWN" "$NOTEPIPE_JSON" "$NOTEPIPE_WARNINGS" >> "$1"
-printf '\377'
-printf 'omit-first\none\ntwo\nthree\nfour\nhook failure tail\377\n' >&2
-exit "$2"
-"#).unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let record = root.path().join("hook calls");
-    let mut cfg = config();
-    for code in ["0", "7"] {
-        put_stage(
-            &mut cfg,
-            "completion",
-            program(
-                "hook",
-                json!([
-                    "./completion hook.sh",
-                    record.to_string_lossy().into_owned(),
-                    code,
-                ]),
-            ),
-        );
-        let output = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
-        let completed = done(&output);
-        let warnings = completed["warnings"].as_array().unwrap();
-        let hook_warnings = warnings
-            .iter()
-            .filter(|warning| warning.as_str().unwrap().starts_with("completion:"))
-            .count();
-        assert_eq!(hook_warnings, usize::from(code != "0"));
-        let log = std::fs::read_to_string(&record).unwrap();
-        let lines = log.lines().collect::<Vec<_>>();
-        let last = &lines[lines.len() - 5..];
-        assert_eq!(last[0], completed["note_dir"].as_str().unwrap());
-        assert_eq!(last[1], completed["note_dir"].as_str().unwrap());
-        assert_eq!(last[2], completed["markdown"].as_str().unwrap());
-        assert_eq!(last[3], completed["json"].as_str().unwrap());
-        assert_eq!(last[4], (warnings.len() - hook_warnings).to_string());
-        assert_eq!(
-            document(&output)["warnings"].as_array().unwrap().len(),
-            warnings.len() - hook_warnings
-        );
-        if code == "7" {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(stderr.contains("code=Some(7)") && stderr.contains("hook failure tail"));
-            assert!(stderr.contains("hook failure tail\u{fffd}"));
-            assert!(!stderr.contains("omit-first"));
-        }
-    }
-    assert_eq!(
-        std::fs::read_to_string(&record).unwrap().lines().count(),
-        10
-    );
-    put_stage(
-        &mut cfg,
-        "completion",
-        program(
-            "hook",
-            json!(["notepipe-completion-fixture-that-does-not-exist"]),
-        ),
-    );
-    let missing = run(root.path(), media.to_str().unwrap(), &cfg, &[]);
-    assert!(
-        done(&missing)["warnings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|warning| warning.as_str().unwrap().contains("completion:"))
-    );
-    put_stage(
-        &mut cfg,
-        "completion",
-        program(
-            "hook",
-            json!([
-                "./completion hook.sh",
-                record.to_string_lossy().into_owned(),
-                "0",
-            ]),
-        ),
-    );
-    std::fs::write(subtitle, "").unwrap();
-    assert!(
-        !run(root.path(), media.to_str().unwrap(), &cfg, &[])
-            .status
-            .success()
-    );
-    assert_eq!(
-        std::fs::read_to_string(&record).unwrap().lines().count(),
-        10
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn cancelling_completion_hooks_stops_their_process_trees() {
-    for signal in [libc::SIGINT, libc::SIGTERM] {
-        let root = tempfile::tempdir().unwrap();
-        if which::which("ffmpeg").is_err() {
-            return;
-        }
-        let media = root.path().join("broken.mp4");
-        std::fs::write(&media, "broken media").unwrap();
-        std::fs::write(
-            media.with_extension("srt"),
-            "1\n00:00:00,000 --> 00:00:02,000\nComplete note.\n",
-        )
-        .unwrap();
-        let record = root.path().join("hook-child");
-        let mut cfg = config();
-        put_stage(
-            &mut cfg,
-            "completion",
-            program(
-                "hook",
-                json!([
-                    "sh",
-                    "-c",
-                    "trap 'wait; exit 0' TERM\nsleep 30 &\nprintf '%s' \"$!\" > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\nwait",
-                    "hook",
-                    record,
-                ]),
-            ),
-        );
-        let mut child = spawn(root.path(), media.to_str().unwrap(), &cfg, &[]);
-        wait_for_file(&mut child, &record);
-        let pid: i32 = std::fs::read_to_string(&record).unwrap().parse().unwrap();
-        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
-        let output = wait_for_cancelled(child);
-        assert!(!events(&output).iter().any(|event| event["type"] == "done"));
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "hook child was orphaned");
-        assert!(root.path().join("broken/note.md").is_file());
-        assert!(root.path().join("broken/note.json").is_file());
-    }
 }
 
 #[test]
@@ -1080,7 +936,7 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
     put_stage(
         &mut cfg,
         "proofread",
-        json!({"type":"rewrite","provider":"ai","prompt":"PROOFREAD"}),
+        json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"PROOFREAD"}),
     );
     cfg["providers"]["ai"]["base_url"] = json!(mock.url.clone());
     cfg["stages"]["proofread"]["model"] = json!("fixture");
@@ -1511,7 +1367,7 @@ fn stages_send_keys_from_the_named_environment_variable() {
         put_stage(
             &mut cfg,
             "proofread",
-            json!({"type":"rewrite","provider":"ai","prompt":"PROOFREAD"}),
+            json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"PROOFREAD"}),
         );
         cfg["providers"]["ai"] =
             json!({"base_url":mock.url,"api_key_env":"NOTEPIPE_TEST_SERVICE_KEY"});
@@ -1583,7 +1439,7 @@ fn retryable_and_terminal_llm_errors_preserve_text_and_never_enter_the_cache() {
     put_stage(
         &mut cfg,
         "proofread",
-        json!({"type":"rewrite","provider":"ai","prompt":"PROOFREAD"}),
+        json!({"type":"llm","reads":"paragraphs","provider":"ai","prompt":"PROOFREAD"}),
     );
     cfg["providers"]["ai"]["base_url"] = json!(mock.url.clone());
     cfg["stages"]["proofread"]["model"] = json!("fixture");
@@ -1726,75 +1582,37 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
         };
         Some((200, json!({"choices":[{"message":{"content":content}}]})))
     });
-    let below_order = order.clone();
-    let below = MockAi::respond_with(move |_, body| {
-        below_order.lock().unwrap().push("gloss");
-        assert_eq!(body["model"], "below-model");
-        assert_eq!(body["temperature"], 0.7);
-        assert_eq!(body["top_p"], 0.8);
-        assert_eq!(body["top_k"], 5);
-        assert!(
-            body["messages"][0]["content"]
-                .as_str()
-                .unwrap()
-                .starts_with("CUSTOM-BELOW Output a JSON object")
-        );
-        assert!(
-            body["messages"][1]["content"]
-                .to_string()
-                .contains("Proofread words.")
-        );
-        Some((
-            200,
-            json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"  Des mots en français.\n    More detail.  \n\n"}]}"#}}]}),
-        ))
-    });
     let mut cfg = config();
     cfg["providers"]["ai"] = json!({"base_url":main.url,"api_key_env":"TEST_DEFAULT_KEY"});
-    cfg["providers"]["below"] = json!({"base_url":below.url,"api_key_env":"TEST_STAGE_KEY"});
     put_stage(
         &mut cfg,
         "proofread",
-        json!({"type":"rewrite","provider":"ai","model":"default-model","prompt":"PROOFREAD","request":{"temperature":0.2,"top_p":0.8}}),
-    );
-    put_stage(
-        &mut cfg,
-        "gloss",
-        json!({"type":"add-below","provider":"below","prompt":"CUSTOM-BELOW","model":"below-model","request":{"temperature":0.7,"top_p":0.8,"top_k":5}}),
+        json!({"type":"llm","reads":"paragraphs","provider":"ai","model":"default-model","prompt":"PROOFREAD","request":{"temperature":0.2,"top_p":0.8}}),
     );
     put_stage(
         &mut cfg,
         "outline",
-        json!({"type":"add-top","provider":"ai","model":"default-model","prompt":"CUSTOM-TOP","request":{"temperature":0.2,"top_p":0.8}}),
+        json!({"type":"llm","reads":"transcript","provider":"ai","model":"default-model","prompt":"CUSTOM-TOP","request":{"temperature":0.2,"top_p":0.8}}),
     );
     put_stage(
         &mut cfg,
         "summary",
-        json!({"type":"add-top","provider":"ai","model":"default-model","prompt":"SUMMARY","request":{"temperature":0.2,"top_p":0.8}}),
+        json!({"type":"llm","reads":"transcript","provider":"ai","model":"default-model","prompt":"SUMMARY","request":{"temperature":0.2,"top_p":0.8}}),
     );
     let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     let doc = document(&output);
-    assert_eq!(
-        *order.lock().unwrap(),
-        ["proofread", "gloss", "outline", "summary"]
-    );
+    assert_eq!(*order.lock().unwrap(), ["proofread", "outline", "summary"]);
     assert_eq!(doc["top"][0]["stage"], "outline");
     assert_eq!(doc["top"][1]["stage"], "summary");
     assert!(doc.get("summary").is_none());
     let event = &doc["sections"][0]["speech"][0];
     assert_eq!(event["text"], "Proofread words.");
     assert_eq!(event["raw"], "Original words.");
-    assert_eq!(event["below"][0]["stage"], "gloss");
-    assert_eq!(
-        event["below"][0]["text"],
-        "  Des mots en français.\n    More detail.  \n\n"
-    );
+    assert!(event.get("below").is_none());
     assert!(event.get("translation").is_none());
     let markdown = std::fs::read_to_string(done(&output)["markdown"].as_str().unwrap()).unwrap();
     assert!(markdown.find("## First block").unwrap() < markdown.find("## Second block").unwrap());
     assert!(markdown.find("## Second block").unwrap() < markdown.find("Proofread words.").unwrap());
-    assert!(markdown.contains(">   Des mots en français.\n>     More detail.  \n> \n> \n"));
-    assert!(below.headers.lock().unwrap()[0].contains("Authorization: Bearer stage-key"));
     assert!(
         main.headers
             .lock()
@@ -1806,7 +1624,7 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
         root.path(),
         video.to_str().unwrap(),
         &cfg,
-        &["--skip", "proofread,gloss,summary"],
+        &["--skip", "proofread,summary"],
     );
     let doc = document(&selected);
     assert_eq!(doc["top"].as_array().unwrap().len(), 1);
@@ -1819,11 +1637,10 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
         root.path(),
         video.to_str().unwrap(),
         &cfg,
-        &["--skip", "proofread,gloss,outline,summary"],
+        &["--skip", "proofread,outline,summary"],
     );
     assert!(document(&disabled)["top"].as_array().unwrap().is_empty());
     assert_eq!(main.calls.load(Ordering::SeqCst), calls);
-    assert_eq!(below.calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -1867,7 +1684,7 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
         put_stage(
             &mut cfg,
             "proofread",
-            json!({"type":"rewrite","provider":"ai","model":"fixture","prompt":"PROOFREAD"}),
+            json!({"type":"llm","reads":"paragraphs","provider":"ai","model":"fixture","prompt":"PROOFREAD"}),
         );
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         let doc = document(&output);
@@ -1935,7 +1752,7 @@ fn filter_program(mode: &str) -> Option<Value> {
 }
 
 #[test]
-fn filters_apply_only_text_below_and_top_preserve_raw_and_run_in_order() {
+fn filters_apply_only_text_and_top_preserve_raw_and_run_in_order() {
     let root = tempfile::tempdir().unwrap();
     let Some(filter) = filter_program("upper") else {
         return;
@@ -1963,7 +1780,7 @@ fn filters_apply_only_text_below_and_top_preserve_raw_and_run_in_order() {
     put_stage(
         &mut cfg,
         "rewrite",
-        json!({"type":"rewrite","provider":"ai"}),
+        json!({"type":"llm","reads":"paragraphs","provider":"ai"}),
     );
     put_stage(&mut cfg, "upper-again", filter);
     cfg["providers"]["ai"]["base_url"] = json!(mock.url);
@@ -1977,7 +1794,7 @@ fn filters_apply_only_text_below_and_top_preserve_raw_and_run_in_order() {
     let fragment = &doc["sections"][0]["speech"][0];
     assert_eq!(fragment["text"], "REWRITTEN WORDS.");
     assert_eq!(fragment["raw"], "Original words.");
-    assert_eq!(fragment["below"].as_array().unwrap().len(), 2);
+    assert!(fragment.get("below").is_none());
     assert_eq!(fragment["start"], 0.0);
     assert_eq!(doc["sections"][0]["image"], "");
     assert_eq!(doc["meta"]["title"], "media");
@@ -2160,12 +1977,12 @@ fn default_stage_names_are_used_for_json_events_and_progress() {
     put_stage(
         &mut cfg,
         "proofread",
-        json!({"type":"rewrite","provider":"ai"}),
+        json!({"type":"llm","reads":"paragraphs","provider":"ai"}),
     );
     put_stage(
         &mut cfg,
         "summary",
-        json!({"type":"add-top","provider":"ai"}),
+        json!({"type":"llm","reads":"transcript","provider":"ai"}),
     );
     let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     done(&output);
@@ -2222,7 +2039,7 @@ fn speech_and_ai_stages_share_one_command_provider() {
     put_stage(
         &mut cfg,
         "summary",
-        json!({"type":"add-top","provider":"speech"}),
+        json!({"type":"llm","reads":"transcript","provider":"speech"}),
     );
     let output = run(
         root.path(),
@@ -2291,51 +2108,6 @@ fn speech_first_falls_back_to_subtitles_when_no_speech_is_found() {
             doc["sections"][0]["speech"][0]["text"],
             "Fallback subtitles."
         );
-    }
-}
-
-#[test]
-fn multiple_hooks_run_in_pipeline_order_and_see_prior_hook_warnings() {
-    let root = tempfile::tempdir().unwrap();
-    let Some(filter) = filter_program("upper") else {
-        return;
-    };
-    let python = filter["command"].as_str().unwrap();
-    let media = root.path().join("media.mp4");
-    std::fs::write(&media, "unused media").unwrap();
-    std::fs::write(
-        media.with_extension("srt"),
-        "1\n00:00:00,000 --> 00:00:02,000\nOriginal words.\n",
-    )
-    .unwrap();
-    let record = root.path().join("hooks");
-    let mut cfg = config();
-    for (name, code) in [("first", 1), ("second", 0)] {
-        put_stage(
-            &mut cfg,
-            name,
-            json!({"type":"hook","command":python,"args":["-c","import os,sys; from pathlib import Path; p=Path(sys.argv[1]); p.open('a',newline='').write(sys.argv[2]+':'+os.environ['NOTEPIPE_WARNINGS']+'\\n'); assert os.path.samefile(os.getcwd(), os.environ['NOTEPIPE_NOTE_DIR']); sys.exit(int(sys.argv[3]))",record,name,code.to_string()]}),
-        );
-    }
-    let output = run(
-        root.path(),
-        media.to_str().unwrap(),
-        &cfg,
-        &["--skip", "screenshots"],
-    );
-    let completed = done(&output);
-    assert_eq!(
-        std::fs::read_to_string(record).unwrap(),
-        "first:0\nsecond:1\n"
-    );
-    assert_eq!(completed["warnings"].as_array().unwrap().len(), 1);
-    assert_eq!(document(&output)["warnings"], json!([]));
-    for name in ["first", "second"] {
-        for status in ["start", "done"] {
-            assert!(events(&output).iter().any(|event| event["type"] == "stage"
-                && event["stage"] == name
-                && event["status"] == status));
-        }
     }
 }
 
@@ -2413,4 +2185,243 @@ fn explicit_subtitles_skip_the_transcript_provider_and_its_events() {
                 .is_some_and(|stage| stage.starts_with("transcript"))
         }));
     }
+}
+
+#[test]
+fn kept_stage_outputs_capture_intermediate_results_and_cached_runs() {
+    use std::sync::atomic::Ordering;
+    let root = tempfile::tempdir().unwrap();
+    let Some(video) = speech_video(root.path()) else {
+        return;
+    };
+    let Some(filter) = filter_program("upper") else {
+        return;
+    };
+    let subtitle = video.with_extension("srt");
+    std::fs::write(
+        &subtitle,
+        "1\n00:00:00,000 --> 00:00:02,000\nOriginal words.\n",
+    )
+    .unwrap();
+    let mock = MockAi::respond_with(|_, body| {
+        let content = if body.get("response_format").is_some() {
+            r#"{"segments":[{"id":0,"text":"Proofread words."}]}"#
+        } else {
+            "## Summary\n\nKept Markdown."
+        };
+        Some((200, json!({"choices":[{"message":{"content":content}}]})))
+    });
+    let mut cfg = config();
+    cfg["providers"]["ai"]["base_url"] = json!(mock.url);
+    put_stage(
+        &mut cfg,
+        "download",
+        json!({"type":"download","command":"unused-for-local-files"}),
+    );
+    put_stage(
+        &mut cfg,
+        "proofread",
+        json!({"type":"llm","reads":"paragraphs","provider":"ai"}),
+    );
+    put_stage(
+        &mut cfg,
+        "summary",
+        json!({"type":"llm","reads":"transcript","provider":"ai"}),
+    );
+    put_stage(&mut cfg, "upper", filter);
+    cfg["stages"]["unused"] = json!({"type":"llm","reads":"transcript","provider":"ai"});
+    let default_output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
+    assert!(
+        !Path::new(done(&default_output)["note_dir"].as_str().unwrap())
+            .join("stages")
+            .exists()
+    );
+    for (name, stage) in cfg["stages"].as_object_mut().unwrap() {
+        if name != "note" {
+            stage["keep"] = json!(true);
+        }
+    }
+    for _ in 0..2 {
+        let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
+        let completed = done(&output);
+        let note = Path::new(completed["note_dir"].as_str().unwrap());
+        let read = |name: &str| -> Value {
+            serde_json::from_slice(&std::fs::read(note.join("stages").join(name)).unwrap()).unwrap()
+        };
+        let doc = document(&output);
+        assert_eq!(doc["schema"], 2);
+        assert!(doc["sections"][0]["speech"][0].get("below").is_none());
+        assert_eq!(
+            read("transcript.json"),
+            json!({"events":[{"start":0.0,"end":2.0,"text":"Original words."}]})
+        );
+        let screenshots = read("screenshots.json");
+        assert_eq!(
+            screenshots,
+            json!([{"t":doc["sections"][0]["t"],"image":"images/0001.jpg"}])
+        );
+        assert!(
+            note.join(screenshots[0]["image"].as_str().unwrap())
+                .is_file()
+        );
+        let proofread = read("proofread.json");
+        assert_eq!(proofread[0]["speech"][0]["text"], "Proofread words.");
+        assert_eq!(proofread[0]["speech"][0]["raw"], "Original words.");
+        assert_eq!(proofread[0]["image"], "images/0001.jpg");
+        assert_eq!(
+            std::fs::read_to_string(note.join("stages/summary.md")).unwrap(),
+            "## Summary\n\nKept Markdown."
+        );
+        let filtered = read("upper.json");
+        assert_eq!(filtered["schema"], 2);
+        assert_eq!(
+            filtered["sections"][0]["speech"][0]["text"],
+            "PROOFREAD WORDS."
+        );
+        assert_eq!(filtered["sections"][0]["speech"][0]["raw"], "ignored raw");
+        assert_eq!(filtered["meta"]["title"], "ignored title");
+        assert_eq!(filtered["warnings"], json!(["ignored warning"]));
+        assert_ne!(filtered, doc);
+        assert!(!note.join("stages/download").exists());
+        assert_eq!(std::fs::read_dir(note.join("stages")).unwrap().count(), 5);
+    }
+    assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
+    for (name, stage) in cfg["stages"].as_object_mut().unwrap() {
+        if name != "note" {
+            stage["keep"] = json!(false);
+        }
+    }
+    let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
+    assert!(
+        !Path::new(done(&output)["note_dir"].as_str().unwrap())
+            .join("stages")
+            .exists()
+    );
+    assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
+    for (name, stage) in cfg["stages"].as_object_mut().unwrap() {
+        if name != "note" {
+            stage["keep"] = json!(true);
+        }
+    }
+    let output = run(
+        root.path(),
+        video.to_str().unwrap(),
+        &cfg,
+        &[
+            "--subtitle",
+            subtitle.to_str().unwrap(),
+            "--skip",
+            "download,screenshots,proofread,summary,upper",
+        ],
+    );
+    assert!(
+        !Path::new(done(&output)["note_dir"].as_str().unwrap())
+            .join("stages")
+            .exists()
+    );
+}
+
+#[test]
+fn download_keep_moves_media_and_copies_all_subtitles_and_the_final_result() {
+    for keep in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let record = root.path().join("source");
+        let Some(command) = source_command(&record, "files") else {
+            return;
+        };
+        let mut cfg = config();
+        cfg["stages"]["transcript"]["sources"] = json!(["subtitles"]);
+        put_stage(&mut cfg, "fetch", program("download", json!(command)));
+        if keep {
+            for (name, stage) in cfg["stages"].as_object_mut().unwrap() {
+                if name != "note" {
+                    stage["keep"] = json!(true);
+                }
+            }
+        }
+        for _ in 0..2 {
+            let output = run(
+                root.path(),
+                "https://example.test/kept",
+                &cfg,
+                &["--skip", "screenshots"],
+            );
+            let completed = done(&output);
+            let note = Path::new(completed["note_dir"].as_str().unwrap());
+            let cached = files(&root.path().join("cache/notepipe/work"));
+            assert!(
+                !cached
+                    .iter()
+                    .any(|path| path.file_name().unwrap() == "media.mp4")
+            );
+            if keep {
+                let download = note.join("stages/fetch");
+                assert_eq!(
+                    std::fs::read(download.join("media.mp4")).unwrap(),
+                    b"cached media"
+                );
+                let source_marker = cached
+                    .iter()
+                    .find(|path| {
+                        path.file_name().unwrap() == "complete.json"
+                            && path.parent().unwrap().file_name().unwrap() == "source"
+                    })
+                    .unwrap();
+                assert_eq!(
+                    std::fs::read(download.join("info.json")).unwrap(),
+                    std::fs::read(source_marker).unwrap()
+                );
+                let info: Value =
+                    serde_json::from_slice(&std::fs::read(download.join("info.json")).unwrap())
+                        .unwrap();
+                assert_eq!(info["subtitles"].as_array().unwrap().len(), 3);
+                for caption in info["subtitles"].as_array().unwrap() {
+                    let path = caption["path"].as_str().unwrap();
+                    assert_eq!(
+                        std::fs::read(download.join(path)).unwrap(),
+                        std::fs::read(source_marker.parent().unwrap().join("files").join(path))
+                            .unwrap()
+                    );
+                }
+            } else {
+                assert!(!note.join("stages").exists());
+            }
+        }
+        assert_eq!(calls(&record), 1);
+    }
+}
+
+#[test]
+fn failed_transcript_llm_writes_no_markdown_output() {
+    let root = tempfile::tempdir().unwrap();
+    let media = root.path().join("media.mp4");
+    std::fs::write(&media, "unused media").unwrap();
+    std::fs::write(
+        media.with_extension("srt"),
+        "1\n00:00:00,000 --> 00:00:02,000\nOriginal words.\n",
+    )
+    .unwrap();
+    let mock =
+        MockAi::respond_with(|_, _| Some((400, json!({"error":{"message":"fixture failure"}}))));
+    let mut cfg = config();
+    cfg["providers"]["ai"]["base_url"] = json!(mock.url);
+    put_stage(
+        &mut cfg,
+        "summary",
+        json!({"type":"llm","reads":"transcript","provider":"ai"}),
+    );
+    cfg["stages"]["summary"]["keep"] = json!(true);
+    let output = run(
+        root.path(),
+        media.to_str().unwrap(),
+        &cfg,
+        &["--skip", "screenshots"],
+    );
+    let completed = done(&output);
+    assert!(!completed["warnings"].as_array().unwrap().is_empty());
+    assert!(
+        !Path::new(completed["note_dir"].as_str().unwrap())
+            .join("stages/summary.md")
+            .exists()
+    );
 }

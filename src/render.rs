@@ -107,12 +107,6 @@ pub fn render_markdown(
         }
         for event in &section.speech {
             writeln!(md, "{}\n", event.text).unwrap();
-            for output in &event.below {
-                for line in output.text.split('\n') {
-                    writeln!(md, "> {line}").unwrap();
-                }
-                md.push('\n');
-            }
         }
     }
     Ok(md)
