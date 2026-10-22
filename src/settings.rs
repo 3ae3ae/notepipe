@@ -524,7 +524,12 @@ mod tests {
                 })
             })
             .collect();
-        assert!(include_str!("../README.md").contains(&shortened));
+        // Windows checkouts may turn the README into CRLF.
+        assert!(
+            include_str!("../README.md")
+                .replace("\r\n", "\n")
+                .contains(&shortened)
+        );
     }
 
     #[test]
