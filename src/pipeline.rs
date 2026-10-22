@@ -345,16 +345,21 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         "No readable transcript"
     );
     let mut top = Vec::new();
-    let mut adapter = None::<crate::adapter::Adapter>;
+    let mut adapters = std::collections::HashMap::<Vec<String>, crate::adapter::Adapter>::new();
     for stage in &cfg.llm.stages {
         runtime::check_cancelled()?;
         let mut settings = cfg.llm.for_stage(stage)?;
+        if settings.adapter.is_empty() && settings.base_url.trim().is_empty() {
+            warnings.push(format!("{}: skipped; no AI service is set. Set base_url and model in [ai], or remove this stage.", stage.name));
+            continue;
+        }
         if !settings.adapter.is_empty() {
-            if adapter.is_none() {
+            if !adapters.contains_key(&settings.adapter) {
                 // shortcut: the adapter starts even when every response is cached; start it on the first cache miss if startup cost matters.
-                adapter = Some(start_ai_adapter(settings.adapter.clone()).await?);
+                let adapter = start_ai_adapter(settings.adapter.clone()).await?;
+                adapters.insert(settings.adapter.clone(), adapter);
             }
-            settings.base_url = format!("{}/v1", adapter.as_ref().unwrap().base);
+            settings.base_url = format!("{}/v1", adapters[&settings.adapter].base);
         }
         progress::stage(&stage.name, "start");
         match stage.input {
@@ -380,7 +385,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
         progress::stage(&stage.name, "done");
     }
-    drop(adapter);
+    drop(adapters);
     runtime::check_cancelled()?;
     progress::stage("render", "start");
     if let Some(path) = source_media {
@@ -579,7 +584,7 @@ mod tests {
         let first = screenshot_key(&cfg).unwrap();
         cfg.llm
             .stages
-            .push(crate::llm::Stage::builtin("summary").unwrap());
+            .push(serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap());
         cfg.asr.model = "different".into();
         assert_eq!(screenshot_key(&cfg).unwrap(), first);
         cfg.similarity = 0.5;

@@ -110,7 +110,10 @@ fn config_path_and_missing_file_guidance_use_the_configuration_path() {
         let output = cli.run(&args);
         assert!(output.status.success());
         assert!(
-            stdout(&output).contains(&format!("File: {} (not created yet)", path.display())),
+            stdout(&output).contains(&format!(
+                "File: {} (created on the first run)",
+                path.display()
+            )),
             "{}",
             stdout(&output)
         );
@@ -164,6 +167,7 @@ fn json_covers_missing_source_parse_and_config_errors() {
 #[test]
 fn validation_precedes_dependency_checks_and_downloads() {
     let cli = CliTest::new();
+    cli.config("");
     std::fs::write(cli.dir.path().join("lecture.mp4"), []).unwrap();
     let result = cli.run(&["./lecture.mp4", "--frame-interval", "0", "--json"]);
     let error = json_error(&result);
@@ -255,7 +259,7 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
     assert_eq!(
         stdout(&created),
         format!(
-            "Created {}\nEvery setting is explained in the file. Remove the # in front of a setting to change it.\n",
+            "Created {}\nEvery value in it is in effect; edit it to change how notes are made.\n",
             path.display()
         )
     );
@@ -269,6 +273,73 @@ fn generated_template_parses_and_does_not_overwrite_existing_config() {
     )));
     let file = std::fs::read_to_string(cli.dir.path().join("config/notepipe/config.toml")).unwrap();
     assert!(file.contains("sensitivity = 0.7"));
+}
+
+#[test]
+fn runs_create_the_default_configuration_once_and_explicit_configs_create_nothing() {
+    for mode in ["", "--json", "--quiet"] {
+        let cli = CliTest::new();
+        let path = cli.dir.path().join("config/notepipe/config.toml");
+        let notice = format!(
+            "Created {} with the default settings. Edit it to change how notes are made.",
+            path.display()
+        );
+        let mut args = vec!["https://example.test/media", "--frame-interval", "0"];
+        if !mode.is_empty() {
+            args.push(mode);
+        }
+        let first = cli.run(&args);
+        assert!(path.is_file());
+        assert!(!first.status.success());
+        if mode == "--json" {
+            let events: Vec<serde_json::Value> = stdout(&first)
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(
+                events[0],
+                serde_json::json!({"type":"log","level":"info","message":notice})
+            );
+            assert!(first.stderr.is_empty());
+        } else {
+            assert_eq!(stderr(&first).contains(&notice), mode != "--quiet");
+        }
+        let contents = std::fs::read(&path).unwrap();
+        let second = cli.run(&args);
+        assert!(!format!("{}{}", stdout(&second), stderr(&second)).contains(&notice));
+        assert_eq!(std::fs::read(&path).unwrap(), contents);
+    }
+    let cli = CliTest::new();
+    std::fs::write(cli.dir.path().join("explicit.toml"), "").unwrap();
+    let error = json_error(&cli.run(&[
+        "https://example.test/media",
+        "--config",
+        "explicit.toml",
+        "--frame-interval",
+        "0",
+        "--json",
+    ]));
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("--frame-interval")
+    );
+    assert!(!cli.dir.path().join("config").exists());
+}
+
+#[test]
+fn failed_default_configuration_creation_warns_and_uses_defaults() {
+    let cli = CliTest::new();
+    std::fs::write(cli.dir.path().join("config"), "blocked").unwrap();
+    let output = cli.run(&["https://example.test/media", "--frame-interval", "0"]);
+    let text = stderr(&output);
+    assert!(text.contains(&format!(
+        "Could not create {}:",
+        cli.dir.path().join("config/notepipe/config.toml").display()
+    )));
+    assert!(text.contains(". Continuing with the default settings."));
+    assert!(text.contains("--frame-interval"));
 }
 
 #[test]
@@ -310,25 +381,15 @@ fn doctor_reports_required_failures_with_nonzero_exit() {
 #[test]
 fn doctor_reports_missing_llm_settings_for_enabled_stages_offline() {
     let cli = CliTest::new();
-    for (settings, expected) in [
-        ("", "AI service URL is not set"),
-        (
-            "base_url = 'http://127.0.0.1:9/v1'\n",
-            "AI model is not set",
-        ),
-    ] {
-        cli.config(&format!(
-            "[ai]\n{settings}[[ai.stages]]\nname = 'summary'\n"
-        ));
-        let result = cli.run(&["doctor"]);
-        assert!(!result.status.success());
-        let text = stdout(&result);
-        assert!(
-            text.contains("✗ Settings values") && text.contains(expected),
-            "{text}"
-        );
-        assert!(stderr(&result).contains("required-tool or configuration issues"));
-    }
+    cli.config("[ai]\nbase_url = 'http://127.0.0.1:9/v1'\n[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n");
+    let result = cli.run(&["doctor"]);
+    assert!(!result.status.success());
+    let text = stdout(&result);
+    assert!(
+        text.contains("✗ Settings values") && text.contains("AI model is not set"),
+        "{text}"
+    );
+    assert!(stderr(&result).contains("required-tool or configuration issues"));
 }
 
 #[test]
@@ -352,6 +413,10 @@ fn doctor_reports_ai_adapter_executable_after_speech() {
         stdout(&result)
     );
     assert!(stderr(&result).contains("required-tool or configuration issues"));
+    cli.config(&serde_json::json!({"stages":[{"name":"custom","input":"transcript","output":"top","adapter":[program]}]}).to_string());
+    let result = cli.run(&["doctor"]);
+    assert!(!result.status.success());
+    assert!(stdout(&result).contains(&format!("✗ AI adapter {program}")));
 }
 
 #[test]
@@ -454,7 +519,7 @@ fn source_adapter_generates_notes_and_reuses_its_completed_output() {
         invalid["message"]
             .as_str()
             .unwrap()
-            .contains("[ai].base_url")
+            .contains("Unknown stage: summary")
     );
     assert!(!record.join("calls").exists());
     for flag in ["--json", "--quiet"] {
@@ -716,13 +781,9 @@ fn stage_selection_is_explicit_and_validated() {
         .success()
     );
     std::fs::write(cli.dir.path().join("media.mp4"), "placeholder").unwrap();
+    cli.config("");
     let error = json_error(&cli.run(&["media.mp4", "--stages", "unknown", "--json"]));
-    assert!(
-        error["message"]
-            .as_str()
-            .unwrap()
-            .contains("Unknown AI stage")
-    );
+    assert!(error["message"].as_str().unwrap().contains("Unknown stage"));
     cli.config("[ai]\nbase_url = 'invalid unused URL'\nmodel = ''\n");
     let error = json_error(&cli.run(&["media.mp4", "--frame-interval", "0", "--json"]));
     assert!(
@@ -747,7 +808,9 @@ fn llm_request_tables_are_validated_before_any_source_work() {
     ] {
         for config in [
             format!("[ai]\nrequest = {request}\n"),
-            format!("[[ai.stages]]\nname = 'summary'\nrequest = {request}\n"),
+            format!(
+                "[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\nrequest = {request}\n"
+            ),
         ] {
             cli.config(&config);
             let error = json_error(&cli.run(&["https://example.test/media", "--json"]));
@@ -760,7 +823,7 @@ fn llm_request_tables_are_validated_before_any_source_work() {
 #[test]
 fn duplicate_stage_names_are_rejected_before_selection_or_source_work() {
     let cli = CliTest::new();
-    cli.config("[[ai.stages]]\nname = 'summary'\n[[ai.stages]]\nname = 'summary'\n");
+    cli.config("[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n");
     for selection in [vec![], vec!["--stages", "summary"], vec!["--no-stages"]] {
         let mut args = vec!["https://example.test/media", "--json"];
         args.extend(selection);

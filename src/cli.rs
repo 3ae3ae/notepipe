@@ -6,7 +6,7 @@ pub(super) fn after_help() -> String {
     let not_created = if path.exists() {
         ""
     } else {
-        " (not created yet)"
+        " (created on the first run)"
     };
     format!(
         r#"Examples:
@@ -24,7 +24,7 @@ Transcripts:
 Settings:
   Options override the configuration file, which overrides the built-in defaults.
   File: {}{not_created}
-  notepipe config init     Create the file, with every setting explained
+  notepipe config init     Create the file with the default settings
   notepipe config show     Show the settings in effect
   notepipe doctor          Check ffmpeg, adapters and settings
 
@@ -164,39 +164,31 @@ pub struct RunOpts {
     #[arg(long = "region", value_name = "AREA", help_heading = "Screenshots")]
     pub roi: Option<String>,
 
-    /// AI stages to run, in order, such as proofread,summary (default: the [[ai.stages]] in the configuration)
+    /// Stages to run, in order, such as proofread,summary (default: the [[stages]] in the configuration)
     #[arg(
         long,
         value_name = "NAMES",
         value_delimiter = ',',
         conflicts_with = "no_stages",
-        help_heading = "AI stages"
+        help_heading = "Stages"
     )]
     pub stages: Option<Vec<String>>,
 
-    /// Run no AI stages
-    #[arg(long, help_heading = "AI stages")]
+    /// Run no stages
+    #[arg(long, help_heading = "Stages")]
     pub no_stages: bool,
 
     /// OpenAI-compatible chat service used by every stage (config: ai.base_url)
-    #[arg(long = "ai-base-url", value_name = "URL", help_heading = "AI stages")]
+    #[arg(long = "ai-base-url", value_name = "URL", help_heading = "Stages")]
     pub llm_base_url: Option<String>,
 
     /// API key for the AI service; NOTEPIPE_AI_API_KEY keeps it out of shell history (config: ai.api_key)
-    #[arg(long = "ai-api-key", value_name = "KEY", help_heading = "AI stages")]
+    #[arg(long = "ai-api-key", value_name = "KEY", help_heading = "Stages")]
     pub llm_api_key: Option<String>,
 
     /// Model for every stage that does not set its own (config: ai.model)
-    #[arg(long = "ai-model", value_name = "NAME", help_heading = "AI stages")]
+    #[arg(long = "ai-model", value_name = "NAME", help_heading = "Stages")]
     pub llm_model: Option<String>,
-
-    /// Replace the proofread stage's prompt for this run
-    #[arg(
-        long = "proofread-prompt",
-        value_name = "TEXT",
-        help_heading = "AI stages"
-    )]
-    pub llm_prompt: Option<String>,
 
     /// Show more detail; -vv for debugging
     #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Terminal")]
@@ -225,7 +217,7 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum ConfigCmd {
-    /// Create the configuration file, with every setting explained in comments
+    /// Create the configuration file with the default settings
     Init {
         /// Replace an existing configuration file
         #[arg(long)]

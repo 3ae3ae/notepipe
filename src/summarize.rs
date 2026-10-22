@@ -6,7 +6,6 @@ use crate::{
 };
 use anyhow::{Context, Result};
 
-pub(crate) const SUMMARY_PROMPT: &str = r#"You summarize recordings from their timestamped transcript. Use only what the transcript says: never invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a one-sentence overview, a list of 3 to 6 key points, and an outline of 3 to 8 sections in time order that covers the whole recording; start each outline item with the section's start time as [mm:ss] and describe the section in one or two sentences. Write mathematical formulas as LaTeX in $...$ or $$...$$. Use Markdown with headings of level 2 or lower, and do not repeat the title. Write in the language of the transcript."#;
 pub(crate) const TRANSCRIPT_CONTRACT: &str =
     r#"Output only the Markdown, without code fences or any other text."#;
 pub(crate) const TRANSCRIPT_USER: &str = r#"Transcript (each line starts with its start time as [mm:ss]):
@@ -111,13 +110,8 @@ pub async fn run(
 mod tests {
     use super::*;
     #[test]
-    fn built_in_and_custom_transcript_contracts_do_not_override_user_instructions() {
-        let mut stage = Stage::builtin("summary").unwrap();
-        assert_eq!(
-            system(&stage),
-            format!("{SUMMARY_PROMPT} {TRANSCRIPT_CONTRACT}")
-        );
-        stage.prompt = "CUSTOM".into();
+    fn transcript_contracts_do_not_override_user_instructions() {
+        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
         stage.name = "outline".into();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
@@ -146,7 +140,7 @@ mod tests {
             duration: 0.,
             seek_url: None,
         };
-        let stage = Stage::builtin("summary").unwrap();
+        let stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
         assert!(
             run(&LlmSettings::default(), &stage, &[], &meta)
                 .await
@@ -185,7 +179,7 @@ mod tests {
             };
             Some((200, json!({"choices":[{"message":{"content":content}}]})))
         });
-        let mut stage = crate::llm::Stage::builtin("summary").unwrap();
+        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
         stage.prompt = "EXTRACT ACTION ITEMS.".into();
         let settings = crate::llm::LlmSettings {
             base_url: mock.url.clone(),

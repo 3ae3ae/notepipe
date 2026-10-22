@@ -70,9 +70,8 @@ pub fn stage(name: &str, status: &str) {
             "scenes/extract" => "Saving screenshots",
             "audio" => "Extracting audio",
             "transcribe" => "Transcribing speech",
-            "summary" => "Generating summary",
             "render" => "Writing notes",
-            _ => name,
+            _ => &format!("Running {name}"),
         };
         eprintln!("{label}…");
     }
@@ -95,7 +94,7 @@ fn progress_event(stage: &str, current: u64, total: u64, message: &str) -> serde
     ev
 }
 
-fn log_event(level: &str, message: &str) -> serde_json::Value {
+pub(crate) fn log_event(level: &str, message: &str) -> serde_json::Value {
     serde_json::json!({"type": "log", "level": level, "message": message})
 }
 

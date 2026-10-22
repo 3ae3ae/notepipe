@@ -138,7 +138,7 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     std::fs::write(&path, settings::template())?;
                     println!("Created {}", path.display());
                     println!(
-                        "Every setting is explained in the file. Remove the # in front of a setting to change it."
+                        "Every value in it is in effect; edit it to change how notes are made."
                     );
                 }
                 ConfigCmd::Path => println!("{}", settings::config_path().display()),
@@ -162,7 +162,34 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
                     return Ok(());
                 }
             };
-            let file = settings::load_from(cli.opts.config.as_deref())?;
+            let creation = if cli.opts.config.is_none() && !settings::config_path().exists() {
+                create_default_config()
+            } else {
+                Ok(false)
+            };
+            let file = match creation {
+                Ok(created) => {
+                    if created && !progress::is_quiet() {
+                        let message = format!(
+                            "Created {} with the default settings. Edit it to change how notes are made.",
+                            settings::config_path().display()
+                        );
+                        if progress::is_json() {
+                            progress::emit(progress::log_event("info", &message));
+                        } else {
+                            eprintln!("{message}");
+                        }
+                    }
+                    settings::load_from(cli.opts.config.as_deref())?
+                }
+                Err(error) => {
+                    eprintln!(
+                        "Could not create {}: {error}. Continuing with the default settings.",
+                        settings::config_path().display()
+                    );
+                    settings::ConfigFile::default()
+                }
+            };
             let initial = crate::options::resolve(source.clone(), &cli.opts, &file)?;
             // Fail before probing tools or starting a source adapter.
             initial.validate()?;
@@ -170,6 +197,29 @@ fn run(cli: Cli, no_args: bool) -> anyhow::Result<()> {
             Ok(crate::runtime::block_on(pipeline::run(&initial))??)
         }
     }
+}
+
+fn create_default_config() -> std::io::Result<bool> {
+    use std::io::Write;
+    let path = settings::config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if let Err(error) = file.write_all(settings::template().as_bytes()) {
+        // A partly written file would fail to parse on every later run.
+        let _ = std::fs::remove_file(&path);
+        return Err(error);
+    }
+    Ok(true)
 }
 
 /// Accept local files and complete HTTP(S) URLs.

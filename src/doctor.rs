@@ -126,7 +126,12 @@ pub fn run() -> Result<()> {
             } else {
                 out.push("- Speech recognition is not set up; it is needed only when there are no subtitles. Set [speech] in the configuration file.".into());
             }
-            if let Some(program) = cfg.ai.adapter.first() {
+            let mut checked = std::collections::HashSet::new();
+            for program in std::iter::once(&cfg.ai.adapter)
+                .chain(cfg.stages.iter().map(|stage| &stage.adapter))
+                .filter_map(|argv| argv.first())
+                .filter(|program| checked.insert(*program))
+            {
                 match crate::adapter::resolve_executable(program) {
                     Ok(path) if path.is_file() => check(
                         &mut out,

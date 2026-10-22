@@ -5,6 +5,7 @@ use crate::{config, llm, settings};
 /// The effective AI settings: the file with command-line overrides.
 fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<llm::LlmSettings> {
     let mut settings = file.ai.clone();
+    settings.stages = file.stages.clone();
     if let Some(value) = &opts.llm_base_url {
         settings.base_url = value.clone();
     }
@@ -20,24 +21,13 @@ fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<ll
         settings.stages = names
             .iter()
             .map(|name| {
-                file.ai
-                    .stages
+                file.stages
                     .iter()
                     .find(|stage| stage.name == *name)
                     .cloned()
-                    .or_else(|| llm::Stage::builtin(name))
-                    .ok_or_else(|| anyhow::anyhow!("Unknown AI stage: {name}"))
+                    .ok_or_else(|| anyhow::anyhow!("Unknown stage: {name}; the configuration has no [[stages]] block with that name"))
             })
             .collect::<anyhow::Result<_>>()?;
-    }
-    if let Some(prompt) = &opts.llm_prompt {
-        for stage in settings
-            .stages
-            .iter_mut()
-            .filter(|stage| stage.name == "proofread")
-        {
-            stage.prompt = prompt.clone();
-        }
     }
     Ok(settings)
 }
@@ -148,21 +138,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stage_flags_override_config_in_order_and_map_the_proofread_prompt() {
+    fn stage_flags_override_config_in_order() {
         let mut file = settings::ConfigFile::default();
-        let mut proofread = llm::Stage::builtin("proofread").unwrap();
+        let mut proofread = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
         proofread.images = true;
-        file.ai.stages = vec![proofread];
+        file.stages = vec![proofread, serde_json::from_value(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap()];
         assert_eq!(
             resolve("video".into(), &RunOpts::default(), &file)
                 .unwrap()
                 .llm
                 .stages,
-            file.ai.stages
+            file.stages
         );
         let opts = RunOpts {
             stages: Some(vec!["summary".into(), "proofread".into()]),
-            llm_prompt: Some("Override".into()),
             ..Default::default()
         };
         let cfg = resolve("video".into(), &opts, &file).unwrap();
@@ -175,7 +164,6 @@ mod tests {
             ["summary", "proofread"]
         );
         assert!(cfg.llm.stages[1].images);
-        assert_eq!(cfg.llm.stages[1].prompt, "Override");
         let opts = RunOpts {
             no_stages: true,
             ..Default::default()
