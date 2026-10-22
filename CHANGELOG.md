@@ -35,6 +35,8 @@ output goes. Configurations from 0.3.0 must be rewritten; `notepipe config init 
 - Subtitles next to a local file are found by the download stage.
 - `note.json` is schema 3, without `top`. The `done` event has `files` and `work_dir` instead of `markdown` and `json`.
 - Configuration errors name the key and line.
+- `notepipe doctor` no longer fails when only the download program is missing, since only URLs need it, and reports a
+  missing key once.
 - Skipped stages print nothing and send no events.
 - Ctrl-C stops a run at once, without waiting for requests in flight, and removes downloaded media and extracted audio.
 

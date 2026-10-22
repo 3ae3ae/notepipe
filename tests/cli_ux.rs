@@ -631,3 +631,61 @@ fn configuration_errors_name_the_path_line_and_key_without_source_snippets() {
         assert!(!explicit.contains(" | "), "{explicit}");
     }
 }
+
+#[test]
+fn doctor_treats_only_download_programs_as_optional_and_deduplicates_provider_keys() {
+    let cli = CliTest::new();
+    let mut cfg = config();
+    let program = "notepipe-missing-doctor-program";
+    cfg["stages"]["download"]["command"] = json!([program]);
+    cli.config_value(&cfg);
+    let output = cli.run(&["doctor"]);
+    assert!(
+        output.status.success(),
+        "{} {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).lines().any(|line| line
+            == format!("- Download adapter {program}  Not installed; needed only for URLs"))
+    );
+    assert!(!stdout(&output).contains("Optional tools by use"));
+    cfg["stages"]["custom"] = json!({"type":"run","output":"custom","command":[program]});
+    cli.config_value(&cfg);
+    let output = cli.run(&["doctor"]);
+    assert!(!output.status.success());
+    assert!(stdout(&output).contains(&format!("✗ Adapter {program}")));
+    cfg["stages"].as_object_mut().unwrap().remove("custom");
+    cfg["providers"]["p"] = json!({"command":[program]});
+    cli.config_value(&cfg);
+    let output = cli.run(&["doctor"]);
+    assert!(!output.status.success());
+    assert!(stdout(&output).contains(&format!("✗ AI adapter {program}")));
+    cfg["providers"]["p"] =
+        json!({"base_url":"http://127.0.0.1:9/v1","api_key_env":"NOTEPIPE_UNSET_DOCTOR_KEY"});
+    cfg["stages"]["transcript"]["sources"] = json!(["speech"]);
+    cfg["stages"]["transcript"]["speech"] = json!({"provider":"p"});
+    cfg["pipeline"] = json!([
+        "download",
+        "transcript",
+        "screenshots",
+        "draft",
+        "one",
+        "two",
+        "markdown"
+    ]);
+    for name in ["one", "two"] {
+        cfg["stages"][name] =
+            json!({"type":"llm","input":"draft.json","output":format!("{name}.md"),"provider":"p"});
+    }
+    cli.config_value(&cfg);
+    let output = cli.run(&["doctor"]);
+    assert!(!output.status.success());
+    assert_eq!(
+        stdout(&output)
+            .matches("Provider p: the environment variable NOTEPIPE_UNSET_DOCTOR_KEY is not set")
+            .count(),
+        1
+    );
+}

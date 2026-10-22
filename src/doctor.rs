@@ -59,7 +59,6 @@ pub fn run() -> Result<()> {
             }
         }
     }
-    out.push("\nOptional tools by use".into());
     let path = crate::settings::config_path();
     let loaded = crate::settings::load();
     out.push("\nConfiguration".into());
@@ -104,21 +103,27 @@ pub fn run() -> Result<()> {
             }
             let mut checked = std::collections::HashSet::new();
             for (label, program) in programs {
-                if !checked.insert(program) {
+                let optional = label == "Download adapter";
+                if !checked.insert((program, optional)) {
                     continue;
                 }
                 match crate::adapter::resolve_executable(program) {
                     Ok(path) if path.is_file() => {
                         check(&mut out, true, label, &format!("  {}", path.display()))
                     }
+                    _ if optional => out.push(format!(
+                        "- Download adapter {program}  Not installed; needed only for URLs"
+                    )),
                     _ => {
                         failures += 1;
                         check(&mut out, false, label, &format!(" {program}"));
                     }
                 }
             }
+            let mut checked_providers = std::collections::HashSet::new();
             for name in &cfg.pipeline {
                 if let Some(provider) = cfg.stages.get(name).and_then(|stage| stage.used_provider())
+                    && checked_providers.insert(provider)
                     && let Some(connection) = cfg.providers.get(provider)
                     && let Err(error) = connection.key(provider)
                 {
