@@ -13,7 +13,7 @@ pub(super) fn after_help() -> String {
   notepipe lecture.mp4                           A note for a local video, in the current folder
   notepipe interview.m4a -o ~/notes              A note for an audio file, under ~/notes
   notepipe talk.mp4 --subtitle talk.srt          Use your own transcript
-  notepipe lecture.mp4 --skip proofread,summary  Notes without the AI stages
+  notepipe lecture.mp4 --skip proofread,summary  Notes without proofreading or a summary
   notepipe https://youtu.be/VIDEO_ID             A URL (install "notepipe[ytdlp]" first)
 
 Transcripts:
@@ -46,7 +46,7 @@ pub(super) fn version() -> &'static str {
     name = "notepipe",
     version = version(),
     about = "Turn video and audio into Markdown notes",
-    long_about = "Turn video and audio into Markdown notes.\n\nnotepipe writes a note for a recording: the transcript in paragraphs, arranged around screenshots of what was on screen,\noptionally proofread, summarized or extended by an AI model. Each note is a folder with note.md, note.json and images/.",
+    long_about = "Turn video and audio into Markdown notes.\n\nnotepipe writes a note for a recording by running the stages in its configuration file. With the default settings,\nthe note is a folder with note.md, note.json and images/: a summary, then the proofread transcript in paragraphs around\nscreenshots of what was on screen.",
     args_conflicts_with_subcommands = true,
     after_help = after_help()
 )]
