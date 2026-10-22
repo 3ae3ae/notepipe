@@ -23,7 +23,11 @@ impl CliTest {
             .unwrap()
     }
     fn path(&self) -> std::path::PathBuf {
-        self.dir.path().join("config").join("notepipe").join("config.toml")
+        self.dir
+            .path()
+            .join("config")
+            .join("notepipe")
+            .join("config.toml")
     }
     fn config(&self, text: &str) {
         std::fs::create_dir_all(self.path().parent().unwrap()).unwrap();
