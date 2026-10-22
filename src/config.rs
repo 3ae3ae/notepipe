@@ -74,20 +74,6 @@ pub fn asr_endpoint(api: &crate::settings::Asr) -> AnyhowResult<String> {
     Ok(append_endpoint_suffix(base, suffix))
 }
 
-/// Speech API key from `NOTEPIPE_SPEECH_API_KEY`.
-pub fn asr_api_key_from_env() -> Option<String> {
-    std::env::var("NOTEPIPE_SPEECH_API_KEY")
-        .ok()
-        .filter(|k| !k.trim().is_empty())
-}
-
-/// CLI fallback for an empty LLM key.
-pub fn llm_api_key_from_env() -> Option<String> {
-    std::env::var("NOTEPIPE_AI_API_KEY")
-        .ok()
-        .filter(|key| !key.trim().is_empty())
-}
-
 /// When to take a screenshot: `first` at the first changed frame, `stable` once the picture settles (for animated slides).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -157,8 +143,8 @@ pub struct PipelineConfig {
     /// Clear this source's cache before starting.
     pub no_resume: bool,
     pub subtitle: Option<PathBuf>,
-    /// AI stage settings after applying command-line options.
-    pub llm: crate::llm::LlmSettings,
+    pub stages: Vec<crate::llm::Stage>,
+    pub services: std::collections::BTreeMap<String, crate::settings::Service>,
     /// HTTP transcription settings with CLI overrides applied.
     pub asr: crate::settings::Asr,
     /// Transcript source: subtitles first, subtitles only, or speech recognition only.
@@ -236,7 +222,7 @@ fn parse_coord(s: &str) -> anyhow::Result<f64> {
 impl PipelineConfig {
     /// Checks all settings up front, so every configuration error appears before downloads or other expensive work.
     pub fn validate(&self) -> AnyhowResult<()> {
-        crate::llm::validate(&self.llm)?;
+        // Services and the references to them are checked against the whole file in options::resolve.
         let finite = |name: &str, v: f64| -> AnyhowResult<()> {
             anyhow::ensure!(
                 v.is_finite(),
@@ -293,15 +279,10 @@ impl PipelineConfig {
     pub fn validate_asr(&self) -> AnyhowResult<()> {
         anyhow::ensure!(
             self.asr.is_configured(),
-            "Speech recognition is not set up. Set base_url or adapter under [speech] in the configuration file (`notepipe config path` shows where; `notepipe config init` creates it), or pass --speech-base-url."
+            "Speech recognition is not set up. Point [speech].service at a service in [services] that has a base_url or adapter."
         );
         if self.asr.command.is_empty() {
             ensure_http_url(&asr_endpoint(&self.asr)?)?;
-        } else {
-            anyhow::ensure!(
-                !self.asr.command[0].trim().is_empty(),
-                "The speech adapter command must name an executable."
-            );
         }
         Ok(())
     }
@@ -559,7 +540,8 @@ mod tests {
             roi: None,
             no_resume: false,
             subtitle: None,
-            llm: Default::default(),
+            stages: Vec::new(),
+            services: Default::default(),
             source: Default::default(),
             asr: Default::default(),
             transcript_source: TranscriptSource::Auto,
@@ -652,14 +634,12 @@ mod asr_tests {
             crate::options::resolve("video".into(), &Default::default(), &Default::default())
                 .unwrap();
         let error = cfg.validate_asr().unwrap_err().to_string();
-        assert!(error.contains("[speech]") && error.contains("notepipe config init"));
+        assert!(error.contains("[speech].service") && error.contains("[services]"));
         cfg.asr.base_url = "http://localhost:8000/v1".into();
         cfg.validate_asr().unwrap();
         cfg.asr.base_url = "invalid ignored URL".into();
         cfg.asr.command = vec!["adapter".into()];
         cfg.validate_asr().unwrap();
-        cfg.asr.command[0] = "".into();
-        assert!(cfg.validate_asr().is_err());
         for field in ["vad_threshold", "min_silence"] {
             let mut file = ConfigFile::default();
             if field == "vad_threshold" {

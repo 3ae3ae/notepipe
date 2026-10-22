@@ -2,23 +2,12 @@
 use crate::cli::RunOpts;
 use crate::{config, llm, settings};
 
-/// The effective AI settings: the file with command-line overrides.
-fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<llm::LlmSettings> {
-    let mut settings = file.ai.clone();
-    settings.stages = file.stages.clone();
-    if let Some(value) = &opts.llm_base_url {
-        settings.base_url = value.clone();
-    }
-    if let Some(value) = &opts.llm_api_key {
-        settings.api_key = value.clone();
-    }
-    if let Some(value) = &opts.llm_model {
-        settings.model = value.clone();
-    }
+fn resolve_stages(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<Vec<llm::Stage>> {
+    let mut stages = file.stages.clone();
     if opts.no_stages {
-        settings.stages.clear();
+        stages.clear();
     } else if let Some(names) = &opts.stages {
-        settings.stages = names
+        stages = names
             .iter()
             .map(|name| {
                 file.stages
@@ -29,7 +18,7 @@ fn resolve_llm(opts: &RunOpts, file: &settings::ConfigFile) -> anyhow::Result<ll
             })
             .collect::<anyhow::Result<_>>()?;
     }
-    Ok(settings)
+    Ok(stages)
 }
 
 /// Precedence: explicit options, then the file, then built-in defaults.
@@ -38,6 +27,15 @@ pub fn resolve(
     opts: &RunOpts,
     file: &settings::ConfigFile,
 ) -> anyhow::Result<config::PipelineConfig> {
+    for (name, service) in &file.services {
+        service.validate(name)?;
+    }
+    llm::validate(&file.stages, &file.services)?;
+    anyhow::ensure!(
+        file.speech.service.is_empty() || file.services.contains_key(&file.speech.service),
+        "[speech].service: no service named {} in [services]",
+        file.speech.service
+    );
     let screenshots = &file.screenshots;
     use config::ScreenshotMode;
     let out_root = opts
@@ -87,7 +85,8 @@ pub fn resolve(
             .transpose()?,
         no_resume: opts.no_resume,
         subtitle: opts.subtitle.clone(),
-        llm: resolve_llm(opts, file)?,
+        stages: resolve_stages(opts, file)?,
+        services: file.services.clone(),
         asr: resolve_asr(opts, file),
         transcript_source: opts
             .transcript_source
@@ -96,40 +95,34 @@ pub fn resolve(
     })
 }
 
-/// CLI overrides for [speech]; environment credentials are resolved only by the CLI pipeline.
+/// Resolve the speech connection without reading environment credentials.
 fn resolve_asr(opts: &RunOpts, file: &settings::ConfigFile) -> crate::settings::Asr {
     let speech = &file.speech;
+    let service = file
+        .services
+        .get(&speech.service)
+        .cloned()
+        .unwrap_or_default();
     let mut a = settings::Asr {
+        service: speech.service.clone(),
+        api_key_env: service.api_key_env,
         mode: speech.mode,
-        base_url: speech.base_url.clone(),
-        api_key: speech.api_key.clone(),
+        base_url: service.base_url,
+        api_key: service.api_key,
         model: speech.model.clone(),
         language: file.transcript.language.clone(),
-        concurrency: speech.concurrency,
-        command: speech.command.clone(),
+        concurrency: service.concurrency as usize,
+        command: service.adapter,
         max_speech: speech.detection.max_segment,
         vad_threshold: speech.detection.threshold,
         min_silence: speech.detection.min_silence,
     };
-    if let Some(v) = &opts.asr_base_url {
-        a.base_url = v.clone();
-    }
-    if let Some(v) = &opts.asr_api_key {
-        a.api_key = v.clone();
-    }
-    if let Some(v) = &opts.asr_model {
-        a.model = v.clone();
-    }
-    if let Some(v) = opts.asr_mode {
-        a.mode = v;
-    }
     if let Some(v) = &opts.asr_language {
         a.language = v.clone();
     }
     if let Some(v) = opts.max_speech {
         a.max_speech = v;
     }
-    a.concurrency = a.concurrency.clamp(1, 16);
     a
 }
 
@@ -140,13 +133,13 @@ mod tests {
     #[test]
     fn stage_flags_override_config_in_order() {
         let mut file = settings::ConfigFile::default();
-        let mut proofread = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
+        file.services.insert("ai".into(), Default::default());
+        let mut proofread = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
         proofread.images = true;
-        file.stages = vec![proofread, serde_json::from_value(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap()];
+        file.stages = vec![proofread, serde_json::from_value(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap()];
         assert_eq!(
             resolve("video".into(), &RunOpts::default(), &file)
                 .unwrap()
-                .llm
                 .stages,
             file.stages
         );
@@ -156,14 +149,13 @@ mod tests {
         };
         let cfg = resolve("video".into(), &opts, &file).unwrap();
         assert_eq!(
-            cfg.llm
-                .stages
+            cfg.stages
                 .iter()
                 .map(|stage| stage.name.as_str())
                 .collect::<Vec<_>>(),
             ["summary", "proofread"]
         );
-        assert!(cfg.llm.stages[1].images);
+        assert!(cfg.stages[1].images);
         let opts = RunOpts {
             no_stages: true,
             ..Default::default()
@@ -171,7 +163,6 @@ mod tests {
         assert!(
             resolve("video".into(), &opts, &file)
                 .unwrap()
-                .llm
                 .stages
                 .is_empty()
         );
@@ -183,7 +174,6 @@ mod tests {
         assert!(
             resolve("video".into(), &RunOpts::default(), &Default::default())
                 .unwrap()
-                .llm
                 .stages
                 .is_empty()
         );
@@ -241,37 +231,25 @@ mod asr_tests {
     }
 
     #[test]
-    fn asr_flags_override_settings_and_concurrency_is_clamped() {
+    fn speech_uses_its_service_and_retains_language_and_detection_flags() {
         let cli = crate::cli::Cli::try_parse_from([
             "notepipe",
             "video",
-            "--speech-base-url",
-            "http://localhost:1234/v1",
-            "--speech-api-key",
-            "key",
-            "--speech-model",
-            "model",
-            "--speech-api",
-            "chat",
             "--language",
             "ko",
             "--max-segment",
             "12",
         ])
         .unwrap();
-        let mut file = settings::ConfigFile::default();
-        file.speech.command = vec!["adapter".into()];
-        for (given, expected) in [(0, 1), (4, 4), (100, 16)] {
-            file.speech.concurrency = given;
-            let cfg = resolve("video".into(), &cli.opts, &file).unwrap();
-            assert_eq!(cfg.asr.concurrency, expected);
-            assert_eq!(cfg.asr.command, ["adapter"]);
-            assert_eq!(cfg.asr.base_url, "http://localhost:1234/v1");
-            assert_eq!(cfg.asr.api_key, "key");
-            assert_eq!(cfg.asr.model, "model");
-            assert_eq!(cfg.asr.mode, settings::AsrMode::Chat);
-            assert_eq!(cfg.asr.language, "ko");
-            assert_eq!(cfg.asr.max_speech, 12.0);
-        }
+        let file: settings::ConfigFile = toml::from_str("[services.remote]\nbase_url = 'https://example.test/v1'\napi_key = 'key'\nconcurrency = 2\n[speech]\nservice = 'remote'\nmodel = 'model'\napi = 'chat'\n").unwrap();
+        let cfg = resolve("video".into(), &cli.opts, &file).unwrap();
+        assert_eq!(cfg.asr.concurrency, 2);
+        assert!(cfg.asr.command.is_empty());
+        assert_eq!(cfg.asr.base_url, "https://example.test/v1");
+        assert_eq!(cfg.asr.api_key, "key");
+        assert_eq!(cfg.asr.model, "model");
+        assert_eq!(cfg.asr.mode, settings::AsrMode::Chat);
+        assert_eq!(cfg.asr.language, "ko");
+        assert_eq!(cfg.asr.max_speech, 12.0);
     }
 }

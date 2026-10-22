@@ -94,7 +94,10 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     if let Some(path) = &cfg.subtitle {
         selected_transcript(path)?;
     }
-    if cfg.subtitle.is_none() && cfg.transcript_source == TranscriptSource::Asr {
+    if cfg.subtitle.is_none()
+        && cfg.transcript_source == TranscriptSource::Asr
+        && !crate::wizard::is_first_run(&cfg)
+    {
         cfg.validate_asr()?;
     }
     let local = Path::new(&cfg.url).is_file();
@@ -120,11 +123,6 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     cfg.out_dir = work.clone();
     let audio = cfg.audio_path();
     let _dispatch = crate::dispatch::install(&work)?;
-    if cfg.llm.api_key.trim().is_empty()
-        && let Some(key) = config::llm_api_key_from_env()
-    {
-        cfg.llm.api_key = key;
-    }
     let source_cache = work.join("source");
     progress::stage("fetch", "start");
     let mut source_media = None;
@@ -219,10 +217,12 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
         cfg.validate_asr()?;
     }
-    if cfg.asr.api_key.trim().is_empty()
-        && let Some(key) = config::asr_api_key_from_env()
-    {
-        cfg.asr.api_key = key;
+    if selected.is_none() {
+        cfg.asr.api_key = crate::settings::resolve_api_key(
+            &cfg.asr.service,
+            &cfg.asr.api_key,
+            &cfg.asr.api_key_env,
+        )?;
     }
     let selected = selected.as_deref().map(selected_transcript).transpose()?;
     let transcript_key = if let Some((key, _)) = &selected {
@@ -345,21 +345,25 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         "No readable transcript"
     );
     let mut top = Vec::new();
-    let mut adapters = std::collections::HashMap::<Vec<String>, crate::adapter::Adapter>::new();
-    for stage in &cfg.llm.stages {
+    let mut adapters = std::collections::HashMap::<String, crate::adapter::Adapter>::new();
+    for stage in &cfg.stages {
         runtime::check_cancelled()?;
-        let mut settings = cfg.llm.for_stage(stage)?;
-        if settings.adapter.is_empty() && settings.base_url.trim().is_empty() {
-            warnings.push(format!("{}: skipped; no AI service is set. Set base_url and model in [ai], or remove this stage.", stage.name));
+        let service = &cfg.services[&stage.service];
+        if !service.is_connected() {
+            warnings.push(format!(
+                "{}: skipped; service {} has no base_url or adapter.",
+                stage.name, stage.service
+            ));
             continue;
         }
+        let mut settings = crate::llm::LlmSettings::for_stage(service, stage)?;
         if !settings.adapter.is_empty() {
-            if !adapters.contains_key(&settings.adapter) {
+            if !adapters.contains_key(&stage.service) {
                 // shortcut: the adapter starts even when every response is cached; start it on the first cache miss if startup cost matters.
                 let adapter = start_ai_adapter(settings.adapter.clone()).await?;
-                adapters.insert(settings.adapter.clone(), adapter);
+                adapters.insert(stage.service.clone(), adapter);
             }
-            settings.base_url = format!("{}/v1", adapters[&settings.adapter].base);
+            settings.base_url = format!("{}/v1", adapters[&stage.service].base);
         }
         progress::stage(&stage.name, "start");
         match stage.input {
@@ -582,9 +586,8 @@ mod tests {
         )
         .unwrap();
         let first = screenshot_key(&cfg).unwrap();
-        cfg.llm
-            .stages
-            .push(serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap());
+        cfg.stages
+            .push(serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap());
         cfg.asr.model = "different".into();
         assert_eq!(screenshot_key(&cfg).unwrap(), first);
         cfg.similarity = 0.5;

@@ -91,30 +91,21 @@ pub fn run() -> Result<()> {
                     check(&mut out, false, "Settings values", &format!("  {error:#}"));
                 }
             }
-            if cfg.speech.is_configured() {
+            if let Some(service) = cfg
+                .services
+                .get(&cfg.speech.service)
+                .filter(|service| service.is_connected())
+            {
                 match crate::options::resolve(String::new(), &Default::default(), cfg)
                     .and_then(|cfg| cfg.validate_asr())
                 {
                     Ok(()) => {
-                        if let Some(program) = cfg.speech.command.first() {
-                            match crate::adapter::resolve_executable(program) {
-                                Ok(path) if path.is_file() => check(
-                                    &mut out,
-                                    true,
-                                    "Speech adapter",
-                                    &format!("  {}", path.display()),
-                                ),
-                                _ => {
-                                    failures += 1;
-                                    check(&mut out, false, "Speech adapter", program);
-                                }
-                            }
-                        } else {
+                        if service.adapter.is_empty() {
                             check(
                                 &mut out,
                                 true,
                                 "Speech service",
-                                &format!("  {} ({})", cfg.speech.base_url, cfg.speech.mode),
+                                &format!("  {} ({})", service.base_url, cfg.speech.mode),
                             );
                         }
                     }
@@ -124,24 +115,29 @@ pub fn run() -> Result<()> {
                     }
                 }
             } else {
-                out.push("- Speech recognition is not set up; it is needed only when there are no subtitles. Set [speech] in the configuration file.".into());
+                out.push("Speech recognition is not set up. Point [speech].service at a service in [services] that has a base_url or adapter.".into());
             }
             let mut checked = std::collections::HashSet::new();
-            for program in std::iter::once(&cfg.ai.adapter)
-                .chain(cfg.stages.iter().map(|stage| &stage.adapter))
-                .filter_map(|argv| argv.first())
-                .filter(|program| checked.insert(*program))
-            {
+            for (name, service) in &cfg.services {
+                let Some(program) = service
+                    .adapter
+                    .first()
+                    .filter(|program| checked.insert(*program))
+                else {
+                    continue;
+                };
+                let label = if *name == cfg.speech.service {
+                    "Speech adapter"
+                } else {
+                    "AI adapter"
+                };
                 match crate::adapter::resolve_executable(program) {
-                    Ok(path) if path.is_file() => check(
-                        &mut out,
-                        true,
-                        "AI adapter",
-                        &format!("  {}", path.display()),
-                    ),
+                    Ok(path) if path.is_file() => {
+                        check(&mut out, true, label, &format!("  {}", path.display()))
+                    }
                     _ => {
                         failures += 1;
-                        check(&mut out, false, "AI adapter", &format!(" {program}"));
+                        check(&mut out, false, label, &format!(" {program}"));
                     }
                 }
             }

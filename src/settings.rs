@@ -3,7 +3,10 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(default, deny_unknown_fields)]
@@ -69,6 +72,8 @@ impl std::fmt::Display for AsrMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Asr {
+    pub service: String,
+    pub api_key_env: String,
     pub mode: AsrMode,
     pub base_url: String,
     pub api_key: String,
@@ -84,12 +89,14 @@ pub struct Asr {
 impl Default for Asr {
     fn default() -> Self {
         Self {
+            service: String::new(),
+            api_key_env: String::new(),
             mode: AsrMode::Transcriptions,
             base_url: String::new(),
             api_key: String::new(),
             model: String::new(),
             language: String::new(),
-            concurrency: 4,
+            concurrency: Service::default().concurrency as usize,
             command: Vec::new(),
             max_speech: crate::config::DEFAULT_MAX_SPEECH,
             vad_threshold: 0.5,
@@ -125,48 +132,96 @@ impl Default for Detection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct Speech {
-    #[serde(rename = "api")]
-    pub mode: AsrMode,
-    #[serde(skip_serializing_if = "String::is_empty")]
+pub struct Service {
     pub base_url: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub adapter: Vec<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub api_key: String,
     #[serde(skip_serializing_if = "String::is_empty")]
-    pub model: String,
-    pub concurrency: usize,
-    #[serde(rename = "adapter", skip_serializing_if = "Vec::is_empty")]
-    pub command: Vec<String>,
-    pub detection: Detection,
+    pub api_key_env: String,
+    pub concurrency: i64,
 }
 
-impl Default for Speech {
+impl Default for Service {
     fn default() -> Self {
-        Self::from(&Asr::default())
+        Self {
+            base_url: String::new(),
+            adapter: Vec::new(),
+            api_key: String::new(),
+            api_key_env: String::new(),
+            concurrency: 4,
+        }
     }
+}
+
+impl Service {
+    pub fn is_connected(&self) -> bool {
+        !self.base_url.trim().is_empty() || !self.adapter.is_empty()
+    }
+
+    pub fn validate(&self, name: &str) -> Result<()> {
+        anyhow::ensure!(
+            self.base_url.trim().is_empty() || self.adapter.is_empty(),
+            "Service {name}: set base_url or adapter, not both"
+        );
+        anyhow::ensure!(
+            self.api_key.is_empty() || self.api_key_env.is_empty(),
+            "Service {name}: set api_key or api_key_env, not both"
+        );
+        anyhow::ensure!(
+            self.adapter
+                .first()
+                .is_none_or(|program| !program.trim().is_empty()),
+            "Service {name}: the adapter command must name an executable"
+        );
+        anyhow::ensure!(
+            (1..=16).contains(&self.concurrency),
+            "Service {name}: concurrency must be 1 to 16"
+        );
+        if !self.base_url.trim().is_empty() {
+            crate::config::ensure_http_url(&self.base_url)?;
+        }
+        Ok(())
+    }
+
+    pub fn key(&self, name: &str) -> Result<String> {
+        resolve_api_key(name, &self.api_key, &self.api_key_env)
+    }
+}
+
+pub(crate) fn resolve_api_key(name: &str, key: &str, var: &str) -> Result<String> {
+    if var.is_empty() {
+        return Ok(key.to_owned());
+    }
+    std::env::var(var)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .with_context(|| format!("Service {name}: the environment variable {var} is not set"))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Speech {
+    pub service: String,
+    #[serde(rename = "api")]
+    pub mode: AsrMode,
+    pub model: String,
+    pub detection: Detection,
 }
 
 impl From<&Asr> for Speech {
     fn from(asr: &Asr) -> Self {
         Self {
+            service: asr.service.clone(),
             mode: asr.mode,
-            base_url: asr.base_url.clone(),
-            api_key: asr.api_key.clone(),
             model: asr.model.clone(),
-            concurrency: asr.concurrency,
-            command: asr.command.clone(),
             detection: Detection {
                 threshold: asr.vad_threshold,
                 min_silence: asr.min_silence,
                 max_segment: asr.max_speech,
             },
         }
-    }
-}
-
-impl Speech {
-    pub fn is_configured(&self) -> bool {
-        !self.command.is_empty() || !self.base_url.trim().is_empty()
     }
 }
 
@@ -177,7 +232,7 @@ pub struct ConfigFile {
     pub transcript: Transcript,
     pub speech: Speech,
     pub screenshots: Screenshots,
-    pub ai: crate::llm::LlmSettings,
+    pub services: BTreeMap<String, Service>,
     #[serde(default, deserialize_with = "crate::llm::deserialize_stages")]
     pub stages: Vec<crate::llm::Stage>,
     #[serde(skip_serializing_if = "Source::is_default")]
@@ -258,9 +313,21 @@ pub fn save(cfg: &ConfigFile, path: Option<&Path>) -> Result<PathBuf> {
         .as_ref()
         .is_some_and(|bytes| bytes.trim_ascii_start().starts_with(b"{"))
     {
-        serde_json::to_vec_pretty(cfg)?
+        let mut value = serde_json::to_value(cfg)?;
+        for service in value["services"].as_object_mut().unwrap().values_mut() {
+            if service.get("adapter").is_some() {
+                service.as_object_mut().unwrap().remove("base_url");
+            }
+        }
+        serde_json::to_vec_pretty(&value)?
     } else {
-        toml::to_string_pretty(cfg)?.into_bytes()
+        let mut value = toml::Value::try_from(cfg)?;
+        for (_, service) in value["services"].as_table_mut().unwrap().iter_mut() {
+            if service.get("adapter").is_some() {
+                service.as_table_mut().unwrap().remove("base_url");
+            }
+        }
+        toml::to_string_pretty(&value)?.into_bytes()
     };
     crate::checkpoint::atomic_write(&p, &bytes)?;
     Ok(p)
@@ -270,7 +337,6 @@ pub fn save(cfg: &ConfigFile, path: Option<&Path>) -> Result<PathBuf> {
 pub fn template() -> String {
     use crate::config as c;
     let asr = Asr::default();
-    let llm = crate::llm::LlmSettings::default();
     [
         ("{OUT}", c::DEFAULT_OUT_DIR.to_string()),
         ("{SIMILARITY}", c::DEFAULT_SIMILARITY.to_string()),
@@ -282,7 +348,7 @@ pub fn template() -> String {
         ("{STABLE_SECS}", format!("{:?}", c::DEFAULT_STABLE_SECS)),
         ("{MAX_SPEECH}", format!("{:?}", asr.max_speech)),
         ("{SPEECH_API}", AsrMode::default().to_string()),
-        ("{ASR_CONCURRENCY}", asr.concurrency.to_string()),
+        ("{CONCURRENCY}", Service::default().concurrency.to_string()),
         ("{VAD_THRESHOLD}", asr.vad_threshold.to_string()),
         ("{MIN_SILENCE}", asr.min_silence.to_string()),
         (
@@ -293,9 +359,6 @@ pub fn template() -> String {
             "{TRANSCRIPT_SOURCE}",
             c::TranscriptSource::default().to_string(),
         ),
-        ("{LLM_BASE_URL}", llm.base_url),
-        ("{LLM_MODEL}", llm.model),
-        ("{LLM_CONCURRENCY}", llm.concurrency.to_string()),
     ]
     .into_iter()
     .fold(TEMPLATE.to_owned(), |text, (key, value)| {
@@ -305,6 +368,14 @@ pub fn template() -> String {
 
 const TEMPLATE: &str = r#"# Every setting is described in https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
 
+[services.speech]
+base_url = ""
+concurrency = {CONCURRENCY}
+
+[services.ai]
+base_url = ""
+concurrency = {CONCURRENCY}
+
 [output]
 dir = "{OUT}"
 
@@ -312,8 +383,9 @@ dir = "{OUT}"
 source = "{TRANSCRIPT_SOURCE}"
 
 [speech]
+service = "speech"
 api = "{SPEECH_API}"
-concurrency = {ASR_CONCURRENCY}
+model = ""
 
 [speech.detection]
 threshold = {VAD_THRESHOLD}
@@ -327,13 +399,10 @@ frame_interval = {SAMPLE_INTERVAL}
 min_gap = {COOLDOWN}
 settle = {STABLE_SECS}
 
-[ai]
-base_url = "{LLM_BASE_URL}"
-model = "{LLM_MODEL}"
-concurrency = {LLM_CONCURRENCY}
-
 [[stages]]
 name = "proofread"
+service = "ai"
+model = ""
 input = "paragraphs"
 output = "replace"
 prompt = '''
@@ -352,6 +421,8 @@ on it.
 
 [[stages]]
 name = "summary"
+service = "ai"
+model = ""
 input = "transcript"
 output = "top"
 prompt = '''
@@ -387,13 +458,18 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     let hidden = |key: &str| {
         if key.is_empty() { "-" } else { "(set, hidden)" }
     };
+    for (name, service) in &cfg.services {
+        println!("[services.{name}]");
+        println!("  {:<17}: {}", "base_url", service.base_url);
+        println!("  {:<17}: {:?}", "adapter", service.adapter);
+        println!("  {:<17}: {}", "api_key", hidden(&service.api_key));
+        println!("  {:<17}: {}", "api_key_env", service.api_key_env);
+        println!("  {:<17}: {}", "concurrency", service.concurrency);
+    }
     println!("[speech]");
-    println!("  {:<17}: {}", "base_url", r.asr.base_url);
-    println!("  {:<17}: {}", "api_key", hidden(&r.asr.api_key));
-    println!("  {:<17}: {}", "model", r.asr.model);
+    println!("  {:<17}: {}", "service", cfg.speech.service);
     println!("  {:<17}: {}", "api", r.asr.mode);
-    println!("  {:<17}: {:?}", "adapter", r.asr.command);
-    println!("  {:<17}: {}", "concurrency", r.asr.concurrency);
+    println!("  {:<17}: {}", "model", r.asr.model);
     println!("[speech.detection]");
     println!("  {:<17}: {}", "threshold", r.asr.vad_threshold);
     println!("  {:<17}: {}", "min_silence", r.asr.min_silence);
@@ -409,36 +485,18 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
         "region",
         cfg.screenshots.region.as_deref().unwrap_or("-")
     );
-    println!("[ai]");
-    println!("  {:<17}: {}", "base_url", cfg.ai.base_url);
-    println!("  {:<17}: {:?}", "adapter", cfg.ai.adapter);
-    println!("  {:<17}: {}", "api_key", hidden(&cfg.ai.api_key));
-    println!("  {:<17}: {}", "model", cfg.ai.model);
-    println!(
-        "  {:<17}: {}",
-        "concurrency",
-        cfg.ai.concurrency.clamp(1, 16)
-    );
-    println!(
-        "  {:<17}: {:?}",
-        "request keys",
-        cfg.ai.request.keys().collect::<Vec<_>>()
-    );
     for stage in &cfg.stages {
-        let effective = cfg.ai.for_stage(stage)?;
         println!("[[stages]]");
         println!("  {:<17}: {}", "name", stage.name);
+        println!("  {:<17}: {}", "service", stage.service);
+        println!("  {:<17}: {}", "model", stage.model);
         println!("  {:<17}: {:?}", "input", stage.input);
         println!("  {:<17}: {:?}", "output", stage.output);
         println!("  {:<17}: {}", "images", stage.images);
-        println!("  {:<17}: {:?}", "adapter", effective.adapter);
-        println!("  {:<17}: {}", "base_url", effective.base_url);
-        println!("  {:<17}: {}", "api_key", hidden(&effective.api_key));
-        println!("  {:<17}: {}", "model", effective.model);
         println!(
             "  {:<17}: {:?}",
             "request keys",
-            effective.request.keys().collect::<Vec<_>>()
+            stage.request.keys().collect::<Vec<_>>()
         );
     }
     println!("[download]");
@@ -465,7 +523,13 @@ mod tests {
         std::fs::write(&target, original).unwrap();
         std::os::unix::fs::symlink("dotfiles/settings.toml", &link).unwrap();
         let mut cfg = super::load_from(Some(&link)).unwrap();
-        cfg.speech.base_url = "https://example.test/v1".into();
+        cfg.services.insert(
+            "speech".into(),
+            super::Service {
+                base_url: "https://example.test/v1".into(),
+                ..Default::default()
+            },
+        );
         assert_eq!(
             super::save(&cfg, Some(&link)).unwrap(),
             target.canonicalize().unwrap()
@@ -491,7 +555,7 @@ mod tests {
         let file: super::ConfigFile = toml::from_str(&super::template()).unwrap();
         let from_template =
             crate::options::resolve(String::new(), &Default::default(), &file).unwrap();
-        let built_in =
+        let mut built_in =
             crate::options::resolve(String::new(), &Default::default(), &Default::default())
                 .unwrap();
         assert_eq!(from_template.stable_secs, built_in.stable_secs);
@@ -503,9 +567,23 @@ mod tests {
         assert_eq!(from_template.transcript_source, built_in.transcript_source);
         assert_eq!(file.transcript.language, built_in.asr.language);
         assert_eq!(from_template.source, built_in.source);
+        built_in.asr.service = "speech".into();
         assert_eq!(from_template.asr, built_in.asr);
-        assert_eq!(file.speech, super::Speech::default());
-        assert_eq!(file.ai, super::ConfigFile::default().ai);
+        assert_eq!(
+            file.speech,
+            super::Speech {
+                service: "speech".into(),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            file.services,
+            [
+                ("speech".into(), super::Service::default()),
+                ("ai".into(), super::Service::default())
+            ]
+            .into()
+        );
         assert_eq!(
             file.output.dir.as_deref(),
             Some(std::path::Path::new(crate::config::DEFAULT_OUT_DIR))
@@ -536,6 +614,8 @@ mod tests {
                 (stage.name.as_str(), stage.input, stage.output),
                 (name, input, output)
             );
+            assert_eq!(stage.service, "ai");
+            assert!(stage.model.is_empty());
             assert!(!stage.prompt.is_empty());
             assert_eq!(stage.prompt, stage.prompt.trim());
         }
@@ -544,13 +624,12 @@ mod tests {
         for key in ["threshold", "min_silence", "max_segment"] {
             assert!(value["speech"]["detection"].get(key).is_some());
         }
-        for (table, fields) in [
-            ("speech", &["api", "concurrency"][..]),
-            ("ai", &["base_url", "model", "concurrency"][..]),
-        ] {
-            for field in fields {
-                assert_eq!(value[table][field], serialized[table][field]);
-            }
+        for field in ["service", "api", "model"] {
+            assert_eq!(value["speech"][field], serialized["speech"][field]);
+        }
+        for name in ["speech", "ai"] {
+            assert_eq!(value["services"][name]["base_url"].as_str(), Some(""));
+            assert_eq!(value["services"][name]["concurrency"].as_integer(), Some(4));
         }
     }
 
@@ -558,36 +637,82 @@ mod tests {
     fn wizard_saves_omit_empty_options_and_round_trip_the_template() {
         let root = tempfile::tempdir().unwrap();
         let mut cfg: super::ConfigFile = toml::from_str(&super::template()).unwrap();
-        cfg.speech.base_url = "https://speech.test/v1".into();
+        cfg.services.get_mut("speech").unwrap().base_url = "https://speech.test/v1".into();
         let path = root.path().join("config.toml");
         super::save(&cfg, Some(&path)).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        let value: toml::Value = toml::from_str(&text).unwrap();
-        for (table, keys) in [
-            ("output", &["on_complete"][..]),
-            ("transcript", &["language"][..]),
-            ("speech", &["api_key", "model", "adapter"][..]),
-            ("ai", &["adapter", "api_key", "request"][..]),
-        ] {
-            for key in keys {
-                assert!(value[table].get(key).is_none(), "{table}.{key}");
+        let value: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        for service in value["services"].as_table().unwrap().values() {
+            for key in ["api_key", "api_key_env", "adapter"] {
+                assert!(service.get(key).is_none(), "{key}");
             }
+            assert!(service.get("concurrency").is_some());
         }
+        for key in ["service", "api", "model"] {
+            assert!(value["speech"].get(key).is_some());
+        }
+        assert!(value["output"].get("on_complete").is_none());
+        assert!(value["transcript"].get("language").is_none());
         assert!(value.get("download").is_none());
         for stage in value["stages"].as_array().unwrap() {
-            for key in [
-                "images", "adapter", "request", "base_url", "api_key", "model",
-            ] {
+            for key in ["name", "service", "model", "input", "output", "prompt"] {
+                assert!(stage.get(key).is_some(), "{key}");
+            }
+            for key in ["images", "request"] {
                 assert!(stage.get(key).is_none(), "{key}");
             }
         }
-        assert_eq!(value["ai"]["base_url"].as_str(), Some(""));
-        assert_eq!(value["ai"]["model"].as_str(), Some(""));
+        assert_eq!(value["services"]["ai"]["base_url"].as_str(), Some(""));
         assert_eq!(super::load_from(Some(&path)).unwrap(), cfg);
-        cfg.speech.base_url.clear();
+        let speech = cfg.services.get_mut("speech").unwrap();
+        speech.base_url.clear();
+        speech.adapter = vec!["adapter".into()];
         super::save(&cfg, Some(&path)).unwrap();
         let value: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(value["speech"].get("base_url").is_none());
+        assert!(value["services"]["speech"].get("base_url").is_none());
         assert_eq!(super::load_from(Some(&path)).unwrap(), cfg);
+    }
+
+    #[test]
+    fn services_reject_conflicting_connections_keys_empty_programs_and_invalid_concurrency() {
+        for (fields, expected) in [
+            (
+                serde_json::json!({"base_url":"http://localhost:1","adapter":["adapter"]}),
+                "Service test: set base_url or adapter, not both",
+            ),
+            (
+                serde_json::json!({"api_key":"key","api_key_env":"VAR"}),
+                "Service test: set api_key or api_key_env, not both",
+            ),
+            (
+                serde_json::json!({"adapter":[""]}),
+                "Service test: the adapter command must name an executable",
+            ),
+            (
+                serde_json::json!({"concurrency":-1}),
+                "Service test: concurrency must be 1 to 16",
+            ),
+            (
+                serde_json::json!({"concurrency":0}),
+                "Service test: concurrency must be 1 to 16",
+            ),
+            (
+                serde_json::json!({"concurrency":17}),
+                "Service test: concurrency must be 1 to 16",
+            ),
+        ] {
+            let service: super::Service = serde_json::from_value(fields).unwrap();
+            assert_eq!(service.validate("test").unwrap_err().to_string(), expected);
+        }
+        super::Service::default().validate("empty").unwrap();
+        for base_url in ["not a URL", "file:///tmp/service", "https://"] {
+            assert!(
+                super::Service {
+                    base_url: base_url.into(),
+                    ..Default::default()
+                }
+                .validate("test")
+                .is_err()
+            );
+        }
     }
 }

@@ -9,7 +9,7 @@ use std::{
 use support::MockAi;
 
 fn config() -> Value {
-    json!({"output":{},"transcript":{},"screenshots":{"mode":"first"},"download":{},"speech":{},"ai":{},"stages":[]})
+    json!({"output":{},"transcript":{},"screenshots":{"mode":"first"},"download":{},"speech":{"service":"speech"},"services":{"speech":{},"ai":{}},"stages":[]})
 }
 fn spawn(root: &Path, source: &str, config: &Value, flags: &[&str]) -> std::process::Child {
     let config_dir = root.join("config/notepipe");
@@ -22,8 +22,6 @@ fn spawn(root: &Path, source: &str, config: &Value, flags: &[&str]) -> std::proc
         .current_dir(root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
-        .env_remove("NOTEPIPE_SPEECH_API_KEY")
-        .env_remove("NOTEPIPE_AI_API_KEY")
         .env_remove("RUST_LOG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -301,7 +299,7 @@ fn explicit_subtitles_publish_plain_notes_and_replace_only_the_same_source() {
 }
 
 #[test]
-fn stages_without_a_service_are_skipped_and_the_note_is_written() {
+fn stages_with_disconnected_services_are_skipped_and_the_note_is_written() {
     let root = tempfile::tempdir().unwrap();
     let Some(video) = speech_video(root.path()) else {
         return;
@@ -312,10 +310,9 @@ fn stages_without_a_service_are_skipped_and_the_note_is_written() {
     )
     .unwrap();
     let mut cfg = config();
-    cfg["stages"] =
-        json!([{"name":"custom","input":"transcript","output":"top","prompt":"CUSTOM"}]);
+    cfg["stages"] = json!([{"name":"custom","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"}]);
     let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
-    let warning = "custom: skipped; no AI service is set. Set base_url and model in [ai], or remove this stage.";
+    let warning = "custom: skipped; service ai has no base_url or adapter.";
     assert_eq!(done(&output)["warnings"], json!([warning]));
     let doc = document(&output);
     assert_eq!(doc["warnings"], json!([warning]));
@@ -337,12 +334,12 @@ fn stages_without_a_service_are_skipped_and_the_note_is_written() {
         .current_dir(root.path())
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .env("XDG_CACHE_HOME", root.path().join("cache"))
-        .env_remove("NOTEPIPE_AI_API_KEY")
         .env_remove("RUST_LOG")
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    let expected = ["proofread", "summary"].map(|name| format!("{name}: skipped; no AI service is set. Set base_url and model in [ai], or remove this stage."));
+    let expected = ["proofread", "summary"]
+        .map(|name| format!("{name}: skipped; service ai has no base_url or adapter."));
     assert_eq!(done(&default_run)["warnings"], json!(expected));
     assert_eq!(document(&default_run)["warnings"], json!(expected));
     assert!(
@@ -369,16 +366,12 @@ fn distinct_stage_adapters_start_once_each_and_stop_after_the_stages() {
         "1\n00:00:00,000 --> 00:00:02,000\nOriginal words.\n",
     )
     .unwrap();
-    let records = [root.path().join("first-ai"), root.path().join("second-ai")];
+    let record = root.path().join("ai");
     let mut cfg = config();
-    cfg["stages"] = json!([]);
-    for (index, record) in [&records[0], &records[1], &records[0]]
-        .into_iter()
-        .enumerate()
-    {
+    for index in 0..3 {
+        cfg["services"][format!("service{}", index % 2)] = json!({"adapter":[python, concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ai_adapter.py"), "--record", record]});
         cfg["stages"].as_array_mut().unwrap().push(json!({
-            "name":format!("stage{index}"), "input":"transcript", "output":"top",
-            "adapter":[python, concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ai_adapter.py"), "--record", record]
+            "name":format!("stage{index}"), "service":format!("service{}", index % 2),"input":"transcript", "output":"top"
         }));
     }
     let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
@@ -395,10 +388,8 @@ fn distinct_stage_adapters_start_once_each_and_stop_after_the_stages() {
             2
         );
     }
-    for record in records {
-        assert!(record.join("calls").is_file());
-        assert!(record.join("terminated").is_file());
-    }
+    assert!(record.join("calls").is_file());
+    assert!(record.join("terminated").is_file());
 }
 
 #[cfg(unix)]
@@ -419,13 +410,11 @@ fn ai_adapter_omits_an_unset_model_stops_and_reuses_responses_across_ports() {
     .unwrap();
     let record = root.path().join("ai");
     let mut cfg = config();
-    cfg["ai"] = json!({
+    cfg["services"]["ai"] = json!({
         "adapter": [python, concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ai_adapter.py"), "--record", record],
-        "base_url": "invalid ignored default",
         "api_key": "adapter-key"
     });
-    cfg["stages"] =
-        json!([{"name":"summary","input":"transcript","output":"top","prompt":"SUMMARY"}]);
+    cfg["stages"] = json!([{"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"SUMMARY"}]);
     let mut reserved_port = None;
     for _ in 0..2 {
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
@@ -640,7 +629,7 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
     });
     let mut cfg = config();
     cfg["download"]["adapter"] = json!(source);
-    cfg["speech"]["adapter"] = json!(asr);
+    cfg["services"]["speech"]["adapter"] = json!(asr);
     cfg["transcript"]["source"] = json!("speech");
     let url = "https://example.test/media?episode=1";
     let first = run(root.path(), url, &cfg, &[]);
@@ -682,9 +671,9 @@ fn llm_only_changes_reuse_source_frames_and_transcript_without_download_or_asr()
     cfg["stages"]
         .as_array_mut()
         .unwrap()
-        .push(json!({"name":"summary","input":"transcript","output":"top","prompt":"SUMMARY"}));
-    cfg["ai"]["base_url"] = json!(mock.url.clone());
-    cfg["ai"]["model"] = json!("fixture");
+        .push(json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"SUMMARY"}));
+    cfg["services"]["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["stages"][0]["model"] = json!("fixture");
     for _ in 0..2 {
         let second = run(root.path(), url, &cfg, &[]);
         assert_eq!(done(&second)["note_dir"], first_done["note_dir"]);
@@ -753,7 +742,7 @@ fn managed_asr_uses_keyless_http_and_stops_after_success_or_error() {
             return;
         };
         let mut cfg = config();
-        cfg["speech"]["adapter"] = json!(command);
+        cfg["services"]["speech"]["adapter"] = json!(command);
         cfg["transcript"]["source"] = json!("speech");
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         assert_eq!(
@@ -810,7 +799,7 @@ fn silent_audio_reports_no_speech() {
         return;
     };
     let mut cfg = config();
-    cfg["speech"]["adapter"] = json!(command);
+    cfg["services"]["speech"]["adapter"] = json!(command);
     cfg["transcript"]["source"] = json!("speech");
     let output = run(root.path(), audio.to_str().unwrap(), &cfg, &[]);
     assert!(!output.status.success());
@@ -848,7 +837,7 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
     });
     let mut cfg = config();
     cfg["download"]["adapter"] = json!(source);
-    cfg["speech"]["adapter"] = json!(asr);
+    cfg["services"]["speech"]["adapter"] = json!(asr);
     cfg["transcript"]["source"] = json!("speech");
     let url = "https://example.test/audio";
     let first = run(root.path(), url, &cfg, &[]);
@@ -879,9 +868,9 @@ fn audio_only_cache_reuses_absent_media_and_sends_vision_stages_as_text() {
     cfg["stages"]
         .as_array_mut()
         .unwrap()
-        .push(json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"PROOFREAD","images":true}));
-    cfg["ai"]["base_url"] = json!(mock.url.clone());
-    cfg["ai"]["model"] = json!("fixture");
+        .push(json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"PROOFREAD","images":true}));
+    cfg["services"]["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["stages"][0]["model"] = json!("fixture");
     for _ in 0..2 {
         let output = run(root.path(), url, &cfg, &[]);
         assert!(done(&output)["warnings"].as_array().unwrap().is_empty());
@@ -1057,12 +1046,12 @@ fn proofreading_uses_custom_rules_and_caches_a_validated_response_format_fallbac
     });
     let mut cfg = config();
     cfg["stages"].as_array_mut().unwrap().push(
-        json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}),
+        json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}),
     );
-    cfg["ai"]["base_url"] = json!(mock.url.clone());
-    cfg["ai"]["model"] = json!("fixture");
+    cfg["services"]["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["stages"][0]["model"] = json!("fixture");
     cfg["stages"][0]["prompt"] = json!("CUSTOM-RULE-42");
-    cfg["ai"]["api_key"] = json!("private-test-key");
+    cfg["services"]["ai"]["api_key"] = json!("private-test-key");
     cfg["stages"][0]["images"] = json!(true);
     for _ in 0..2 {
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
@@ -1219,8 +1208,8 @@ fn failed_transcription_preserves_the_previous_note_and_completed_chunks() {
         }),
     );
     assert!(!note_dir.exists());
-    cfg["speech"]["adapter"] = json!(command);
-    cfg["speech"]["concurrency"] = json!(1);
+    cfg["services"]["speech"]["adapter"] = json!(command);
+    cfg["services"]["speech"]["concurrency"] = json!(1);
     cfg["speech"]["detection"]["max_segment"] = json!(1.);
     cfg["transcript"]["source"] = json!("speech");
     let failed = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
@@ -1315,8 +1304,8 @@ fn sigint_and_sigterm_cancel_adapters_and_resume_completed_asr_chunks() {
             return;
         };
         let mut cfg = config();
-        cfg["speech"]["adapter"] = json!(command);
-        cfg["speech"]["concurrency"] = json!(1);
+        cfg["services"]["speech"]["adapter"] = json!(command);
+        cfg["services"]["speech"]["concurrency"] = json!(1);
         cfg["speech"]["detection"]["max_segment"] = json!(1.);
         cfg["transcript"]["source"] = json!("speech");
         let mut child = spawn(root.path(), video.to_str().unwrap(), &cfg, &[]);
@@ -1392,7 +1381,7 @@ fn speech_settings_select_separate_checkpoints_without_inner_markers() {
     let adapter = RemoteAsr::start(&command, &record);
     let mut cfg = config();
     cfg["transcript"]["source"] = json!("speech");
-    cfg["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
+    cfg["services"]["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
     done(&run(root.path(), video.to_str().unwrap(), &cfg, &[]));
     let chunks = calls(&record);
     assert!(chunks > 0);
@@ -1439,9 +1428,9 @@ fn keyless_remote_asr_and_bounded_adapter_concurrency_still_work() {
         let adapter = RemoteAsr::start(&command, &record);
         let mut cfg = config();
         cfg["transcript"]["source"] = json!("speech");
-        cfg["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
+        cfg["services"]["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
         cfg["speech"]["detection"]["max_segment"] = json!(1.);
-        cfg["speech"]["concurrency"] = json!(concurrency);
+        cfg["services"]["speech"]["concurrency"] = json!(concurrency);
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         done(&output);
         assert_eq!(
@@ -1462,12 +1451,8 @@ fn keyless_remote_asr_and_bounded_adapter_concurrency_still_work() {
 }
 
 #[test]
-fn proofreading_keys_prefer_flags_then_config_then_environment() {
-    for (configured, flag, expected) in [
-        ("file-key", Some("flag-key"), "flag-key"),
-        ("file-key", None, "file-key"),
-        ("", None, "environment-key"),
-    ] {
+fn stages_send_keys_from_the_named_environment_variable() {
+    for key in [Some("environment-key"), None, Some("")] {
         let root = tempfile::tempdir().unwrap();
         let Some(video) = speech_video(root.path()) else {
             return;
@@ -1477,20 +1462,17 @@ fn proofreading_keys_prefer_flags_then_config_then_environment() {
             "1\n00:00:00,000 --> 00:00:02,000\nOriginal.\n",
         )
         .unwrap();
-        let mock = MockAi::respond_with(|_, _| {
+        let mock = MockAi::respond_with(|_, body| {
+            assert!(body.get("model").is_none());
             Some((
                 200,
                 json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"Proofread."}]}"#}}]}),
             ))
         });
         let mut cfg = config();
-        cfg["stages"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}));
-        cfg["ai"]["base_url"] = json!(mock.url.clone());
-        cfg["ai"]["model"] = json!("fixture");
-        cfg["ai"]["api_key"] = json!(configured);
+        cfg["stages"] = json!([{"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}]);
+        cfg["services"]["ai"] =
+            json!({"base_url":mock.url,"api_key_env":"NOTEPIPE_TEST_SERVICE_KEY"});
         let path = root.path().join("settings.json");
         std::fs::write(&path, serde_json::to_vec(&cfg).unwrap()).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
@@ -1499,16 +1481,31 @@ fn proofreading_keys_prefer_flags_then_config_then_environment() {
             .args(["--config", path.to_str().unwrap(), "--json"])
             .current_dir(root.path())
             .env("XDG_CACHE_HOME", root.path().join("cache"))
-            .env("NOTEPIPE_AI_API_KEY", "environment-key")
             .env_remove("RUST_LOG")
             .stdin(Stdio::null());
-        if let Some(flag) = flag {
-            command.args(["--ai-api-key", flag]);
+        if let Some(key) = key {
+            command.env("NOTEPIPE_TEST_SERVICE_KEY", key);
+        } else {
+            command.env_remove("NOTEPIPE_TEST_SERVICE_KEY");
         }
-        done(&command.output().unwrap());
-        assert!(
-            mock.headers.lock().unwrap()[0].contains(&format!("Authorization: Bearer {expected}"))
-        );
+        let output = command.output().unwrap();
+        if key == Some("environment-key") {
+            done(&output);
+            assert!(
+                mock.headers.lock().unwrap()[0].contains("Authorization: Bearer environment-key")
+            );
+        } else {
+            assert!(!output.status.success());
+            let error = events(&output)
+                .into_iter()
+                .find(|event| event["type"] == "error")
+                .unwrap();
+            assert_eq!(
+                error["message"],
+                "Service ai: the environment variable NOTEPIPE_TEST_SERVICE_KEY is not set"
+            );
+            assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        }
     }
 }
 
@@ -1538,10 +1535,10 @@ fn retryable_and_terminal_llm_errors_preserve_text_and_never_enter_the_cache() {
     });
     let mut cfg = config();
     cfg["stages"].as_array_mut().unwrap().push(
-        json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}),
+        json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}),
     );
-    cfg["ai"]["base_url"] = json!(mock.url.clone());
-    cfg["ai"]["model"] = json!("fixture");
+    cfg["services"]["ai"]["base_url"] = json!(mock.url.clone());
+    cfg["stages"][0]["model"] = json!("fixture");
     let first = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     let doc = document(&first);
     assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -1576,7 +1573,7 @@ fn cancellation_during_audio_cutting_sends_no_http_request() {
     let adapter = RemoteAsr::start(&command, &record);
     let mut cfg = config();
     cfg["transcript"]["source"] = json!("speech");
-    cfg["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
+    cfg["services"]["speech"]["base_url"] = json!(format!("{}/v1", adapter.base));
     let bin = root.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let wrapper = bin.join("ffmpeg");
@@ -1701,15 +1698,13 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
         ))
     });
     let mut cfg = config();
-    cfg["ai"] = json!({
-        "base_url":main.url,"api_key":"default-key","model":"default-model",
-        "request":{"temperature":0.2,"top_p":0.8}
-    });
+    cfg["services"]["ai"] = json!({"base_url":main.url,"api_key":"default-key"});
+    cfg["services"]["below"] = json!({"base_url":below.url,"api_key":"stage-key"});
     cfg["stages"] = json!([
-        {"name":"proofread","input":"paragraphs","output":"replace","prompt":"PROOFREAD"},
-        {"name":"gloss","input":"paragraphs","output":"below","prompt":"CUSTOM-BELOW","base_url":below.url,"api_key":"stage-key","model":"below-model","request":{"temperature":0.7,"top_k":5}},
-        {"name":"outline","input":"transcript","output":"top","prompt":"CUSTOM-TOP"},
-        {"name":"summary","input":"transcript","output":"top","prompt":"SUMMARY"}
+        {"name":"proofread","service":"ai","model":"default-model","input":"paragraphs","output":"replace","prompt":"PROOFREAD","request":{"temperature":0.2,"top_p":0.8}},
+        {"name":"gloss","service":"below","input":"paragraphs","output":"below","prompt":"CUSTOM-BELOW","model":"below-model","request":{"temperature":0.7,"top_p":0.8,"top_k":5}},
+        {"name":"outline","service":"ai","model":"default-model","input":"transcript","output":"top","prompt":"CUSTOM-TOP","request":{"temperature":0.2,"top_p":0.8}},
+        {"name":"summary","service":"ai","model":"default-model","input":"transcript","output":"top","prompt":"SUMMARY","request":{"temperature":0.2,"top_p":0.8}}
     ]);
     let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
     let doc = document(&output);
@@ -1753,8 +1748,7 @@ fn generic_stages_preserve_order_overrides_and_markdown_outputs() {
     assert_eq!(doc["sections"][0]["speech"][0]["text"], "Original words.");
     assert!(doc["sections"][0]["speech"][0].get("below").is_none());
     let calls = main.calls.load(Ordering::SeqCst);
-    cfg["ai"]["base_url"] = json!("invalid unused URL");
-    cfg["ai"]["model"] = json!("");
+    cfg["stages"][0]["model"] = json!("");
     let disabled = run(root.path(), video.to_str().unwrap(), &cfg, &["--no-stages"]);
     assert!(document(&disabled)["top"].as_array().unwrap().is_empty());
     assert_eq!(main.calls.load(Ordering::SeqCst), calls);
@@ -1797,13 +1791,12 @@ fn paragraph_stages_keep_partial_successes_and_roll_back_an_unreadable_replaceme
             ))
         });
         let mut cfg = config();
-        cfg["ai"]["base_url"] = json!(mock.url.clone());
-        cfg["ai"]["model"] = json!("fixture");
-        cfg["ai"]["concurrency"] = json!(2);
+        cfg["services"]["ai"]["base_url"] = json!(mock.url.clone());
+        cfg["services"]["ai"]["concurrency"] = json!(2);
         cfg["stages"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}));
+            .push(json!({"name":"proofread","service":"ai","model":"fixture","input":"paragraphs","output":"replace","prompt":"PROOFREAD"}));
         let output = run(root.path(), video.to_str().unwrap(), &cfg, &[]);
         let doc = document(&output);
         let paragraphs = doc["sections"][0]["speech"].as_array().unwrap();

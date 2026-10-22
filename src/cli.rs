@@ -18,8 +18,8 @@ pub(super) fn after_help() -> String {
 
 Transcripts:
   Subtitles are used when they exist: lecture.srt or lecture.vtt next to the file, or those found by the
-  download adapter. Otherwise speech is sent to the service set in [speech]; the first run in a terminal
-  asks for it and saves it.
+  download adapter. Otherwise speech is sent to the service that [speech] names; the first run in a
+  terminal asks for it and saves it.
 
 Settings:
   Options override the configuration file, which overrides the built-in defaults.
@@ -93,39 +93,6 @@ pub struct RunOpts {
     #[arg(long = "language", value_name = "CODE", help_heading = "Transcript")]
     pub asr_language: Option<String>,
 
-    /// OpenAI-compatible speech service, such as https://api.openai.com/v1 (config: speech.base_url)
-    #[arg(
-        long = "speech-base-url",
-        value_name = "URL",
-        help_heading = "Speech recognition"
-    )]
-    pub asr_base_url: Option<String>,
-
-    /// API key for the speech service; NOTEPIPE_SPEECH_API_KEY keeps it out of shell history (config: speech.api_key)
-    #[arg(
-        long = "speech-api-key",
-        value_name = "KEY",
-        help_heading = "Speech recognition"
-    )]
-    pub asr_api_key: Option<String>,
-
-    /// Speech model, such as gpt-4o-mini-transcribe (config: speech.model)
-    #[arg(
-        long = "speech-model",
-        value_name = "NAME",
-        help_heading = "Speech recognition"
-    )]
-    pub asr_model: Option<String>,
-
-    /// How audio is sent to the service (default: transcriptions; config: speech.api)
-    #[arg(
-        long = "speech-api",
-        value_enum,
-        value_name = "API",
-        help_heading = "Speech recognition"
-    )]
-    pub asr_mode: Option<crate::settings::AsrMode>,
-
     /// Longest piece of speech sent in one request, 1 to 600 (default: 20; config: speech.detection.max_segment)
     #[arg(
         long = "max-segment",
@@ -177,18 +144,6 @@ pub struct RunOpts {
     /// Run no stages
     #[arg(long, help_heading = "Stages")]
     pub no_stages: bool,
-
-    /// OpenAI-compatible chat service used by every stage (config: ai.base_url)
-    #[arg(long = "ai-base-url", value_name = "URL", help_heading = "Stages")]
-    pub llm_base_url: Option<String>,
-
-    /// API key for the AI service; NOTEPIPE_AI_API_KEY keeps it out of shell history (config: ai.api_key)
-    #[arg(long = "ai-api-key", value_name = "KEY", help_heading = "Stages")]
-    pub llm_api_key: Option<String>,
-
-    /// Model for every stage that does not set its own (config: ai.model)
-    #[arg(long = "ai-model", value_name = "NAME", help_heading = "Stages")]
-    pub llm_model: Option<String>,
 
     /// Show more detail; -vv for debugging
     #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Terminal")]

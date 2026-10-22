@@ -175,7 +175,7 @@ fn run_api(
     let abort = std::sync::atomic::AtomicBool::new(false);
     let mut err: Option<anyhow::Error> = None;
     std::thread::scope(|s| {
-        for _ in 0..api.concurrency.clamp(1, 16).min(pending.len()) {
+        for _ in 0..api.concurrency.min(pending.len()) {
             let tx = tx.clone();
             let target = ApiTarget {
                 client: &client,

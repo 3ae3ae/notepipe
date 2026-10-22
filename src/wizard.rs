@@ -52,6 +52,19 @@ fn save_asr(cfg: &PipelineConfig) -> Result<PathBuf> {
     cfg.validate_asr()?;
     let mut file = crate::settings::load_from(cfg.config_path.as_deref())?;
     file.speech = (&cfg.asr).into();
+    if file.speech.service.is_empty() {
+        file.speech.service = "speech".into();
+    }
+    file.services.insert(
+        file.speech.service.clone(),
+        crate::settings::Service {
+            base_url: cfg.asr.base_url.clone(),
+            adapter: cfg.asr.command.clone(),
+            api_key: cfg.asr.api_key.clone(),
+            api_key_env: cfg.asr.api_key_env.clone(),
+            concurrency: cfg.asr.concurrency as i64,
+        },
+    );
     file.transcript.language = cfg.asr.language.clone();
     crate::settings::save(&file, cfg.config_path.as_deref())
 }
@@ -60,7 +73,7 @@ fn save_asr(cfg: &PipelineConfig) -> Result<PathBuf> {
 pub fn run(cfg: &PipelineConfig) -> Result<Asr> {
     anyhow::ensure!(
         cfg.config_path.as_deref() != Some(Path::new("-")),
-        "Setup is unavailable with --config -; set [speech] in the supplied configuration."
+        "Speech recognition is not set up. Point [speech].service at a service in [services] that has a base_url or adapter."
     );
     let choice = selected_or_cancelled(
         dialoguer::Select::new()
@@ -93,7 +106,7 @@ pub fn run(cfg: &PipelineConfig) -> Result<Asr> {
         .interact_text()?
         .trim()
         .to_owned();
-    if asr.api_key.trim().is_empty() && crate::config::asr_api_key_from_env().is_none() {
+    if asr.api_key.trim().is_empty() && asr.api_key_env.is_empty() {
         asr.api_key = dialoguer::Password::new()
             .with_prompt("API key (optional; hidden)")
             .allow_empty_password(true)
@@ -162,7 +175,7 @@ mod tests {
     #[test]
     fn setup_saves_to_the_selected_file_and_preserves_its_format_and_other_settings() {
         let root = tempfile::tempdir().unwrap();
-        for json in [false, true] {
+        for (json, name) in [(false, ""), (true, ""), (false, "remote"), (true, "remote")] {
             let path = root.path().join(if json {
                 "selected.json"
             } else {
@@ -170,7 +183,18 @@ mod tests {
             });
             let mut file = crate::settings::ConfigFile::default();
             file.output.dir = Some("my-notes".into());
-            file.ai.model = "my-model".into();
+            file.speech.model = "my-model".into();
+            file.speech.service = name.into();
+            if !name.is_empty() {
+                file.services.insert(
+                    name.into(),
+                    crate::settings::Service {
+                        concurrency: 2,
+                        api_key_env: "MY_SERVICE_KEY".into(),
+                        ..Default::default()
+                    },
+                );
+            }
             let original = if json {
                 serde_json::to_string(&file).unwrap()
             } else {
@@ -193,12 +217,25 @@ mod tests {
             assert_eq!(save_asr(&cfg).unwrap(), path.canonicalize().unwrap());
             let saved = crate::settings::load_from(Some(&path)).unwrap();
             file.speech = (&cfg.asr).into();
+            if file.speech.service.is_empty() {
+                file.speech.service = "speech".into();
+            }
+            file.services.insert(
+                file.speech.service.clone(),
+                crate::settings::Service {
+                    base_url: cfg.asr.base_url.clone(),
+                    api_key_env: cfg.asr.api_key_env.clone(),
+                    concurrency: cfg.asr.concurrency as i64,
+                    ..Default::default()
+                },
+            );
             file.transcript.language = cfg.asr.language;
             assert_eq!(saved, file);
-            assert_eq!(
-                std::fs::read_to_string(&path).unwrap().starts_with('{'),
-                json
-            );
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(text.starts_with('{'), json);
+            assert!(!text.contains("api_key\""));
+            assert!(!text.contains("api_key ="));
+            assert!(!text.contains("adapter"));
             let backup = root.path().join(if json {
                 "selected.json.bak"
             } else {
@@ -253,7 +290,7 @@ mod tests {
             run(&cfg)
                 .unwrap_err()
                 .to_string()
-                .contains("Setup is unavailable with --config -")
+                .contains("Speech recognition is not set up")
         );
     }
 }

@@ -10,8 +10,6 @@ pub(crate) const IMAGE_NOTE: &str =
     r#" Each request includes the screenshot shown during this passage."#;
 
 const BATCH: usize = 20;
-const DEFAULT_CONCURRENCY: usize = 8;
-const MAX_CONCURRENCY: usize = 16;
 const MAX_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,19 +29,13 @@ pub enum Output {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Stage {
     pub name: String,
+    pub service: String,
+    pub model: String,
     pub input: Input,
     pub output: Output,
     pub prompt: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub images: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub adapter: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub request: Map<String, Value>,
 }
@@ -52,16 +44,15 @@ pub struct Stage {
 #[serde(deny_unknown_fields)]
 struct StageFields {
     name: String,
+    #[serde(default)]
+    service: String,
+    #[serde(default)]
+    model: String,
     input: Option<Input>,
     output: Option<Output>,
     prompt: Option<String>,
     #[serde(default)]
     images: bool,
-    #[serde(default)]
-    adapter: Vec<String>,
-    base_url: Option<String>,
-    api_key: Option<String>,
-    model: Option<String>,
     #[serde(default, deserialize_with = "deserialize_request")]
     request: Map<String, Value>,
 }
@@ -72,23 +63,16 @@ impl<'de> Deserialize<'de> for Stage {
         let fields = StageFields::deserialize(deserializer)?;
         let stage = Self {
             name: fields.name,
+            service: fields.service,
+            model: fields.model,
             input: fields
                 .input
                 .ok_or_else(|| D::Error::custom("Stages need input"))?,
             output: fields
                 .output
                 .ok_or_else(|| D::Error::custom("Stages need output"))?,
-            prompt: fields
-                .prompt
-                .or_else(|| (!fields.adapter.is_empty()).then(String::new))
-                .ok_or_else(|| D::Error::custom("Stages without an adapter need a prompt"))?
-                .trim()
-                .to_owned(),
+            prompt: fields.prompt.unwrap_or_default().trim().to_owned(),
             images: fields.images,
-            adapter: fields.adapter,
-            base_url: fields.base_url,
-            api_key: fields.api_key,
-            model: fields.model,
             request: fields.request,
         };
         stage.validate().map_err(D::Error::custom)?;
@@ -113,39 +97,18 @@ impl Stage {
             !self.images || self.input == Input::Paragraphs,
             "Only paragraphs stages support images"
         );
-        anyhow::ensure!(
-            self.base_url.is_none() || self.adapter.is_empty(),
-            "Stage {}: set base_url or adapter, not both",
-            self.name
-        );
-        anyhow::ensure!(
-            self.adapter
-                .first()
-                .is_none_or(|program| !program.is_empty()),
-            "Stage {}: the adapter command must name an executable",
-            self.name
-        );
         validate_request(&self.request)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LlmSettings {
     pub base_url: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub adapter: Vec<String>,
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub api_key: String,
     pub model: String,
     pub concurrency: usize,
-    #[serde(
-        deserialize_with = "deserialize_request",
-        skip_serializing_if = "Map::is_empty"
-    )]
     pub request: Map<String, Value>,
-    #[serde(skip)]
-    pub stages: Vec<Stage>,
 }
 impl Default for LlmSettings {
     fn default() -> Self {
@@ -154,42 +117,20 @@ impl Default for LlmSettings {
             adapter: Vec::new(),
             api_key: String::new(),
             model: String::new(),
-            concurrency: DEFAULT_CONCURRENCY,
+            concurrency: crate::settings::Service::default().concurrency as usize,
             request: Map::new(),
-            stages: Vec::new(),
         }
     }
 }
 impl LlmSettings {
-    pub fn for_stage(&self, stage: &Stage) -> Result<Self> {
-        validate_request(&self.request)?;
-        stage.validate()?;
-        let mut request = self.request.clone();
-        request.extend(stage.request.clone());
+    pub fn for_stage(service: &crate::settings::Service, stage: &Stage) -> Result<Self> {
         Ok(Self {
-            base_url: if !stage.adapter.is_empty() {
-                String::new()
-            } else {
-                stage
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| self.base_url.clone())
-            },
-            adapter: if !stage.adapter.is_empty() {
-                stage.adapter.clone()
-            } else if stage.base_url.is_some() {
-                Vec::new()
-            } else {
-                self.adapter.clone()
-            },
-            api_key: stage
-                .api_key
-                .clone()
-                .unwrap_or_else(|| self.api_key.clone()),
-            model: stage.model.clone().unwrap_or_else(|| self.model.clone()),
-            concurrency: self.concurrency.clamp(1, MAX_CONCURRENCY),
-            request,
-            stages: Vec::new(),
+            base_url: service.base_url.clone(),
+            adapter: service.adapter.clone(),
+            api_key: service.key(&stage.service)?,
+            model: stage.model.clone(),
+            concurrency: service.concurrency as usize,
+            request: stage.request.clone(),
         })
     }
 
@@ -208,7 +149,7 @@ fn validate_request(request: &Map<String, Value>) -> Result<()> {
         !["model", "messages", "stream", "response_format"]
             .iter()
             .any(|key| request.contains_key(*key)),
-        "ai.request cannot override model, messages, stream or response_format"
+        "request cannot override model, messages, stream or response_format"
     );
     Ok(())
 }
@@ -247,7 +188,7 @@ pub(crate) fn chat_body(
 ) -> Result<Value> {
     validate_request(&settings.request)?;
     let mut body = settings.request.clone();
-    if settings.adapter.is_empty() || !settings.model.is_empty() {
+    if !settings.model.is_empty() {
         body.insert("model".into(), settings.model.clone().into());
     }
     body.insert("messages".into(), serde_json::json!([{"role":"system","content":system},{"role":"user","content":user.into()}]));
@@ -263,27 +204,24 @@ pub(crate) fn chat_body(
 pub fn endpoint(base_url: &str) -> String {
     crate::config::append_endpoint_suffix(base_url.trim(), "/chat/completions")
 }
-pub fn validate(settings: &LlmSettings) -> Result<()> {
-    validate_request(&settings.request)?;
-    validate_stage_names(&settings.stages)?;
-    anyhow::ensure!(
-        settings
-            .adapter
-            .first()
-            .is_none_or(|program| !program.is_empty()),
-        "The AI adapter command must name an executable"
-    );
-    for stage in &settings.stages {
-        let settings = settings.for_stage(stage)?;
-        if !settings.adapter.is_empty() || settings.base_url.trim().is_empty() {
-            continue;
-        }
+pub fn validate(
+    stages: &[Stage],
+    services: &std::collections::BTreeMap<String, crate::settings::Service>,
+) -> Result<()> {
+    validate_stage_names(stages)?;
+    for stage in stages {
+        stage.validate()?;
         anyhow::ensure!(
-            !settings.model.trim().is_empty(),
-            "AI model is not set. Set [ai].model or the stage's model."
+            !stage.service.is_empty(),
+            "Stage {} needs a service",
+            stage.name
         );
-        crate::config::ensure_http_url(&settings.base_url)
-            .with_context(|| format!("Invalid service for stage {}", stage.name))?;
+        anyhow::ensure!(
+            services.contains_key(&stage.service),
+            "Stage {}: no service named {} in [services]",
+            stage.name,
+            stage.service
+        );
     }
     Ok(())
 }
@@ -354,7 +292,7 @@ pub fn paragraphs(
     let image_warnings = std::sync::Mutex::new(Vec::new());
     let failures = crate::runtime::map_pool(
         chunks,
-        s.concurrency.clamp(1, MAX_CONCURRENCY),
+        s.concurrency,
         |(image_path, section, mut chunk)| {
             pb.inc(1);
             let image = image_path.as_deref().and_then(|path| match section_image_b64(path) {
@@ -661,99 +599,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validate_rejects_unusable_service_urls() {
-        for base_url in ["not a URL", "file:///tmp/service", "https://"] {
-            let settings = LlmSettings {
-                base_url: base_url.into(),
-                model: "test-model".into(),
-                stages: vec![serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap()],
-                ..Default::default()
-            };
-            assert!(validate(&settings).is_err(), "accepted {base_url}");
-        }
-        let settings = LlmSettings {
-            base_url: "http://localhost:8080/v1".into(),
-            model: "test-model".into(),
+    fn stages_resolve_only_their_named_service_and_allow_an_empty_model_and_prompt() {
+        let service = crate::settings::Service {
+            base_url: "https://example.test/v1".into(),
+            api_key: "key".into(),
+            concurrency: 2,
             ..Default::default()
         };
-        assert!(validate(&settings).is_ok());
-    }
-
-    #[test]
-    fn adapter_stages_allow_missing_service_and_model_but_explicit_services_do_not() {
-        let mut settings = LlmSettings {
-            adapter: vec!["ai-adapter".into(), "--option".into()],
-            stages: vec![serde_json::from_value(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap()],
-            ..Default::default()
-        };
-        validate(&settings).unwrap();
-        let effective = settings.for_stage(&settings.stages[0]).unwrap();
-        assert_eq!(effective.adapter, settings.adapter);
-        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
+        let stage: Stage = serde_json::from_value(serde_json::json!({"name":"custom","service":"ai","input":"transcript","output":"top","prompt":"  ","request":{"temperature":0.7}})).unwrap();
+        assert!(stage.prompt.is_empty());
+        let effective = LlmSettings::for_stage(&service, &stage).unwrap();
+        assert_eq!(effective.base_url, service.base_url);
+        assert_eq!(effective.api_key, "key");
+        assert_eq!(effective.concurrency, 2);
+        let body = chat_body(&effective, &stage.prompt, "User", stage.input).unwrap();
         assert!(body.get("model").is_none());
-        settings.adapter.clear();
-        validate(&settings).unwrap();
-        settings.adapter = vec!["".into()];
-        assert_eq!(
-            validate(&settings).unwrap_err().to_string(),
-            "The AI adapter command must name an executable"
-        );
-        settings.adapter = vec!["ai-adapter".into()];
-        settings.base_url = "invalid ignored default".into();
-        validate(&settings).unwrap();
-        settings.stages[0].base_url = Some("https://example.test/v1".into());
-        assert!(
-            validate(&settings)
-                .unwrap_err()
-                .to_string()
-                .contains("AI model is not set")
-        );
-        settings.stages[0].model = Some("stage-model".into());
-        validate(&settings).unwrap();
-        let effective = settings.for_stage(&settings.stages[0]).unwrap();
-        assert!(effective.adapter.is_empty());
-        assert_eq!(effective.base_url, "https://example.test/v1");
-        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
-        assert_eq!(body["model"], "stage-model");
-        settings.stages[0].base_url = None;
-        let effective = settings.for_stage(&settings.stages[0]).unwrap();
-        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
-        assert_eq!(body["model"], "stage-model");
-    }
-
-    #[test]
-    fn stage_adapters_override_inherited_connections_and_reject_conflicts() {
-        let settings = LlmSettings {
-            base_url: "https://default.test/v1".into(),
-            adapter: vec!["default-adapter".into()],
-            ..Default::default()
-        };
-        let mut stage: Stage = serde_json::from_value(serde_json::json!({
-            "name":"custom", "input":"transcript", "output":"top", "prompt":"  CUSTOM\n"
-        }))
-        .unwrap();
-        assert_eq!(stage.prompt, "CUSTOM");
-        let inherited = settings.for_stage(&stage).unwrap();
-        assert_eq!(inherited.base_url, settings.base_url);
-        assert_eq!(inherited.adapter, settings.adapter);
-        stage.base_url = Some("https://stage.test/v1".into());
-        let explicit = settings.for_stage(&stage).unwrap();
-        assert_eq!(explicit.base_url, "https://stage.test/v1");
-        assert!(explicit.adapter.is_empty());
-        stage.adapter = vec!["stage-adapter".into()];
-        assert_eq!(
-            settings.for_stage(&stage).unwrap_err().to_string(),
-            "Stage custom: set base_url or adapter, not both"
-        );
-        stage.base_url = None;
-        let adapted = settings.for_stage(&stage).unwrap();
-        assert_eq!(adapted.adapter, stage.adapter);
-        assert!(adapted.base_url.is_empty());
-        stage.adapter[0].clear();
-        assert_eq!(
-            settings.for_stage(&stage).unwrap_err().to_string(),
-            "Stage custom: the adapter command must name an executable"
-        );
+        assert_eq!(body["messages"][0]["content"], "");
+        assert_eq!(body["temperature"], 0.7);
     }
 
     #[test]
@@ -907,7 +769,7 @@ mod tests {
             &mut sections,
             root.path(),
             &settings,
-            &serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap(),
+            &serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap(),
         )
         .unwrap();
         assert_eq!((report.attempted, report.failed), (1, 1));
@@ -956,7 +818,6 @@ mod tests {
             base_url: "https://example.test/v1".into(),
             api_key: "k".into(),
             model: "m".into(),
-            stages: vec![serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap()],
             ..Default::default()
         }
     }
@@ -974,7 +835,7 @@ mod tests {
         let mut refs = vec![&mut a, &mut b];
         let polished = [(0, "今天讲编译原理".into()), (1, String::new())];
         assert!(segment_ids_match(&polished, refs.len()));
-        apply_results(&mut refs, &polished, &serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap());
+        apply_results(&mut refs, &polished, &serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap());
         assert_eq!(a.raw, None, "unchanged text keeps no raw copy");
         assert_eq!(b.text, "", "filler is emptied and removed by the caller");
         assert_eq!(b.raw.as_deref(), Some("啊"), "the original is kept in raw");
@@ -993,9 +854,10 @@ mod tests {
 
     #[test]
     fn chat_body_text_vs_vision() {
-        let mut s = test_settings();
+        let s = test_settings();
+        let mut stage: Stage = serde_json::from_value(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
         let items = ["hello"];
-        let text_only = build_chat_body(&s, &s.stages[0], &items, None).unwrap();
+        let text_only = build_chat_body(&s, &stage, &items, None).unwrap();
         assert_eq!(text_only["response_format"]["type"], "json_object");
         assert_eq!(text_only["model"], "m");
         assert!(text_only.get("max_tokens").is_none());
@@ -1004,10 +866,10 @@ mod tests {
         assert_eq!(user.len(), 1);
         assert_eq!(user[0]["type"], "text");
 
-        let disabled = build_chat_body(&s, &s.stages[0], &items, Some("aGVsbG8=")).unwrap();
+        let disabled = build_chat_body(&s, &stage, &items, Some("aGVsbG8=")).unwrap();
         assert_eq!(disabled, text_only);
-        s.stages[0].images = true;
-        let vision = build_chat_body(&s, &s.stages[0], &items, Some("aGVsbG8=")).unwrap();
+        stage.images = true;
+        let vision = build_chat_body(&s, &stage, &items, Some("aGVsbG8=")).unwrap();
         let user: &Vec<serde_json::Value> = vision["messages"][1]["content"].as_array().unwrap();
         assert_eq!(user.len(), 2, "an image adds an image_url part");
         assert_eq!(user[1]["type"], "image_url");
@@ -1026,7 +888,7 @@ mod tests {
     #[test]
     fn stages_require_explicit_fields_and_keep_their_declared_contracts() {
         let settings = LlmSettings::default();
-        let mut custom: Stage = serde_json::from_value(serde_json::json!({"name":"annotate","input":"paragraphs","output":"below","prompt":"CUSTOM"})).unwrap();
+        let mut custom: Stage = serde_json::from_value(serde_json::json!({"name":"annotate","service":"ai","input":"paragraphs","output":"below","prompt":"CUSTOM"})).unwrap();
         let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
         assert_eq!(
             body["messages"][0]["content"],
@@ -1041,7 +903,6 @@ mod tests {
         for (field, error) in [
             ("input", "Stages need input"),
             ("output", "Stages need output"),
-            ("prompt", "Stages without an adapter need a prompt"),
         ] {
             let mut fields = serde_json::to_value(&custom).unwrap();
             fields.as_object_mut().unwrap().remove(field);
@@ -1051,18 +912,12 @@ mod tests {
                     .to_string(),
                 error
             );
-            fields["adapter"] = serde_json::json!(["stage-adapter"]);
-            if field == "prompt" {
-                assert_eq!(serde_json::from_value::<Stage>(fields).unwrap().prompt, "");
-            } else {
-                assert_eq!(
-                    serde_json::from_value::<Stage>(fields)
-                        .unwrap_err()
-                        .to_string(),
-                    error
-                );
-            }
         }
+        let empty_prompt: Stage = serde_json::from_value(
+            serde_json::json!({"name":"custom","service":"ai","input":"transcript","output":"top"}),
+        )
+        .unwrap();
+        assert!(empty_prompt.prompt.is_empty());
         custom.images = true;
         for name in ["proofread", "annotate"] {
             custom.name = name.into();
@@ -1082,19 +937,19 @@ mod tests {
             ("transcript", "below", false),
             ("transcript", "top", true),
         ] {
-            assert!(serde_json::from_value::<Stage>(serde_json::json!({"name":"custom","input":input,"output":output,"prompt":"CUSTOM","images":images})).is_err());
+            assert!(serde_json::from_value::<Stage>(serde_json::json!({"name":"custom","service":"ai","input":input,"output":output,"prompt":"CUSTOM","images":images})).is_err());
         }
     }
 
     #[test]
     fn duplicate_stage_names_are_rejected_at_load_and_runtime_validation() {
-        let config = "[ai]\n[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n";
+        let config = "[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n";
         let error = toml::from_str::<crate::settings::ConfigFile>(config).unwrap_err();
         assert!(error.to_string().contains("Duplicate stage name: summary"));
-        let mut settings = test_settings();
-        settings.stages.push(settings.stages[0].clone());
+        let stage: Stage = serde_json::from_value(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace"})).unwrap();
+        let stages = vec![stage.clone(), stage];
         assert!(
-            validate(&settings)
+            validate(&stages, &Default::default())
                 .unwrap_err()
                 .to_string()
                 .contains("Duplicate stage name: proofread")
@@ -1102,76 +957,35 @@ mod tests {
     }
 
     #[test]
-    fn stage_overrides_merge_requests_and_protected_keys_are_rejected_at_load() {
-        let file = toml::from_str::<crate::settings::ConfigFile>(
-            r#"
-[ai]
-base_url = "invalid unused default"
-api_key = "default-key"
-model = "default-model"
-request = { temperature = 0.2, max_tokens = 99 }
-[[stages]]
-name = "summary"
-input = "transcript"
-output = "top"
-prompt = "CUSTOM"
-base_url = "https://example.test/v1"
-api_key = "stage-key"
-model = "stage-model"
-request = { temperature = 0.7, top_p = 0.8 }
-"#,
-        )
-        .unwrap();
-        let settings = crate::options::resolve(String::new(), &Default::default(), &file)
-            .unwrap()
-            .llm;
-        validate(&settings).unwrap();
-        let effective = settings.for_stage(&settings.stages[0]).unwrap();
-        assert_eq!(effective.base_url, "https://example.test/v1");
-        assert_eq!(effective.api_key, "stage-key");
-        assert_eq!(effective.model, "stage-model");
-        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
+    fn stage_requests_merge_with_the_protocol_and_protected_keys_are_rejected_at_load() {
+        let stage: Stage = serde_json::from_value(serde_json::json!({"name":"summary","service":"ai","model":"stage-model","input":"transcript","output":"top","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
+        let service = crate::settings::Service {
+            base_url: "https://example.test/v1".into(),
+            ..Default::default()
+        };
+        let effective = LlmSettings::for_stage(&service, &stage).unwrap();
+        let body = chat_body(&effective, "System", "User", stage.input).unwrap();
+        assert_eq!(body["model"], "stage-model");
         assert_eq!(body["temperature"], 0.7);
-        assert_eq!(body["max_tokens"], 99);
         assert_eq!(body["top_p"], 0.8);
+        assert!(body.get("max_tokens").is_none());
         assert!(body.get("response_format").is_none());
-        for key in ["model", "messages", "stream", "response_format"] {
-            let request = serde_json::json!({key:"forbidden"});
-            assert!(
-                serde_json::from_value::<LlmSettings>(serde_json::json!({"request":request}))
-                    .is_err()
-            );
-            assert!(
-                serde_json::from_value::<Stage>(
-                    serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM","request":request})
-                )
-                .is_err()
-            );
-        }
         for request in [
+            serde_json::json!({"model":"forbidden"}),
+            serde_json::json!({"messages":[]}),
+            serde_json::json!({"stream":false}),
+            serde_json::json!({"response_format":{}}),
             serde_json::json!([]),
             serde_json::json!("text"),
             serde_json::json!(1),
         ] {
-            assert!(
-                serde_json::from_value::<LlmSettings>(serde_json::json!({"request":request}))
-                    .is_err()
-            );
-            assert!(
-                serde_json::from_value::<Stage>(
-                    serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM","request":request})
-                )
-                .is_err()
-            );
+            assert!(serde_json::from_value::<Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","request":request})).is_err());
         }
-        let unused: LlmSettings =
-            serde_json::from_value(serde_json::json!({"base_url":"invalid","model":""})).unwrap();
-        validate(&unused).unwrap();
     }
 
     #[test]
     fn below_outputs_skip_empty_or_equal_text_and_keep_stage_order() {
-        let mut stage: Stage = serde_json::from_value(serde_json::json!({"name":"notes","input":"paragraphs","output":"below","prompt":"Annotate"})).unwrap();
+        let mut stage: Stage = serde_json::from_value(serde_json::json!({"name":"notes","service":"ai","input":"paragraphs","output":"below","prompt":"Annotate"})).unwrap();
         let mut events = ["First", "Second", "Third"].map(|text| TranscriptEvent {
             start: 0.,
             end: 1.,
@@ -1303,7 +1117,7 @@ request = { temperature = 0.7, top_p = 0.8 }
             model: "fixture".into(),
             ..Default::default()
         };
-        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
+        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"proofread","service":"ai","input":"paragraphs","output":"replace","prompt":"CUSTOM"})).unwrap();
         stage.name = "annotate".into();
         stage.images = true;
         let report = crate::llm::paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();

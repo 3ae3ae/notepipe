@@ -111,7 +111,7 @@ mod tests {
     use super::*;
     #[test]
     fn transcript_contracts_do_not_override_user_instructions() {
-        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
+        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
         stage.name = "outline".into();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
@@ -140,7 +140,7 @@ mod tests {
             duration: 0.,
             seek_url: None,
         };
-        let stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
+        let stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
         assert!(
             run(&LlmSettings::default(), &stage, &[], &meta)
                 .await
@@ -179,7 +179,7 @@ mod tests {
             };
             Some((200, json!({"choices":[{"message":{"content":content}}]})))
         });
-        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
+        let mut stage = serde_json::from_value::<crate::llm::Stage>(serde_json::json!({"name":"summary","service":"ai","input":"transcript","output":"top","prompt":"CUSTOM"})).unwrap();
         stage.prompt = "EXTRACT ACTION ITEMS.".into();
         let settings = crate::llm::LlmSettings {
             base_url: mock.url.clone(),

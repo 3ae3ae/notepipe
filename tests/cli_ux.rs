@@ -17,8 +17,6 @@ impl CliTest {
             .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
             .env("XDG_CACHE_HOME", self.dir.path().join("cache"))
             .env_remove("RUST_LOG")
-            .env_remove("NOTEPIPE_SPEECH_API_KEY")
-            .env_remove("NOTEPIPE_AI_API_KEY")
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap()
@@ -135,7 +133,7 @@ fn config_path_and_missing_file_guidance_use_the_configuration_path() {
 #[test]
 fn missing_or_invalid_sources_fail_with_recovery() {
     let cli = CliTest::new();
-    let missing = cli.run(&["--speech-api", "chat"]);
+    let missing = cli.run(&["--language", "ko"]);
     assert!(!missing.status.success());
     assert!(
         stderr(&missing).contains("Missing video or audio source"),
@@ -157,7 +155,7 @@ fn json_covers_missing_source_parse_and_config_errors() {
     let cli = CliTest::new();
     json_error(&cli.run(&["--json"]));
     json_error(&cli.run(&["./missing.mp4", "--json"]));
-    json_error(&cli.run(&["./missing.mp4", "--json", "--speech-api", "invalid"]));
+    json_error(&cli.run(&["./missing.mp4", "--json", "--transcript", "invalid"]));
     std::fs::write(cli.dir.path().join("lecture.mp4"), []).unwrap();
     cli.config("[output\n");
     let error = json_error(&cli.run(&["./lecture.mp4", "--json"]));
@@ -202,11 +200,11 @@ fn config_show_reports_the_defaults_conversion_uses() {
 #[test]
 fn config_show_reports_ai_adapter_after_base_url() {
     let cli = CliTest::new();
-    cli.config("[ai]\nadapter = ['my-ai-adapter', '--option']\n");
+    cli.config("[services.ai]\nadapter = ['my-ai-adapter', '--option']\n");
     let result = cli.run(&["config", "show"]);
     assert!(result.status.success());
     let text = stdout(&result);
-    let ai = text.split_once("[ai]\n").unwrap().1;
+    let ai = text.split_once("[services.ai]\n").unwrap().1;
     let mut lines = ai.lines();
     assert_eq!(lines.next().unwrap(), format!("  {:<17}: ", "base_url"));
     assert_eq!(
@@ -238,7 +236,7 @@ fn screenshot_mode_is_configurable_and_unknown_keys_are_rejected() {
 fn settings_never_print_saved_keys() {
     let cli = CliTest::new();
     cli.config(
-        "[ai]\napi_key = 'secret-llm-test-key'\n[speech]\napi_key = 'secret-asr-test-key'\n",
+        "[services.ai]\napi_key = 'secret-llm-test-key'\n[services.speech]\napi_key = 'secret-asr-test-key'\n[services.unused]\napi_key_env = 'NOTEPIPE_TEST_UNSET_KEY'\n",
     );
     let result = cli.run(&["config", "show"]);
     assert!(result.status.success());
@@ -391,14 +389,15 @@ fn doctor_reports_required_failures_with_nonzero_exit() {
 }
 
 #[test]
-fn doctor_reports_missing_llm_settings_for_enabled_stages_offline() {
+fn doctor_reports_unknown_service_for_enabled_stages_offline() {
     let cli = CliTest::new();
-    cli.config("[ai]\nbase_url = 'http://127.0.0.1:9/v1'\n[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n");
+    cli.config("[services.ai]\nbase_url = 'http://127.0.0.1:9/v1'\n[[stages]]\nname = 'summary'\nservice = 'missing'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\n");
     let result = cli.run(&["doctor"]);
     assert!(!result.status.success());
     let text = stdout(&result);
     assert!(
-        text.contains("✗ Settings values") && text.contains("AI model is not set"),
+        text.contains("✗ Settings values")
+            && text.contains("Stage summary: no service named missing in [services]"),
         "{text}"
     );
     assert!(stderr(&result).contains("required-tool or configuration issues"));
@@ -408,15 +407,16 @@ fn doctor_reports_missing_llm_settings_for_enabled_stages_offline() {
 fn doctor_reports_ai_adapter_executable_after_speech() {
     let cli = CliTest::new();
     let program = env!("CARGO_BIN_EXE_notepipe");
-    cli.config(&serde_json::json!({"ai": {"adapter": [program]}}).to_string());
+    cli.config(&serde_json::json!({"services": {"ai": {"adapter": [program]}, "unused": {"adapter": [program]}}}).to_string());
     let result = cli.run(&["doctor"]);
     let text = stdout(&result);
-    let speech = text.find("- Speech recognition").unwrap();
+    let speech = text.find("Speech recognition is not set up").unwrap();
     let adapter = text.find(&format!("✓ AI adapter  {program}")).unwrap();
     assert!(adapter > speech, "{text}");
+    assert_eq!(text.matches(&format!("✓ AI adapter  {program}")).count(), 1);
 
     let program = "notepipe-test-missing-ai-adapter";
-    cli.config(&serde_json::json!({"ai": {"adapter": [program]}}).to_string());
+    cli.config(&serde_json::json!({"services": {"ai": {"adapter": [program]}}}).to_string());
     let result = cli.run(&["doctor"]);
     assert!(!result.status.success());
     assert!(
@@ -425,7 +425,7 @@ fn doctor_reports_ai_adapter_executable_after_speech() {
         stdout(&result)
     );
     assert!(stderr(&result).contains("required-tool or configuration issues"));
-    cli.config(&serde_json::json!({"stages":[{"name":"custom","input":"transcript","output":"top","adapter":[program]}]}).to_string());
+    cli.config(&serde_json::json!({"services":{"custom":{"adapter":[program]}},"stages":[{"name":"custom","service":"custom","input":"transcript","output":"top"}]}).to_string());
     let result = cli.run(&["doctor"]);
     assert!(!result.status.success());
     assert!(stdout(&result).contains(&format!("✗ AI adapter {program}")));
@@ -705,7 +705,6 @@ fn source_discovery_never_uses_unset_or_empty_path_entries_as_the_current_direct
             .env("XDG_CONFIG_HOME", cli.dir.path().join("config"))
             .env("XDG_CACHE_HOME", cli.dir.path().join("cache"))
             .env_remove("RUST_LOG")
-            .env_remove("NOTEPIPE_AI_API_KEY")
             .stdin(std::process::Stdio::null());
         if let Some(path) = path {
             command.env("PATH", path);
@@ -768,7 +767,7 @@ fn explicit_config_accepts_json_and_toml_from_files_and_stdin_with_flag_override
         }
     }
     for invalid in [
-        "[ai]\napi_key = 'private-test-key",
+        "[services.ai]\napi_key = 'private-test-key",
         "{\"ai\":{\"api_key\":\"private-test-key",
     ] {
         std::fs::write(cli.dir.path().join("invalid.conf"), invalid).unwrap();
@@ -796,7 +795,7 @@ fn stage_selection_is_explicit_and_validated() {
     cli.config("");
     let error = json_error(&cli.run(&["media.mp4", "--stages", "unknown", "--json"]));
     assert!(error["message"].as_str().unwrap().contains("Unknown stage"));
-    cli.config("[ai]\nbase_url = 'invalid unused URL'\nmodel = ''\n");
+    cli.config("[services.ai]\nbase_url = ''\n");
     let error = json_error(&cli.run(&["media.mp4", "--frame-interval", "0", "--json"]));
     assert!(
         error["message"]
@@ -818,16 +817,11 @@ fn llm_request_tables_are_validated_before_any_source_work() {
         "{ stream = false }",
         "{ response_format = {} }",
     ] {
-        for config in [
-            format!("[ai]\nrequest = {request}\n"),
-            format!(
-                "[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\nrequest = {request}\n"
-            ),
-        ] {
-            cli.config(&config);
-            let error = json_error(&cli.run(&["https://example.test/media", "--json"]));
-            assert!(error["message"].as_str().unwrap().contains("configuration"));
-        }
+        cli.config(&format!(
+            "[[stages]]\nname = 'summary'\nservice = 'ai'\ninput = 'transcript'\noutput = 'top'\nprompt = 'CUSTOM'\nrequest = {request}\n"
+        ));
+        let error = json_error(&cli.run(&["https://example.test/media", "--json"]));
+        assert!(error["message"].as_str().unwrap().contains("configuration"));
     }
     assert!(!cli.dir.path().join("cache").exists());
 }
@@ -841,6 +835,42 @@ fn duplicate_stage_names_are_rejected_before_selection_or_source_work() {
         args.extend(selection);
         let error = json_error(&cli.run(&args));
         assert!(error["message"].as_str().unwrap().contains("configuration"));
+    }
+    assert!(!cli.dir.path().join("cache").exists());
+}
+
+#[test]
+fn removed_ai_model_flag_is_rejected() {
+    let result = CliTest::new().run(&["media.mp4", "--ai-model", "model"]);
+    assert!(!result.status.success());
+    assert!(stderr(&result).contains("unexpected argument '--ai-model'"));
+}
+
+#[test]
+fn service_references_fail_before_source_work() {
+    let cli = CliTest::new();
+    for (config, expected) in [
+        (
+            "[[stages]]\nname = 'summary'\nservice = 'missing'\ninput = 'transcript'\noutput = 'top'\n",
+            "Stage summary: no service named missing in [services]",
+        ),
+        (
+            "[[stages]]\nname = 'summary'\ninput = 'transcript'\noutput = 'top'\n",
+            "Stage summary needs a service",
+        ),
+        (
+            "[speech]\nservice = 'missing'\n",
+            "[speech].service: no service named missing in [services]",
+        ),
+    ] {
+        cli.config(config);
+        for args in [
+            vec!["https://example.test/media", "--json"],
+            vec!["https://example.test/media", "--no-stages", "--json"],
+        ] {
+            let error = json_error(&cli.run(&args));
+            assert_eq!(error["message"], expected);
+        }
     }
     assert!(!cli.dir.path().join("cache").exists());
 }
