@@ -87,6 +87,9 @@ fn no_arguments_or_help_succeed_with_guidance_and_only_supported_flags() {
         }
     }
     let text = stdout(&cli.run(&["--help"]));
+    let prose = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(prose.contains("notepipe writes a note for a recording by running the stages in its configuration file. With the default settings, the note is a folder with note.md, note.json and images/: a summary, then the proofread transcript in paragraphs around screenshots of what was on screen."));
+    assert!(text.contains("Notes without proofreading or a summary"));
     for option in [
         "--out",
         "--config",
