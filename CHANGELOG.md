@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-22
+
 The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizorewww; this entry lists the differences.
 
 ### Added
@@ -24,7 +26,7 @@ The first release as notepipe. It started from course2md 2.0.0-rc.16 by mizoreww
 - `--config FILE|-`, `--subtitle FILE`, `--stages`, `--no-stages`, `NOTEPIPE_SPEECH_API_KEY`, `NOTEPIPE_AI_API_KEY`.
 - `[output].on_complete`, a command run after each note is written.
 - Packages for `uv tool install`, with the official adapters as extras (`notepipe[ytdlp]`), and a release workflow that
-  publishes to PyPI.
+  publishes to PyPI and crates.io.
 
 ### Changed
 
