@@ -17,6 +17,8 @@ parser.add_argument('--record', required=True, type=Path)
 parser.add_argument('--behavior', default='healthy')
 args = parser.parse_args()
 args.record.mkdir(exist_ok=True)
+with (args.record / 'starts').open('a', newline='\n') as log:
+    log.write('start\n')
 
 
 def stop(signum, frame):
@@ -78,6 +80,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         (args.record / 'request').write_bytes(body)
         (args.record / 'authorization').write_text(self.headers.get('Authorization', ''))
         (args.record / 'endpoint').write_text(self.path)
+        if args.behavior == 'slow':
+            (args.record / 'transcribing').write_text('ready')
+            time.sleep(30)
+            (args.record / 'responded').write_text('ready')
         if args.behavior == 'parallel':
             with Handler.lock:
                 Handler.active += 1

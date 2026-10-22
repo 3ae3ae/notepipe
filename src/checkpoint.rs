@@ -232,6 +232,7 @@ impl Checkpoint {
     /// An empty `text` means the chunk was recognized and contains no speech.
     pub fn record(&mut self, start: f64, end: f64, text: &str) -> Result<()> {
         let ev = TranscriptEvent {
+            extra: Default::default(),
             start,
             end,
             text: text.to_string(),
@@ -351,6 +352,7 @@ mod tests {
     fn middle_corruption_is_hard_error() {
         let ev = |s: f64, t: &str| {
             serde_json::to_string(&TranscriptEvent {
+                extra: Default::default(),
                 start: s,
                 end: s + 1.0,
                 text: t.into(),
@@ -377,6 +379,7 @@ mod tests {
         let d = tmpdir("tailwrite");
         let ev = |s: f64, t: &str| {
             serde_json::to_string(&TranscriptEvent {
+                extra: Default::default(),
                 start: s,
                 end: s + 1.0,
                 text: t.into(),
@@ -453,6 +456,7 @@ mod tests {
         // Hand-edited file: a valid last line without a newline gets one before appending.
         let d = tmpdir("nonl");
         let l = serde_json::to_string(&TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 1.0,
             text: "hand-edited".into(),
@@ -501,6 +505,7 @@ mod tests {
     fn duplicate_lines_keep_first() {
         let d = tmpdir("dup");
         let l = serde_json::to_string(&TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 1.0,
             text: "first".into(),
@@ -508,6 +513,7 @@ mod tests {
         })
         .unwrap();
         let l2 = serde_json::to_string(&TranscriptEvent {
+            extra: Default::default(),
             start: 0.0,
             end: 1.0,
             text: "second".into(),

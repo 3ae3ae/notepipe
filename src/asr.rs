@@ -97,10 +97,7 @@ impl EmptyResultTracker {
     }
 }
 
-pub async fn run(
-    cfg: &PipelineConfig,
-    wav: &Path,
-) -> Result<(Vec<TranscriptEvent>, Option<crate::adapter::Adapter>)> {
+pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent>> {
     cfg.validate_asr()?;
     let api = cfg.asr.clone();
     let wav = wav.to_path_buf();
@@ -111,7 +108,7 @@ pub async fn run(
     let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir)?;
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let _cancel_on_drop = crate::runtime::CancelOnDrop(cancelled.clone());
-    tokio::task::spawn_blocking(move || run_api(&api, &wav, &mut cp, &stage, &cancelled))
+    crate::runtime::spawn_blocking(move || run_api(&api, &wav, &mut cp, &stage, &cancelled))
         .await
         .context("Speech recognition task did not complete")?
 }
@@ -129,7 +126,7 @@ fn run_api(
     cp: &mut crate::checkpoint::Checkpoint,
     stage: &str,
     cancelled: &std::sync::atomic::AtomicBool,
-) -> Result<(Vec<TranscriptEvent>, Option<crate::adapter::Adapter>)> {
+) -> Result<Vec<TranscriptEvent>> {
     let check_control = || {
         anyhow::ensure!(
             !cancelled.load(std::sync::atomic::Ordering::Relaxed),
@@ -145,7 +142,7 @@ fn run_api(
     check_control()?;
     tracing::info!(segs = segs.len(), endpoint = %api.base_url, model = %api.model, "api vad");
     if segs.is_empty() {
-        return Ok((no_speech_events(), None));
+        return Ok(no_speech_events());
     }
 
     // Resume: give the workers only the chunks that are not done yet.
@@ -153,23 +150,14 @@ fn run_api(
         .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))
         .collect();
     if pending.is_empty() {
-        return Ok((cp.sorted_events(), None));
+        return Ok(cp.sorted_events());
     }
 
     let tmp = tempfile::Builder::new()
         .prefix("notepipe-asr-")
         .tempdir()
         .context("Could not create a temporary working directory")?;
-    let mut api = api.clone();
-    let mut adapter = if api.command.is_empty() {
-        None
-    } else {
-        let adapter =
-            crate::adapter::Adapter::start_with_control(&api.command, stage, &check_control)?;
-        api.base_url = format!("{}/v1", adapter.base);
-        Some(adapter)
-    };
-    let url = crate::config::asr_endpoint(&api)?;
+    let url = crate::config::asr_endpoint(api)?;
     let pb = crate::progress::Bar::new(format!("{stage}/speech"), segs.len() as u64).with_template(
         "{spinner:.green} asr {pos}/{len} [{bar:32.cyan/blue}] {elapsed} {eta} {msg}",
     );
@@ -214,8 +202,17 @@ fn run_api(
                         break;
                     }
                     let seg = segs[i];
-                    let r =
-                        transcribe_api(&target, &tmp_dir.join(format!("c{i:04}.wav")), seg, wav);
+                    let r = (|| {
+                        let _permit = api
+                            .limit
+                            .as_ref()
+                            .map(|limit| limit.acquire())
+                            .transpose()?;
+                        transcribe_api(&target, &tmp_dir.join(format!("c{i:04}.wav")), seg, wav)
+                    })();
+                    if r.is_err() {
+                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     if tx.send((i, r)).is_err() {
                         break;
                     }
@@ -231,9 +228,6 @@ fn run_api(
             {
                 err = Some(error);
                 abort.store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Some(adapter) = &mut adapter {
-                    adapter.stop();
-                }
             }
             let (i, r) = match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(result) => result,
@@ -261,11 +255,6 @@ fn run_api(
                     abort.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
-            if err.is_some()
-                && let Some(adapter) = &mut adapter
-            {
-                adapter.stop();
-            }
             // Every collected result, empty or not, advances progress exactly once, as in the sequential path.
             pb.inc(1);
         }
@@ -278,11 +267,7 @@ fn run_api(
     });
     pb.finish();
     if let Some(e) = err {
-        return Err(if let Some(adapter) = &adapter {
-            adapter.stderr.attach(e, "Speech adapter output")
-        } else {
-            e
-        });
+        return Err(e);
     }
     check_control()?;
     // Events come from the checkpoint, where the loop recorded them, sorted by time.
@@ -292,7 +277,7 @@ fn run_api(
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
         "asr done"
     );
-    Ok((events, adapter))
+    Ok(events)
 }
 
 /// Bounded retries: retryable errors back off with [`crate::runtime::retry_backoff`] (cancellable while waiting),
@@ -328,7 +313,11 @@ fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_js
                     request.set("Authorization", &format!("Bearer {}", t.key))
                 };
                 (t.check_control)().map_err(crate::dispatch::Failure::local)?;
-                crate::dispatch::receive(request.send_bytes(body))
+                let body = body.to_vec();
+                crate::runtime::interruptible_http(t.check_control, move || {
+                    crate::dispatch::receive(request.send_bytes(&body))
+                })
+                .map_err(crate::dispatch::Failure::local)?
             },
             |value| {
                 anyhow::ensure!(
@@ -839,59 +828,5 @@ mod http_tests {
                     .ends_with(&format!(" The speech is in {language}."))
             );
         }
-    }
-    #[cfg(unix)]
-    #[test]
-    fn dropping_the_async_transcription_stops_its_blocking_adapter() {
-        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
-            if crate::runtime::which("ffmpeg").is_none() {
-                return;
-            }
-            let Some(python) = crate::runtime::which("python3") else {
-                return;
-            };
-            let dir = tempfile::tempdir().unwrap();
-            let record = dir.path().join("adapter");
-            let mut cfg =
-                crate::options::resolve("video".into(), &Default::default(), &Default::default())
-                    .unwrap();
-            cfg.out_dir = dir.path().join("work");
-            cfg.asr.command = vec![
-                python.display().to_string(),
-                "-u".into(),
-                concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/asr_adapter.py").into(),
-                "--record".into(),
-                record.display().to_string(),
-                "--behavior".into(),
-                "hang".into(),
-            ];
-            let task = tokio::spawn(async move {
-                run(
-                    &cfg,
-                    Path::new(concat!(
-                        env!("CARGO_MANIFEST_DIR"),
-                        "/tests/fixtures/speech.wav"
-                    )),
-                )
-                .await
-            });
-            let gate = record.join("transcribing");
-            let start = Instant::now();
-            while !gate.is_file() && start.elapsed() < Duration::from_secs(60) {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            let reached_request = gate.is_file();
-            task.abort();
-            assert!(matches!(task.await, Err(error) if error.is_cancelled()));
-            assert!(reached_request);
-            let start = Instant::now();
-            while !record.join("terminated").is_file() && start.elapsed() < Duration::from_secs(30)
-            {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            assert!(record.join("terminated").is_file());
-            assert!(!dir.path().join("work/asr.jsonl").exists());
-        });
     }
 }

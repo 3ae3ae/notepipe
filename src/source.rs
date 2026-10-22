@@ -16,6 +16,8 @@ const MAX_LINE_BYTES: u64 = 1024 * 1024;
 /// Public, vendor-neutral note metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MediaMeta {
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
     pub title: String,
     pub author: String,
     pub duration: f64,
@@ -26,14 +28,14 @@ pub struct MediaMeta {
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Output {
-    media: String,
+    pub(crate) media: String,
     #[serde(default)]
     title: String,
     #[serde(default)]
     author: String,
     #[serde(default)]
     duration: f64,
-    language: Option<String>,
+    pub(crate) language: Option<String>,
     url: Option<String>,
     seek_url: Option<String>,
     #[serde(default)]
@@ -66,10 +68,16 @@ impl Output {
         if !path.is_file() {
             return Ok(None);
         }
-        Ok(Some(
-            serde_json::from_slice(&std::fs::read(path)?)
-                .context("Invalid download adapter cache")?,
-        ))
+        let output: Self = serde_json::from_slice(&std::fs::read(path)?)
+            .context("Invalid download adapter cache")?;
+        ensure!(
+            !output.media.is_empty()
+                && Path::new(&output.media)
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_))),
+            "Invalid download adapter path; paths must stay inside its output directory"
+        );
+        Ok(Some(output))
     }
 
     pub(crate) fn metadata(&self, source: &str) -> Result<MediaMeta> {
@@ -85,6 +93,7 @@ impl Output {
                 .context("Invalid download adapter seek URL")?;
         }
         Ok(MediaMeta {
+            extra: Default::default(),
             title: if self.title.trim().is_empty() {
                 Path::new(&self.media)
                     .file_stem()
@@ -120,88 +129,7 @@ impl Output {
             .collect()
     }
 
-    pub(crate) fn media_path(&self, cache: &Path) -> Result<PathBuf> {
-        output_path(&cache.join("files"), &self.media)
-    }
-
-    pub(crate) fn retained_media(&self, cache: &Path, note: &Path) -> Result<Option<PathBuf>> {
-        let stages = note.join("stages");
-        if !stages.is_dir() {
-            return Ok(None);
-        }
-        let info: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(cache.join("complete.json"))?)?;
-        for entry in std::fs::read_dir(stages)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let saved = entry.path().join("info.json");
-            if saved.is_file()
-                && serde_json::from_slice::<serde_json::Value>(&std::fs::read(saved)?)? == info
-            {
-                match output_path(&entry.path(), &self.media) {
-                    Ok(path) => return Ok(Some(path)),
-                    Err(error)
-                        if error
-                            .downcast_ref::<std::io::Error>()
-                            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) => {}
-                    Err(error) => return Err(error),
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    pub(crate) fn save(&self, cache: &Path, media: &Path, destination: &Path) -> Result<()> {
-        std::fs::create_dir_all(destination)?;
-        for caption in &self.subtitles {
-            let source = output_path(&cache.join("files"), &caption.path)?;
-            let target = destination.join(&caption.path);
-            std::fs::create_dir_all(target.parent().unwrap())?;
-            std::io::copy(
-                &mut std::fs::File::open(source)?,
-                &mut std::fs::File::create(target)?,
-            )?;
-        }
-        let move_media = match self.media_path(cache) {
-            Ok(path) => path == media,
-            Err(error)
-                if error
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
-            {
-                false
-            }
-            Err(error) => return Err(error),
-        };
-        let target = destination.join(&self.media);
-        std::fs::create_dir_all(target.parent().unwrap())?;
-        if move_media {
-            match std::fs::rename(media, &target) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
-                    std::io::copy(
-                        &mut std::fs::File::open(media)?,
-                        &mut std::fs::File::create(&target)?,
-                    )?;
-                    std::fs::remove_file(media)?;
-                }
-                Err(error) => return Err(error.into()),
-            }
-        } else {
-            std::io::copy(
-                &mut std::fs::File::open(media)?,
-                &mut std::fs::File::create(target)?,
-            )?;
-        }
-        std::io::copy(
-            &mut std::fs::File::open(cache.join("complete.json"))?,
-            &mut std::fs::File::create(destination.join("info.json"))?,
-        )?;
-        Ok(())
-    }
-
+    #[cfg(test)]
     pub(crate) fn preferred_subtitle(
         &self,
         cache: &Path,
@@ -212,6 +140,30 @@ impl Output {
         tracks.retain(|track| automatic || track.kind != subtitle::SubtitleKind::Automatic);
         subtitle::sort_tracks(&mut tracks, language, self.language.as_deref());
         Ok(tracks.into_iter().next().map(|track| track.path))
+    }
+
+    pub(crate) fn info(root: &Path) -> Result<Self> {
+        serde_json::from_slice(&std::fs::read(root.join("info.json"))?)
+            .context("Invalid media info")
+    }
+    pub(crate) fn file(&self, root: &Path, source: &str) -> Result<PathBuf> {
+        if Path::new(source).is_file() && self.media == source {
+            return Ok(PathBuf::from(source));
+        }
+        output_path(root, &self.media)
+    }
+    pub(crate) fn subtitle_tracks(
+        &self,
+        root: &Path,
+        source: &str,
+    ) -> Result<Vec<subtitle::SubtitleTrack>> {
+        if Path::new(source).is_file() {
+            return Ok(subtitle::sidecar_tracks(Path::new(source))
+                .into_iter()
+                .filter(|t| self.subtitles.iter().any(|c| Path::new(&c.path) == t.path))
+                .collect());
+        }
+        self.tracks(root)
     }
 
     fn resolve(&self, root: &Path, source: &str) -> Result<Resolved> {
@@ -316,7 +268,6 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path, stage: &str) -> R
     let mut eof = false;
     let poll = Duration::from_millis(50);
     let mut exited = tokio::time::interval_at(tokio::time::Instant::now() + poll, poll);
-    crate::progress::stage_label(stage, "start", "Downloading media");
     let result = async {
         let status = loop {
             let mut bounded = (&mut stdout).take(MAX_LINE_BYTES + 1 - line.len() as u64);
@@ -363,7 +314,6 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path, stage: &str) -> R
             Ok(resolved)
         })
         .map_err(|error| stderr.attach(error, "Download adapter diagnostics"))?;
-    crate::progress::stage_label(stage, "done", "Downloading media");
     Ok(result)
 }
 
@@ -390,42 +340,11 @@ mod tests {
     }
 
     #[test]
-    fn saved_download_info_preserves_the_final_result_without_added_defaults() {
-        let root = tempfile::tempdir().unwrap();
-        let cache = root.path().join("cache");
-        std::fs::create_dir_all(cache.join("files/nested")).unwrap();
-        std::fs::write(cache.join("files/nested/media.wav"), b"media").unwrap();
+    fn download_info_preserves_the_final_result_without_added_defaults() {
         let value = serde_json::json!({"media":"nested/media.wav","extension":{"original":true}});
         let mut last = None;
         accept_line("fetch", &serde_json::to_vec(&value).unwrap(), &mut last).unwrap();
-        assert_eq!(last, Some(value.clone()));
-        std::fs::write(
-            cache.join("complete.json"),
-            serde_json::to_vec(&last.unwrap()).unwrap(),
-        )
-        .unwrap();
-        let output = Output::read(&cache).unwrap().unwrap();
-        let media = output.media_path(&cache).unwrap();
-        let destination = root.path().join("note/stages/fetch");
-        output.save(&cache, &media, &destination).unwrap();
-        assert!(!media.exists());
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(
-                &std::fs::read(destination.join("info.json")).unwrap()
-            )
-            .unwrap(),
-            value
-        );
-        assert_eq!(
-            std::fs::read(destination.join("nested/media.wav")).unwrap(),
-            b"media"
-        );
-        assert_eq!(
-            output
-                .retained_media(&cache, &root.path().join("note"))
-                .unwrap(),
-            Some(destination.join("nested/media.wav").canonicalize().unwrap())
-        );
+        assert_eq!(last, Some(value));
     }
 
     #[test]

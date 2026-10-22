@@ -64,7 +64,7 @@ pub struct Cli {
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct RunOpts {
-    /// Folder that receives the note folders (default: the current folder; config: the note stage's dir)
+    /// Folder that receives the note folders (default: the current folder; config: out)
     #[arg(short, long, value_name = "DIR", help_heading = "Output")]
     pub out: Option<PathBuf>,
 

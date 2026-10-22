@@ -1,5 +1,5 @@
 //! Build a complete note folder before replacing the previous publication.
-use crate::{render, runtime, source::MediaMeta, timeline::Section};
+use crate::{runtime, source::MediaMeta, timeline::Section};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,44 +12,55 @@ pub struct Document {
     pub schema: u32,
     pub meta: MediaMeta,
     pub sections: Vec<Section>,
-    pub top: Vec<crate::timeline::StageText>,
-    pub warnings: Vec<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-pub enum StageOutput {
-    Json(String, serde_json::Value),
-    Markdown(String, String),
-    Download {
-        name: String,
-        cache: PathBuf,
-        media: PathBuf,
-    },
+pub struct Publication {
+    pub stage: String,
+    pub output: String,
+    pub name: String,
+    pub images: Vec<String>,
 }
 
-pub fn note_sections(sections: &[Section]) -> Vec<Section> {
-    let mut sections = sections.to_vec();
-    let mut images = BTreeMap::new();
-    for section in &mut sections {
-        if !section.image.is_empty() {
-            let number = images.len() + 1;
-            section.image = images
-                .entry(section.image.clone())
-                .or_insert_with(|| format!("images/{number:04}.jpg"))
-                .clone();
+impl Document {
+    pub fn read(path: &Path, work: &Path) -> Result<Self> {
+        let document: Self = serde_json::from_slice(&std::fs::read(path)?)?;
+        anyhow::ensure!(document.schema == 3, "Invalid document schema; expected 3");
+        anyhow::ensure!(
+            document.meta.duration.is_finite() && document.meta.duration >= 0.,
+            "Invalid document duration"
+        );
+        for section in &document.sections {
+            anyhow::ensure!(
+                section.t.is_finite()
+                    && section.t >= 0.
+                    && section.end.is_finite()
+                    && section.end >= section.t,
+                "Invalid document section times"
+            );
+            anyhow::ensure!(
+                section.speech.iter().all(|e| e.start.is_finite()
+                    && e.end.is_finite()
+                    && e.start >= 0.
+                    && e.end >= e.start),
+                "Invalid subtitle timestamps"
+            );
+            if !section.image.is_empty() {
+                anyhow::ensure!(
+                    safe_asset_path(work, &section.image)?.is_file(),
+                    "Invalid note asset path"
+                );
+            }
         }
+        Ok(document)
     }
-    sections
-}
-
-pub fn retained_download(root: &Path, meta: &MediaMeta, cache: &Path) -> Result<Option<PathBuf>> {
-    if !root.is_dir() {
-        return Ok(None);
-    }
-    let note = destination(root, meta)?;
-    let output = crate::source::Output::read(cache)?;
-    match output {
-        Some(output) => output.retained_media(cache, &note),
-        None => Ok(None),
+    pub fn images(&self) -> Vec<String> {
+        self.sections
+            .iter()
+            .map(|s| s.image.clone())
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 }
 
@@ -65,7 +76,7 @@ pub fn safe_asset_path(root: &Path, relative: &str) -> Result<PathBuf> {
         canonical.starts_with(root.canonicalize()?),
         "Asset escapes note directory"
     );
-    Ok(full)
+    Ok(canonical)
 }
 
 pub fn has_readable_body(sections: &[Section]) -> bool {
@@ -79,26 +90,15 @@ fn matches_source(note: &Path, source: &str) -> Result<bool> {
     if note.symlink_metadata()?.file_type().is_symlink() || !note.is_dir() {
         return Ok(false);
     }
-    let path = note.join("note.md");
+    let path = note.join(".notepipe.json");
     if !path.is_file() {
         return Ok(false);
     }
-    let text = std::fs::read_to_string(path)?;
-    let mut lines = text.lines();
-    if lines.next() != Some("---") {
+    if path.symlink_metadata()?.is_symlink() {
         return Ok(false);
     }
-    let mut found = None;
-    // shortcut: ownership reads our JSON-quoted YAML scalar, add a YAML parser if other scalar styles must be supported.
-    for line in lines {
-        if line == "---" {
-            return Ok(found.as_deref() == Some(source));
-        }
-        if let Some(value) = line.strip_prefix("source: ") {
-            found = serde_json::from_str::<String>(value).ok();
-        }
-    }
-    Ok(false)
+    let marker = serde_json::from_slice::<serde_json::Value>(&std::fs::read(path)?).ok();
+    Ok(marker.as_ref().and_then(|m| m["source"].as_str()) == Some(source))
 }
 
 const TRANSACTION_FILE: &str = ".notepipe-transaction.json";
@@ -312,93 +312,110 @@ fn destination(root: &Path, meta: &MediaMeta) -> Result<PathBuf> {
 
 pub fn publish(
     root: &Path,
-    frames_root: &Path,
-    mut document: Document,
-    outputs: Vec<StageOutput>,
-) -> Result<(PathBuf, Vec<String>)> {
+    work: &Path,
+    meta: &MediaMeta,
+    outputs: &[Publication],
+    warnings: &mut Vec<String>,
+) -> Result<(Option<PathBuf>, BTreeMap<String, String>)> {
     runtime::check_cancelled()?;
-    anyhow::ensure!(
-        has_readable_body(&document.sections),
-        "No readable transcript"
-    );
-    std::fs::create_dir_all(root)?;
-    let root = root.canonicalize()?;
-    let _lock = runtime::lock_file(&root.join(".notepipe.lock"))?;
-    document.warnings.extend(recover_locked(&root)?);
-    anyhow::ensure!(
-        !root.join(TRANSACTION_FILE).try_exists()?,
-        "Unfinished note transaction remains in {}",
-        root.display()
-    );
-    let destination = destination(&root, &document.meta)?;
-    let name = destination.file_name().unwrap().to_string_lossy();
-    let staging = tempfile::Builder::new()
-        .prefix(&format!(".{name}.notepipe-new-"))
-        .tempdir_in(&root)?;
-    let previous = tempfile::Builder::new()
-        .prefix(&format!(".{name}.notepipe-old-"))
-        .tempdir_in(&root)?
-        .keep();
-    std::fs::remove_dir(&previous)?;
-    let mut transaction = Transaction {
-        name: name.into_owned(),
-        staging: staging
-            .path()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned(),
-        old: previous.file_name().unwrap().to_string_lossy().into_owned(),
-        phase: Phase::Staged,
-    };
-    let normalized = note_sections(&document.sections);
-    for (section, normalized) in document.sections.iter_mut().zip(normalized) {
-        runtime::check_cancelled()?;
-        if !section.image.is_empty() {
-            let target = staging.path().join(&normalized.image);
-            if !target.is_file() {
-                let image = safe_asset_path(frames_root, &section.image)?;
-                std::fs::create_dir_all(target.parent().unwrap())?;
-                std::io::copy(
-                    &mut std::fs::File::open(image)?,
-                    &mut std::fs::File::create(target)?,
-                )?;
-            }
-        }
-        section.image = normalized.image;
-    }
-    if !outputs.is_empty() {
-        let stages = staging.path().join("stages");
-        std::fs::create_dir(&stages)?;
-        for output in outputs {
+    let mut files = BTreeMap::new();
+    let folder_outputs = outputs.iter().filter(|o| o.name != "-").collect::<Vec<_>>();
+    let destination = if folder_outputs.is_empty() {
+        None
+    } else {
+        std::fs::create_dir_all(root)?;
+        let root = root.canonicalize()?;
+        let _lock = runtime::lock_file(&root.join(".notepipe.lock"))?;
+        warnings.extend(recover_locked(&root)?);
+        anyhow::ensure!(
+            !root.join(TRANSACTION_FILE).try_exists()?,
+            "Unfinished note transaction remains in {}",
+            root.display()
+        );
+        let destination = destination(&root, meta)?;
+        let name = destination.file_name().unwrap().to_string_lossy();
+        let staging = tempfile::Builder::new()
+            .prefix(&format!(".{name}.notepipe-new-"))
+            .tempdir_in(&root)?;
+        let previous = tempfile::Builder::new()
+            .prefix(&format!(".{name}.notepipe-old-"))
+            .tempdir_in(&root)?
+            .keep();
+        std::fs::remove_dir(&previous)?;
+        let mut transaction = Transaction {
+            name: name.into_owned(),
+            staging: staging
+                .path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            old: previous.file_name().unwrap().to_string_lossy().into_owned(),
+            phase: Phase::Staged,
+        };
+        for output in &folder_outputs {
             runtime::check_cancelled()?;
-            match output {
-                StageOutput::Json(name, value) => std::fs::write(
-                    stages.join(format!("{name}.json")),
-                    serde_json::to_vec_pretty(&value)?,
-                )?,
-                StageOutput::Markdown(name, text) => {
-                    std::fs::write(stages.join(format!("{name}.md")), text)?
-                }
-                StageOutput::Download { name, cache, media } => {
-                    crate::source::Output::read(&cache)?
-                        .context("Missing completed source output")?
-                        .save(&cache, &media, &stages.join(name))?;
-                }
+            copy_path(
+                &work.join(&output.output),
+                &staging.path().join(&output.name),
+            )?;
+            files.insert(
+                output.stage.clone(),
+                destination.join(&output.name).display().to_string(),
+            );
+        }
+        let images: std::collections::BTreeSet<_> =
+            outputs.iter().flat_map(|o| &o.images).collect();
+        for image in images {
+            let source = safe_asset_path(work, image)?;
+            let target = staging.path().join(image);
+            if target.exists() {
+                anyhow::ensure!(
+                    target.is_file()
+                        && runtime::file_digest(&source)? == runtime::file_digest(&target)?,
+                    "Published output conflicts with image {image}"
+                );
+            } else {
+                copy_path(&source, &target)?;
             }
         }
+        std::fs::write(
+            staging.path().join(".notepipe.json"),
+            serde_json::to_vec(&serde_json::json!({"source":meta.source}))?,
+        )?;
+        runtime::check_cancelled()?;
+        transaction.write(&root)?;
+        let _ = staging.keep();
+        commit(&root, &mut transaction, warnings)?;
+        Some(destination)
+    };
+    for output in outputs.iter().filter(|o| o.name == "-") {
+        files.insert(output.stage.clone(), "-".into());
     }
-    let markdown = render::render_markdown(&document.meta, &document.sections, &document.top)?;
-    std::fs::write(staging.path().join("note.md"), markdown)?;
-    std::fs::write(
-        staging.path().join("note.json"),
-        serde_json::to_vec_pretty(&document)?,
-    )?;
-    runtime::check_cancelled()?;
-    transaction.write(&root)?;
-    let _ = staging.keep();
-    commit(&root, &mut transaction, &mut document.warnings)?;
-    Ok((destination, document.warnings))
+    Ok((destination, files))
+}
+
+pub fn copy_path(source: &Path, target: &Path) -> Result<()> {
+    anyhow::ensure!(
+        !source.symlink_metadata()?.is_symlink(),
+        "Invalid note asset path"
+    );
+    if source.is_dir() {
+        std::fs::create_dir_all(target)?;
+        for entry in std::fs::read_dir(source)? {
+            let entry = entry?;
+            copy_path(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    } else {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::io::copy(
+            &mut std::fs::File::open(source)?,
+            &mut std::fs::File::create(target)?,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -406,8 +423,9 @@ mod tests {
     use super::*;
     fn document(source: &str) -> Document {
         Document {
-            schema: 2,
+            schema: 3,
             meta: MediaMeta {
+                extra: Default::default(),
                 title: "Shared title".into(),
                 source: source.into(),
                 author: String::new(),
@@ -415,22 +433,44 @@ mod tests {
                 seek_url: None,
             },
             sections: vec![Section {
+                extra: Default::default(),
                 t: 0.,
                 end: 1.,
                 image: String::new(),
                 speech: vec![crate::timeline::TranscriptEvent {
+                    extra: Default::default(),
                     start: 0.,
                     end: 1.,
                     text: "Original body".into(),
                     raw: None,
                 }],
             }],
-            top: Vec::new(),
-            warnings: vec![],
+            extra: Default::default(),
         }
     }
-    fn publish(root: &Path, frames: &Path, document: &Document) -> Result<(PathBuf, Vec<String>)> {
-        super::publish(root, frames, document.clone(), Vec::new())
+    fn publish(root: &Path, work: &Path, document: &Document) -> Result<(PathBuf, Vec<String>)> {
+        std::fs::write(work.join("test.json"), serde_json::to_vec(document)?)?;
+        std::fs::write(
+            work.join("test.md"),
+            crate::render::markdown(&[crate::render::document(&document.sections)]),
+        )?;
+        let mut warnings = Vec::new();
+        let outputs = vec![
+            Publication {
+                stage: "document".into(),
+                output: "test.json".into(),
+                name: "note.json".into(),
+                images: document.images(),
+            },
+            Publication {
+                stage: "markdown".into(),
+                output: "test.md".into(),
+                name: "note.md".into(),
+                images: document.images(),
+            },
+        ];
+        let (note, _) = super::publish(root, work, &document.meta, &outputs, &mut warnings)?;
+        Ok((note.unwrap(), warnings))
     }
 
     fn transaction(name: &str, phase: Phase) -> Transaction {
@@ -448,20 +488,14 @@ mod tests {
         let mut first = document("https://example.test/one");
         std::fs::write(temp.path().join("frame.jpg"), "image").unwrap();
         first.sections[0].image = "frame.jpg".into();
-        first.warnings.push("Known warning".into());
         let (one, _) = publish(&root, temp.path(), &first).unwrap();
         assert_eq!(one.file_name().unwrap(), "Shared-title");
         let published: Document =
             serde_json::from_slice(&std::fs::read(one.join("note.json")).unwrap()).unwrap();
-        assert_eq!(published.sections[0].image, "images/0001.jpg");
+        assert_eq!(published.sections[0].image, "frame.jpg");
         assert!(one.join(&published.sections[0].image).is_file());
-        assert_eq!(published.warnings, first.warnings);
         let (two, _) = publish(&root, temp.path(), &document("https://example.test/two")).unwrap();
         assert_eq!(two.file_name().unwrap(), "Shared-title-2");
-        first.top.push(crate::timeline::StageText {
-            stage: "summary".into(),
-            text: "Updated summary".into(),
-        });
         assert_eq!(publish(&root, temp.path(), &first).unwrap().0, one);
         let previous = std::fs::read(one.join("note.md")).unwrap();
         let previous_json = std::fs::read(one.join("note.json")).unwrap();
@@ -469,20 +503,23 @@ mod tests {
         assert!(publish(&root, temp.path(), &first).is_err());
         assert_eq!(std::fs::read(one.join("note.md")).unwrap(), previous);
         assert_eq!(std::fs::read(one.join("note.json")).unwrap(), previous_json);
-        assert!(
-            std::fs::read_to_string(two.join("note.md"))
-                .unwrap()
-                .contains("https://example.test/two")
-        );
+        assert!(matches_source(&two, "https://example.test/two").unwrap());
     }
     #[test]
-    fn incomplete_front_matter_does_not_claim_ownership() {
+    fn folders_without_a_marker_are_not_claimed() {
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("note.md");
-        std::fs::write(&path, "---\nsource: \"same\"\nUser text").unwrap();
-        assert!(!matches_source(temp.path(), "same").unwrap());
-        std::fs::write(&path, "---\r\nsource: \"same\"\r\n---\r\nUser text").unwrap();
-        assert!(matches_source(temp.path(), "same").unwrap());
+        let note = temp.path().join("Shared-title");
+        std::fs::create_dir(&note).unwrap();
+        std::fs::write(note.join("note.md"), "---\nsource: \"one\"\n---\nUser text").unwrap();
+        assert_eq!(
+            publish(temp.path(), temp.path(), &document("one"))
+                .unwrap()
+                .0
+                .file_name()
+                .unwrap(),
+            "Shared-title-2"
+        );
+        assert!(note.join("note.md").is_file());
     }
 
     #[test]
@@ -490,7 +527,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
         assert!(recover(root.path()).is_err());
-        assert!(super::publish(root.path(), root.path(), document("one"), Vec::new()).is_err());
+        assert!(publish(root.path(), root.path(), &document("one")).is_err());
         drop(lock);
         recover(root.path()).unwrap();
         publish(root.path(), root.path(), &document("one")).unwrap();
@@ -810,7 +847,6 @@ mod tests {
         );
         let saved: Document =
             serde_json::from_slice(&std::fs::read(note.join("note.json")).unwrap()).unwrap();
-        assert_eq!(saved.warnings, doc.warnings);
         assert_eq!(saved.sections[0].speech[0].text, "Updated body");
         let previous = std::fs::read_dir(&root)
             .unwrap()

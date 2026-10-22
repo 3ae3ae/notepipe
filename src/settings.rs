@@ -23,8 +23,10 @@ impl std::fmt::Display for AsrMode {
 }
 
 /// Resolved speech settings; credentials never come from literal configuration values.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Asr {
+    #[serde(skip)]
+    pub limit: Option<std::sync::Arc<crate::runtime::RequestLimit>>,
     pub mode: AsrMode,
     pub base_url: String,
     pub api_key: String,
@@ -39,6 +41,7 @@ pub struct Asr {
 impl Default for Asr {
     fn default() -> Self {
         Self {
+            limit: None,
             mode: AsrMode::default(),
             base_url: String::new(),
             api_key: String::new(),
@@ -54,6 +57,7 @@ impl Default for Asr {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Source {
     pub command: Vec<String>,
 }
@@ -64,9 +68,7 @@ pub struct Provider {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub args: Option<Vec<String>>,
+    pub command: Option<Vec<String>>,
     pub api_key_env: String,
     pub concurrency: i64,
 }
@@ -75,7 +77,6 @@ impl Default for Provider {
         Self {
             base_url: None,
             command: None,
-            args: None,
             api_key_env: String::new(),
             concurrency: 4,
         }
@@ -92,10 +93,6 @@ impl Provider {
             "Provider {name}: set base_url or command"
         );
         anyhow::ensure!(
-            self.args.is_none() || self.command.is_some(),
-            "Provider {name}: args need a command"
-        );
-        anyhow::ensure!(
             (1..=16).contains(&self.concurrency),
             "Provider {name}: concurrency must be 1 to 16"
         );
@@ -110,19 +107,12 @@ impl Provider {
             );
         }
         if let Some(command) = &self.command {
-            anyhow::ensure!(
-                !command.trim().is_empty(),
-                "The adapter command must name an executable."
-            );
+            validate_command(command)?;
         }
         Ok(())
     }
     pub fn argv(&self) -> Vec<String> {
-        self.command
-            .iter()
-            .cloned()
-            .chain(self.args.iter().flatten().cloned())
-            .collect()
+        self.command.clone().unwrap_or_default()
     }
     pub fn key(&self, name: &str) -> Result<String> {
         if self.api_key_env.is_empty() {
@@ -139,37 +129,21 @@ impl Provider {
             })
     }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Program {
-    pub command: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub keep: bool,
-}
-impl Program {
-    pub fn argv(&self) -> Vec<String> {
-        std::iter::once(self.command.clone())
-            .chain(self.args.clone())
-            .collect()
-    }
+fn validate_command(command: &[String]) -> Result<()> {
+    anyhow::ensure!(
+        command.first().is_some_and(|p| !p.trim().is_empty()),
+        "The adapter command must name an executable."
+    );
+    Ok(())
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Subtitles {
-    pub sidecar: bool,
-    pub downloaded: bool,
     pub automatic: bool,
 }
 impl Default for Subtitles {
     fn default() -> Self {
-        Self {
-            sidecar: true,
-            downloaded: true,
-            automatic: true,
-        }
+        Self { automatic: true }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -197,7 +171,6 @@ impl Default for Speech {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Transcript {
-    pub keep: bool,
     pub language: String,
     pub sources: Vec<String>,
     pub subtitles: Subtitles,
@@ -206,7 +179,6 @@ pub struct Transcript {
 impl Default for Transcript {
     fn default() -> Self {
         Self {
-            keep: false,
             language: "auto".into(),
             sources: vec!["subtitles".into(), "speech".into()],
             subtitles: Subtitles::default(),
@@ -217,7 +189,6 @@ impl Default for Transcript {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Screenshots {
-    pub keep: bool,
     pub mode: crate::config::ScreenshotMode,
     pub sensitivity: f64,
     pub frame_interval: f64,
@@ -229,7 +200,6 @@ pub struct Screenshots {
 impl Default for Screenshots {
     fn default() -> Self {
         Self {
-            keep: false,
             mode: Default::default(),
             sensitivity: crate::config::DEFAULT_SIMILARITY,
             frame_interval: crate::config::DEFAULT_SAMPLE_INTERVAL,
@@ -245,12 +215,9 @@ const DEFAULT_CHUNK_SIZE: i64 = 25_000;
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Llm {
-    #[serde(deserialize_with = "read_mode")]
-    pub reads: String,
     pub provider: String,
     pub model: String,
     pub prompt: String,
-    pub keep: bool,
     #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
     #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
@@ -259,77 +226,117 @@ pub struct Llm {
     pub chunk_size: Option<i64>,
     pub request: serde_json::Map<String, serde_json::Value>,
 }
-fn read_mode<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<String, D::Error> {
-    let value = serde_json::Value::deserialize(deserializer)?;
-    Ok(value.as_str().unwrap_or_default().to_owned())
-}
 fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     deserializer: D,
 ) -> std::result::Result<Option<T>, D::Error> {
     T::deserialize(deserializer).map(Some)
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct Note {
-    pub dir: PathBuf,
-}
-impl Default for Note {
-    fn default() -> Self {
-        Self {
-            dir: crate::config::DEFAULT_OUT_DIR.into(),
-        }
-    }
+#[serde(deny_unknown_fields)]
+pub struct Run {
+    pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub produces: Option<Kind>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum Stage {
-    Download(Program),
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+pub enum StageType {
+    Download(Source),
     Transcript(Transcript),
     Screenshots(Screenshots),
+    Document {},
     Llm(Llm),
-    Filter(Program),
-    Note(Note),
+    Markdown {},
+    Run(Run),
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Media,
+    Transcript,
+    Images,
+    Document,
+    Markdown,
+    File,
+}
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Media => "media",
+            Self::Transcript => "transcript",
+            Self::Images => "images",
+            Self::Document => "document",
+            Self::Markdown => "markdown",
+            Self::File => "file",
+        })
+    }
+}
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Stage {
+    pub input: Vec<String>,
+    pub output: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publish: Option<String>,
+    #[serde(flatten)]
+    pub kind: StageType,
+}
+impl<'de> Deserialize<'de> for Stage {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut value = serde_json::Map::<String, serde_json::Value>::deserialize(d)?;
+        let input = match value.remove("input") {
+            None => Vec::new(),
+            Some(serde_json::Value::String(input)) => vec![input],
+            Some(input) => serde_json::from_value(input).map_err(D::Error::custom)?,
+        };
+        let output = serde_json::from_value(
+            value
+                .remove("output")
+                .ok_or_else(|| D::Error::missing_field("output"))?,
+        )
+        .map_err(D::Error::custom)?;
+        let publish = value
+            .remove("publish")
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(D::Error::custom)?;
+        let kind = serde_json::from_value(value.into()).map_err(D::Error::custom)?;
+        Ok(Self {
+            input,
+            output,
+            publish,
+            kind,
+        })
+    }
+}
+pub fn plain_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && name != "source" && !name.contains(['/', '\\'])
 }
 impl Stage {
-    pub fn rank(&self) -> u8 {
-        match self {
-            Self::Download(_) => 0,
-            Self::Transcript(_) | Self::Screenshots(_) => 1,
-            Self::Llm(_) | Self::Filter(_) => 2,
-            Self::Note(_) => 3,
-        }
-    }
-    pub fn provider(&self) -> Option<&str> {
-        match self {
-            Self::Transcript(t)
-                if t.sources.iter().any(|s| s == "speech") || !t.speech.provider.is_empty() =>
-            {
-                Some(&t.speech.provider)
-            }
-            Self::Llm(p) => Some(&p.provider),
-            _ => None,
+    pub fn output_kind(&self) -> Kind {
+        match &self.kind {
+            StageType::Download(_) => Kind::Media,
+            StageType::Transcript(_) => Kind::Transcript,
+            StageType::Screenshots(_) => Kind::Images,
+            StageType::Document {} => Kind::Document,
+            StageType::Llm(_) if self.output.ends_with(".json") => Kind::Document,
+            StageType::Llm(_) | StageType::Markdown {} => Kind::Markdown,
+            StageType::Run(r) => r.produces.unwrap_or(Kind::File),
         }
     }
     pub fn used_provider(&self) -> Option<&str> {
-        if matches!(self, Self::Transcript(t) if !t.sources.iter().any(|source| source == "speech"))
-        {
-            return None;
-        }
-        self.provider()
-    }
-    pub fn keep(&self) -> bool {
-        match self {
-            Self::Download(p) | Self::Filter(p) => p.keep,
-            Self::Transcript(t) => t.keep,
-            Self::Screenshots(s) => s.keep,
-            Self::Llm(l) => l.keep,
-            Self::Note(_) => false,
+        match &self.kind {
+            StageType::Transcript(t) if t.sources.iter().any(|s| s == "speech") => {
+                Some(&t.speech.provider)
+            }
+            StageType::Llm(l) => Some(&l.provider),
+            _ => None,
         }
     }
     pub fn ai(&self, name: &str) -> Option<crate::llm::Stage> {
-        let Self::Llm(l) = self else { return None };
+        let StageType::Llm(l) = &self.kind else {
+            return None;
+        };
         Some(crate::llm::Stage {
             name: name.into(),
             provider: l.provider.clone(),
@@ -339,7 +346,7 @@ impl Stage {
             batch_size: l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE) as usize,
             chunk_size: l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE) as usize,
             request: l.request.clone(),
-            input: if l.reads == "paragraphs" {
+            input: if self.output.ends_with(".json") {
                 crate::llm::Input::Paragraphs
             } else {
                 crate::llm::Input::Transcript
@@ -351,10 +358,15 @@ impl Stage {
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     pub pipeline: Vec<String>,
+    #[serde(default = "default_out")]
+    pub out: PathBuf,
     #[serde(default)]
     pub providers: BTreeMap<String, Provider>,
     #[serde(default)]
     pub stages: BTreeMap<String, Stage>,
+}
+fn default_out() -> PathBuf {
+    crate::config::DEFAULT_OUT_DIR.into()
 }
 impl Default for ConfigFile {
     fn default() -> Self {
@@ -366,6 +378,8 @@ impl ConfigFile {
         for (name, provider) in &self.providers {
             provider.validate(name)?;
         }
+        let mut outputs = BTreeMap::new();
+        let mut published = BTreeMap::new();
         for (name, stage) in &self.stages {
             anyhow::ensure!(
                 !name.is_empty()
@@ -374,31 +388,70 @@ impl ConfigFile {
                         .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')),
                 "Stage names may use only letters, digits, \"-\" and \"_\": {name}"
             );
-            if let Stage::Llm(l) = stage {
+            anyhow::ensure!(
+                plain_name(&stage.output),
+                "Stage {name}: output must be a plain name in the work folder, such as transcript.json"
+            );
+            if let Some(a) = outputs.insert(stage.output.to_lowercase(), name) {
+                anyhow::bail!("Stages {a} and {name} both write {}", stage.output);
+            }
+            if let Some(publish) = &stage.publish {
                 anyhow::ensure!(
-                    matches!(l.reads.as_str(), "paragraphs" | "transcript"),
-                    "Stage {name}: reads must be \"paragraphs\" or \"transcript\""
+                    publish == "-" || plain_name(publish),
+                    "Stage {name}: publish must be a plain file name in the note folder, or - for standard output"
                 );
-                for (key, present, mode) in [
-                    ("images", l.images.is_some(), "paragraphs"),
-                    ("batch_size", l.batch_size.is_some(), "paragraphs"),
-                    ("chunk_size", l.chunk_size.is_some(), "transcript"),
+                if let Some(a) = published.insert(publish.to_lowercase(), name) {
+                    anyhow::ensure!(
+                        publish != "-",
+                        "Only one stage can publish to standard output"
+                    );
+                    anyhow::bail!("Stages {a} and {name} both publish {publish}");
+                }
+                anyhow::ensure!(
+                    !matches!(stage.kind, StageType::Download(_)),
+                    "Stage {name}: a download output cannot be published"
+                );
+            }
+            if let StageType::Llm(l) = &stage.kind {
+                anyhow::ensure!(
+                    stage.output.ends_with(".json") || stage.output.ends_with(".md"),
+                    "Stage {name}: an llm output ends in .json (rewrite each paragraph) or .md (one answer)"
+                );
+                for (key, present, ext) in [
+                    ("images", l.images.is_some(), ".json"),
+                    ("batch_size", l.batch_size.is_some(), ".json"),
+                    ("chunk_size", l.chunk_size.is_some(), ".md"),
                 ] {
                     anyhow::ensure!(
-                        !present || l.reads == mode,
-                        "Stage {name}: {key} applies only when reads = \"{mode}\""
+                        !present || stage.output.ends_with(ext),
+                        "Stage {name}: {key} applies only to an llm output ending in {ext}"
                     );
                 }
+                anyhow::ensure!(
+                    (1..=100).contains(&l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE)),
+                    "Stage {name}: batch_size must be 1 to 100"
+                );
+                anyhow::ensure!(
+                    (1000..=1_000_000).contains(&l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE)),
+                    "Stage {name}: chunk_size must be 1000 to 1000000"
+                );
+                crate::llm::validate_request(&l.request)?;
             }
-            if let Some(provider) = stage.provider() {
+            let provider = match &stage.kind {
+                StageType::Transcript(t) if !t.speech.provider.is_empty() => {
+                    Some(t.speech.provider.as_str())
+                }
+                _ => stage.used_provider(),
+            };
+            if let Some(provider) = provider {
                 anyhow::ensure!(!provider.is_empty(), "Stage {name} needs a provider");
                 anyhow::ensure!(
                     self.providers.contains_key(provider),
                     "Stage {name}: no provider named {provider} in [providers]"
                 );
             }
-            match stage {
-                Stage::Transcript(t) => {
+            match &stage.kind {
+                StageType::Transcript(t) => {
                     anyhow::ensure!(
                         !t.sources.is_empty()
                             && t.sources
@@ -410,40 +463,42 @@ impl ConfigFile {
                     );
                     validate_tuning(&Screenshots::default(), &t.speech)?;
                 }
-                Stage::Screenshots(s) => validate_tuning(s, &Speech::default())?,
-                Stage::Llm(l) => {
-                    if l.reads == "paragraphs" {
-                        anyhow::ensure!(
-                            (1..=100).contains(&l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE)),
-                            "Stage {name}: batch_size must be 1 to 100"
-                        );
-                    } else {
-                        anyhow::ensure!(
-                            (1000..=1_000_000)
-                                .contains(&l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE)),
-                            "Stage {name}: chunk_size must be 1000 to 1000000"
-                        );
+                StageType::Screenshots(s) => validate_tuning(s, &Speech::default())?,
+                StageType::Download(p) => {
+                    validate_command(&p.command)?;
+                    anyhow::ensure!(
+                        stage.input == ["source"],
+                        "Stage {name}: a download stage reads source"
+                    );
+                }
+                StageType::Run(p) => {
+                    validate_command(&p.command)?;
+                    anyhow::ensure!(
+                        p.produces.is_none_or(|k| matches!(
+                            k,
+                            Kind::Transcript | Kind::Document | Kind::Markdown
+                        )),
+                        "Stage {name}: produces must be transcript, document or markdown"
+                    );
+                    for arg in &p.command {
+                        for placeholder in ["{input}", "{output}"] {
+                            anyhow::ensure!(
+                                !arg.contains(placeholder) || arg == placeholder,
+                                "Stage {name}: a {placeholder} placeholder must be a whole argument"
+                            );
+                        }
                     }
                 }
-                Stage::Download(p) | Stage::Filter(p) => anyhow::ensure!(
-                    !p.command.trim().is_empty(),
-                    "The adapter command must name an executable."
-                ),
-                Stage::Note(_) => {}
-            }
-            if let Some(ai) = stage.ai(name) {
-                crate::llm::validate_request(&ai.request)?;
+                _ => {}
             }
         }
         Ok(())
     }
 }
-
 fn validate_tuning(s: &Screenshots, speech: &Speech) -> Result<()> {
     if let Some(region) = &s.region {
         crate::config::Roi::parse(region)?;
     }
-    // Reuse the engine's numeric validation for active and inactive stage tables.
     crate::config::validate_tuning(
         s.sensitivity,
         s.frame_interval,
@@ -483,24 +538,18 @@ pub fn load_from(path: Option<&Path>) -> Result<ConfigFile> {
     parse(&text)
 }
 pub fn parse(text: &str) -> Result<ConfigFile> {
-    // Parse errors can quote credentials from the input; report only the format.
     let mut cfg: ConfigFile = if text.trim_start().starts_with('{') {
         serde_json::from_str(text).map_err(|_| anyhow::anyhow!("Invalid JSON configuration"))?
     } else {
         toml::from_str(text).map_err(|_| anyhow::anyhow!("Invalid TOML configuration"))?
     };
-    // Fill only the selected mode's defaults, preserving wrong-mode keys for validation.
     for stage in cfg.stages.values_mut() {
-        if let Stage::Llm(l) = stage {
-            match l.reads.as_str() {
-                "paragraphs" => {
-                    l.images.get_or_insert(false);
-                    l.batch_size.get_or_insert(DEFAULT_BATCH_SIZE);
-                }
-                "transcript" => {
-                    l.chunk_size.get_or_insert(DEFAULT_CHUNK_SIZE);
-                }
-                _ => {}
+        if let StageType::Llm(l) = &mut stage.kind {
+            if stage.output.ends_with(".json") {
+                l.images.get_or_insert(false);
+                l.batch_size.get_or_insert(DEFAULT_BATCH_SIZE);
+            } else if stage.output.ends_with(".md") {
+                l.chunk_size.get_or_insert(DEFAULT_CHUNK_SIZE);
             }
         }
     }
@@ -512,13 +561,7 @@ pub fn template() -> &'static str {
 pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     cfg.validate()?;
     println!("Configuration file: {}", config_path().display());
-    let mut effective = cfg.clone();
-    for provider in effective.providers.values_mut() {
-        if provider.command.is_some() && provider.args.is_none() {
-            provider.args = Some(Vec::new());
-        }
-    }
-    print!("{}", toml::to_string_pretty(&effective)?);
+    print!("{}", toml::to_string_pretty(cfg)?);
     Ok(())
 }
 
@@ -526,7 +569,43 @@ pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
-
+    fn resolve(value: &Value, skip: &[&str]) -> Result<crate::config::PipelineConfig> {
+        let cfg = parse(&value.to_string())?;
+        crate::options::resolve(
+            "local".into(),
+            &crate::cli::RunOpts {
+                skip: skip.iter().map(|s| (*s).into()).collect(),
+                ..Default::default()
+            },
+            &cfg,
+        )
+    }
+    fn config() -> Value {
+        serde_json::to_value(ConfigFile::default()).unwrap()
+    }
+    #[test]
+    fn template_matches_commented_defaults_and_round_trips() {
+        let cfg = parse(template()).unwrap();
+        cfg.validate().unwrap();
+        crate::options::resolve("local".into(), &Default::default(), &cfg).unwrap();
+        let uncommented = template()
+            .lines()
+            .map(
+                |line| match line.strip_prefix("# ").and_then(|s| s.split_once(" = ")) {
+                    Some((key, _))
+                        if key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') =>
+                    {
+                        &line[2..]
+                    }
+                    _ => line,
+                },
+            )
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(parse(&uncommented).unwrap(), cfg);
+        assert_eq!(parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap(), cfg);
+        assert_eq!(parse(&serde_json::to_string(&cfg).unwrap()).unwrap(), cfg);
+    }
     #[test]
     fn readme_shows_the_generated_file_with_shortened_prompts() {
         let mut in_prompt = false;
@@ -551,395 +630,486 @@ mod tests {
                 .contains(&shortened)
         );
     }
-
     #[test]
-    fn template_is_literal_valid_and_matches_tuning_defaults() {
-        let cfg = parse(template()).unwrap();
-        crate::options::resolve(String::new(), &Default::default(), &cfg).unwrap();
-        let Stage::Transcript(t) = &cfg.stages["transcript"] else {
-            panic!()
-        };
-        assert_eq!(t.language, Transcript::default().language);
-        assert_eq!(t.sources, Transcript::default().sources);
-        assert_eq!(t.subtitles, Subtitles::default());
-        assert_eq!(t.speech.threshold, Speech::default().threshold);
-        assert_eq!(t.speech.min_silence, Speech::default().min_silence);
-        assert_eq!(t.speech.max_segment, Speech::default().max_segment);
-        assert_eq!(
-            cfg.stages["screenshots"],
-            Stage::Screenshots(Screenshots::default())
+    fn download_settings_keep_required_commands_and_reject_unknown_keys() {
+        assert!(Source::default().command.is_empty());
+        for value in [json!({}), json!({"command":["unused"],"unknown":true})] {
+            assert!(serde_json::from_value::<Source>(value).is_err());
+        }
+        assert!(
+            serde_json::from_value::<Stage>(
+                json!({"type":"download","input":"source","output":"media"})
+            )
+            .is_err()
         );
-        let Stage::Llm(p) = &cfg.stages["proofread"] else {
-            panic!()
-        };
-        assert_eq!(p.batch_size, Some(20));
-        let Stage::Llm(top) = &cfg.stages["summary"] else {
-            panic!()
-        };
-        assert_eq!(top.chunk_size, Some(25_000));
-        assert_eq!(
-            cfg.providers["openai"].concurrency,
-            Provider::default().concurrency
-        );
-        cfg.validate().unwrap();
-        assert!(!cfg.stages["download"].keep());
-        let uncommented = template()
-            .lines()
-            .map(|line| {
-                match line
-                    .strip_prefix("# ")
-                    .and_then(|text| text.split_once(" = "))
-                {
-                    Some((key, value))
-                        if key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') =>
-                    {
-                        if key == "keep" {
-                            assert_eq!(value, "false");
-                        }
-                        &line[2..]
-                    }
-                    _ => line,
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let explicit = parse(&uncommented).unwrap();
-        explicit.validate().unwrap();
-        assert_eq!(explicit, cfg);
-        for definition in [
-            json!({"type":"download","command":"adapter"}),
-            json!({"type":"transcript"}),
-            json!({"type":"screenshots"}),
-            json!({"type":"llm","reads":"paragraphs"}),
-            json!({"type":"llm","reads":"transcript"}),
-            json!({"type":"filter","command":"adapter"}),
-        ] {
-            let stage: Stage = serde_json::from_value(definition).unwrap();
-            assert!(!stage.keep());
-        }
-        let serialized = toml::to_string_pretty(&cfg).unwrap();
-        assert_eq!(parse(&serialized).unwrap(), cfg);
-        assert_eq!(parse(&serde_json::to_string(&cfg).unwrap()).unwrap(), cfg);
-    }
-
-    #[test]
-    fn provider_errors_are_exact() {
-        for (value, expected) in [
-            (
-                json!({"base_url":"http://localhost:1", "command":"adapter"}),
-                "Provider test: set base_url or command, not both",
-            ),
-            (json!({}), "Provider test: set base_url or command"),
-            (
-                json!({"base_url":"http://localhost:1", "args":[]}),
-                "Provider test: args need a command",
-            ),
-            (
-                json!({"base_url":"https://example.test/v1/chat/completions/"}),
-                "Provider test: base_url must be the API root, such as https://api.openai.com/v1",
-            ),
-            (
-                json!({"base_url":"https://example.test/v1/audio/transcriptions"}),
-                "Provider test: base_url must be the API root, such as https://api.openai.com/v1",
-            ),
-            (
-                json!({"command":"adapter", "concurrency":0}),
-                "Provider test: concurrency must be 1 to 16",
-            ),
-            (
-                json!({"command":"adapter", "concurrency":17}),
-                "Provider test: concurrency must be 1 to 16",
-            ),
-        ] {
-            let provider: Provider = serde_json::from_value(value).unwrap();
-            assert_eq!(provider.validate("test").unwrap_err().to_string(), expected);
-        }
-        for base in ["not a URL", "file:///tmp/model", "https://"] {
-            let provider: Provider = serde_json::from_value(json!({"base_url":base})).unwrap();
-            assert!(provider.validate("test").is_err());
-        }
-    }
-
-    fn minimal() -> Value {
-        json!({"pipeline":["transcript","note"], "providers":{"p":{"base_url":"http://localhost:1/v1"}}, "stages":{"transcript":{"type":"transcript","sources":["subtitles"]},"note":{"type":"note"}}})
-    }
-    fn error(value: Value) -> String {
-        let cfg: ConfigFile = serde_json::from_value(value).unwrap();
-        crate::options::resolve(String::new(), &Default::default(), &cfg)
-            .unwrap_err()
-            .to_string()
+        let value = json!({"command":["unused","argument"]});
+        let settings: Source = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(settings).unwrap(), value);
     }
     #[test]
-    fn stage_validation_includes_inactive_tables() {
-        for (stage, expected) in [
-            (
-                json!({"type":"llm","reads":"paragraphs"}),
-                "Stage test needs a provider",
-            ),
-            (
-                json!({"type":"llm","reads":"transcript","provider":"missing"}),
-                "Stage test: no provider named missing in [providers]",
-            ),
-            (
-                json!({"type":"transcript","speech":{"provider":"missing"}}),
-                "Stage test: no provider named missing in [providers]",
-            ),
-            (
-                json!({"type":"llm","reads":"paragraphs","provider":"p","batch_size":0}),
-                "Stage test: batch_size must be 1 to 100",
-            ),
-            (
-                json!({"type":"llm","reads":"paragraphs","provider":"p","batch_size":101}),
-                "Stage test: batch_size must be 1 to 100",
-            ),
-            (
-                json!({"type":"llm","reads":"transcript","provider":"p","chunk_size":999}),
-                "Stage test: chunk_size must be 1000 to 1000000",
-            ),
-            (
-                json!({"type":"llm","reads":"transcript","provider":"p","chunk_size":1000001}),
-                "Stage test: chunk_size must be 1000 to 1000000",
-            ),
-            (
-                json!({"type":"transcript","sources":[]}),
-                "Stage test: sources must list subtitles, speech or both, once each",
-            ),
-            (
-                json!({"type":"transcript","sources":["subtitles","subtitles"]}),
-                "Stage test: sources must list subtitles, speech or both, once each",
-            ),
-            (
-                json!({"type":"transcript","sources":["unknown"]}),
-                "Stage test: sources must list subtitles, speech or both, once each",
-            ),
-        ] {
-            let mut cfg = minimal();
-            cfg["stages"]["test"] = stage;
-            assert_eq!(error(cfg), expected);
-        }
-        for stage in [
-            json!({"type":"screenshots","sensitivity":0}),
-            json!({"type":"transcript","sources":["subtitles"],"speech":{"threshold":2}}),
-        ] {
-            let mut cfg = minimal();
-            cfg["stages"]["test"] = stage;
-            let cfg: ConfigFile = serde_json::from_value(cfg).unwrap();
-            assert!(cfg.validate().is_err());
-        }
-    }
-    #[test]
-    fn llm_reads_and_mode_specific_keys_are_validated() {
-        for reads in [
-            None,
-            Some(json!("")),
-            Some(json!("other")),
-            Some(json!(false)),
-            Some(json!(1)),
-            Some(json!({})),
-            Some(json!(null)),
-        ] {
-            let mut cfg = minimal();
-            cfg["stages"]["test"] = json!({"type":"llm","provider":"p"});
-            if let Some(reads) = reads {
-                cfg["stages"]["test"]["reads"] = reads;
+    fn output_and_publication_names_are_plain_and_unique() {
+        for key in ["output", "publish"] {
+            for name in ["", ".hidden", "../outside", "a/b", "a\\b", "source"] {
+                let mut cfg = config();
+                cfg["stages"]["summary"][key] = json!(name);
+                let expected = if key == "output" {
+                    "Stage summary: output must be a plain name in the work folder, such as transcript.json"
+                } else {
+                    "Stage summary: publish must be a plain file name in the note folder, or - for standard output"
+                };
+                assert_eq!(resolve(&cfg, &[]).unwrap_err().to_string(), expected);
             }
-            assert_eq!(
-                error(cfg),
-                "Stage test: reads must be \"paragraphs\" or \"transcript\""
-            );
         }
-        for (key, value, mode, wrong) in [
-            ("images", json!(false), "paragraphs", "transcript"),
-            ("batch_size", json!(20), "paragraphs", "transcript"),
-            ("chunk_size", json!(25000), "transcript", "paragraphs"),
+        for (key, value, expected) in [
+            (
+                "output",
+                "draft.json",
+                "Stages draft and summary both write draft.json",
+            ),
+            (
+                "publish",
+                "note.json",
+                "Stages proofread and summary both publish note.json",
+            ),
         ] {
-            let mut cfg = minimal();
-            cfg["stages"]["test"] = json!({"type":"llm","reads":wrong,"provider":"p"});
-            cfg["stages"]["test"][key] = value;
+            let mut cfg = config();
+            cfg["stages"]["summary"][key] = json!(value);
+            assert_eq!(resolve(&cfg, &[]).unwrap_err().to_string(), expected);
+        }
+        let mut cfg = config();
+        cfg["stages"]["summary"]["publish"] = json!("-");
+        cfg["stages"]["proofread"]["publish"] = json!("-");
+        assert_eq!(
+            resolve(&cfg, &[]).unwrap_err().to_string(),
+            "Only one stage can publish to standard output"
+        );
+        let mut cfg = config();
+        cfg["stages"]["download"]["publish"] = json!("media");
+        assert_eq!(
+            resolve(&cfg, &[]).unwrap_err().to_string(),
+            "Stage download: a download output cannot be published"
+        );
+    }
+    #[test]
+    fn output_and_publication_names_compare_unicode_lowercase() {
+        for (key, verb) in [("output", "write"), ("publish", "publish")] {
+            for (a, b) in [("A.md", "a.md"), ("Ä.md", "ä.md"), ("İ.md", "i\u{307}.md")] {
+                let mut cfg = json!({"pipeline":["a","b"],"stages":{
+                    "a":{"type":"run","output":"first","publish":"first","command":["unused"]},
+                    "b":{"type":"run","output":"second","publish":"second","command":["unused"]}
+                }});
+                cfg["stages"]["a"][key] = json!(a);
+                cfg["stages"]["b"][key] = json!(b);
+                assert_eq!(
+                    resolve(&cfg, &[]).unwrap_err().to_string(),
+                    format!("Stages a and b both {verb} {b}")
+                );
+            }
+        }
+    }
+    #[test]
+    fn inputs_must_exist_earlier_and_have_an_accepted_kind() {
+        for (input, expected) in [
+            (
+                "missing.json",
+                "Stage transcript: no earlier stage writes missing.json",
+            ),
+            (
+                "source",
+                "Stage transcript: only a download stage reads source",
+            ),
+            (
+                "draft.json",
+                "Stage transcript: no earlier stage writes draft.json",
+            ),
+        ] {
+            let mut cfg = config();
+            cfg["stages"]["transcript"]["input"] = json!(input);
+            assert_eq!(resolve(&cfg, &[]).unwrap_err().to_string(), expected);
+        }
+        for (stage, input, expected) in [
+            (
+                "summary",
+                "media",
+                "Stage summary reads media, which is media; a llm stage reads transcript or document or markdown",
+            ),
+            (
+                "proofread",
+                "transcript.json",
+                "Stage proofread reads transcript.json, which is transcript; a llm stage reads document",
+            ),
+            (
+                "markdown",
+                "images",
+                "Stage markdown reads images, which is images; a markdown stage reads document or markdown",
+            ),
+        ] {
+            let mut cfg = config();
+            cfg["stages"][stage]["input"] = json!(input);
+            assert_eq!(resolve(&cfg, &[]).unwrap_err().to_string(), expected);
+        }
+    }
+    #[test]
+    fn llm_extension_and_mode_keys_are_checked() {
+        let mut cfg = config();
+        cfg["stages"]["proofread"]["output"] = json!("bad.txt");
+        assert_eq!(
+            resolve(&cfg, &[]).unwrap_err().to_string(),
+            "Stage proofread: an llm output ends in .json (rewrite each paragraph) or .md (one answer)"
+        );
+        for (stage, key, value, ext) in [
+            ("proofread", "chunk_size", json!(25000), ".md"),
+            ("summary", "images", json!(false), ".json"),
+            ("summary", "batch_size", json!(20), ".json"),
+        ] {
+            let mut cfg = config();
+            cfg["stages"][stage][key] = value;
             assert_eq!(
-                error(cfg),
-                format!("Stage test: {key} applies only when reads = \"{mode}\"")
+                resolve(&cfg, &[]).unwrap_err().to_string(),
+                format!("Stage {stage}: {key} applies only to an llm output ending in {ext}")
             );
         }
     }
     #[test]
-    fn stage_names_are_validated_in_inactive_tables_too() {
-        for name in ["", "../bad", "a.b", "a b", "a/b", "a\\b", "한글"] {
-            let mut cfg = minimal();
-            cfg["stages"][name] = json!({"type":"note"});
+    fn skips_pass_documents_through_omit_optional_inputs_and_reject_required_inputs() {
+        let cfg = config();
+        let resolved = resolve(&cfg, &["proofread", "summary", "screenshots"]).unwrap();
+        assert_eq!(
+            resolved
+                .stages
+                .iter()
+                .find(|(n, _)| n == "draft")
+                .unwrap()
+                .1
+                .input,
+            ["transcript.json"]
+        );
+        assert_eq!(
+            resolved
+                .stages
+                .iter()
+                .find(|(n, _)| n == "markdown")
+                .unwrap()
+                .1
+                .input,
+            ["proofread.json"]
+        );
+        for (skip, expected) in [
+            (
+                "transcript",
+                "--skip transcript: draft needs transcript.json",
+            ),
+            ("download", "--skip download: transcript needs media"),
+            ("draft", "--skip draft: proofread needs draft.json"),
+        ] {
+            assert_eq!(resolve(&cfg, &[skip]).unwrap_err().to_string(), expected);
+        }
+        let mut cfg = config();
+        cfg["stages"]["proofread"]
+            .as_object_mut()
+            .unwrap()
+            .remove("publish");
+        cfg["stages"]["markdown"]
+            .as_object_mut()
+            .unwrap()
+            .remove("publish");
+        assert_eq!(
+            resolve(&cfg, &[]).unwrap_err().to_string(),
+            "Nothing is published; set publish on a stage"
+        );
+    }
+    #[test]
+    fn run_placeholders_and_stdin_shape_are_validated() {
+        for placeholder in ["{input}", "{output}"] {
+            let mut cfg = config();
+            cfg["stages"]["custom"] = json!({"type":"run","output":"file","command":["program",format!("prefix{placeholder}")]});
             assert_eq!(
-                error(cfg),
+                resolve(&cfg, &[]).unwrap_err().to_string(),
+                format!("Stage custom: a {placeholder} placeholder must be a whole argument")
+            );
+        }
+        for input in [
+            json!(["transcript.json", "draft.json"]),
+            json!("media"),
+            json!("images"),
+        ] {
+            let mut cfg = config();
+            cfg["pipeline"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("custom"));
+            cfg["stages"]["custom"] =
+                json!({"type":"run","input":input,"output":"custom","command":["program"]});
+            assert_eq!(
+                resolve(&cfg, &[]).unwrap_err().to_string(),
+                "Stage custom: standard input takes one file; use {input} in command for more"
+            );
+        }
+    }
+    #[test]
+    fn unknown_keys_and_removed_keys_are_errors_everywhere() {
+        for (table, key) in [
+            ("", "unexpected"),
+            ("providers.openai", "args"),
+            ("stages.download", "args"),
+            ("stages.proofread", "reads"),
+            ("stages.summary", "keep"),
+            ("stages.transcript.subtitles", "sidecar"),
+            ("stages.transcript.speech", "unknown"),
+            ("stages.markdown", "model"),
+        ] {
+            let mut cfg = config();
+            let mut target = &mut cfg;
+            for part in table.split('.').filter(|p| !p.is_empty()) {
+                target = &mut target[part];
+            }
+            target[key] = json!("unknown");
+            assert!(parse(&cfg.to_string()).is_err(), "{table}.{key}");
+        }
+    }
+    #[test]
+    fn cli_stdout_conflict_and_matching_stage_overrides_are_checked() {
+        let mut cfg = ConfigFile::default();
+        cfg.stages.get_mut("markdown").unwrap().publish = Some("-".into());
+        let opts = crate::cli::RunOpts {
+            json: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            crate::options::resolve("local".into(), &opts, &cfg)
+                .unwrap_err()
+                .to_string(),
+            "Publishing to standard output and --json both use standard output; use one of them"
+        );
+        let opts = crate::cli::RunOpts {
+            asr_language: Some("ko".into()),
+            similarity: Some(0.6),
+            ..Default::default()
+        };
+        let resolved = crate::options::resolve("local".into(), &opts, &cfg).unwrap();
+        let speech =
+            crate::options::stage_config(&resolved, "transcript", &cfg.stages["transcript"])
+                .unwrap();
+        // Overrides live in resolved stages, not the original config.
+        assert!(speech.asr.language.is_empty());
+        let stage = &resolved
+            .stages
+            .iter()
+            .find(|(n, _)| n == "transcript")
+            .unwrap()
+            .1;
+        assert_eq!(
+            crate::options::stage_config(&resolved, "transcript", stage)
+                .unwrap()
+                .asr
+                .language,
+            "ko"
+        );
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn providers_and_inactive_tables_still_validate_their_settings() {
+        for (provider, expected) in [
+            (json!({}), "Provider p: set base_url or command"),
+            (
+                json!({"base_url":"http://localhost/v1","command":["tool"]}),
+                "Provider p: set base_url or command, not both",
+            ),
+            (
+                json!({"command":[]}),
+                "The adapter command must name an executable.",
+            ),
+            (
+                json!({"command":["tool"],"concurrency":0}),
+                "Provider p: concurrency must be 1 to 16",
+            ),
+            (
+                json!({"command":["tool"],"concurrency":17}),
+                "Provider p: concurrency must be 1 to 16",
+            ),
+            (
+                json!({"base_url":"http://localhost/v1/chat/completions"}),
+                "Provider p: base_url must be the API root, such as https://api.openai.com/v1",
+            ),
+        ] {
+            let mut cfg = ConfigFile::default();
+            cfg.providers
+                .insert("p".into(), serde_json::from_value(provider).unwrap());
+            assert_eq!(cfg.validate().unwrap_err().to_string(), expected);
+        }
+        for (key, value) in [
+            ("batch_size", json!(0)),
+            ("batch_size", json!(101)),
+            ("chunk_size", json!(999)),
+            ("chunk_size", json!(1_000_001)),
+            ("request", json!({"messages":[]})),
+        ] {
+            let mut cfg = serde_json::to_value(ConfigFile::default()).unwrap();
+            let stage = if key == "batch_size" {
+                "proofread"
+            } else {
+                "summary"
+            };
+            cfg["stages"][stage][key] = value;
+            assert!(parse(&cfg.to_string()).unwrap().validate().is_err());
+        }
+        for name in ["", "../bad", "a.b", "a b", "a/b", "a\\b", "한글"] {
+            let mut cfg = ConfigFile::default();
+            let stage = cfg.stages["markdown"].clone();
+            cfg.stages.insert(
+                name.into(),
+                Stage {
+                    output: "unused".into(),
+                    publish: None,
+                    ..stage
+                },
+            );
+            assert_eq!(
+                cfg.validate().unwrap_err().to_string(),
                 format!("Stage names may use only letters, digits, \"-\" and \"_\": {name}")
             );
         }
-        let mut cfg = minimal();
-        cfg["stages"]["A-z_09"] = json!({"type":"note"});
-        serde_json::from_value::<ConfigFile>(cfg)
-            .unwrap()
-            .validate()
-            .unwrap();
+        for typ in ["filter", "note", "unknown"] {
+            assert!(
+                parse(
+                    &json!({"pipeline":[],"stages":{"old":{"type":typ,"output":"old"}}})
+                        .to_string()
+                )
+                .is_err()
+            );
+        }
+        assert!(parse("{}").is_err());
     }
     #[test]
-    fn pipeline_rules_and_skip_are_validated_on_the_effective_pipeline() {
-        for (names, expected) in [
+    fn input_errors_describe_each_stage_rule_and_empty_skip_result() {
+        for (stage, input, rule) in [
+            ("download", json!([]), "a download stage reads source"),
             (
-                vec!["missing", "note"],
-                "pipeline: no stage named missing in [stages]",
-            ),
-            (
-                vec!["transcript", "transcript", "note"],
-                "pipeline: transcript is listed twice",
-            ),
-            (
-                vec!["note", "transcript"],
-                "pipeline: note must come after transcript",
-            ),
-            (
-                vec!["transcript"],
-                "pipeline: exactly one note stage must run",
-            ),
-            (
-                vec!["note"],
-                "pipeline: a transcript stage must run, or pass --subtitle",
-            ),
-        ] {
-            let mut cfg = minimal();
-            cfg["pipeline"] = json!(names);
-            assert_eq!(error(cfg), expected);
-        }
-        let mut cfg = minimal();
-        cfg["stages"]["last"] = json!({"type":"filter","command":"adapter"});
-        cfg["pipeline"] = json!(["transcript", "note", "last"]);
-        assert_eq!(error(cfg), "pipeline: note must come after last");
-        for (kind, definition, names) in [
-            (
-                "download",
-                json!({"type":"download","command":"adapter"}),
-                vec!["one", "two", "transcript", "note"],
+                "transcript",
+                json!([]),
+                "a transcript stage reads one input",
             ),
             (
                 "transcript",
-                json!({"type":"transcript","sources":["subtitles"]}),
-                vec!["one", "two", "note"],
+                json!(["media", "media"]),
+                "a transcript stage reads one input",
             ),
             (
                 "screenshots",
-                json!({"type":"screenshots"}),
-                vec!["transcript", "one", "two", "note"],
+                json!([]),
+                "a screenshots stage reads one input",
             ),
             (
-                "note",
-                json!({"type":"note"}),
-                vec!["transcript", "one", "two"],
+                "screenshots",
+                json!(["media", "media"]),
+                "a screenshots stage reads one input",
+            ),
+            ("proofread", json!([]), "a llm stage reads one input"),
+            (
+                "summary",
+                json!(["draft.json", "draft.json"]),
+                "a llm stage reads one input",
+            ),
+            (
+                "draft",
+                json!([]),
+                "a document stage reads one transcript and at most one images directory",
+            ),
+            (
+                "draft",
+                json!(["transcript.json", "transcript.json"]),
+                "a document stage reads one transcript and at most one images directory",
+            ),
+            (
+                "draft",
+                json!(["transcript.json", "images", "images"]),
+                "a document stage reads one transcript and at most one images directory",
+            ),
+            (
+                "markdown",
+                json!([]),
+                "a markdown stage reads at least one input",
             ),
         ] {
-            let mut cfg = minimal();
-            cfg["pipeline"] = json!(names);
-            cfg["stages"]["one"] = definition.clone();
-            cfg["stages"]["two"] = definition;
+            let mut cfg = serde_json::to_value(ConfigFile::default()).unwrap();
+            cfg["stages"][stage]["input"] = input;
+            let cfg = parse(&cfg.to_string()).unwrap();
             assert_eq!(
-                error(cfg),
-                if kind == "note" {
-                    "pipeline: exactly one note stage must run".into()
-                } else {
-                    format!("pipeline: only one {kind} stage can run")
-                }
+                crate::options::resolve("local".into(), &Default::default(), &cfg)
+                    .unwrap_err()
+                    .to_string(),
+                format!("Stage {stage}: {rule}")
             );
         }
-        let cfg = ConfigFile::default();
+        let mut cfg = ConfigFile::default();
+        cfg.stages.get_mut("markdown").unwrap().input = vec!["summary.md".into()];
         let opts = crate::cli::RunOpts {
-            skip: vec!["proofread".into(), "summary".into()],
+            skip: vec!["summary".into()],
             ..Default::default()
         };
-        let resolved = crate::options::resolve(String::new(), &opts, &cfg).unwrap();
-        assert!(
-            !resolved
-                .stages
-                .iter()
-                .any(|(name, _)| matches!(name.as_str(), "proofread" | "summary"))
+        assert_eq!(
+            crate::options::resolve("local".into(), &opts, &cfg)
+                .unwrap_err()
+                .to_string(),
+            "--skip leaves stage markdown with no input"
         );
-        for (skip, expected) in [
-            ("note", "pipeline: exactly one note stage must run"),
-            ("unknown", "--skip: no stage named unknown in the pipeline"),
+    }
+    #[test]
+    fn pipeline_names_cardinalities_and_outputs_are_validated() {
+        let mut cfg = ConfigFile::default();
+        cfg.stages.get_mut("download").unwrap().input = vec!["other".into()];
+        assert_eq!(
+            cfg.validate().unwrap_err().to_string(),
+            "Stage download: a download stage reads source"
+        );
+
+        for (pipeline, expected) in [
+            (
+                vec!["missing"],
+                "pipeline: no stage named missing in [stages]",
+            ),
+            (
+                vec!["download", "download"],
+                "pipeline: download is listed twice",
+            ),
         ] {
-            let opts = crate::cli::RunOpts {
-                skip: vec![skip.into()],
+            let cfg = ConfigFile {
+                pipeline: pipeline.into_iter().map(str::to_owned).collect(),
                 ..Default::default()
             };
             assert_eq!(
-                crate::options::resolve(String::new(), &opts, &cfg)
+                crate::options::resolve("local".into(), &Default::default(), &cfg)
                     .unwrap_err()
                     .to_string(),
                 expected
             );
         }
-        let mut cfg: ConfigFile = serde_json::from_value(minimal()).unwrap();
-        cfg.pipeline = vec!["note".into()];
-        crate::options::resolve(
-            String::new(),
-            &crate::cli::RunOpts {
-                subtitle: Some("test.srt".into()),
-                ..Default::default()
-            },
-            &cfg,
-        )
-        .unwrap();
-    }
-    #[test]
-    fn unknown_keys_and_other_stage_types_keys_are_rejected() {
-        for kind in [
-            "download",
-            "transcript",
-            "screenshots",
-            "llm",
-            "filter",
-            "note",
-        ] {
-            let mut cfg = minimal();
-            cfg["stages"]["bad"] = json!({"type":kind,"nonsense":true,"command":"adapter"});
-            assert!(serde_json::from_value::<ConfigFile>(cfg).is_err(), "{kind}");
+        for input in [json!([]), json!(["proofread.json", "proofread.json"])] {
+            let mut cfg = serde_json::to_value(ConfigFile::default()).unwrap();
+            cfg["stages"]["summary"]["input"] = input;
+            let cfg = parse(&cfg.to_string()).unwrap();
+            assert_eq!(
+                crate::options::resolve("local".into(), &Default::default(), &cfg)
+                    .unwrap_err()
+                    .to_string(),
+                "Stage summary: a llm stage reads one input"
+            );
         }
-        for field in [
-            "output",
-            "transcript",
-            "speech",
-            "screenshots",
-            "download",
-            "services",
-            "unknown",
-        ] {
-            let mut cfg = minimal();
-            cfg[field] = json!({});
-            assert!(serde_json::from_value::<ConfigFile>(cfg).is_err());
-        }
-        for field in ["api_key", "adapter", "unknown"] {
-            let mut cfg = minimal();
-            cfg["providers"]["p"][field] = json!("secret");
-            assert!(serde_json::from_value::<ConfigFile>(cfg).is_err());
-        }
-        for field in ["subtitles", "speech"] {
-            let mut cfg = minimal();
-            cfg["stages"]["transcript"][field] = json!({"unknown":true});
-            assert!(serde_json::from_value::<ConfigFile>(cfg).is_err());
-        }
-        assert!(serde_json::from_value::<Stage>(json!({"type":"note","keep":true})).is_err());
-        let error = serde_json::from_value::<Stage>(json!({"type":"unknown"}))
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains(
-            "expected one of `download`, `transcript`, `screenshots`, `llm`, `filter`, `note`"
-        ));
-        assert!(
-            serde_json::from_value::<Stage>(
-                json!({"type":"llm","reads":"paragraphs","input":"paragraphs"})
-            )
-            .is_err()
+        let mut cfg = serde_json::to_value(ConfigFile::default()).unwrap();
+        cfg["stages"]["custom"] =
+            json!({"type":"run","output":"custom","produces":"images","command":["tool"]});
+        assert_eq!(
+            parse(&cfg.to_string())
+                .unwrap()
+                .validate()
+                .unwrap_err()
+                .to_string(),
+            "Stage custom: produces must be transcript, document or markdown"
         );
-        for key in ["images", "batch_size", "chunk_size"] {
-            let mut stage = json!({"type":"llm","reads":"paragraphs"});
-            stage[key] = json!(null);
-            assert!(serde_json::from_value::<Stage>(stage).is_err());
-        }
-        assert!(parse("{}").is_err());
     }
 }

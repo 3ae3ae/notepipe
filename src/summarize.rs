@@ -77,7 +77,7 @@ pub async fn run(
         context(meta),
         chunks(events, stage.chunk_size),
     );
-    tokio::task::spawn_blocking(move || {
+    crate::runtime::spawn_blocking(move || {
         let agent = llm::chat_agent();
         let partials = crate::runtime::map_pool(chunks, settings.concurrency, |chunk| {
             send(
@@ -105,6 +105,12 @@ pub async fn run(
     .context("Transcript stage interrupted")?
 }
 
+pub async fn markdown(settings: &LlmSettings, stage: &Stage, text: &str) -> Result<String> {
+    let (settings, stage, text) = (settings.clone(), stage.clone(), text.to_owned());
+    crate::runtime::spawn_blocking(move || send(&llm::chat_agent(), &settings, &stage, &text))
+        .await?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,7 +118,7 @@ mod tests {
     fn transcript_contracts_do_not_override_user_instructions() {
         let mut stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
@@ -121,6 +127,7 @@ mod tests {
         stage.chunk_size = 1000;
         let events = (0..3)
             .map(|index| TranscriptEvent {
+                extra: Default::default(),
                 start: f64::from(index * 60),
                 end: f64::from(index * 60 + 1),
                 text: "x".repeat(stage.chunk_size - 10),
@@ -137,6 +144,7 @@ mod tests {
     #[tokio::test]
     async fn empty_transcript_bails_without_an_http_request() {
         let meta = MediaMeta {
+            extra: Default::default(),
             title: "Title".into(),
             author: String::new(),
             source: String::new(),
@@ -145,7 +153,7 @@ mod tests {
         };
         let stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         assert!(
@@ -188,7 +196,7 @@ mod tests {
         });
         let mut stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"llm","reads":"transcript","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         stage.prompt = "EXTRACT ACTION ITEMS.".into();
@@ -200,6 +208,7 @@ mod tests {
         };
         let events = (0..2)
             .map(|index| crate::timeline::TranscriptEvent {
+                extra: Default::default(),
                 start: f64::from(index * 60),
                 end: f64::from(index * 60 + 1),
                 text: "x".repeat(15_000),
@@ -207,6 +216,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let meta = crate::source::MediaMeta {
+            extra: Default::default(),
             title: "Recording".into(),
             author: "Author".into(),
             duration: 120.,

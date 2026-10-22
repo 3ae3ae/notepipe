@@ -73,7 +73,7 @@ fn sections(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(br#"{"pipeline":["transcript","screenshots","note"],"stages":{"transcript":{"type":"transcript","sources":["subtitles"]},"screenshots":{"type":"screenshots"},"note":{"type":"note"}}}"#).unwrap();
+    child.stdin.take().unwrap().write_all(br#"{"pipeline":["download","transcript","screenshots","draft","markdown"],"stages":{"download":{"type":"download","input":"source","output":"media","command":["unused"]},"transcript":{"type":"transcript","input":"media","output":"transcript.json","sources":["subtitles"]},"screenshots":{"type":"screenshots","input":"media","output":"images"},"draft":{"type":"document","input":["transcript.json","images"],"output":"draft.json","publish":"note.json"},"markdown":{"type":"markdown","input":"draft.json","output":"note.md","publish":"note.md"}}}"#).unwrap();
     let output = child.wait_with_output().unwrap();
     assert!(
         output.status.success(),
@@ -90,7 +90,8 @@ fn sections(
     .unwrap();
     assert_eq!(done["type"], "done");
     let document: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(done["json"].as_str().unwrap()).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(done["files"]["draft"].as_str().unwrap()).unwrap())
+            .unwrap();
     document["sections"].as_array().unwrap().clone()
 }
 
@@ -271,7 +272,7 @@ fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
             .spawn()
             .and_then(|mut child| {
                 use std::io::Write;
-                child.stdin.take().unwrap().write_all(br#"{"pipeline":["transcript","screenshots","note"],"stages":{"transcript":{"type":"transcript","sources":["subtitles"]},"screenshots":{"type":"screenshots"},"note":{"type":"note"}}}"#)?;
+                child.stdin.take().unwrap().write_all(br#"{"pipeline":["download","transcript","screenshots","draft","markdown"],"stages":{"download":{"type":"download","input":"source","output":"media","command":["unused"]},"transcript":{"type":"transcript","input":"media","output":"transcript.json","sources":["subtitles"]},"screenshots":{"type":"screenshots","input":"media","output":"images"},"draft":{"type":"document","input":["transcript.json","images"],"output":"draft.json","publish":"note.json"},"markdown":{"type":"markdown","input":"draft.json","output":"note.md","publish":"note.md"}}}"#)?;
                 child.wait_with_output()
             })
             .unwrap();
@@ -293,12 +294,12 @@ fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
         let done = events.last().unwrap();
         assert_eq!(done["type"], "done");
         assert!(done["warnings"].as_array().unwrap().is_empty());
-        let note = std::fs::read_to_string(done["markdown"].as_str().unwrap()).unwrap();
+        let note = std::fs::read_to_string(done["files"]["markdown"].as_str().unwrap()).unwrap();
         assert!(note.contains("An audio-only note.") && !note.contains("!["));
-        let document: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(done["json"].as_str().unwrap()).unwrap())
-                .unwrap();
-        assert!(document["warnings"].as_array().unwrap().is_empty());
+        let document: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(done["files"]["draft"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(document["sections"][0]["image"], "");
     }
 }

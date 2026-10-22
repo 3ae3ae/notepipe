@@ -1,7 +1,8 @@
 # Lines starting with # show the defaults.
 # Every setting is described in https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md
 
-pipeline = ["download", "transcript", "screenshots", "proofread", "summary", "note"]
+pipeline = ["download", "transcript", "screenshots", "draft", "proofread", "summary", "markdown"]
+# out = "."
 
 [providers.openai]
 base_url = "https://api.openai.com/v1"
@@ -10,18 +11,18 @@ api_key_env = "OPENAI_API_KEY"
 
 [stages.download]
 type = "download"
-command = "notepipe-source-ytdlp"
-# keep = false
+input = "source"
+output = "media"
+command = ["notepipe-source-ytdlp"]
 
 [stages.transcript]
 type = "transcript"
+input = "media"
+output = "transcript.json"
 # language = "auto"
 # sources = ["subtitles", "speech"]
-# keep = false
 
 [stages.transcript.subtitles]
-# sidecar = true
-# downloaded = true
 # automatic = true
 
 [stages.transcript.speech]
@@ -34,20 +35,28 @@ model = "whisper-1"
 
 [stages.screenshots]
 type = "screenshots"
+input = "media"
+output = "images"
 # mode = "stable"
 # sensitivity = 0.85
 # frame_interval = 1.0
 # min_gap = 10.0
 # settle = 0.8
-# keep = false
+
+[stages.draft]
+type = "document"
+input = ["transcript.json", "images"]
+output = "draft.json"
 
 [stages.proofread]
 type = "llm"
-reads = "paragraphs"
+input = "draft.json"
+output = "proofread.json"
+publish = "note.json"
 provider = "openai"
 model = "gpt-6-luna"
+# images = false
 # batch_size = 20
-# keep = false
 prompt = '''
 You proofread transcripts of spoken recordings. Each input item is a stretch of continuous speech,
 already split at natural pauses. Fix obvious speech-recognition errors (misheard words, homophones,
@@ -64,11 +73,11 @@ on it.
 
 [stages.summary]
 type = "llm"
-reads = "transcript"
+input = "proofread.json"
+output = "summary.md"
 provider = "openai"
 model = "gpt-6-luna"
 # chunk_size = 25000
-# keep = false
 prompt = '''
 You summarize recordings from their timestamped transcript. Use only what the transcript says: never
 invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a
@@ -79,6 +88,8 @@ $$...$$. Use Markdown with headings of level 2 or lower, and do not repeat the t
 language of the transcript.
 '''
 
-[stages.note]
-type = "note"
-# dir = "."
+[stages.markdown]
+type = "markdown"
+input = ["summary.md", "proofread.json"]
+output = "note.md"
+publish = "note.md"

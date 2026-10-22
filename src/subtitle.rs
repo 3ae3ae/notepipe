@@ -252,6 +252,7 @@ pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
                         prev.end = end.max(prev.end)
                     }
                     _ => out.push(TranscriptEvent {
+                        extra: Default::default(),
                         start,
                         end,
                         text,
@@ -327,6 +328,7 @@ fn is_cue_tag(tag: &str) -> bool {
 }
 
 /// Same-name sidecars, preferring the requested ASR language when set.
+#[cfg(test)]
 pub fn sidecar_subtitle(video: &Path, preferred_language: &str) -> Option<PathBuf> {
     let mut tracks = sidecar_tracks(video);
     sort_tracks(&mut tracks, preferred_language, None);
