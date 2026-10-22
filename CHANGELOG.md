@@ -8,22 +8,31 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ### Added
 
-- `adapter` on a stage: a program that handles that stage instead of the AI service. It need not use a language model,
-  and such a stage needs no `prompt`.
+- `[services.NAME]`: a connection, either a `base_url` or an `adapter` that notepipe starts, with its key and
+  `concurrency`, defined once. Speech recognition and each stage name the service they use, and a stage's service can
+  be an adapter that is not a language model.
+- `api_key_env` reads a service's key from the environment variable it names.
 
 ### Changed
 
-- Stages are top-level `[[stages]]` blocks instead of `[[ai.stages]]`; `[ai]` is the service they use by default.
-  Configurations from 0.1.0 must move their stages.
+- The configuration is rebuilt around services, and configurations from 0.1.0 must be rewritten:
+  - `[speech]` names its `service` and keeps `api`, `model` and `[speech.detection]`; its connection and `concurrency`
+    move to the service.
+  - Stages are top-level `[[stages]]` blocks instead of `[[ai.stages]]`, each naming its `service` and `model`; `[ai]`
+    is gone.
 - `proofread` and `summary` are no longer built in. They are ordinary stages in the configuration file, with their
-  prompts written out, and every stage sets `input`, `output` and `prompt`.
-- A run without a configuration file creates one and says where it is. It and `config init` write every default value
-  and the two stages, and leave out settings that start empty.
-- A stage with no AI service or adapter is skipped with a warning instead of stopping the run.
+  prompts written out. Every stage sets `input` and `output`; `prompt` and `model` are sent when set.
+- A run without a configuration file creates one and says where it is. It and `config init` write every default value,
+  the services `speech` and `ai` waiting for an address, and the two stages, and leave out settings that start empty.
+- A stage whose service has no address is skipped with a warning instead of stopping the run.
+- Requests to a service are limited by its `concurrency`, 4 by default, instead of 4 for speech and 8 for stages.
 
 ### Removed
 
 - `--proofread-prompt`; edit the stage's prompt instead.
+- `--speech-base-url`, `--speech-api-key`, `--speech-model`, `--speech-api`, `--ai-base-url`, `--ai-api-key` and
+  `--ai-model`. Connections and models are set in the configuration, or with `--config -` for one run.
+- `NOTEPIPE_SPEECH_API_KEY` and `NOTEPIPE_AI_API_KEY`; use `api_key_env`.
 
 ## [0.1.0] - 2026-10-22
 

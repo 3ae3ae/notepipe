@@ -21,9 +21,12 @@ its Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); a plain `c
 ## Use
 
 ```toml
-[speech]
+[services.speech-swift]
 adapter = ["notepipe-asr-speech-swift"]
 concurrency = 1
+
+[speech]
+service = "speech-swift"
 ```
 
 `--model` selects `qwen3-1.7b` (default), `qwen3-0.6b` or `whisper`. The first run downloads the model.

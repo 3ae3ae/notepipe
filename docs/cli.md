@@ -18,8 +18,8 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 - `--stages a,b` / `--no-stages` choose the stages for this run.
 - With `--json` notepipe never prompts. Missing settings are errors.
 
-API keys can be part of the configuration. `NOTEPIPE_SPEECH_API_KEY` and `NOTEPIPE_AI_API_KEY` fill keys that are empty,
-also when the configuration comes from `--config`; clear them in the child environment if a run must not use them.
+API keys can be part of the configuration, or come from the environment variables that services name in
+`api_key_env`; a program that starts notepipe can pass them in the child's environment.
 
 ## Events
 
@@ -73,7 +73,7 @@ source: "…"            # the URL as given, or the absolute path of the local f
 author: "…"            # when known
 duration: "h:mm:ss"    # when known
 created: "2026-10-21T12:00:00Z"
-generator: "notepipe 0.1.0"
+generator: "notepipe …"   # notepipe and its version
 ---
 ```
 

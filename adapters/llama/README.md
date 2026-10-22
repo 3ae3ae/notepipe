@@ -17,9 +17,12 @@ uv tool install "notepipe[llama]"
 ## Use
 
 ```toml
-[speech]
+[services.llama]
 adapter = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
 concurrency = 1
+
+[speech]
+service = "llama"
 ```
 
 Every argument other than `--host`, `--port` and `--llama-server PATH` is passed to `llama-server` unchanged, so you can

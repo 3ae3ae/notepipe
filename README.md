@@ -29,7 +29,6 @@ source: "https://www.youtube.com/watch?v=…"
 author: "Example University"
 duration: "1:12:40"
 created: "2026-10-21T09:30:00Z"
-generator: "notepipe 0.1.0"
 ---
 
 # Introduction to Compilers
@@ -134,10 +133,14 @@ notepipe config show    # show the settings in effect
 
 The file is `~/.config/notepipe/config.toml`, or `%APPDATA%\notepipe\config.toml` on Windows (`$XDG_CONFIG_HOME/notepipe/`
 when that is set). The first run creates it and says where it is. Every default value is written out, so what the file
-says is what runs. Its sections follow the order in which a note is made, and every command-line option names the
-setting it overrides. Set up for Korean lectures and OpenAI, the parts you would change look like this:
+says is what runs. A connection is written once under `[services]`, and speech recognition and each stage name the one
+they use. Set up for Korean lectures and OpenAI, the parts you would change look like this:
 
 ```toml
+[services.openai]                   # one connection, used by name below
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"      # or api_key = "…"
+
 [output]
 dir = "~/notes"
 
@@ -145,39 +148,37 @@ dir = "~/notes"
 language = "ko"                     # empty: detect
 
 [speech]                            # used when there are no subtitles
-base_url = "https://api.openai.com/v1"
+service = "openai"
 model = "gpt-4o-mini-transcribe"
 
 [screenshots]
 mode = "stable"                     # wait for animated slides to settle
 
-[ai]                                # the service the stages use
-base_url = "https://api.openai.com/v1"
-model = "gpt-5.6-luna"
-
 [[stages]]                          # stages run in this order
 name = "proofread"
+service = "openai"
+model = "gpt-5.6-luna"
 input = "paragraphs"
 output = "replace"
 prompt = '''…'''                    # the prompt the file came with, or your own
 
 [[stages]]
 name = "summary"
+service = "openai"
+model = "gpt-5.6-terra"             # each stage picks its own model
 input = "transcript"
 output = "top"
 prompt = '''…'''
-model = "gpt-5.6-terra"             # a stage can use its own model, service, key or adapter
 request = { reasoning_effort = "medium" }
 ```
 
-API keys can stay out of the file: `NOTEPIPE_SPEECH_API_KEY` and `NOTEPIPE_AI_API_KEY` are used when it has none.
 [docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md) lists every setting.
 
 ## Speech recognition
 
-Speech is located on your machine, cut into short segments and sent to the service in `[speech]`.
+Speech is located on your machine, cut into short segments and sent to the service that `[speech]` names.
 
-| Service | `[speech]` settings |
+| Service | Settings (`base_url` in the service, the rest in `[speech]`) |
 |---|---|
 | OpenAI | `base_url = "https://api.openai.com/v1"`, `model = "gpt-4o-mini-transcribe"` |
 | Groq | `base_url = "https://api.groq.com/openai/v1"`, `model = "whisper-large-v3-turbo"` |
@@ -201,25 +202,30 @@ own in a few lines:
 ```toml
 [[stages]]
 name = "translate"
+service = "openai"
+model = "gpt-5.6-luna"
 input = "paragraphs"                # each paragraph …
 output = "below"                    # … gets the model's answer underneath
 prompt = "Translate each item into Korean. Keep names, code and formulas unchanged."
 
 [[stages]]
 name = "action-items"
+service = "openai"
+model = "gpt-5.6-luna"
 input = "transcript"                # the whole transcript …
 output = "top"                      # … and the answer at the top of the note
 prompt = "List the decisions and action items in this meeting as a Markdown checklist, with owners where named."
 ```
 
-Until `[ai]` names a service, the stages are skipped with a warning and the note is written without them. A stage does
-not have to use a language model: give it an `adapter`, and a program of your own handles it, whether that program calls
-another API or applies fixed rules ([docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#ai-adapters)).
+A stage whose service has no `base_url` or `adapter` yet is skipped with a warning, and the note is written without it.
+A stage does not have to use a language model: its service can be an adapter, a program of your own that calls another
+API or applies fixed rules ([docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#service-adapters)).
 
 `--stages translate,summary` picks stages for one run, and `--no-stages` skips them. Any OpenAI-compatible chat service
 works, including OpenAI, Anthropic (`https://api.anthropic.com/v1`), Google Gemini
 (`https://generativelanguage.googleapis.com/v1beta/openai`), OpenRouter, Groq, and local servers such as Ollama
-(`http://localhost:11434/v1`) or LM Studio. Anything else, such as the OpenAI Responses API or access through a subscription, connects through an [AI adapter](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#ai-adapters).
+(`http://localhost:11434/v1`) or LM Studio. Anything else, such as the OpenAI Responses API or access through a
+subscription, connects through an [adapter](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md#service-adapters).
 
 ## Adapters
 
@@ -247,9 +253,12 @@ uv tool install "notepipe[llama]"
 ```
 
 ```toml
-[speech]
+[services.llama]
 adapter = ["notepipe-asr-llama", "-hf", "ggml-org/Qwen3-ASR-1.7B-GGUF:Q8_0"]
 concurrency = 1
+
+[speech]
+service = "llama"
 ```
 
 ### `openvino` — Intel NPU, CPU or GPU
@@ -262,9 +271,12 @@ uv tool install "notepipe[openvino]"
 ```
 
 ```toml
-[speech]
+[services.openvino]
 adapter = ["notepipe-asr-openvino"]  # add "--device", "CPU" (or "GPU") to choose the device
 concurrency = 1
+
+[speech]
+service = "openvino"
 ```
 
 ### `speech-swift` — Apple silicon
@@ -278,9 +290,12 @@ uv tool install "notepipe[speech-swift]"
 ```
 
 ```toml
-[speech]
+[services.speech-swift]
 adapter = ["notepipe-asr-speech-swift"]
 concurrency = 1
+
+[speech]
+service = "speech-swift"
 ```
 
 ### `xai` — xAI speech-to-text
@@ -292,9 +307,13 @@ uv tool install "notepipe[xai]"
 ```
 
 ```toml
-[speech]
+[services.xai]
 adapter = ["notepipe-asr-xai"]
-model = "grok-voice-transcribe-2.0"  # the key comes from api_key or NOTEPIPE_SPEECH_API_KEY
+api_key_env = "XAI_API_KEY"
+
+[speech]
+service = "xai"
+model = "grok-voice-transcribe-2.0"
 ```
 
 ### `meta` — Meta speech-to-text
@@ -306,15 +325,20 @@ uv tool install "notepipe[meta]"
 ```
 
 ```toml
-[speech]
+[services.meta]
 adapter = ["notepipe-asr-meta"]
-model = "muse-voice-transcribe-1.0"  # the key comes from api_key or NOTEPIPE_SPEECH_API_KEY
+api_key_env = "META_API_KEY"
+
+[speech]
+service = "meta"
+model = "muse-voice-transcribe-1.0"
 ```
 
 ### Your own
 
 An adapter is any program that follows a short contract, so it can be written in any language; a complete example in
-Python takes a few dozen lines. [docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md) describes all three kinds: speech, AI and download.
+Python takes a few dozen lines. [docs/adapters.md](https://github.com/3ae3ae/notepipe/blob/main/docs/adapters.md) describes both kinds: service adapters, for speech
+recognition and stages, and download adapters.
 Install one next to notepipe with `uv tool install notepipe --with <package>`, or put it on your `PATH`.
 
 ## The note

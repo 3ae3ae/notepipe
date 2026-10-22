@@ -61,13 +61,29 @@ URL ──► download adapter ───┴──► media file
 2. **Screenshots.** Frames are sampled with ffmpeg and compared; a screenshot is kept when the picture changes and then
    holds still. Audio-only input skips this step.
 3. **Transcript.** Subtitles are used when available. Otherwise speech is located with earshot, a small neural voice
-   detector compiled into notepipe, split into short segments and sent to the configured speech endpoint.
+   detector compiled into notepipe, split into short segments and sent to the service that `[speech]` names.
 4. **Timeline.** Transcript fragments are grouped under the screenshot that was on screen and joined into paragraphs,
    with word spacing that follows each writing system.
-5. **Stages.** Each configured stage sends the paragraphs or the whole transcript to a language model with its prompt,
-   or to an adapter, and replaces paragraphs, adds text below them or adds Markdown at the top.
+5. **Stages.** Each configured stage sends the paragraphs or the whole transcript, with its prompt, to its service (a
+   language model or an adapter) and replaces paragraphs, adds text below them or adds Markdown at the top.
 6. **Note.** `note.md`, `images/` and `note.json` are written to a staging folder and moved into place, then the
    completion hook runs.
+
+## Interfaces
+
+notepipe meets the outside world in a few places, and each has one shape:
+
+- **Services.** Every connection, whether a cloud API, a server on your network or an adapter that notepipe starts, is
+  a service, defined once under `[services]` with its address and credentials. A service does not know what it is used
+  for.
+- **Steps.** Speech recognition and each stage name the service they use and hold only what they ask of it: the API, the
+  model, the prompt. Nothing is inherited from another section, so a step's own block says where its requests go.
+- **Adapters.** Every program started as a service follows one lifecycle: `--host` and `--port`, `GET /health`, and
+  stopping with its step. Whether it serves the transcription API, the chat API or both depends only on the steps that
+  use it. A download adapter has its own small contract, because it runs once per URL instead of serving requests.
+- **Configuration and options.** The configuration is the complete statement of a run, and the file notepipe creates
+  lists every value in effect. Command-line options change what a run does with the note, not where it connects.
+- **Output.** `note.md`, `note.json` and the `--json` events are the contract with programs that read notes.
 
 ## Where things belong
 
@@ -77,9 +93,10 @@ live instead:
 | Need | Place |
 |---|---|
 | Downloading from a website, sign-in, playlists | a download adapter |
-| A local speech model (llama.cpp, OpenVINO, Core ML …) | a speech adapter |
-| A vendor API that is not OpenAI-compatible | a speech or AI adapter that translates the request |
-| AI through a different API, or through a subscription | an AI adapter |
+| A local speech model (llama.cpp, OpenVINO, Core ML …) | a service adapter |
+| A vendor API that is not OpenAI-compatible | a service adapter that translates the request |
+| AI through a different API, or through a subscription | a service adapter |
+| A processing step that is not a language model | a stage whose service is an adapter |
 | Cleaning up one model's output quirks | that model's adapter |
 | A different summary, a translation, a glossary, study questions | a stage prompt in the configuration |
 | Another output format, syncing to a note app | the completion hook |

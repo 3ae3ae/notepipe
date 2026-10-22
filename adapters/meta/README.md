@@ -12,10 +12,13 @@ uv tool install "notepipe[meta]"
 ## Use
 
 ```toml
-[speech]
+[services.meta]
 adapter = ["notepipe-asr-meta"]
+api_key_env = "META_API_KEY"    # or api_key = "…"
+
+[speech]
+service = "meta"
 model = "muse-voice-transcribe-1.0"
-api_key = "…"            # or NOTEPIPE_SPEECH_API_KEY
 ```
 
 notepipe's API key is forwarded as is. `[transcript].language` (a language code) is sent as a language-name hint.

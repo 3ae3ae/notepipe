@@ -12,9 +12,12 @@ uv tool install "notepipe[openvino]"
 ## Use
 
 ```toml
-[speech]
+[services.openvino]
 adapter = ["notepipe-asr-openvino"]
 concurrency = 1
+
+[speech]
+service = "openvino"
 ```
 
 | Option | Default | Meaning |
