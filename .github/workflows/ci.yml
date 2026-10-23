@@ -1,21 +1,23 @@
 name: ci
 
 # main only changes through pull requests that pass this workflow while up to date with main, so a merge needs no
-# second run.
+# second test run: a push to main runs no jobs and only records main's status, which the README badge shows.
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   # Decide which jobs this change needs: code and build files, not READMEs. A manual run or a change to this file
-  # runs everything.
+  # runs everything; a push to main runs nothing.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -30,14 +32,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: paths
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'pull_request'
         with:
           filters: |
             core: [src/**, tests/**, Cargo.toml, Cargo.lock, .github/workflows/ci.yml]
             speech_swift: ['adapters/speech-swift/{src,native}/**', 'adapters/speech-swift/{Cargo.toml,Cargo.lock,build.rs}', .github/workflows/ci.yml]
       - uses: dorny/paths-filter@v3
         id: adapters
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'pull_request'
         with:
           filters: |
             llama: ['adapters/llama/{src,tests}/**', 'adapters/llama/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
