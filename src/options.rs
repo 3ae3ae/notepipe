@@ -19,6 +19,17 @@ pub fn resolve(
             "--skip: no stage named {name} in the pipeline"
         );
     }
+    if source.starts_with("http://") || source.starts_with("https://") {
+        anyhow::ensure!(
+            file.pipeline.iter().any(|name| !opts.skip.contains(name)
+                && file.stages.get(name).is_some_and(|stage| matches!(
+                    &stage.kind,
+                    StageType::Download(p) if p.command.is_some()
+                ))),
+            "{}",
+            crate::source::ADAPTER_HINT
+        );
+    }
     let mut names = HashSet::new();
     let mut stages = Vec::new();
     let mut written = BTreeMap::new();
@@ -216,15 +227,6 @@ pub fn resolve(
         !opts.json || !published.contains(&"-"),
         "Publishing to standard output and --json both use standard output; use one of them"
     );
-    if source.starts_with("http://") || source.starts_with("https://") {
-        anyhow::ensure!(
-            stages
-                .iter()
-                .any(|(n, s)| !opts.skip.contains(n) && matches!(s.kind, StageType::Download(_))),
-            "{}",
-            crate::source::ADAPTER_HINT
-        );
-    }
     let out_root = config::expand_tilde(opts.out.clone().unwrap_or_else(|| file.out.clone()));
     let out_root = std::path::absolute(out_root)?;
     let cfg = config::PipelineConfig {

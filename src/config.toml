@@ -13,7 +13,6 @@ api_key_env = "OPENAI_API_KEY"
 type = "download"
 input = "source"
 output = "media"
-command = ["notepipe-source-ytdlp"]
 
 [stages.transcript]
 type = "transcript"

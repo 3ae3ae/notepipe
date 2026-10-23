@@ -82,6 +82,7 @@ fn no_arguments_or_help_succeed_with_guidance_and_only_supported_flags() {
             "The transcript stage tries its sources in order:",
             "See notepipe config show for the pipeline in effect.",
             "--skip proofread,summary",
+            "A URL, once the download stage has a command",
         ] {
             assert!(text.contains(expected), "{text}");
         }
@@ -304,7 +305,7 @@ fn auto_creation_notices_and_fallback_use_the_built_in_template() {
     let text = stderr(&output);
     assert!(text.contains(". Continuing with the default settings."));
     assert!(
-        text.contains("Provider openai: the environment variable OPENAI_API_KEY is not set"),
+        text.contains("A URL needs a download stage with a command, for example [\"notepipe-source-ytdlp\"] from notepipe[ytdlp]"),
         "{text}"
     );
     assert!(!cli.dir.path().join("cache").exists());
@@ -421,6 +422,24 @@ fn doctor_reports_programs_keys_and_required_tools_offline() {
     assert!(stderr(&output).contains("required-tool or configuration issues"));
 }
 #[test]
+fn doctor_omits_download_stages_without_a_command() {
+    let cli = CliTest::new();
+    let mut cfg = config();
+    cfg["stages"]["download"]
+        .as_object_mut()
+        .unwrap()
+        .remove("command");
+    cli.config_value(&cfg);
+    let output = cli.run(&["doctor"]);
+    assert!(
+        output.status.success(),
+        "{} {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(!stdout(&output).contains("Download adapter"));
+}
+#[test]
 fn version_flags_include_only_an_explicit_build_commit() {
     let suffix = option_env!("NOTEPIPE_COMMIT_HASH")
         .map(|hash| format!(" ({hash})"))
@@ -462,15 +481,44 @@ fn source_config(cli: &CliTest, behavior: &str) -> Option<std::path::PathBuf> {
 }
 
 #[test]
-fn urls_require_an_explicit_download_stage_without_path_discovery() {
-    let cli = CliTest::new();
-    cli.config_value(&json!({"pipeline":["custom"],"stages":{"custom":{"type":"run","output":"file","publish":"file","command":["must-not-start"]}}}));
-    let error = source_json_error(&cli.run(&["https://example.test/media", "--json"]));
-    assert_eq!(
-        error["message"],
-        "URLs need a download stage in the pipeline; install one with uv tool install \"notepipe[ytdlp]\""
-    );
-    assert!(!cli.dir.path().join("cache").exists());
+fn urls_require_an_active_download_command_before_any_work() {
+    let python = which::which("python3")
+        .or_else(|_| which::which("python"))
+        .unwrap();
+    for mode in ["absent", "commandless", "skipped", "unlisted"] {
+        let cli = CliTest::new();
+        let record = cli.dir.path().join("started");
+        let command = json!([
+            python,
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/run.py"),
+            "counter",
+            record
+        ]);
+        let mut cfg = json!({"pipeline":["custom"],"stages":{"custom":{"type":"run","output":"file","publish":"file","command":command}}});
+        if mode != "absent" {
+            cfg["stages"]["download"] =
+                json!({"type":"download","input":"source","output":"media"});
+            if mode != "commandless" {
+                cfg["stages"]["download"]["command"] = command;
+            }
+            if mode != "unlisted" {
+                cfg["pipeline"] = json!(["download", "custom"]);
+            }
+        }
+        cli.config_value(&cfg);
+        let mut args = vec!["https://example.test/media", "--json"];
+        if mode == "skipped" {
+            args.extend(["--skip", "download"]);
+        }
+        let error = json_error(&cli.run(&args));
+        assert_eq!(
+            error["message"],
+            "A URL needs a download stage with a command, for example [\"notepipe-source-ytdlp\"] from notepipe[ytdlp]",
+            "{mode}"
+        );
+        assert!(!cli.dir.path().join("cache").exists(), "{mode}");
+        assert!(!record.exists(), "{mode}");
+    }
 }
 #[test]
 fn source_adapter_errors_include_diagnostics() {

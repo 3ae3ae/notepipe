@@ -1059,10 +1059,14 @@ mod tests {
         std::fs::write(&outside, "user data").unwrap();
         std::fs::write(files.join("partial.wav"), "partial download").unwrap();
         symlink(&outside, files.join("link.wav")).unwrap();
+        let mut file = settings::ConfigFile::default();
+        file.stages.get_mut("download").unwrap().kind = StageType::Download(settings::Source {
+            command: Some(vec!["unused".into()]),
+        });
         let cfg = crate::options::resolve(
             "https://example.test/media".into(),
             &Default::default(),
-            &Default::default(),
+            &file,
         )
         .unwrap();
         let mut warnings = Vec::new();
@@ -1153,17 +1157,24 @@ mod tests {
         let path = root.path().join("local");
         std::fs::write(&path, "original").unwrap();
         let mut source = settings::Source {
-            command: vec!["adapter".into()],
+            command: Some(vec!["adapter".into()]),
         };
         let key = source_key(path.to_str().unwrap(), &source).unwrap();
         std::fs::write(&path, "changed content").unwrap();
         assert_ne!(key, source_key(path.to_str().unwrap(), &source).unwrap());
         let url = "https://example.test/video";
         let key = source_key(url, &source).unwrap();
-        source.command.push("--option".into());
+        assert_eq!(
+            key,
+            runtime::digest(
+                &serde_json::to_vec(&serde_json::json!({"url":url,"command":["adapter"]})).unwrap()
+            )[..16]
+        );
+        source.command.as_mut().unwrap().push("--option".into());
         assert_ne!(key, source_key(url, &source).unwrap());
-        let cfg =
-            crate::options::resolve(url.into(), &Default::default(), &Default::default()).unwrap();
+        let mut file = settings::ConfigFile::default();
+        file.stages.get_mut("download").unwrap().kind = StageType::Download(source);
+        let cfg = crate::options::resolve(url.into(), &Default::default(), &file).unwrap();
         let stage = &cfg
             .stages
             .iter()
