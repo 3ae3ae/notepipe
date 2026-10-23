@@ -218,6 +218,7 @@ fn default_template_publishes_and_keeps_every_named_work_output() {
         toml::from_str::<toml::Value>(include_str!("../src/config.toml")).unwrap(),
     )
     .unwrap();
+    assert!(cfg["stages"]["download"].get("command").is_none());
     cfg["out"] = json!(root.join("out"));
     cfg["providers"]["openai"]["base_url"] = json!(provider.url);
     cfg["providers"]["openai"]["api_key_env"] = json!("");

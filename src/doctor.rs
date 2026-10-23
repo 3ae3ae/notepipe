@@ -89,7 +89,7 @@ pub fn run() -> Result<()> {
             for stage in cfg.stages.values() {
                 match &stage.kind {
                     crate::settings::StageType::Download(p) => {
-                        if let Some(program) = p.command.first() {
+                        if let Some(program) = p.command.as_ref().and_then(|argv| argv.first()) {
                             programs.push(("Download adapter", program));
                         }
                     }

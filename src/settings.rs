@@ -59,7 +59,12 @@ impl Default for Asr {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
-    pub command: Vec<String>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub command: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -465,7 +470,9 @@ impl ConfigFile {
                 }
                 StageType::Screenshots(s) => validate_tuning(s, &Speech::default())?,
                 StageType::Download(p) => {
-                    validate_command(&p.command)?;
+                    if let Some(command) = &p.command {
+                        validate_command(command)?;
+                    }
                     anyhow::ensure!(
                         stage.input == ["source"],
                         "Stage {name}: a download stage reads source"
@@ -653,17 +660,31 @@ mod tests {
         );
     }
     #[test]
-    fn download_settings_keep_required_commands_and_reject_unknown_keys() {
-        assert!(Source::default().command.is_empty());
-        for value in [json!({}), json!({"command":["unused"],"unknown":true})] {
+    fn download_settings_allow_no_command_and_validate_present_commands() {
+        assert!(Source::default().command.is_none());
+        let settings: Source = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(settings, Source::default());
+        assert_eq!(serde_json::to_value(settings).unwrap(), json!({}));
+        for value in [
+            json!({"command":null}),
+            json!({"command":["unused"],"unknown":true}),
+        ] {
             assert!(serde_json::from_value::<Source>(value).is_err());
         }
         assert!(
             serde_json::from_value::<Stage>(
                 json!({"type":"download","input":"source","output":"media"})
             )
-            .is_err()
+            .is_ok()
         );
+        for command in [json!([]), json!([""]), json!(["   "])] {
+            let mut cfg = config();
+            cfg["stages"]["download"]["command"] = command;
+            assert_eq!(
+                resolve(&cfg, &[]).unwrap_err().to_string(),
+                "The adapter command must name an executable."
+            );
+        }
         let value = json!({"command":["unused","argument"]});
         let settings: Source = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(settings).unwrap(), value);

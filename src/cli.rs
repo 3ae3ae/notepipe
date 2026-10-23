@@ -14,7 +14,7 @@ pub(super) fn after_help() -> String {
   notepipe interview.m4a -o ~/notes              A note for an audio file, under ~/notes
   notepipe talk.mp4 --subtitle talk.srt          Use your own transcript
   notepipe lecture.mp4 --skip proofread,summary  Notes without proofreading or a summary
-  notepipe https://youtu.be/VIDEO_ID             A URL (install "notepipe[ytdlp]" first)
+  notepipe https://youtu.be/VIDEO_ID             A URL, once the download stage has a command
 
 Transcripts:
   The transcript stage tries its sources in order: subtitles next to the file or from the download, then

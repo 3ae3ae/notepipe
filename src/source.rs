@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
-pub const ADAPTER_HINT: &str = "URLs need a download stage in the pipeline; install one with uv tool install \"notepipe[ytdlp]\"";
+pub const ADAPTER_HINT: &str = "A URL needs a download stage with a command, for example [\"notepipe-source-ytdlp\"] from notepipe[ytdlp]";
 const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
 /// Public, vendor-neutral note metadata.
@@ -178,7 +178,11 @@ impl Output {
 
 /// Resolve the configured command exactly, preferring sibling executables, then PATH.
 pub fn command(source: &Source) -> Result<(PathBuf, &[String])> {
-    let (program, args) = source.command.split_first().context(ADAPTER_HINT)?;
+    let (program, args) = source
+        .command
+        .as_deref()
+        .and_then(|command| command.split_first())
+        .context(ADAPTER_HINT)?;
     ensure!(
         !program.trim().is_empty(),
         "The download adapter command must name an executable"
@@ -324,7 +328,7 @@ mod tests {
     fn command(record: &Path, behavior: &str) -> Option<Source> {
         let python = runtime::which("python3").or_else(|| runtime::which("python"))?;
         Some(Source {
-            command: vec![
+            command: Some(vec![
                 python.display().to_string(),
                 concat!(
                     env!("CARGO_MANIFEST_DIR"),
@@ -335,7 +339,7 @@ mod tests {
                 record.display().to_string(),
                 "--behavior".into(),
                 behavior.into(),
-            ],
+            ]),
         })
     }
 
