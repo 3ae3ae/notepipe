@@ -6,6 +6,13 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Changed
+
+- The generated configuration takes local files: its download stage has no `command`, because the yt-dlp adapter is a
+  separate install. To take URLs, install `notepipe[ytdlp]` and add `command = ["notepipe-source-ytdlp"]` to
+  `[stages.download]`; a URL without a download command stops with a message that says so. A download stage's
+  `command` is optional.
+
 ## [0.4.0] - 2026-10-23
 
 Stages now read and write files, and say which: the configuration shows where every input comes from and where every

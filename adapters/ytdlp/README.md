@@ -9,8 +9,17 @@ A [notepipe](https://github.com/3ae3ae/notepipe) source adapter that downloads m
 uv tool install "notepipe[ytdlp]"
 ```
 
-The configuration notepipe creates already uses it in its download stage. ffmpeg is required to merge formats and
-convert subtitles.
+Then name it in the download stage of your configuration (`notepipe config path` shows where the file is):
+
+```toml
+[stages.download]
+type = "download"
+input = "source"
+output = "media"
+command = ["notepipe-source-ytdlp"]
+```
+
+ffmpeg is required to merge formats and convert subtitles.
 
 ## Behavior
 

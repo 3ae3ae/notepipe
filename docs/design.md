@@ -17,8 +17,8 @@ recognition and stages run wherever you point them: a cloud API, a server on you
 as a program.
 
 **Stay neutral.** The engine prefers no vendor, website, language or region: nothing in its code depends on one, and it
-contacts only what the configuration names. The configuration it creates uses OpenAI and yt-dlp so that a fresh install works, and it
-is a file you change like any other. Prompts are English defaults that you replace; notes follow the language of the
+contacts only what the configuration names. The configuration it creates uses OpenAI so that a fresh install works with
+an API key, and it is a file you change like any other. Prompts are English defaults that you replace; notes follow the language of the
 recording, not of the tool. The CLI speaks English, the common language of developer tools.
 
 **Produce plain, durable output.** A note is a folder of Markdown, images and JSON that any editor, script or note app can

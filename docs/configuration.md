@@ -12,8 +12,8 @@ notepipe config show    # show the configuration in effect
 ```
 
 The first run creates the file when there is none and says where it is; `config init` writes the same file, and the
-[README](../README.md#configuration) shows it. It uses OpenAI with the key in `OPENAI_API_KEY`, so it works as soon as
-that variable is set. Settings at their default are written as comments, so the file shows every value in effect:
+[README](../README.md#the-pipeline--default-configuration) shows it. It uses OpenAI with the key in `OPENAI_API_KEY`, so it works on local
+files as soon as that variable is set; URLs also need a [download program](#download). Settings at their default are written as comments, so the file shows every value in effect:
 remove the `#` to change one. Settings that start empty are left out of it and described below.
 
 Values are taken from, in order: command-line options, the configuration, the defaults below. Unknown keys are errors,
@@ -90,14 +90,15 @@ source's title, author, duration and link, from the download stage.
 
 ### `download`
 
-Reads `source` and writes `media`. For a URL it runs a [download program](adapters.md#download-programs); a local file
+Reads `source` and writes `media`. For a URL it runs the [download program](adapters.md#download-programs) in
+`command`; a local file
 is used where it is, with the subtitles found next to it (`NAME.srt`, `NAME.vtt` and language variants such as
-`NAME.en.srt`). A URL needs this stage, and a run has at most one. Downloaded media is deleted once the run ends; a local file never is. The output
+`NAME.en.srt`). A URL needs this stage with a `command`, and a run has at most one. Downloaded media is deleted once the run ends; a local file never is. The output
 of a download stage cannot be published.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `command` | required | The download program, as an argument list, such as `["notepipe-source-ytdlp"]` (installed with `uv tool install "notepipe[ytdlp]"`); for yt-dlp, arguments after `"--"` go to yt-dlp itself |
+| `command` | none | The download program for URLs, as an argument list, such as `["notepipe-source-ytdlp"]` (installed with `uv tool install "notepipe[ytdlp]"`); for yt-dlp, arguments after `"--"` go to yt-dlp itself. Without it, the stage takes local files only |
 
 ### `transcript`
 
