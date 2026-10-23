@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-23
+
 ### Changed
 
 - The generated configuration takes local files: its download stage has no `command`, because the yt-dlp adapter is a
