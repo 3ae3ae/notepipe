@@ -9,7 +9,8 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
 
 ## Input
 
-- `SOURCE` is a local video or audio file, or an `http(s)` URL (fetched by the pipeline's `download` stage).
+- `SOURCE` is a local video or audio file, or an `http(s)` URL (fetched by the program in the `download` stage's
+  `command`).
 - `--config FILE` reads the configuration from `FILE` instead of the user's config file; `--config -` reads it from
   standard input. The content is TOML, or JSON when its first non-space character is `{`. It has the same structure as
   `config.toml` (see `notepipe config init`). Command-line options still override it.

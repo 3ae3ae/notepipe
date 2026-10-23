@@ -247,7 +247,7 @@ output = "media"
 command = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
 ```
 
-The program runs only for `http(s)` sources. For a local file, notepipe writes the stage's `info.json` itself, with
+The program runs only for `http(s)` sources; a download stage without `command` takes local files only. For a local file, notepipe writes the stage's `info.json` itself, with
 the file's absolute path and the subtitles found next to it, and never deletes the file. Results are cached per URL
 and command. Downloaded media is deleted once the run ends (after a forced exit, by the next run), so a later run that only changes later stages reuses the
 transcript and screenshots, while one that needs the media again downloads it again.
