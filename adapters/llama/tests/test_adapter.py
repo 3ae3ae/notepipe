@@ -143,6 +143,12 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(code, 502)
                 self.assertIsInstance(value["error"]["message"], str)
 
+    def test_output_limit_is_a_failure_that_is_not_retried(self):
+        self.response(json.dumps({"choices": [{"finish_reason": "length", "message": {"content": "The blue"}}]}))
+        code, value = self.call(body=form())
+        self.assertEqual(code, 422)
+        self.assertIn("output limit", value["error"]["message"])
+
     def test_malformed_uploads_and_unknown_routes_are_json_errors(self):
         for method, path, body, headers, status in [
             ("GET", "/unknown", None, {}, 404),
