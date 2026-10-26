@@ -37,6 +37,11 @@ fn screenshot_key(cfg: &PipelineConfig) -> Result<String> {
         &serde_json::json!({"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi}),
     )?))
 }
+fn transcript_key(asr: &settings::Asr) -> Result<String> {
+    Ok(runtime::digest(&serde_json::to_vec(
+        &checkpoint::AsrIdentity::new(asr),
+    )?))
+}
 fn read_frames(root: &Path) -> Result<Option<scene::Output>> {
     let marker = root.join("complete.json");
     if !marker.is_file() {
@@ -316,6 +321,12 @@ impl Run {
             .or_default()
             .clone()
     }
+    fn transcript_cache(&self, key: &str) -> PathBuf {
+        self.work.join(format!(".cache/transcript-{key}.json"))
+    }
+    fn frames_cache(&self, key: &str) -> PathBuf {
+        self.work.join(format!(".cache/frames-{key}"))
+    }
     fn meta(&self) -> Result<MediaMeta> {
         for (name, stage) in &self.cfg.stages {
             if matches!(stage.kind, StageType::Download(_)) && !self.cfg.skip.contains(name) {
@@ -577,6 +588,40 @@ impl Run {
             .next()
             .map(|track| (track.path, track.language.unwrap_or_default())))
     }
+    fn media_needed(&self, info: &source::Output, files: &Path) -> Result<bool> {
+        for (stage_name, stage) in &self.cfg.stages {
+            if self.cfg.skip.contains(stage_name) {
+                continue;
+            }
+            let cfg = crate::options::stage_config(&self.cfg, stage_name, stage)?;
+            match &stage.kind {
+                StageType::Screenshots(_) => {
+                    if read_frames(&self.frames_cache(&screenshot_key(&cfg)?))?.is_none() {
+                        return Ok(true);
+                    }
+                }
+                StageType::Transcript(t) => {
+                    let selected = self.subtitle(info, files, t)?.filter(|(path, _)| {
+                        selected_transcript(path)
+                            .is_ok_and(|(_, events)| timeline::has_readable_events(&events))
+                    });
+                    let subtitles_first = self.cfg.subtitle.is_some()
+                        || t.sources.first().is_some_and(|s| s == "subtitles");
+                    if !(subtitles_first && selected.is_some()) {
+                        let key = transcript_key(&cfg.asr)?;
+                        if Transcript::read(&self.transcript_cache(&key)).is_err() {
+                            return Ok(true);
+                        }
+                    }
+                }
+                StageType::Run(_) if stage.input.iter().any(|p| self.kind(p) == Kind::Media) => {
+                    return Ok(true);
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
     async fn download(&self, name: &str, target: &Path) -> Result<()> {
         std::fs::create_dir(target)?;
         if Path::new(&self.cfg.url).is_file() {
@@ -607,51 +652,7 @@ impl Run {
                     result?;
                 }
             }
-            for (stage_name, stage) in &self.cfg.stages {
-                if need_media {
-                    break;
-                }
-                if self.cfg.skip.contains(stage_name) {
-                    continue;
-                }
-                let cfg = crate::options::stage_config(&self.cfg, stage_name, stage)?;
-                match &stage.kind {
-                    StageType::Screenshots(_) => {
-                        need_media |= read_frames(
-                            &self
-                                .work
-                                .join(format!(".cache/frames-{}", screenshot_key(&cfg)?)),
-                        )?
-                        .is_none()
-                    }
-                    StageType::Transcript(t) => {
-                        let selected =
-                            self.subtitle(info, &cache.join("files"), t)?
-                                .filter(|(path, _)| {
-                                    selected_transcript(path).is_ok_and(|(_, events)| {
-                                        timeline::has_readable_events(&events)
-                                    })
-                                });
-                        let subtitles_first = self.cfg.subtitle.is_some()
-                            || t.sources.first().is_some_and(|s| s == "subtitles");
-                        if !(subtitles_first && selected.is_some()) {
-                            let key = runtime::digest(&serde_json::to_vec(
-                                &checkpoint::AsrIdentity::new(&cfg.asr),
-                            )?);
-                            need_media |= Transcript::read(
-                                &self.work.join(format!(".cache/transcript-{key}.json")),
-                            )
-                            .is_err();
-                        }
-                    }
-                    StageType::Run(_)
-                        if stage.input.iter().any(|p| self.kind(p) == Kind::Media) =>
-                    {
-                        need_media = true
-                    }
-                    _ => {}
-                }
-            }
+            need_media = need_media || self.media_needed(info, &cache.join("files"))?;
         }
         if need_media {
             let resolved = source::resolve(&self.cfg.url, &self.cfg.source, &cache, name).await?;
@@ -707,17 +708,11 @@ impl Run {
                 subtitle::validate_events(&events)?;
                 (key, language.clone(), Some(events))
             } else {
-                (
-                    runtime::digest(&serde_json::to_vec(&checkpoint::AsrIdentity::new(
-                        &cfg.asr,
-                    ))?),
-                    cfg.asr.language.clone(),
-                    None,
-                )
+                (transcript_key(&cfg.asr)?, cfg.asr.language.clone(), None)
             };
             let lock = self.cache_lock(&format!("transcript-{key}"));
             let _lock = lock.lock().await;
-            let cache = self.work.join(format!(".cache/transcript-{key}.json"));
+            let cache = self.transcript_cache(&key);
             if cache.is_file()
                 && let Ok(mut transcript) = Transcript::read(&cache)
             {
@@ -770,9 +765,7 @@ impl Run {
         target: &Path,
     ) -> Result<Vec<String>> {
         let mut cfg = crate::options::stage_config(&self.cfg, name, stage)?;
-        let cache = self
-            .work
-            .join(format!(".cache/frames-{}", screenshot_key(&cfg)?));
+        let cache = self.frames_cache(&screenshot_key(&cfg)?);
         let lock = self.cache_lock(&format!("frames-{}", screenshot_key(&cfg)?));
         let _lock = lock.lock().await;
         cfg.out_dir = cache.clone();
