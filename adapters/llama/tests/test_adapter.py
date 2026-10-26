@@ -147,6 +147,7 @@ class AdapterTests(unittest.TestCase):
         self.response(json.dumps({"choices": [{"finish_reason": "length", "message": {"content": "The blue"}}]}))
         code, value = self.call(body=form())
         self.assertEqual(code, 422)
+        self.assertEqual(value["error"]["code"], "output_limit")
         self.assertIn("output limit", value["error"]["message"])
 
     def test_malformed_uploads_and_unknown_routes_are_json_errors(self):
