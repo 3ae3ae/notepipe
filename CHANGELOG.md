@@ -6,11 +6,13 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-26
+
 ### Fixed
 
-- The llama.cpp speech adapter no longer returns a transcript that the model cut off at its output limit as finished;
-  it fails the segment, and notepipe neither retries nor keeps it. The adapter contract asks the same of every speech
-  program.
+- The llama.cpp speech adapter (`notepipe-asr-llama` 0.1.2) no longer returns a transcript that the model cut off at
+  its output limit as finished; it fails the segment, and notepipe neither retries nor keeps it. The adapter contract
+  asks the same of every speech program.
 
 ## [0.4.1] - 2026-10-23
 
