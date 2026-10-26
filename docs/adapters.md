@@ -91,7 +91,8 @@ compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as a
 | `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, about `max_segment` seconds or less (20 by default) plus up to half a second of padding; always the last part |
 
 Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. Return clean text: model-specific
-markers or formatting are the program's job to remove.
+markers or formatting are the program's job to remove. A transcript cut off at the model's output limit is not a result:
+answer with a `4xx` status other than `429`, which notepipe does not retry.
 
 ### Chat API
 
