@@ -263,7 +263,7 @@ class AdapterTests(unittest.TestCase):
             "-o elsewhere/%(title)s.%(ext)s\n-P elsewhere\n"
             "--skip-download\n--simulate\n--no-write-subs\n--sub-langs en\n"
         )
-        self.run_adapter("--config-locations", str(config))
+        self.run_adapter("--config-locations", str(config), "--skip-unavailable-fragments", "--ignore-errors")
         self.assertEqual(self.options["format"], "bestaudio")
         self.assertEqual(self.options["socket_timeout"], 7)
         self.assertTrue(self.options["noplaylist"])
@@ -271,6 +271,8 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.options["outtmpl"]["default"], "media.%(ext)s")
         self.assertFalse(self.options["simulate"])
         self.assertFalse(self.options["skip_download"])
+        self.assertFalse(self.options["skip_unavailable_fragments"])
+        self.assertFalse(self.options["ignoreerrors"])
         self.assertTrue(self.options["writesubtitles"])
         self.assertTrue(self.options["writeautomaticsub"])
         self.assertEqual(self.options["subtitleslangs"], ["all"])

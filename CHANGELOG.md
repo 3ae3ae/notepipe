@@ -13,6 +13,8 @@ All notable changes to notepipe are documented in this file. The format is based
   adapter (`notepipe-asr-llama` 0.1.3) sends it.
 - On a re-run, a transcript stage that reads only subtitles no longer downloads the media again when the source has
   no subtitles.
+- The yt-dlp adapter (`notepipe-source-ytdlp` 0.1.2) fails a download that is missing fragments, or that met errors
+  `--ignore-errors` would pass over, instead of handing on the partial file as complete.
 
 ## [0.4.2] - 2026-10-26
 
