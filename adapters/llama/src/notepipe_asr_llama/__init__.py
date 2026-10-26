@@ -151,7 +151,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if value["choices"][0].get("finish_reason") == "length":
             # A 4xx is not retried: asking again stops at the same limit.
-            self.error(422, "The speech model stopped at its output limit")
+            self.reply(422, {"error": {"code": "output_limit", "message": "The speech model stopped at its output limit"}})
             return
         self.reply(200, {"text": sanitize_qwen_text(text)})
 
