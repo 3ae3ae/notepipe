@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-26
+
 ### Fixed
 
 - A speech program that stops at the model's output limit can say so with the error code `output_limit`; notepipe
