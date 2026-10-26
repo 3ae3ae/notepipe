@@ -607,7 +607,9 @@ impl Run {
                     });
                     let subtitles_first = self.cfg.subtitle.is_some()
                         || t.sources.first().is_some_and(|s| s == "subtitles");
-                    if !(subtitles_first && selected.is_some()) {
+                    if !(subtitles_first && selected.is_some())
+                        && t.sources.iter().any(|s| s == "speech")
+                    {
                         let key = transcript_key(&cfg.asr)?;
                         if Transcript::read(&self.transcript_cache(&key)).is_err() {
                             return Ok(true);
