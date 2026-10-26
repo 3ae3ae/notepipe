@@ -1789,6 +1789,32 @@ fn explicit_subtitles_override_downloaded_tracks_without_starting_the_provider()
 }
 
 #[test]
+fn speech_output_limit_fails_without_retrying() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/speech.wav"
+    ));
+    let record = root.path().join("asr");
+    let mut cfg = speech_config(&record, "output-limit");
+    cfg["stages"]["transcript"]["speech"]["max_segment"] = json!(30.0);
+    let output = spawn(
+        root.path(),
+        source.to_str().unwrap(),
+        &cfg,
+        &["--skip", "screenshots"],
+        false,
+    )
+    .wait_with_output()
+    .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(count(&record), 1);
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("The model stopped at its output limit.")
+    );
+}
+
+#[test]
 fn managed_asr_stops_after_a_transcription_error() {
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());

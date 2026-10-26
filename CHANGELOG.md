@@ -6,6 +6,11 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Fixed
+
+- A speech program that stops at the model's output limit can say so with the error code `output_limit`; notepipe
+  then reports "The model stopped at its output limit." instead of blaming the request parameters.
+
 ## [0.4.2] - 2026-10-26
 
 ### Fixed

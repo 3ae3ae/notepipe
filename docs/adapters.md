@@ -92,7 +92,8 @@ compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as a
 
 Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. Return clean text: model-specific
 markers or formatting are the program's job to remove. A transcript cut off at the model's output limit is not a result:
-answer with a `4xx` status other than `429`, which notepipe does not retry.
+answer `422` with `{"error": {"code": "output_limit", "message": "…"}}`, which notepipe does not retry and
+reports as the model stopping at its output limit.
 
 ### Chat API
 

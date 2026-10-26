@@ -95,6 +95,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if args.behavior == 'hang' or (args.behavior == 'resume' and len((args.record / 'calls').read_text().splitlines()) > 1 and not (args.record / 'release').exists()):
             (args.record / 'transcribing').write_text('ready')
             time.sleep(30)
+        elif args.behavior == 'output-limit':
+            self.send_response(422)
+            response = b'{"error":{"code":"output_limit","message":"x"}}'
         elif args.behavior == 'error' or (args.behavior == 'fail-after-first' and len((args.record / 'calls').read_text().splitlines()) > 1 and not (args.record / 'release').exists()):
             self.send_response(400)
             response = b'{}'

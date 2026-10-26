@@ -44,7 +44,11 @@ fn classify_rejection(status: u16, body: &[u8]) -> Failure {
     Failure {
         retryable: status == 429 || (500..=599).contains(&status),
         unsupported_response_format: rejects_response_format(status, body),
-        message: rejection_message(status),
+        message: if rejects_output_limit(body) {
+            "The model stopped at its output limit.".into()
+        } else {
+            rejection_message(status)
+        },
     }
 }
 
@@ -67,6 +71,12 @@ fn rejects_response_format(status: u16, body: &[u8]) -> bool {
         && body
             .windows(b"response_format".len())
             .any(|part| part.eq_ignore_ascii_case(b"response_format"))
+}
+
+/// The adapter contract's code for a result cut off at the model's output limit; provider text is still not kept.
+fn rejects_output_limit(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body)
+        .is_ok_and(|value| value["error"]["code"] == "output_limit")
 }
 
 pub struct HttpResponse {
@@ -216,6 +226,34 @@ pub fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn output_limit_code_uses_a_fixed_message_without_changing_retryability() {
+        for status in [400, 422, 429, 500] {
+            let error = classify_rejection(
+                status,
+                br#"{"error":{"code":"output_limit","message":"x"}}"#,
+            );
+            assert_eq!(error.message, "The model stopped at its output limit.");
+            assert_eq!(error.retryable, status == 429 || status >= 500);
+            assert!(!error.unsupported_response_format);
+        }
+    }
+    #[test]
+    fn rejections_without_output_limit_code_keep_the_existing_message() {
+        for body in [
+            r#"{"error":{"message":"output_limit"}}"#,
+            r#"{"error":{"code":"other","message":"x"}}"#,
+            "output_limit",
+        ] {
+            let error = classify_rejection(422, body.as_bytes());
+            assert_eq!(
+                error.message,
+                "The service rejected the request parameters (HTTP 422); check the model and service settings for this task."
+            );
+            assert!(!error.retryable);
+            assert!(!error.unsupported_response_format);
+        }
+    }
     #[test]
     fn response_format_fallback_uses_only_status_and_the_named_field() {
         for status in [400, 422] {
