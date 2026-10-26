@@ -97,6 +97,8 @@ def download(url, out, extra_args, output):
             noprogress=True,
             simulate=False,
             skip_download=False,
+            skip_unavailable_fragments=False,
+            ignoreerrors=False,
             listformats=False,
             listsubtitles=False,
             list_thumbnails=False,
