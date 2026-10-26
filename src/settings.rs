@@ -318,13 +318,17 @@ pub fn plain_name(name: &str) -> bool {
     !name.is_empty() && !name.starts_with('.') && name != "source" && !name.contains(['/', '\\'])
 }
 impl Stage {
+    /// An `llm` stage writing `.json` rewrites the note document; skipped, it passes its input on unchanged.
+    pub fn llm_writes_document(&self) -> bool {
+        matches!(self.kind, StageType::Llm(_)) && self.output.ends_with(".json")
+    }
     pub fn output_kind(&self) -> Kind {
         match &self.kind {
             StageType::Download(_) => Kind::Media,
             StageType::Transcript(_) => Kind::Transcript,
             StageType::Screenshots(_) => Kind::Images,
             StageType::Document {} => Kind::Document,
-            StageType::Llm(_) if self.output.ends_with(".json") => Kind::Document,
+            StageType::Llm(_) if self.llm_writes_document() => Kind::Document,
             StageType::Llm(_) | StageType::Markdown {} => Kind::Markdown,
             StageType::Run(r) => r.produces.unwrap_or(Kind::File),
         }
@@ -351,7 +355,7 @@ impl Stage {
             batch_size: l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE) as usize,
             chunk_size: l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE) as usize,
             request: l.request.clone(),
-            input: if self.output.ends_with(".json") {
+            input: if self.llm_writes_document() {
                 crate::llm::Input::Paragraphs
             } else {
                 crate::llm::Input::Transcript
