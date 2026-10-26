@@ -137,8 +137,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         subtitle::validate_events(&selected_transcript(path)?.1)?;
     }
     let mut warnings = if cfg.stages.iter().any(|(name, s)| {
-        (!cfg.skip.contains(name)
-            || (matches!(s.kind, StageType::Llm(_)) && s.output.ends_with(".json")))
+        (!cfg.skip.contains(name) || s.llm_writes_document())
             && s.publish.as_deref().is_some_and(|p| p != "-")
     }) {
         artifact::recover(&cfg.out_root)?
@@ -223,9 +222,7 @@ async fn execute(
             while index < pending.len() {
                 let (name, stage) = &pending[index];
                 let skipped = run.cfg.skip.contains(name);
-                let passthrough = skipped
-                    && matches!(stage.kind, StageType::Llm(_))
-                    && stage.output.ends_with(".json");
+                let passthrough = skipped && stage.llm_writes_document();
                 if (skipped && !passthrough)
                     || ((matches!(stage.kind, StageType::Download(_))
                         || download.is_none_or(|output| ready.contains(output)))
@@ -289,9 +286,7 @@ async fn execute(
     let mut outputs = Vec::new();
     let mut stdout = None;
     for (name, stage) in &run.cfg.stages {
-        if run.cfg.skip.contains(name)
-            && !(matches!(stage.kind, StageType::Llm(_)) && stage.output.ends_with(".json"))
-        {
+        if run.cfg.skip.contains(name) && !stage.llm_writes_document() {
             continue;
         }
         if let Some(publish) = &stage.publish {
@@ -424,7 +419,7 @@ impl Run {
                     settings.base_url = provider.base(name).await?;
                     settings.limit = Some(provider.limit.clone());
                     let _cancel = runtime::CancelOnDrop(settings.cancelled.clone());
-                    if stage.output.ends_with(".json") {
+                    if stage.llm_writes_document() {
                         let mut document = Document::read(&inputs[0], &self.work)?;
                         let work = self.work.clone();
                         let (document, stage_warnings) =

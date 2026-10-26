@@ -66,7 +66,7 @@ pub fn resolve(
                 StageType::Transcript(_) => ("transcript", &[Kind::Media]),
                 StageType::Screenshots(_) => ("screenshots", &[Kind::Media]),
                 StageType::Document {} => ("document", &[Kind::Transcript, Kind::Images]),
-                StageType::Llm(_) if stage.output.ends_with(".json") => ("llm", &[Kind::Document]),
+                StageType::Llm(_) if stage.llm_writes_document() => ("llm", &[Kind::Document]),
                 StageType::Llm(_) => ("llm", &[Kind::Transcript, Kind::Document, Kind::Markdown]),
                 StageType::Markdown {} => ("markdown", &[Kind::Document, Kind::Markdown]),
                 StageType::Run(_) => (
@@ -132,8 +132,7 @@ pub fn resolve(
             );
         }
         let skipped = opts.skip.contains(name);
-        if !skipped || (matches!(stage.kind, StageType::Llm(_)) && stage.output.ends_with(".json"))
-        {
+        if !skipped || stage.llm_writes_document() {
             stage.input.retain(|input| {
                 if absent.contains_key(input) {
                     !(matches!(stage.kind, StageType::Markdown {})
@@ -153,8 +152,7 @@ pub fn resolve(
                 "--skip leaves stage {name} with no input"
             );
         }
-        if skipped && !(matches!(stage.kind, StageType::Llm(_)) && stage.output.ends_with(".json"))
-        {
+        if skipped && !stage.llm_writes_document() {
             absent.insert(stage.output.clone(), name.clone());
         }
         match &mut stage.kind {
