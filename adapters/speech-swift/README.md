@@ -32,5 +32,9 @@ provider = "speech-swift"
 `--model` selects `qwen3-1.7b` (default), `qwen3-0.6b` or `whisper`. The first run downloads the model.
 The transcript stage's `language` is passed to the model.
 
-The Qwen models write at most 448 tokens per segment, roughly a minute of speech. Keep the speech `max_segment` at its
-default of 20 seconds, or below 60, so that long segments are not cut short.
+The Qwen models write at most 448 tokens per segment: roughly a minute of English speech, and less in scripts that take
+more tokens per word. Keep the speech `max_segment` at its default of 20 seconds so that segments are not cut short.
+
+Whisper on Core ML writes at most about 220 tokens per segment, and ends a segment early when one word comes three times
+in a row, as in "no, no, no". Either way the rest of the segment is lost without an error. Prefer a Qwen model; with
+Whisper, a shorter `max_segment` helps only with the token limit.
