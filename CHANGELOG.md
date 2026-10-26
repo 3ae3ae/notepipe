@@ -16,6 +16,11 @@ All notable changes to notepipe are documented in this file. The format is based
 - The yt-dlp adapter (`notepipe-source-ytdlp` 0.1.2) fails a download that is missing fragments, or that met errors
   `--ignore-errors` would pass over, instead of handing on the partial file as complete.
 
+### Changed
+
+- The speech-swift adapter's README (`notepipe-asr-speech-swift` 0.1.2) says when Whisper on Core ML ends a segment
+  early without an error.
+
 ## [0.4.2] - 2026-10-26
 
 ### Fixed
