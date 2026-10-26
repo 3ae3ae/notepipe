@@ -11,6 +11,8 @@ All notable changes to notepipe are documented in this file. The format is based
 - A speech program that stops at the model's output limit can say so with the error code `output_limit`; notepipe
   then reports "The model stopped at its output limit." instead of blaming the request parameters. The llama.cpp
   adapter (`notepipe-asr-llama` 0.1.3) sends it.
+- On a re-run, a transcript stage that reads only subtitles no longer downloads the media again when the source has
+  no subtitles.
 
 ## [0.4.2] - 2026-10-26
 

@@ -1664,6 +1664,81 @@ fn source_adapter_command(record: &Path, behavior: &str) -> Value {
     ])
 }
 
+#[test]
+fn remote_reruns_download_only_when_active_stages_need_media() {
+    for (cache, skip) in [
+        ("frames-", ""),
+        ("transcript-", ""),
+        ("run", ""),
+        ("frames-", "screenshots"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let download = root.path().join("download");
+        let mut cfg = speech_config(&root.path().join("asr"), "healthy");
+        cfg["stages"]["download"]["command"] = source_adapter_command(&download, "speech");
+        if cache == "run" {
+            cfg["pipeline"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("consume"));
+            cfg["stages"]["consume"] = json!({"type":"run","input":"media","output":"media.md","publish":"media.md","produces":"markdown","command":[
+                python(), "-c", "import json,pathlib,sys;p=pathlib.Path(sys.argv[1]);assert (p/json.loads((p/'info.json').read_text())['media']).is_file();print('Media available.')", "{input}"
+            ]});
+        }
+        let source = Path::new("https://example.test/cached-media");
+        let first = done(&run(root.path(), source, &cfg, &[]));
+        let work = Path::new(first["work_dir"].as_str().unwrap());
+        assert_eq!(count(&download), 1);
+        assert!(!work.join(".cache/download/files/media.mp4").exists());
+        assert!(!work.join("media/media.mp4").exists());
+        if cache != "run" {
+            let path = std::fs::read_dir(work.join(".cache"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with(cache)
+                })
+                .unwrap();
+            if path.is_dir() {
+                std::fs::remove_dir_all(path).unwrap();
+            } else {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        let flags = if skip.is_empty() {
+            Vec::new()
+        } else {
+            vec!["--skip", skip]
+        };
+        let second = done(&run(root.path(), source, &cfg, &flags));
+        assert_eq!(second["work_dir"], first["work_dir"]);
+        assert_eq!(
+            count(&download),
+            if skip.is_empty() { 2 } else { 1 },
+            "{cache}, skip={skip}"
+        );
+    }
+}
+
+#[test]
+fn subtitles_only_remote_reruns_do_not_download_again_when_subtitles_are_absent() {
+    let root = tempfile::tempdir().unwrap();
+    let download = root.path().join("download");
+    let mut cfg = config();
+    cfg["stages"]["download"]["command"] = source_adapter_command(&download, "no-subtitles");
+    let source = Path::new("https://example.test/no-subtitles");
+    for _ in 0..2 {
+        assert_eq!(
+            error(&run(root.path(), source, &cfg, &["--skip", "screenshots"])),
+            "No subtitles found. Select existing subtitles, or use speech recognition."
+        );
+        assert_eq!(count(&download), 1);
+    }
+}
+
 fn silence(root: &Path) -> PathBuf {
     let source = root.join("silence.wav");
     let output = Command::new("ffmpeg")

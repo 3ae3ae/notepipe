@@ -53,7 +53,8 @@ else:
         command += ['-i', str(Path(__file__).with_name('speech.wav')), '-shortest']
     subprocess.run(command + ['-c:v', 'mpeg4', str(media)], check=True)
 tracks = []
-for language, automatic, text in [('fr', False, 'French captions.'), ('en', True, 'Automatic captions.'), ('en', False, 'Welcome to the source adapter.')]:
+captions = [] if args.behavior == 'no-subtitles' else [('fr', False, 'French captions.'), ('en', True, 'Automatic captions.'), ('en', False, 'Welcome to the source adapter.')]
+for language, automatic, text in captions:
     name = f'caption-{language}-{automatic}.srt'
     (out / name).write_text(f'1\n00:00:00,000 --> 00:00:02,500\n{text}\n', encoding='utf-8')
     tracks.append({'path': name, 'language': language, 'automatic': automatic})
