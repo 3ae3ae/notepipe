@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-10-28
+
 ### Fixed
 
 - The llama.cpp adapter (`notepipe-asr-llama` 0.1.4) no longer lets Qwen3-ASR repeat one word until the request times
