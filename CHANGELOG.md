@@ -6,6 +6,13 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Fixed
+
+- The llama.cpp adapter (`notepipe-asr-llama` 0.1.4) no longer lets Qwen3-ASR repeat one word until the request times
+  out. Each segment's output is capped by its length, and a segment that reaches the cap is decoded again with a
+  repetition penalty and then with sampling. Before, such a segment ran for two minutes on every attempt and stopped
+  the run.
+
 ## [0.4.5] - 2026-10-28
 
 ### Fixed

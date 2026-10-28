@@ -31,12 +31,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        body = self.rfile.read(int(self.headers["Content-Length"]))
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         record.joinpath("request.json").write_text(json.dumps({
-            "path": self.path, "body": json.loads(body), "headers": dict(self.headers),
+            "path": self.path, "body": body, "headers": dict(self.headers),
         }))
+        with record.joinpath("requests.jsonl").open("a") as requests:
+            requests.write(json.dumps(body) + "\n")
         config = record / "response.json"
         config = json.loads(config.read_text()) if config.exists() else {}
+        # A list answers successive requests in order and then repeats its last entry.
+        if isinstance(config, list):
+            count = len(record.joinpath("requests.jsonl").read_text().splitlines())
+            config = config[min(count, len(config)) - 1]
         response = config.get("body", json.dumps({"choices": [{"message": {"content": "Recognized."}}]})).encode()
         self.send_response(config.get("status", 200), "untrusted-secret")
         if "location" in config:
