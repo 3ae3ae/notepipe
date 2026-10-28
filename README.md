@@ -433,6 +433,7 @@ Official adapters are published as independent packages and install as extras of
 | [`llama`](https://github.com/3ae3ae/notepipe/blob/main/adapters/llama) | `notepipe-asr-llama` | provider | Local speech recognition on CPU or GPU via [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`. |
 | [`openvino`](https://github.com/3ae3ae/notepipe/blob/main/adapters/openvino) | `notepipe-asr-openvino` | provider | Local speech recognition on an Intel NPU (default), CPU or GPU via [OpenVINO GenAI](https://github.com/openvinotoolkit/openvino.genai). |
 | [`speech-swift`](https://github.com/3ae3ae/notepipe/blob/main/adapters/speech-swift) | `notepipe-asr-speech-swift` | provider | Local speech recognition on Apple silicon (macOS 15+) using MLX or Core ML via [speech-swift](https://github.com/soniqo/speech-swift) *(built in CI; not yet verified on hardware)*. |
+| [`sensevoice`](https://github.com/3ae3ae/notepipe/blob/main/adapters/sensevoice) | `notepipe-asr-sensevoice` | provider | Local speech recognition with [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) via [FunASR](https://github.com/modelscope/FunASR) on CPU, an NVIDIA GPU or Apple silicon; Chinese, English, Japanese, Korean and Cantonese. |
 | [`xai`](https://github.com/3ae3ae/notepipe/blob/main/adapters/xai) | `notepipe-asr-xai` | provider | Bridges transcription requests to xAI's speech-to-text API (`XAI_API_KEY`). |
 | [`meta`](https://github.com/3ae3ae/notepipe/blob/main/adapters/meta) | `notepipe-asr-meta` | provider | Bridges transcription requests to Meta's speech-to-text API (`META_API_KEY`). |
 
@@ -525,8 +526,8 @@ application with a built-in notes library, check out `course2md`.
 [yt-slide-mark](https://github.com/exopoiesis/yt-slide-mark) by exopoiesis. `notepipe` also builds on
 [FFmpeg](https://ffmpeg.org) and [earshot](https://crates.io/crates/earshot), and its official adapters wrap
 [yt-dlp](https://github.com/yt-dlp/yt-dlp), [llama.cpp](https://github.com/ggml-org/llama.cpp),
-[OpenVINO](https://github.com/openvinotoolkit/openvino.genai) and
-[speech-swift](https://github.com/soniqo/speech-swift).
+[OpenVINO](https://github.com/openvinotoolkit/openvino.genai),
+[speech-swift](https://github.com/soniqo/speech-swift) and [FunASR](https://github.com/modelscope/FunASR).
 
 ## License
 

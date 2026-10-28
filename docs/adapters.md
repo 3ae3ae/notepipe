@@ -25,6 +25,7 @@ without a shell.
 | `llama` | [`notepipe-asr-llama`](../adapters/llama) | speech | Runs `llama-server`; strips Qwen3-ASR output markers |
 | `openvino` | [`notepipe-asr-openvino`](../adapters/openvino) | speech | Intel NPU by default; `--device CPU` or `GPU` also work |
 | `speech-swift` | [`notepipe-asr-speech-swift`](../adapters/speech-swift) | speech | Apple silicon (macOS 15 or later) with MLX and Core ML through speech-swift; built in CI, not yet verified on hardware |
+| `sensevoice` | [`notepipe-asr-sensevoice`](../adapters/sensevoice) | speech | SenseVoice through FunASR on CPU, an NVIDIA GPU or Apple silicon; Chinese, English, Japanese, Korean and Cantonese |
 | `xai` | [`notepipe-asr-xai`](../adapters/xai) | speech | Forwards to xAI's speech-to-text API |
 | `meta` | [`notepipe-asr-meta`](../adapters/meta) | speech | Forwards to Meta's speech-to-text API |
 
