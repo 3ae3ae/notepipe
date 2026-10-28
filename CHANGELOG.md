@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-28
+
 ### Fixed
 
 - A paragraph stage no longer writes invisible control characters into the note when the model leaves a backslash
