@@ -6,6 +6,7 @@ from email import policy
 from email.parser import BytesParser
 import http.client
 import http.server
+import io
 import json
 import signal
 import socket
@@ -14,8 +15,13 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+import wave
 
 MAX_UPLOAD = 64 * 1024 * 1024
+# Several times what speech needs, so only a model that repeats itself reaches it.
+TOKENS_PER_SECOND = 25
+# Decoding settings tried in turn while a segment reaches its output cap.
+FALLBACKS = [{}, {"repeat_penalty": 1.1}, {"temperature": 0.4, "repeat_penalty": 1.1}]
 
 
 def multipart(content_type, body):
@@ -49,7 +55,16 @@ def sanitize_qwen_text(text):
     return text
 
 
-def transcription_request(fields):
+def max_tokens(audio):
+    try:
+        with wave.open(io.BytesIO(audio)) as wav:
+            seconds = wav.getnframes() / wav.getframerate()
+    except (wave.Error, EOFError, ZeroDivisionError):
+        return None
+    return 40 + int(TOKENS_PER_SECOND * seconds)
+
+
+def transcription_request(fields, fallback=None):
     prompt = "Transcribe the audio."
     if fields.get("language"):
         prompt += f" The speech is in {fields['language']}."
@@ -64,6 +79,10 @@ def transcription_request(fields):
     }
     if fields.get("model"):
         body["model"] = fields["model"]
+    limit = max_tokens(fields["file"])
+    if limit is not None:
+        body["max_tokens"] = limit
+    body.update(fallback or {})
     return json.dumps(body).encode("utf-8")
 
 
@@ -126,21 +145,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         try:
-            request = urllib.request.Request(
-                self.server.base_url + "/v1/chat/completions", data=transcription_request(fields),
-                headers={"Content-Type": "application/json"}, method="POST",
-            )
-            with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect).open(request, timeout=120) as response:
-                raw = response.read(MAX_UPLOAD + 1)
-            if len(raw) > MAX_UPLOAD:
-                raise ValueError("Upstream response exceeds 64 MiB")
-            value = json.loads(raw)
-            if not isinstance(value, dict) or value.get("error") is not None:
-                raise ValueError("Invalid upstream response")
-            text = value["choices"][0]["message"]["content"]
-            if not isinstance(text, str):
-                raise ValueError("Invalid upstream transcript")
-            text.encode("utf-8")
+            # Greedy decoding can repeat one word until the cap, as Qwen3-ASR does on some short segments;
+            # decoding again with a repetition penalty, then with sampling, ends the loop.
+            for fallback in FALLBACKS:
+                request = urllib.request.Request(
+                    self.server.base_url + "/v1/chat/completions", data=transcription_request(fields, fallback),
+                    headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect).open(request, timeout=120) as response:
+                    raw = response.read(MAX_UPLOAD + 1)
+                if len(raw) > MAX_UPLOAD:
+                    raise ValueError("Upstream response exceeds 64 MiB")
+                value = json.loads(raw)
+                if not isinstance(value, dict) or value.get("error") is not None:
+                    raise ValueError("Invalid upstream response")
+                text = value["choices"][0]["message"]["content"]
+                if not isinstance(text, str):
+                    raise ValueError("Invalid upstream transcript")
+                text.encode("utf-8")
+                if value["choices"][0].get("finish_reason") != "length":
+                    break
         except urllib.error.HTTPError as error:
             with error:
                 phrase = self.responses.get(error.code, ("Request failed", ""))[0]
@@ -150,7 +174,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.error(502, "Invalid response from llama-server")
             return
         if value["choices"][0].get("finish_reason") == "length":
-            # A 4xx is not retried: asking again stops at the same limit.
+            # Every fallback reached the cap. A 4xx is not retried: asking again stops at the same limit.
             self.reply(422, {"error": {"code": "output_limit", "message": "The speech model stopped at its output limit"}})
             return
         self.reply(200, {"text": sanitize_qwen_text(text)})

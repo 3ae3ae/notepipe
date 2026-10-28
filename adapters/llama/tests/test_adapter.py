@@ -1,5 +1,6 @@
 import base64
 import http.client
+import io
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+import wave
 
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "src"))
@@ -143,12 +145,36 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(code, 502)
                 self.assertIsInstance(value["error"]["message"], str)
 
+    def requests(self):
+        return [json.loads(line) for line in self.record.joinpath("requests.jsonl").read_text().splitlines()]
+
+    def test_output_cap_follows_the_audio_length(self):
+        audio = io.BytesIO()
+        with wave.open(audio, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\0\0" * 16000 * 3)
+        self.assertEqual(self.call(body=form(audio.getvalue())), (200, {"text": "Recognized."}))
+        self.assertEqual(self.requests()[0]["max_tokens"], 40 + 25 * 3)
+
+    def test_a_segment_at_its_cap_is_decoded_again_with_fallbacks(self):
+        repeating = json.dumps({"choices": [{"finish_reason": "length", "message": {"content": "시, 시, 시,"}}]})
+        self.record.joinpath("response.json").write_text(json.dumps([
+            {"body": repeating}, {"body": repeating},
+            {"body": json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "시련이죠?"}}]})},
+        ]))
+        self.assertEqual(self.call(body=form()), (200, {"text": "시련이죠?"}))
+        self.assertEqual([(r["temperature"], r.get("repeat_penalty")) for r in self.requests()],
+                         [(0, None), (0, 1.1), (0.4, 1.1)])
+
     def test_output_limit_is_a_failure_that_is_not_retried(self):
         self.response(json.dumps({"choices": [{"finish_reason": "length", "message": {"content": "The blue"}}]}))
         code, value = self.call(body=form())
         self.assertEqual(code, 422)
         self.assertEqual(value["error"]["code"], "output_limit")
         self.assertIn("output limit", value["error"]["message"])
+        self.assertEqual(len(self.requests()), 3, "every fallback is tried first")
 
     def test_malformed_uploads_and_unknown_routes_are_json_errors(self):
         for method, path, body, headers, status in [
