@@ -224,7 +224,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        adapter: [llama, meta, openvino, xai, ytdlp]
+        adapter: [llama, meta, openvino, sensevoice, xai, ytdlp]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -288,6 +288,7 @@ jobs:
           - { artifacts: package-llama, environment: pypi-notepipe-asr-llama }
           - { artifacts: package-meta, environment: pypi-notepipe-asr-meta }
           - { artifacts: package-openvino, environment: pypi-notepipe-asr-openvino }
+          - { artifacts: package-sensevoice, environment: pypi-notepipe-asr-sensevoice }
           - { artifacts: package-xai, environment: pypi-notepipe-asr-xai }
           - { artifacts: package-ytdlp, environment: pypi-notepipe-source-ytdlp }
     # PyPI allows one pending trusted publisher per environment, so each project publishes from its own.

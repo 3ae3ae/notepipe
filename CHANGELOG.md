@@ -6,6 +6,12 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Added
+
+- `notepipe[sensevoice]` installs the SenseVoice speech adapter (`notepipe-asr-sensevoice` 0.1.0), which runs
+  SenseVoice through FunASR on CPU, an NVIDIA GPU or Apple silicon. It recognizes Chinese, English, Japanese, Korean
+  and Cantonese.
+
 ## [0.4.3] - 2026-10-26
 
 ### Fixed

@@ -27,7 +27,7 @@ jobs:
     outputs:
       core: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.core == 'true' }}
       speech_swift: ${{ github.event_name == 'workflow_dispatch' || steps.paths.outputs.speech_swift == 'true' }}
-      python: ${{ github.event_name == 'workflow_dispatch' && '["llama","meta","openvino","xai","ytdlp"]' || steps.adapters.outputs.changes || '[]' }}
+      python: ${{ github.event_name == 'workflow_dispatch' && '["llama","meta","openvino","sensevoice","xai","ytdlp"]' || steps.adapters.outputs.changes || '[]' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -45,6 +45,7 @@ jobs:
             llama: ['adapters/llama/{src,tests}/**', 'adapters/llama/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
             meta: ['adapters/meta/{src,tests}/**', 'adapters/meta/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
             openvino: ['adapters/openvino/{src,tests}/**', 'adapters/openvino/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
+            sensevoice: ['adapters/sensevoice/{src,tests}/**', 'adapters/sensevoice/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
             xai: ['adapters/xai/{src,tests}/**', 'adapters/xai/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
             ytdlp: ['adapters/ytdlp/{src,tests}/**', 'adapters/ytdlp/{pyproject.toml,uv.lock}', .github/workflows/ci.yml]
 

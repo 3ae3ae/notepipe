@@ -18,6 +18,7 @@ openvino = ["notepipe-asr-openvino"]
 speech-swift = ["notepipe-asr-speech-swift"]
 xai = ["notepipe-asr-xai"]
 meta = ["notepipe-asr-meta"]
+sensevoice = ["notepipe-asr-sensevoice"]
 
 [project.urls]
 Homepage = "https://github.com/3ae3ae/notepipe"

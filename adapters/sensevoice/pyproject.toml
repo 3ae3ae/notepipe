@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "notepipe-asr-sensevoice"
+version = "0.1.0"
+description = "SenseVoice speech recognition adapter for notepipe"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["funasr>=1.4.16", "torch>=2.14.1", "torchaudio>=2.11.0", "numpy>=1.26.4"]
+
+[project.scripts]
+notepipe-asr-sensevoice = "notepipe_asr_sensevoice:main"
+
+# Keep local development and CI free of CUDA wheel downloads.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
