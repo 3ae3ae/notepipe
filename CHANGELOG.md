@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-28
+
 ### Added
 
 - `notepipe[sensevoice]` installs the SenseVoice speech adapter (`notepipe-asr-sensevoice` 0.1.0), which runs
