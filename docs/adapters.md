@@ -124,7 +124,8 @@ The input, and the answer notepipe expects in `content`:
 {"choices": [{"message": {"content": "…"}}], "usage": {"prompt_tokens": 120, "completion_tokens": 40}}
 ```
 
-`usage` is optional; when present, notepipe reports the counts. `429` and `5xx` responses are retried with backoff.
+`usage` is optional; when present, notepipe reports the counts. `429` and `5xx` responses are retried with backoff, and
+so is a `.json` answer whose text holds control characters other than line breaks.
 
 A program may ignore `response_format`, because the system message asks for JSON as well. If it rejects the field
 instead, it should answer `400` with a message that mentions `response_format`; notepipe then retries without it.

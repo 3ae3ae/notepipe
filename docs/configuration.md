@@ -174,7 +174,8 @@ notepipe adds instructions for the answer's format to the prompt, and sets `mode
 
 A stage that fails stops the run, and nothing is published: requests that still fail after retries, an answer that is
 not in the expected format or was cut off at the model's output limit, and an answer that would remove every paragraph.
-An empty answer for one paragraph removes that paragraph.
+A paragraph answer whose text holds control characters, which is what JSON mode makes of a backslash the model did not
+escape, is retried like a failed request. An empty answer for one paragraph removes that paragraph.
 
 The default file holds two `llm` stages:
 

@@ -32,7 +32,7 @@ impl Failure {
             unsupported_response_format: false,
         }
     }
-    fn new(retryable: bool, message: impl Into<String>) -> Self {
+    pub(crate) fn new(retryable: bool, message: impl Into<String>) -> Self {
         Self {
             retryable,
             message: message.into(),
@@ -184,7 +184,8 @@ pub fn json_request(
     }
     let value = serde_json::from_slice(&response.body)
         .map_err(|_| Failure::local("The service response is not valid JSON"))?;
-    validate(&value).map_err(Failure::local)?;
+    // A validator may return a retryable Failure; any other error is final.
+    validate(&value).map_err(|error| error.downcast::<Failure>().unwrap_or_else(Failure::local))?;
     Ok(value)
 }
 

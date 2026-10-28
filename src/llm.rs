@@ -240,6 +240,18 @@ fn chat(
             segment_ids_match(&parsed, items.len()),
             "Result segments do not match the input"
         );
+        // JSON mode turns a backslash the model left unescaped, as in \hat or \frac, into a control
+        // character. That happens now and then, so the request is sent again.
+        if parsed
+            .iter()
+            .any(|(_, text)| text.chars().any(|c| c.is_control() && c != '\n'))
+        {
+            return Err(crate::dispatch::Failure::new(
+                true,
+                "The model's answer contains control characters, usually from a backslash it did not escape",
+            )
+            .into());
+        }
         Ok(())
     })?;
     parse_segments(&content).context("Invalid paragraphs response")
@@ -675,6 +687,76 @@ mod tests {
         );
         assert_eq!(sections[0].speech, vec![event]);
         assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn paragraph_answers_with_control_characters_are_requested_again() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        use std::sync::atomic::Ordering;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let event = TranscriptEvent {
+            extra: Default::default(),
+            start: 0.,
+            end: 1.,
+            text: "y hat and beta".into(),
+            raw: None,
+        };
+        // The first `bad` answers hold what JSON mode makes of an unescaped "\hat{y}" and "\beta".
+        for (bad, calls, result) in [
+            (1, 2, Some("$\\hat{y}$ and $\\beta$")),
+            (usize::MAX, 3, None),
+        ] {
+            let mock = MockAi::respond_with(move |call, _| {
+                let text = if call < bad {
+                    "$\u{0}y$ and $\u{8}eta$"
+                } else {
+                    "$\\hat{y}$ and $\\beta$"
+                };
+                Some((
+                    200,
+                    json!({"choices":[{"message":{"content":json!({"segments":[{"id":0,"text":text}]}).to_string()}}]}),
+                ))
+            });
+            let mut sections = vec![Section {
+                extra: Default::default(),
+                t: 0.,
+                end: 1.,
+                image: String::new(),
+                speech: vec![event.clone()],
+            }];
+            let settings = LlmSettings {
+                base_url: mock.url.clone(),
+                ..Default::default()
+            };
+            let root = tempfile::tempdir().unwrap();
+            let outcome = paragraphs(
+                &mut sections,
+                root.path(),
+                &settings,
+                &crate::llm::test_stage(
+                    "proofread",
+                    serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
+                )
+                .unwrap(),
+            );
+            assert_eq!(mock.calls.load(Ordering::SeqCst), calls);
+            match result {
+                Some(text) => {
+                    outcome.unwrap();
+                    assert_eq!(sections[0].speech[0].text, text);
+                }
+                None => {
+                    assert!(
+                        outcome
+                            .unwrap_err()
+                            .to_string()
+                            .contains("control characters")
+                    );
+                    assert_eq!(sections[0].speech, vec![event.clone()]);
+                }
+            }
+        }
     }
 
     #[test]

@@ -6,6 +6,12 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Fixed
+
+- A paragraph stage no longer writes invisible control characters into the note when the model leaves a backslash
+  unescaped, as in `\hat{y}` or `\frac`. JSON mode turns such a backslash into a control character, so notepipe now
+  asks for that batch again.
+
 ## [0.4.4] - 2026-10-28
 
 ### Added
