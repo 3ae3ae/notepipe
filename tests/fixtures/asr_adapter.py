@@ -116,10 +116,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 items = json.loads(json.loads(body)['messages'][1]['content'][0]['text'])
                 content = json.dumps({'segments': [{'id': item['id'], 'text': item['text']} for item in items]})
             first = len((args.record / 'calls').read_text().splitlines()) == 1
-            value = {'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': 'Fixture transcript.'}
+            text = '' if args.behavior == 'empty' or (args.behavior == 'empty-first' and first) else 'Fixture transcript.'
+            value = {'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': text}
             if args.behavior == 'missing-text-first' and first:
                 value = {'text': None}
-            if args.behavior in ('missing-text-first', 'invalid-json-first'):
+            if args.behavior in ('empty-first', 'missing-text-first', 'invalid-json-first'):
                 value['usage'] = {'prompt_tokens': 3, 'completion_tokens': 2}
             response = b'not JSON' if args.behavior == 'invalid-json-first' and first else json.dumps(value).encode()
         self.send_header('Content-Type', 'application/json')

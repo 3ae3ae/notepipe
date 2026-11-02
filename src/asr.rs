@@ -8,91 +8,6 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-// Tuning constants; segmentation constants are next to normalize_segments.
-
-/// Empty-result tripwire: speech detection found speech in these segments, yet the endpoint keeps returning
-/// empty text without a single success. Such an endpoint cannot handle audio (wrong configuration, or a gateway
-/// that drops the body), and continuing would only waste requests. A single empty segment is still valid silence.
-const EMPTY_RESULT_TRIPWIRE: usize = 10;
-
-/// Buffers empty results and resets on the first non-empty one (the endpoint works and the silence is real);
-/// trips when empty results reach the threshold. The caller records buffered empty results only once it is clear
-/// the tripwire did not fire, so a broken endpoint cannot mark segments as silence that a fixed rerun would skip.
-#[derive(Default)]
-struct EmptyTripwire {
-    pending_empty: usize,
-    seen_success: bool,
-}
-
-impl EmptyTripwire {
-    /// Counts one result and returns whether the tripwire fired.
-    fn record(&mut self, empty: bool) -> bool {
-        if empty {
-            self.pending_empty += 1;
-        } else {
-            self.seen_success = true;
-        }
-        !self.seen_success && self.pending_empty >= EMPTY_RESULT_TRIPWIRE
-    }
-
-    fn tripped_error(&self) -> anyhow::Error {
-        anyhow::anyhow!(
-            "The speech service returned empty text for {} consecutive segments; check that the endpoint and model support audio input",
-            self.pending_empty
-        )
-    }
-}
-
-/// Empty results are buffered until the endpoint is known to work.
-/// Every chunk result passes the tripwire first. When it fires, **nothing is checkpointed**:
-/// empty records would mark the segments as finished silence and hide the failure. Empty results are buffered
-/// and recorded once a non-empty result arrives or the run finishes normally. Results arriving out of order are safe:
-/// order only affects the buffer, and every buffered record has the same empty text.
-#[derive(Default)]
-struct EmptyResultTracker {
-    tripwire: EmptyTripwire,
-    pending_empty: Vec<(f64, f64)>,
-}
-
-impl EmptyResultTracker {
-    /// Handles one chunk result: non-empty results are recorded, empty ones buffered.
-    /// Returns an error when the run must stop (the tripwire fired or the checkpoint write failed).
-    fn record_outcome(
-        &mut self,
-        cp: &mut crate::checkpoint::Checkpoint,
-        start: f64,
-        end: f64,
-        text: &str,
-    ) -> Result<()> {
-        let empty = text.trim().is_empty();
-        if self.tripwire.record(empty) {
-            // Tripped: record nothing (see the struct comment).
-            return Err(self.tripwire.tripped_error());
-        }
-        if empty {
-            self.pending_empty.push((start, end));
-            return Ok(());
-        }
-        self.flush_pending(cp)?;
-        cp.record(start, end, text)
-    }
-
-    /// Normal completion: records the buffered empty results (real silence) so silent chunks are not redone.
-    /// Do not call after an error, including the tripwire: the buffer must be discarded with the failed run.
-    fn finish(self, cp: &mut crate::checkpoint::Checkpoint) -> Result<()> {
-        let mut this = self;
-        this.flush_pending(cp)
-    }
-
-    /// Records buffered empty results; stops at the first write failure and keeps the rest for a rerun.
-    fn flush_pending(&mut self, cp: &mut crate::checkpoint::Checkpoint) -> Result<()> {
-        for (start, end) in std::mem::take(&mut self.pending_empty) {
-            cp.record(start, end, "")?;
-        }
-        Ok(())
-    }
-}
-
 pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent>> {
     cfg.validate_asr()?;
     let api = cfg.asr.clone();
@@ -146,6 +61,7 @@ fn run_api(
         .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))
         .collect();
     if pending.is_empty() {
+        warn_empty_segments(cp, &segs);
         return Ok(cp.sorted_events());
     }
 
@@ -184,7 +100,6 @@ fn run_api(
                 mode: api.mode,
                 language: &api.language,
                 stage,
-
                 check_control: &check_control,
             };
             let (tmp_dir, wav) = (tmp.path(), wav);
@@ -224,7 +139,6 @@ fn run_api(
         }
         drop(tx);
 
-        let mut tracker = EmptyResultTracker::default();
         loop {
             if err.is_none()
                 && let Err(error) = check_control()
@@ -244,10 +158,10 @@ fn run_api(
                 abort.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             match r {
-                _ if err.is_some() => {} // already tripped or failed: drop late results
+                _ if err.is_some() => {} // already failed: drop late results
                 Ok(text) => {
                     let text = text.as_deref().unwrap_or("");
-                    if let Err(e) = tracker.record_outcome(cp, segs[i].start, segs[i].end, text) {
+                    if let Err(e) = cp.record(segs[i].start, segs[i].end, text) {
                         err = Some(e);
                         abort.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -260,18 +174,13 @@ fn run_api(
             // Every collected result, empty or not, advances progress exactly once, as in the sequential path.
             pb.inc(1);
         }
-        // Normal completion: record buffered empty results (real silence) so silent chunks are not redone.
-        if err.is_none()
-            && let Err(e) = check_control().and_then(|()| tracker.finish(cp))
-        {
-            err = Some(e);
-        }
     });
     pb.finish();
     if let Some(e) = err {
         return Err(e);
     }
     check_control()?;
+    warn_empty_segments(cp, &segs);
     // Events come from the checkpoint, where the loop recorded them, sorted by time.
     let events: Vec<TranscriptEvent> = cp.sorted_events();
     tracing::info!(
@@ -280,6 +189,24 @@ fn run_api(
         "asr done"
     );
     Ok(events)
+}
+
+fn warn_empty_segments(cp: &crate::checkpoint::Checkpoint, segments: &[Seg]) {
+    let with_text: std::collections::HashSet<_> = cp
+        .sorted_events()
+        .iter()
+        .map(|event| (event.start.to_bits(), event.end.to_bits()))
+        .collect();
+    let empty = segments
+        .iter()
+        .filter(|seg| !with_text.contains(&(seg.start.to_bits(), seg.end.to_bits())))
+        .count();
+    if empty > 0 {
+        crate::dispatch::warn(format!(
+            "{empty} of {} speech segments returned no text",
+            segments.len()
+        ));
+    }
 }
 
 /// Send a chunk with shared retries; only its transcription checkpoint is persisted.
@@ -428,24 +355,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_tripwire_fires_only_without_any_success() {
-        let mut t = EmptyTripwire::default();
-        for _ in 0..EMPTY_RESULT_TRIPWIRE - 1 {
-            assert!(!t.record(true));
-        }
-        assert!(
-            t.record(true),
-            "consecutive empty results trip the tripwire"
+    fn empty_warning_counts_only_the_current_segments() {
+        let _serial = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let root = tempfile::tempdir().unwrap();
+        let warnings = crate::dispatch::install(root.path()).unwrap();
+        let mut cp = crate::checkpoint::Checkpoint::open(root.path()).unwrap();
+        cp.record(0., 1., "Speech").unwrap();
+        cp.record(1., 2., "").unwrap();
+        cp.record(9., 10., "Old checkpoint entry").unwrap();
+        let segments = [0., 1.].map(|start| Seg {
+            start,
+            end: start + 1.,
+            cut_start: start,
+            cut_end: start + 1.,
+        });
+        warn_empty_segments(&cp, &segments);
+        assert_eq!(
+            warnings.take_warnings(),
+            ["1 of 2 speech segments returned no text"]
         );
-        assert!(t.tripped_error().to_string().contains("empty text"));
-
-        // After a non-empty result the endpoint works, so silence is real and the tripwire stays open.
-        let mut t = EmptyTripwire::default();
-        assert!(!t.record(true));
-        assert!(!t.record(false));
-        for _ in 0..EMPTY_RESULT_TRIPWIRE * 2 {
-            assert!(!t.record(true));
-        }
     }
 
     #[test]
