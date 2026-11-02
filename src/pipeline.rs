@@ -168,15 +168,6 @@ async fn run_inner(
     if let Some(path) = &cfg.subtitle {
         subtitle::validate_events(&selected_transcript(path)?.events)?;
     }
-    let recovered = if cfg.stages.iter().any(|(name, s)| {
-        (!cfg.skip.contains(name) || s.llm_writes_document())
-            && s.publish.as_deref().is_some_and(|p| p != "-")
-    }) {
-        artifact::recover(&cfg.out_root)?
-    } else {
-        Vec::new()
-    };
-    runtime::lock_recover(&warnings).extend(recovered);
     let work_root = config::cache_dir().join("work");
     std::fs::create_dir_all(&work_root)?;
     let identity = source_key(&cfg.url)?;
@@ -244,7 +235,7 @@ async fn run_inner(
             ));
         }
     }
-    let (note_dir, files, stdout) = result?;
+    let (published, stdout) = result?;
     runtime::check_cancelled()?;
     if let Some(path) = stdout {
         use std::io::Write;
@@ -258,18 +249,26 @@ async fn run_inner(
     for warning in warnings.iter() {
         eprintln!("Warning: {warning}");
     }
-    progress::done(&work, note_dir.as_deref(), &files, &warnings);
+    progress::done(
+        &work,
+        published.note_dir.as_deref(),
+        &published.files,
+        &warnings,
+        published.unchanged,
+    );
     if !progress::is_json()
         && !progress::is_quiet()
-        && let Some(note_dir) = note_dir
+        && let Some(note_dir) = published.note_dir
     {
-        eprintln!("Notes ready: {}", note_dir.display());
+        if published.unchanged {
+            eprintln!("Note unchanged: {}", note_dir.display());
+        } else {
+            eprintln!("Notes ready: {}", note_dir.display());
+        }
     }
     Ok(())
 }
-async fn execute(
-    run: Arc<Run>,
-) -> Result<(Option<PathBuf>, BTreeMap<String, String>, Option<PathBuf>)> {
+async fn execute(run: Arc<Run>) -> Result<(artifact::Published, Option<PathBuf>)> {
     let mut pending = run.cfg.stages.clone();
     let download = run
         .cfg
@@ -375,14 +374,14 @@ async fn execute(
         std::fs::File::open(path)?;
     }
     let meta = run.meta()?;
-    let (note, files) = artifact::publish(
+    let published = artifact::publish(
         &run.cfg.out_root,
         &run.work,
         &meta,
         &outputs,
         &mut runtime::lock_recover(&run.warnings),
     )?;
-    Ok((note, files, stdout))
+    Ok((published, stdout))
 }
 impl Run {
     fn warn(&self, warning: String) {
