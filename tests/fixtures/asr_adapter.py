@@ -118,9 +118,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             first = len((args.record / 'calls').read_text().splitlines()) == 1
             text = '' if args.behavior == 'empty' or (args.behavior == 'empty-first' and first) else 'Fixture transcript.'
             value = {'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': text}
+            if args.behavior == 'warning':
+                value['warning'] = '  Diagnostic\n\t' + '界' * 400
             if args.behavior == 'missing-text-first' and first:
                 value = {'text': None}
-            if args.behavior in ('empty-first', 'missing-text-first', 'invalid-json-first'):
+            if args.behavior in ('warning', 'empty-first', 'missing-text-first', 'invalid-json-first'):
                 value['usage'] = {'prompt_tokens': 3, 'completion_tokens': 2}
             response = b'not JSON' if args.behavior == 'invalid-json-first' and first else json.dumps(value).encode()
         self.send_header('Content-Type', 'application/json')

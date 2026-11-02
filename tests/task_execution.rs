@@ -2285,7 +2285,12 @@ fn explicit_subtitles_override_downloaded_tracks_without_starting_the_provider()
 
 #[test]
 fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
-    for behavior in ["empty-first", "missing-text-first", "invalid-json-first"] {
+    for behavior in [
+        "warning",
+        "empty-first",
+        "missing-text-first",
+        "invalid-json-first",
+    ] {
         let root = tempfile::tempdir().unwrap();
         let source = Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2318,6 +2323,16 @@ fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
                     records.len()
                 ))]
             );
+        } else if behavior == "warning" {
+            assert_eq!(warnings.len(), records.len());
+            for warning in warnings {
+                let warning = warning.as_str().unwrap();
+                assert!(warning.starts_with("Speech at "));
+                let diagnostic = warning.split_once(": Diagnostic ").unwrap().1;
+                assert_eq!(diagnostic.chars().count() + "Diagnostic ".len(), 300);
+                assert!(diagnostic.ends_with('…'));
+                assert!(!warning.chars().any(char::is_control));
+            }
         } else {
             assert_eq!(calls, records.len() + 1);
             let warning = warnings[0].as_str().unwrap();
