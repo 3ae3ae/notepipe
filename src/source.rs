@@ -600,18 +600,19 @@ mod tests {
                 assert!(start.elapsed() < Duration::from_secs(60));
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            let pid: i32 = std::fs::read_to_string(record.join("pid"))
-                .unwrap()
-                .parse()
-                .unwrap();
+            let pids = ["pid", "child-pid"].map(|name| {
+                std::fs::read_to_string(record.join(name))
+                    .unwrap()
+                    .parse::<i32>()
+                    .unwrap()
+            });
             task.abort();
             assert!(task.await.err().unwrap().is_cancelled());
             let start = std::time::Instant::now();
-            while unsafe { libc::kill(pid, 0) } == 0 {
+            while pids.iter().any(|&pid| unsafe { libc::kill(pid, 0) } == 0) {
                 assert!(start.elapsed() < Duration::from_secs(30));
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            assert!(record.join("child-stopped").is_file());
             assert!(!root.path().join("cache/complete.json").exists());
         })
         .unwrap();

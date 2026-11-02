@@ -26,7 +26,7 @@ out = Path(directory)
 assert not any(out.iterdir())
 if args.behavior == 'hang':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    code = "import signal,time; from pathlib import Path; signal.signal(signal.SIGTERM, lambda *_: (Path(%r).write_text('stopped'), exit(0))); Path(%r).write_text('ready'); time.sleep(60)" % (str(args.record / 'child-stopped'), str(args.record / 'child-ready'))
+    code = "import os,signal,time; from pathlib import Path; signal.signal(signal.SIGTERM, lambda *_: (Path(%r).write_text('stopped'), exit(0))); Path(%r).write_text(str(os.getpid())); Path(%r).write_text('ready'); time.sleep(60)" % (str(args.record / 'child-stopped'), str(args.record / 'child-pid'), str(args.record / 'child-ready'))
     subprocess.Popen([sys.executable, '-c', code])
     time.sleep(60)
 if args.behavior == 'exit':
