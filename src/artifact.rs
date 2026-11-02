@@ -106,6 +106,7 @@ fn matches_source(note: &Path, source: &str) -> Result<bool> {
 
 #[derive(Serialize, Deserialize)]
 struct Record {
+    source: String,
     folder: PathBuf,
     files: BTreeMap<PathBuf, String>,
 }
@@ -232,6 +233,7 @@ fn commit(root: &Path, staging: &Path, title: &str) -> Result<PathBuf> {
 pub fn publish(
     root: &Path,
     work: &Path,
+    identity: &str,
     meta: &MediaMeta,
     outputs: &[Publication],
     warnings: &mut Vec<String>,
@@ -283,13 +285,13 @@ pub fn publish(
         }
         std::fs::write(
             staging.path().join(".notepipe.json"),
-            serde_json::to_vec(&serde_json::json!({"source":meta.source}))?,
+            serde_json::to_vec(&serde_json::json!({"source":identity}))?,
         )?;
         runtime::check_cancelled()?;
         let digests = file_digests(staging.path())?;
         let existing = match records.get(&root) {
-            Some(record) if record.files == digests => {
-                existing_note(&root, &meta.source, record, staging.path())?
+            Some(record) if record.source == identity && record.files == digests => {
+                existing_note(&root, identity, record, staging.path())?
             }
             _ => None,
         };
@@ -301,6 +303,7 @@ pub fn publish(
             records.insert(
                 root.clone(),
                 Record {
+                    source: identity.into(),
                     folder: destination.file_name().unwrap().into(),
                     files: digests,
                 },
@@ -416,10 +419,17 @@ mod tests {
         }];
         let meta = document("source").meta;
         let mut warnings = vec![];
-        let note = super::publish(root.path(), work.path(), &meta, &outputs, &mut warnings)
-            .unwrap()
-            .note_dir
-            .unwrap();
+        let note = super::publish(
+            root.path(),
+            work.path(),
+            &meta.source,
+            &meta,
+            &outputs,
+            &mut warnings,
+        )
+        .unwrap()
+        .note_dir
+        .unwrap();
         outputs.push(Publication {
             stage: "b".into(),
             output: "b".into(),
@@ -427,9 +437,16 @@ mod tests {
             images: vec![],
         });
         assert_eq!(
-            super::publish(root.path(), work.path(), &meta, &outputs, &mut warnings)
-                .unwrap_err()
-                .to_string(),
+            super::publish(
+                root.path(),
+                work.path(),
+                &meta.source,
+                &meta,
+                &outputs,
+                &mut warnings
+            )
+            .unwrap_err()
+            .to_string(),
             "Stages a and b publish the same file"
         );
         assert_eq!(
@@ -485,7 +502,14 @@ mod tests {
                 images: document.images(),
             },
         ];
-        let published = super::publish(root, work, &document.meta, &outputs, &mut warnings)?;
+        let published = super::publish(
+            root,
+            work,
+            &document.meta.source,
+            &document.meta,
+            &outputs,
+            &mut warnings,
+        )?;
         Ok((published.note_dir.unwrap(), warnings))
     }
 
@@ -738,6 +762,7 @@ mod tests {
         let published = super::publish(
             root.path(),
             work.path(),
+            "source",
             &document("source").meta,
             &outputs,
             &mut Vec::new(),
