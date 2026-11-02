@@ -220,10 +220,11 @@ pub fn file_track(path: PathBuf, language: Option<String>) -> SubtitleTrack {
 
 /// Parses SRT or VTT subtitles into transcript events.
 /// - Timestamps: `HH:MM:SS,mmm` (SRT), `HH:MM:SS.mmm` (VTT) and `MM:SS.mmm`
-/// - Inline VTT tags (`<c>...</c>` and others) and common HTML entities are removed
+/// - Cue markup is removed and supported character references are decoded
 /// - Lines of one cue are joined; rolling captions (common in automatic captions) are de-duplicated
 pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
     let mut out: Vec<TranscriptEvent> = vec![];
+    let content = content.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = content.lines().collect();
     let mut i = 0;
     while i < lines.len() {
@@ -277,10 +278,10 @@ fn parse_cue_header(line: &str) -> Option<(f64, f64)> {
     ))
 }
 
-/// Removes HTML/VTT tags and decodes common entities.
+/// Removes cue markup and decodes character references once, without changing literal text.
 fn clean_cue_text(line: &str) -> String {
-    let mut s = String::with_capacity(line.len());
-    let mut chars = line.trim().chars();
+    let mut text = String::with_capacity(line.len());
+    let mut chars = line.chars();
     while let Some(c) = chars.next() {
         if c == '<'
             && let Some(end) = chars.as_str().find(['<', '>'])
@@ -288,43 +289,84 @@ fn clean_cue_text(line: &str) -> String {
             && is_cue_tag(&chars.as_str()[..end])
         {
             chars = chars.as_str()[end + 1..].chars();
+        } else if c == '&'
+            && let Some(end) = chars.as_str().find([';', '&'])
+            && chars.as_str().as_bytes()[end] == b';'
+            && let Some(decoded) = decode_reference(&chars.as_str()[..end])
+        {
+            text.push(decoded);
+            chars = chars.as_str()[end + 1..].chars();
         } else {
-            s.push(c);
+            text.push(c);
         }
     }
-    // Replace &amp; last; otherwise "&amp;lt;" would become "&lt;" and then "<".
-    for (from, to) in [
-        ("&nbsp;", " "),
-        ("&lt;", "<"),
-        ("&gt;", ">"),
-        ("&quot;", "\""),
-        ("&amp;", "&"),
-    ] {
-        s = s.replace(from, to);
+    text
+}
+
+fn decode_reference(reference: &str) -> Option<char> {
+    match reference {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        "nbsp" => Some('\u{a0}'),
+        "lrm" => Some('\u{200e}'),
+        "rlm" => Some('\u{200f}'),
+        _ => {
+            let numeric = reference.strip_prefix('#')?;
+            let (digits, radix) = numeric
+                .strip_prefix(['x', 'X'])
+                .map(|digits| (digits, 16))
+                .unwrap_or((numeric, 10));
+            if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+                return None;
+            }
+            char::from_u32(u32::from_str_radix(digits, radix).ok()?)
+        }
     }
-    s.trim().to_string()
 }
 
 fn is_cue_tag(tag: &str) -> bool {
-    if tag.contains(':')
-        && tag.contains('.')
-        && tag
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || byte == b':' || byte == b'.')
-        && crate::timeline::parse_timestamp(tag).is_some()
-    {
-        return true;
+    if let Some((clock, millis)) = tag.split_once('.') {
+        let parts: Vec<_> = clock.split(':').collect();
+        if matches!(parts.len(), 2 | 3)
+            && parts[0].len() >= 2
+            && parts[1..].iter().all(|part| part.len() == 2)
+            && millis.len() == 3
+            && tag
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b == b':' || b == b'.')
+            && crate::timeline::parse_timestamp(tag).is_some_and(f64::is_finite)
+        {
+            return true;
+        }
     }
-    let tag = tag.strip_prefix('/').unwrap_or(tag);
+    if let Some(name) = tag.strip_prefix('/') {
+        return matches!(
+            name.trim_end().to_ascii_lowercase().as_str(),
+            "c" | "i" | "b" | "u" | "v" | "lang" | "ruby" | "rt" | "font"
+        );
+    }
     let end = tag
-        .find(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        .find(['.', ' ', '\t', '\n', '/', '\r'])
         .unwrap_or(tag.len());
     let (name, suffix) = tag.split_at(end);
-    name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
-        && (suffix.is_empty()
-            || suffix == "/"
-            || suffix.starts_with(|c: char| c.is_ascii_whitespace())
-            || (name == "c" && suffix.starts_with('.')))
+    match name.to_ascii_lowercase().as_str() {
+        "c" => {
+            suffix.is_empty()
+                || (suffix.starts_with('.')
+                    && suffix[1..]
+                        .split('.')
+                        .all(|class| !class.is_empty() && !class.contains(char::is_whitespace)))
+        }
+        "v" | "lang" => suffix.is_empty() || suffix.starts_with(char::is_whitespace),
+        "i" | "b" | "u" | "font" | "br" => {
+            suffix.is_empty() || suffix == "/" || suffix.starts_with(char::is_whitespace)
+        }
+        "ruby" | "rt" => suffix.trim().is_empty(),
+        _ => false,
+    }
 }
 
 /// Same-name sidecars, preferring the requested ASR language when set.
@@ -561,7 +603,7 @@ second cue
 ";
         let ev = parse_subtitle(vtt);
         assert_eq!(ev.len(), 2);
-        assert_eq!(ev[0].text, "hello world !");
+        assert_eq!(ev[0].text, "hello world\u{a0}!");
         assert!((ev[0].start - 61.0).abs() < 1e-3);
         assert_eq!(ev[1].text, "second cue");
     }
@@ -573,6 +615,12 @@ second cue
             ("if x < 3 and y > 2.", "if x < 3 and y > 2."),
             ("a > b", "a > b"),
             ("an unfinished <b", "an unfinished <b"),
+            (
+                "vector<int> List<String> x<y and z>w",
+                "vector<int> List<String> x<y and z>w",
+            ),
+            ("<div>text</div>", "<div>text</div>"),
+            ("<00:00.1> <00:00:bad>", "<00:00.1> <00:00:bad>"),
             ("2 < 3 <b>bold</b> > 1", "2 < 3 bold > 1"),
         ] {
             assert_eq!(clean_cue_text(input), expected, "{input}");
@@ -589,7 +637,9 @@ second cue
             ("<00:00:01.000>one<00:02.000>two", "onetwo"),
             ("<font color=\"red\">one</font><br/>two", "onetwo"),
             ("a <b> c", "a  c"),
-            ("&lt;b&gt; &amp;lt; &nbsp;&quot;", "<b> &lt;  \""),
+            ("<I>one</I ><BR / >two", "onetwo"),
+            ("<i class='x'>one</i><br class='x'/>two", "onetwo"),
+            ("&lt;b&gt; &amp;lt; &nbsp;&quot;", "<b> &lt; \u{a0}\""),
         ] {
             assert_eq!(clean_cue_text(input), expected, "{input}");
         }
@@ -618,6 +668,41 @@ second cue
             "a duplicate extends the cue"
         );
         assert_eq!(ev[1].text, "一门人工智能分支");
+    }
+
+    #[test]
+    fn character_references_decode_once_and_preserve_unknown_or_invalid_values() {
+        assert_eq!(
+            clean_cue_text("&amp&copy; &#65&bogus; &amp"),
+            "&amp&copy; &#65&bogus; &amp"
+        );
+        assert_eq!(
+            clean_cue_text(
+                "&amp;&lt;&gt;&quot;&apos;&nbsp;&lrm;&rlm; &#65;&#x1F600;&#X4E2D; &amp;lt; &copy; &#xD800; &#1114112; &#-1; &#xNO; &#;"
+            ),
+            "&<>\"'\u{a0}\u{200e}\u{200f} A😀中 &lt; &copy; &#xD800; &#1114112; &#-1; &#xNO; &#;"
+        );
+    }
+
+    #[test]
+    fn subtitle_files_accept_all_line_endings() {
+        for newline in ["\n", "\r\n", "\r"] {
+            let input = [
+                "WEBVTT",
+                "",
+                "00:00.000 --> 00:01.000",
+                "first",
+                "",
+                "00:01.000 --> 00:02.000",
+                "second",
+                "",
+            ]
+            .join(newline);
+            let events = parse_subtitle(&input);
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].text, "first");
+            assert_eq!(events[1].text, "second");
+        }
     }
 
     #[test]
