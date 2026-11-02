@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-11-03
+
 ### Changed
 
 - A request is tried at most three times, by one rule for speech and chat: failed connections, `429` and `5xx`
