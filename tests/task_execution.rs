@@ -2256,6 +2256,14 @@ fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() 
         let completed = done(&run(root.path(), source, &cfg, &[]));
         let doc = document(&completed, "draft");
         assert_eq!(doc["meta"]["source"], source.to_str().unwrap());
+        assert_eq!(
+            doc["meta"]["url"],
+            if behavior == "seek" {
+                "https://example.test/canonical"
+            } else {
+                source.to_str().unwrap()
+            }
+        );
         if behavior == "seek" {
             assert_eq!(
                 doc["meta"]["seek_url"],

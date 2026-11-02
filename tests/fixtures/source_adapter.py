@@ -61,6 +61,7 @@ for language, automatic, text in captions:
 print(json.dumps({'progress': 1.0}), flush=True)
 result = {'media': media.name, 'title': 'Fixture source', 'author': 'Fixture author', 'duration': 3, 'language': 'en', 'url': url, 'subtitles': tracks}
 if args.behavior == 'seek':
+    result['url'] = 'https://example.test/canonical'
     result['seek_url'] = 'https://example.test/play?at={t}#part'
 result = json.dumps(result)
 if args.behavior == 'instant':

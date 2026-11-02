@@ -93,7 +93,12 @@ impl Output {
                 .context("Invalid download adapter seek URL")?;
         }
         Ok(MediaMeta {
-            extra: Default::default(),
+            extra: self
+                .url
+                .as_ref()
+                .map(|url| ("url".into(), url.clone().into()))
+                .into_iter()
+                .collect(),
             title: if self.title.trim().is_empty() {
                 Path::new(&self.media)
                     .file_stem()
