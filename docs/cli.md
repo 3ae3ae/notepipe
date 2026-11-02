@@ -34,7 +34,7 @@ With `--json`, standard output carries one JSON object per line. Every object ha
 | `tokens` | `stage`, `prompt`, `completion` | token usage so far in a stage |
 | `log` | `level` (`error`, `warn`, `info`, `debug`), `message` | diagnostics |
 | `done` | `note_dir`, `files`, `work_dir`, `warnings` | the run finished and its outputs were published |
-| `error` | `message` | the run failed |
+| `error` | `message`, `warnings` | the run failed |
 
 `stage` is the name of a stage in the pipeline, or `NAME/STEP` for a step inside it: `TRANSCRIPT/subtitles`,
 `TRANSCRIPT/audio` and `TRANSCRIPT/speech` in the transcript stage, `SCREENSHOTS/scan` and `SCREENSHOTS/extract` in the
@@ -44,7 +44,8 @@ added.
 
 In the `done` event, `note_dir` is the note folder, or `null` when nothing was published to one; `files` maps each
 publishing stage to the path it published, or to `"-"`; `work_dir` is the source's work folder, where every stage's
-output is; `warnings` is the final list of warnings.
+output is; `warnings` is the final list of warnings. The `error` event carries, in `warnings`, the warnings collected
+before the failure.
 
 A stage that publishes to `-` prints its output on standard output after the note folder is written, so a failure to
 print leaves the new note in place. It cannot be combined with `--json`.
@@ -58,7 +59,8 @@ print leaves the new note in place. It cannot be combined with `--json`.
 | 2 | the command line could not be parsed, such as an unknown option |
 | 130 | cancelled by Ctrl-C, or by SIGTERM on Unix |
 
-On the first signal notepipe stops its stages and the programs it started, abandons requests in flight (their answers
+On the first signal notepipe stops its stages and the process groups of the programs it started (a descendant that
+starts its own session is outside them), abandons requests in flight (their answers
 are never cached), removes downloaded media and extracted audio, and exits. A second signal exits immediately after
 killing those programs, and the next run does the cleanup.
 
@@ -87,7 +89,7 @@ stages read and write with `produces = "document"`:
 ```json
 {
   "schema": 3,
-  "meta": {"title": "…", "author": "…", "duration": 123.4, "source": "…", "seek_url": "…"},
+  "meta": {"title": "…", "author": "…", "duration": 123.4, "source": "…", "url": "…", "seek_url": "…"},
   "sections": [
     {"t": 0.0, "end": 42.0, "image": "images/0001.jpg",
      "speech": [{"start": 0.5, "end": 7.0, "text": "…", "raw": "…"}]}
@@ -95,9 +97,10 @@ stages read and write with `produces = "document"`:
 }
 ```
 
-`source` is the URL as given, or the absolute path of the local file. `image` is empty for sections without a
-screenshot (for example audio-only input). `raw` is present when a stage replaced the text, and `seek_url` when the
-download program provided a link template. Fields a `run` stage adds are kept.
+`source` is the URL as given, or the absolute path of the local file. `image` is empty for sections without a screenshot
+(for example audio-only input). `raw` is present when a stage replaced the text, and `url` and `seek_url` when the
+download program provided a link and a link template. `duration` is `null` when it could not be read. Fields a `run`
+stage adds are kept, except names the document uses itself (`schema`, `meta`, `sections`), which are an error.
 
 ## Work folders and caches
 

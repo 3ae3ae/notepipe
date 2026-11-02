@@ -53,8 +53,8 @@ source ─► download ─► media ─┬─► transcript ─► transcript.js
    notepipe, split into short segments and sent to the stage's provider.
 3. **Screenshots.** Frames are sampled with ffmpeg and compared; a screenshot is kept when the picture changes and then
    holds still. Audio-only input has none. This runs at the same time as the transcript.
-4. **Document.** Transcript lines are grouped under the screenshot that was on screen and joined into paragraphs, with
-   word spacing that follows each writing system.
+4. **Document.** Each transcript line goes, whole, under the screenshot on screen at its midpoint, and the lines are
+   joined into paragraphs, with word spacing that follows each writing system.
 5. **Processing.** `llm` stages send a file, with their prompt, to their provider: a document's paragraphs, rewritten
    in place, or a whole transcript, document or Markdown file, answered with Markdown. `run` stages pass files through
    any program.
@@ -106,11 +106,12 @@ live instead:
 - **Notes are replaced whole.** A new note is built completely before it replaces the previous one. A run that fails or
   is cancelled before its note is written leaves the previous note as it was. If a run is interrupted while swapping
   folders, the next run finishes or undoes the swap from a transaction record before it writes a note.
-- **Finished work is reused.** Downloads, screenshots, transcripts and successful AI responses are cached per source and
-  keyed by the inputs that affect them, so changing an AI prompt does not repeat speech recognition, and a rerun with
-  nothing changed repeats no paid or slow work and leaves the note as it is. Failed responses are never cached. `run`
-  stages, whose dependencies notepipe cannot see, run every time.
-- **Cancellation is clean.** Ctrl-C (and SIGTERM on Unix) stops the run and every program it started.
+- **Finished work is reused.** Downloads, screenshots, speech transcripts and successful AI responses are cached per
+  source and keyed by the inputs that affect them, so changing an AI prompt does not repeat speech recognition, and a
+  rerun with nothing changed repeats no paid or slow work and leaves the note as it is. Failed responses are never
+  cached. `run` stages, whose dependencies notepipe cannot see, run every time.
+- **Cancellation is clean.** Ctrl-C (and SIGTERM on Unix) stops the run and every program it started. A descendant
+  that starts a session of its own is not stopped.
 - **Data goes only where the configuration sends it.** notepipe contacts the providers and runs the programs that the
   configuration names, and nothing else; it has no telemetry. The configuration it creates names OpenAI.
 
