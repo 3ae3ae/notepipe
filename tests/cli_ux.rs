@@ -67,6 +67,7 @@ fn source_json_error(output: &Output) -> Value {
 }
 fn json_error(output: &Output) -> Value {
     let error = source_json_error(output);
+    assert_eq!(error["warnings"], json!([]));
     assert_eq!(events(output).len(), 1, "{}", stdout(output));
     error
 }

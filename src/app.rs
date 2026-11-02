@@ -96,7 +96,7 @@ fn main_inner(running: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::pr
             if error.use_stderr() && json_requested {
                 progress::set_json_mode();
                 progress::emit(
-                    serde_json::json!({"type": "error", "message": format!("Invalid arguments: {}", error)}),
+                    serde_json::json!({"type": "error", "message": format!("Invalid arguments: {}", error), "warnings": []}),
                 );
             } else {
                 let _ = error.print();
@@ -115,9 +115,17 @@ fn main_inner(running: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::pr
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             let message = format!("{error:#}");
+            let warnings = error
+                .downcast_ref::<pipeline::Failure>()
+                .map_or(&[][..], |failure| failure.warnings.as_slice());
             if json {
-                progress::emit(serde_json::json!({"type": "error", "message": message}));
+                progress::emit(
+                    serde_json::json!({"type": "error", "message": message, "warnings": warnings}),
+                );
             } else {
+                for warning in warnings {
+                    eprintln!("Warning: {warning}");
+                }
                 eprintln!("Error: {}", message);
             }
             std::process::ExitCode::FAILURE

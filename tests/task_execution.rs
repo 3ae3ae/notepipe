@@ -2867,31 +2867,91 @@ fn lifecycle_live_provider_errors_do_not_attach_diagnostics() {
 }
 
 #[test]
-fn lifecycle_unknown_duration_is_null_and_warns_on_success() {
-    let root = tempfile::tempdir().unwrap();
-    let source = local(root.path());
-    let cfg = config();
-    let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
-    let all = events(&output);
-    let final_event = all.last().unwrap();
-    assert_eq!(final_event["type"], "done");
-    assert!(final_event["warnings"].as_array().unwrap().iter().any(|w| {
-        w.as_str()
+fn lifecycle_unknown_duration_is_null_and_warns_on_success_and_failure() {
+    for fail in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = local(root.path());
+        let mut cfg = config();
+        if fail {
+            cfg["pipeline"].as_array_mut().unwrap().push(json!("fail"));
+            cfg["stages"]["fail"] = json!({"type":"run","input":"draft.json","output":"failure","command":[python(),"-c","import sys;sys.exit(7)"]});
+        }
+        let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
+        let all = events(&output);
+        let final_event = all.last().unwrap();
+        assert_eq!(final_event["type"], if fail { "error" } else { "done" });
+        assert!(final_event["warnings"].as_array().unwrap().iter().any(|w| {
+            w.as_str()
+                .unwrap()
+                .starts_with("Could not read the duration of lecture.mp4: ")
+        }));
+        let work = std::fs::read_dir(root.path().join("cache/notepipe/work"))
             .unwrap()
-            .starts_with("Could not read the duration of lecture.mp4: ")
-    }));
-    let work = std::fs::read_dir(root.path().join("cache/notepipe/work"))
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| p.is_dir())
-        .unwrap();
-    for (path, pointer) in [
-        ("media/info.json", "/duration"),
-        ("draft.json", "/meta/duration"),
-    ] {
-        let value: Value =
-            serde_json::from_slice(&std::fs::read(work.join(path)).unwrap()).unwrap();
-        assert_eq!(value.pointer(pointer), Some(&Value::Null));
+            .map(|e| e.unwrap().path())
+            .find(|p| p.is_dir())
+            .unwrap();
+        for (path, pointer) in [
+            ("media/info.json", "/duration"),
+            ("draft.json", "/meta/duration"),
+        ] {
+            let value: Value =
+                serde_json::from_slice(&std::fs::read(work.join(path)).unwrap()).unwrap();
+            assert_eq!(value.pointer(pointer), Some(&Value::Null));
+        }
+        if fail {
+            assert!(final_event["message"].as_str().unwrap().contains("fail"));
+            let human = spawn(
+                root.path(),
+                source.to_str().unwrap(),
+                &cfg,
+                &["--skip", "screenshots"],
+                false,
+            )
+            .wait_with_output()
+            .unwrap();
+            let stderr = String::from_utf8_lossy(&human.stderr);
+            assert!(
+                stderr.find("Warning: Could not read the duration").unwrap()
+                    < stderr.find("Error:").unwrap()
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn lifecycle_cleanup_warnings_survive_failure_and_cancellation() {
+    for cancel in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = "https://example.test/cleanup";
+        let mut cfg = config();
+        cfg["pipeline"] = json!(["download", "fail"]);
+        cfg["stages"]["download"]["command"] =
+            source_adapter_command(&root.path().join("source"), "files");
+        let ready = root.path().join("ready");
+        cfg["stages"]["fail"] = json!({"type":"run","input":"media","output":"failure","publish":"failure","command":[python(),"-c",format!("import pathlib,sys,time;m=pathlib.Path(sys.argv[1]);(m.parent/'.cache/download/complete.json').write_text('invalid');pathlib.Path(sys.argv[2]).write_text('ready');{}", if cancel {"time.sleep(30)"} else {"sys.exit(7)"}),"{input}",ready]});
+        let mut child = spawn(root.path(), source, &cfg, &[], true);
+        wait_for_file(&mut child, &ready);
+        if cancel {
+            assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+        }
+        let output = child.wait_with_output().unwrap();
+        let all = events(&output);
+        let failure = all.last().unwrap();
+        assert_eq!(failure["type"], "error");
+        assert_eq!(output.status.code(), Some(if cancel { 130 } else { 1 }));
+        assert!(failure["message"].as_str().unwrap().contains(if cancel {
+            "Cancelled"
+        } else {
+            "fail"
+        }));
+        assert!(
+            failure["warnings"].as_array().unwrap().iter().any(|w| w
+                .as_str()
+                .unwrap()
+                .contains("Invalid download adapter cache")),
+            "{failure}"
+        );
     }
 }
 
