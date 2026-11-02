@@ -439,6 +439,41 @@ fn doctor_omits_download_stages_without_a_command() {
     );
     assert!(!stdout(&output).contains("Download adapter"));
 }
+#[cfg(unix)]
+#[test]
+fn doctor_rejects_program_paths_without_execute_permission() {
+    use std::os::unix::fs::PermissionsExt;
+    let cli = CliTest::new();
+    let path = cli.dir.path().join("not-executable");
+    std::fs::write(&path, "program").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mut cfg = config();
+    cfg["providers"]["p"] = json!({"command":[path]});
+    cfg["stages"]["download"]["command"] = json!([path]);
+    let run_path = cli.dir.path().join("run-not-executable");
+    std::fs::copy(&path, &run_path).unwrap();
+    cfg["stages"]["custom"] = json!({"type":"run","output":"custom","command":[run_path]});
+    cli.config_value(&cfg);
+    let output = cli.run(&["doctor"]);
+    assert!(!output.status.success());
+    let text = stdout(&output);
+    assert!(
+        text.contains(&format!("✗ AI adapter {}", path.display())),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("✗ Adapter {}", run_path.display())),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "- Download adapter {}  Not installed; needed only for URLs",
+            path.display()
+        )),
+        "{text}"
+    );
+    assert!(!text.contains(&format!("✓ AI adapter  {}", path.display())));
+}
 #[test]
 fn version_flags_include_only_an_explicit_build_commit() {
     let suffix = option_env!("NOTEPIPE_COMMIT_HASH")
