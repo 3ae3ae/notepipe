@@ -67,7 +67,7 @@ these keys:
 
 | Key | Meaning |
 |---|---|
-| `type` | What the stage does: `download`, `transcript`, `screenshots`, `document`, `llm`, `markdown` or `run` |
+| `type` | What the stage does: `download`, `transcript`, `screenshots`, `document`, `rewrite`, `write`, `markdown` or `run` |
 | `input` | What it reads: `"source"` (the file or URL on the command line; `download` only) or the `output` of a stage listed earlier in `pipeline`. A string, or a list |
 | `output` | What it writes: a plain name in the work folder, such as `transcript.json`. No `/` or `\`, not starting with `.`, not `source`; each name is written by one stage; names that differ only in case count as the same, and so do names the file system treats as one file |
 | `publish` | Optional: a name to copy the output to in the note folder, such as `note.md`, with the same rules as `output`, or `-` for standard output. Each name, ignoring case and anything else the file system ignores, is published by one stage, and only one stage, writing a file rather than a folder, can publish to `-` |
@@ -81,8 +81,8 @@ Each output has a kind, fixed by the stage that writes it, and each stage type r
 | `media` | `download` | a folder with the media, its subtitles and `info.json` |
 | `transcript` | `transcript` | JSON: the language and timed lines, `{"language": "en", "events": [{"start", "end", "text"}, …]}` |
 | `images` | `screenshots` | a folder of `0001.jpg`, `0002.jpg`, … with `images.json`, `[{"t", "image"}, …]` |
-| `document` | `document`, an `llm` writing `.json` | JSON in the [note.json format](cli.md#output): sections with their screenshot and paragraphs |
-| `markdown` | `markdown`, an `llm` writing `.md` | Markdown text |
+| `document` | `document`, `rewrite` | JSON in the [note.json format](cli.md#output): sections with their screenshot and paragraphs |
+| `markdown` | `markdown`, `write` | Markdown text |
 | `file` | `run` | whatever the program wrote; it can only be published |
 
 A `run` stage with `produces` writes a `transcript`, `document` or `markdown` instead. Every stage also knows the
@@ -124,6 +124,7 @@ segments and sent to the provider.
 | `provider` | required | The provider to send speech to |
 | `api` | `"transcriptions"` | `transcriptions`: `/audio/transcriptions`; `chat`: audio input to `/chat/completions` |
 | `model` | `""` | Sent only when set |
+| `prompt` | none | With `api = "chat"`, required: the instructions sent with each segment, followed by the language when it is set. Not accepted with `transcriptions` |
 | `threshold` | `0.5` | Speech confidence from 0 to 1; lower keeps quieter speech |
 | `min_silence` | `0.4` | Pauses shorter than this many seconds do not split segments |
 | `max_segment` | `20.0` | Longest stretch of speech in one request, 1 to 600 seconds; up to 0.25 s of silence is added on each side |
@@ -151,48 +152,61 @@ screenshot that was on screen at its midpoint, and the lines joined into paragra
 writing system. Lines that carry different extra fields, such as a speaker added by a `run` stage, start a new
 paragraph. It has no settings.
 
-### `llm`
+### `rewrite`
 
-Reads one file and sends it to a model with a prompt. The end of `output` decides what happens:
+Reads a `document` and writes a `document`: its paragraphs go to a model in batches, with the prompt, and each is
+replaced by the answer. Times and screenshots stay, and a changed paragraph keeps its first original text as `raw`.
 
-| `output` ends in | Reads | Does |
+| Key | Default | Meaning |
 |---|---|---|
-| `.json` | a `document` | sends the paragraphs in batches and replaces each with the answer; times and screenshots stay, and a changed paragraph keeps its first original text as `raw` |
-| `.md` | a `transcript`, `document` or `markdown` | sends it, transcripts and documents as timed lines with the title and author and Markdown as it is, and writes the answer |
+| `provider` | required | The provider to send requests to |
+| `model` | `""` | Sent only when set |
+| `prompt` | `""` | Instructions sent with the paragraphs |
+| `images` | `false` | Also send the screenshot shown during each paragraph |
+| `batch_size` | `20` | Paragraphs in one request, 1 to 100. Small local models follow the answer's format more reliably with fewer |
+| `request` | `{}` | Extra fields for the request body, for example `{ reasoning_effort = "low" }` |
+
+Paragraphs travel as plain text between numbered marker lines, in the request and in the answer, so nothing in them is
+escaped ([docs/adapters.md](adapters.md#chat-api)). An empty answer for one paragraph removes that paragraph; a stage
+that removes every paragraph warns and goes on.
+
+### `write`
+
+Reads a `transcript`, `document` or `markdown` and writes `markdown`: the model's answer. Transcripts and documents are
+sent as timed lines with the title and author, and Markdown as it is.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `provider` | required | The provider to send requests to |
 | `model` | `""` | Sent only when set |
 | `prompt` | `""` | Instructions sent with the input |
-| `images` | `false` | `.json` only: also send the screenshot shown during each paragraph |
-| `batch_size` | `20` | `.json` only: paragraphs in one request, 1 to 100 |
-| `chunk_size` | `25000` | `.md` only: about how many characters of timed lines go in one request, 1000 to 1000000. A longer transcript or document is sent in parts, and one more request combines their answers; Markdown is always sent whole |
+| `chunk_size` | `25000` | About how many characters of timed lines go in one request, 1000 to 1000000. A longer transcript or document is sent in parts, and one more request combines their answers; Markdown is always sent whole |
 | `request` | `{}` | Extra fields for the request body, for example `{ reasoning_effort = "low" }` |
 
-notepipe adds instructions for the answer's format to the prompt, and sets `model`, `messages`, `stream` and
-`response_format` itself; `request` cannot change those. Nothing is sent by default for sampling or length limits.
+### Requests to models
+
+`rewrite` and `write` stages add instructions for the answer's format to the prompt and set `model`, `messages` and
+`stream` themselves; `request` cannot change those or set `response_format`. Nothing is sent by default for sampling or
+length limits.
 
 A request is tried at most three times. A failed connection, a `429` or `5xx` answer and an answer that is not in the
-expected format are tried again; a paragraph answer whose text holds control characters, which is what JSON mode makes
-of a backslash the model did not escape, counts as not in the expected format. Other client errors, and an answer cut
-off at the model's output limit or stopped by its content filter, fail at once. A stage that fails stops the run,
-nothing is published, and the error names the stage, the part of the recording and what the service said. An empty
-answer for one paragraph removes that paragraph; a stage that removes every paragraph warns and goes on.
+expected format are tried again. Other client errors, and an answer cut off at the model's output limit or stopped by
+its content filter, fail at once. A stage that fails stops the run, nothing is published, and the error names the stage,
+the part of the recording and what the service said.
 
-The default file holds two `llm` stages:
+The default file holds a `rewrite` and a `write` stage:
 
-| Stage | Reads → writes | What its prompt asks for |
-|---|---|---|
-| `proofread` | `draft.json` → `proofread.json` | Fixes recognition errors, filler and punctuation without changing meaning or language; writes formulas as LaTeX |
-| `summary` | `proofread.json` → `summary.md` | A one-sentence overview, 3–6 key points and a timestamped outline, in the transcript's language |
+| Stage | Type | Reads → writes | What its prompt asks for |
+|---|---|---|---|
+| `proofread` | `rewrite` | `draft.json` → `proofread.json` | Fixes recognition errors, filler and punctuation without changing meaning or language; writes formulas as LaTeX |
+| `summary` | `write` | `proofread.json` → `summary.md` | A one-sentence overview, 3–6 key points and a timestamped outline, in the transcript's language |
 
 ### `markdown`
 
 Reads one or more `document` and `markdown` files and writes `markdown`: each input in the order of `input`, separated by a blank
 line. A document becomes its screenshots, as `![](<images/0001.jpg>)`, each followed by the paragraphs placed under
 it. Nothing else is added: no front matter, title or headings. To lay the note out differently, write the
-Markdown with an `llm` stage or a `run` stage instead.
+Markdown with a `write` stage or a `run` stage instead.
 
 ### `run`
 
@@ -206,18 +220,22 @@ Runs a program of your own, or any command-line tool, as a stage. See
 
 ## Publishing and the note folder
 
-When every stage has finished, notepipe builds the note folder, `<out>/<title>/`, with every file a stage publishes.
+When every stage has finished, notepipe writes the note folder, `<out>/<title>/`, with every file a stage publishes.
 A published document, or Markdown made from one, brings along the screenshots it shows, at the same path as in the
 work folder: `images/` with the default names. Markdown brings along the images it refers to by the path the document
-uses. The folder then replaces the previous one whole, so a reader never sees
-a half-written note and a failed run changes nothing; a replacement cut short is completed or undone on the next run. Files you add to the folder yourself are replaced with it.
+uses. The folder is built under a hidden name and renamed into place, so a reader never sees a half-written note and a
+failed run writes nothing.
 
-A later run on the same source replaces its own folder; notepipe recognises it by `.notepipe.json` inside. A
-different source with the same title gets a `-2`, `-3`, … suffix, and a folder without `.notepipe.json` is never
-replaced. When a source's title changes, its note goes to a folder for the new title.
+A note folder is never changed after it is written. notepipe recognises a source's notes by `.notepipe.json` inside,
+which names the source by its contents. A rerun whose files are the same as the last ones it published leaves the note
+as it is, even if you edited, renamed or added to it, and says `Note unchanged`; if no folder in the output folder
+carries the source's `.notepipe.json`, the note is written again. A rerun with different results, for example after a
+prompt changed, writes a new folder next to the old one with a `-2`, `-3`, … suffix, as does a source whose title
+another folder already uses. A recording that was moved reuses all earlier work, but its new location changes its
+note, so it gets a new folder too. Delete folders you no longer want yourself.
 
-`publish = "-"` prints the output to standard output after the note folder is written, so the folder is already
-replaced if printing fails; it cannot be combined with `--json`, which uses standard output for events. A run that publishes only to standard output writes no folder.
+`publish = "-"` prints the output to standard output after the note folder is written; it cannot be combined with
+`--json`, which uses standard output for events. A run that publishes only to standard output writes no folder.
 
 ## Order, speed and repeated runs
 
@@ -227,11 +245,12 @@ published. The download stage runs first, since every stage can read the source'
 start as soon as their inputs are ready, so the transcript and the screenshots are made at the same time.
 
 Every stage writes its output again on every run, from what it has done before: a download, speech segments, and model
-answers are reused as long as the settings that shaped them are unchanged. Changing a prompt therefore repeats only that
+answers are reused as long as the settings that shaped them are unchanged. A local source is recognised by its
+contents, so a moved or renamed file reuses this work. Changing a prompt therefore repeats only that
 stage's requests, and an interrupted transcription resumes where it stopped. `document`, `markdown` and `run` stages
 always run. `--no-resume` starts the source over.
 
-`--skip NAMES` leaves stages out for one run. A skipped `llm` stage writing `.json` passes its input on unchanged, so
+`--skip NAMES` leaves stages out for one run. A skipped `rewrite` stage passes its input on unchanged, so
 skipping `proofread` publishes `draft.json` as `note.json`. Any other skipped stage writes nothing: a `markdown` stage
 leaves it out (skipping `summary` gives a note without a summary), and a `document` stage works without screenshots.
 Skipping a stage whose output another stage needs is an error before any work starts.
@@ -294,7 +313,7 @@ produces = "document"
 command = ["python3", "fix-terms.py", "--glossary", "glossary.tsv"]
 
 [stages.proofread]
-type = "llm"
+type = "rewrite"
 input = "terms.json"
 output = "proofread.json"
 publish = "note.json"

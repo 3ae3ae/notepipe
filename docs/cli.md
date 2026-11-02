@@ -33,7 +33,7 @@ With `--json`, standard output carries one JSON object per line. Every object ha
 | `progress` | `stage`, `current`, `total` | progress within a stage |
 | `tokens` | `stage`, `prompt`, `completion` | token usage so far in a stage |
 | `log` | `level` (`error`, `warn`, `info`, `debug`), `message` | diagnostics |
-| `done` | `note_dir`, `files`, `work_dir`, `warnings` | the run finished and its outputs were published |
+| `done` | `note_dir`, `files`, `work_dir`, `unchanged`, `warnings` | the run finished and its outputs were published |
 | `error` | `message`, `warnings` | the run failed |
 
 `stage` is the name of a stage in the pipeline, or `NAME/STEP` for a step inside it: `TRANSCRIPT/subtitles`,
@@ -42,8 +42,9 @@ screenshots stage, and `NAME/provider` while a stage starts a provider program. 
 Treat unknown names and extra fields as informational; new ones may be
 added.
 
-In the `done` event, `note_dir` is the note folder, or `null` when nothing was published to one; `files` maps each
-publishing stage to the path it published, or to `"-"`; `work_dir` is the source's work folder, where every stage's
+In the `done` event, `note_dir` is the note folder, or `null` when nothing was published to one; `unchanged` is `true`
+when the results equal the last ones published, so the existing folder in `note_dir` was left as it is; `files` maps
+each publishing stage to the path it published, or to `"-"`; `work_dir` is the source's work folder, where every stage's
 output is; `warnings` is the final list of warnings. The `error` event carries, in `warnings`, the warnings collected
 before the failure.
 
@@ -76,12 +77,11 @@ its Markdown shows. With the default configuration:
 <out>/<title>/.notepipe.json      the source this folder belongs to
 ```
 
-The folder name comes from the title. A run on the same source replaces its folder, which it recognises by
-`.notepipe.json`; a different source with the same title gets a `-2`, `-3`, … suffix, and a folder without
-`.notepipe.json` is never replaced. After a source's title changes, its note goes to a folder for the new title. The
-folder is built in a staging folder and moved into place whole, so a reader never sees a half-written note and a failed
-run leaves the previous note as it was. If moving the new note into place fails and the previous note cannot be moved
-back either, the error message gives the path where the previous note was kept; the next run restores it.
+The folder name comes from the title; `.notepipe.json` names the source by its contents (`sha256:…`, or the URL). A
+note folder is never changed once written: a rerun with the same results leaves it as it is, even edited or renamed,
+and a changed result, or a different source with the same title, gets a new folder with a `-2`, `-3`, … suffix. The
+folder is built under a hidden name and renamed into place, so a reader never sees a half-written note and a failed run
+writes nothing.
 
 A published document, such as the default `note.json`, has this format (`schema` 3), which is also what `run`
 stages read and write with `produces = "document"`:

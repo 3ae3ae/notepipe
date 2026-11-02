@@ -87,7 +87,8 @@ These requests go to every provider, whether it is a remote API or a program.
 ### Transcription API
 
 The transcript stage sends each speech segment to `POST <base_url>/audio/transcriptions` as `multipart/form-data`,
-compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as audio input):
+compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as audio input, with the stage's speech
+`prompt` and the language as text):
 
 | Field | Required | Content |
 |---|---|---|
@@ -103,25 +104,27 @@ and reports as the model stopping at its output limit.
 
 ### Chat API
 
-`llm` stages send `POST <base_url>/chat/completions` with a JSON body in the OpenAI Chat Completions format:
+`rewrite` and `write` stages send `POST <base_url>/chat/completions` with a JSON body in the OpenAI Chat Completions
+format:
 
 | Field | Present | Content |
 |---|---|---|
 | `model` | when the stage has a model | the model name |
 | `messages` | always | a system message with the stage's prompt and notepipe's format instructions, then a user message with the input (below) |
-| `response_format` | an `output` ending in `.json` | `{"type": "json_object"}` |
 | other fields | when configured | everything in the stage's `request` |
 
 The input, and the answer notepipe expects in `content`:
 
-- **`output` ending in `.json`:** the user content is an array of parts. The first is a `text` part holding a JSON array
-  of up to `batch_size` paragraphs, `[{"id": 0, "text": "…"}, …]`; with `images = true` an `image_url` part with the
-  screenshot follows, as a JPEG data URL. Answer with `{"segments": [{"id": 0, "text": "…"}, …]}`, one entry for every
-  input `id`.
-- **`output` ending in `.md`:** the user content is a string. For a transcript or a document: the title and author
-  when they are known, then one line per fragment or paragraph starting with its start time, such as `[03:12]` or
-  `[1:03:12]`. For Markdown: the Markdown as it is. Answer with Markdown. An input longer than `chunk_size` arrives in
-  several requests, followed by one that asks to combine their results.
+- **`rewrite`:** the user content is an array of parts. The first is a `text` part holding up to `batch_size`
+  paragraphs, each after a marker line `<<<TAG:0>>>`, `<<<TAG:1>>>`, …, followed by a line `<<<TAG:end>>>`; TAG is
+  `np-` and hex digits that no paragraph contains. With `images = true` an `image_url` part with the screenshot follows,
+  as a JPEG data URL. Answer with the same marker lines in the same order, each followed by that paragraph's new text
+  written as it should appear, nothing escaped, and the end line. Text before the first marker or after the end line is
+  ignored; an empty block removes its paragraph; a missing, extra or reordered block makes the answer invalid.
+- **`write`:** the user content is a string. For a transcript or a document: the title and author when they are known,
+  then one line per fragment or paragraph starting with its start time, such as `[03:12]` or `[1:03:12]`. For
+  Markdown: the Markdown as it is. Answer with Markdown. An input longer than `chunk_size` arrives in several requests,
+  followed by one that asks to combine their results.
 
 `stream` is never requested. Respond `200` with:
 
@@ -130,13 +133,8 @@ The input, and the answer notepipe expects in `content`:
 ```
 
 `usage` is optional; when present, notepipe counts it, also for answers it rejects. A request is tried at most three
-times with backoff: failed connections, `429` and `5xx` responses, and answers that are not in the expected format,
-including a `.json` answer whose text holds control characters other than line breaks, are tried again. An answer whose
-`finish_reason` is `length` or `content_filter` fails at once.
-
-A program may ignore `response_format`, because the system message asks for JSON as well. If it rejects the field
-instead, it should answer `400` with a message that mentions `response_format`; notepipe then sends it again without the
-field, within the same three attempts.
+times with backoff: failed connections, `429` and `5xx` responses, and answers that are not in the expected format are
+tried again. An answer whose `finish_reason` is `length` or `content_filter` fails at once.
 
 ### Examples
 

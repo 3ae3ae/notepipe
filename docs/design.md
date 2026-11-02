@@ -55,12 +55,14 @@ source ─► download ─► media ─┬─► transcript ─► transcript.js
    holds still. Audio-only input has none. This runs at the same time as the transcript.
 4. **Document.** Each transcript line goes, whole, under the screenshot on screen at its midpoint, and the lines are
    joined into paragraphs, with word spacing that follows each writing system.
-5. **Processing.** `llm` stages send a file, with their prompt, to their provider: a document's paragraphs, rewritten
-   in place, or a whole transcript, document or Markdown file, answered with Markdown. `run` stages pass files through
+5. **Processing.** `rewrite` stages send a document's paragraphs, with their prompt, to their provider and replace
+   them with the answers; `write` stages send a whole transcript, document or Markdown file and keep the Markdown
+   answer. `run` stages pass files through
    any program.
 6. **Markdown.** The `markdown` stage joins documents and Markdown files into the note's text, in the order given.
 7. **Publishing.** When every stage has finished, the files the stages publish, and the screenshots they show, are
-   written to a staging folder and moved into place as the note folder; one can also go to standard output.
+   written to a new note folder under a hidden name and renamed into place, unless they are the same as the last
+   ones published; one can also go to standard output.
 
 ## Interfaces
 
@@ -94,8 +96,8 @@ live instead:
 | A vendor API that is not OpenAI-compatible | a provider program that translates the request |
 | AI through a different API, or through a subscription | a provider program |
 | Cleaning up one model's output quirks | that model's provider program |
-| A different summary, a translation, a glossary, study questions | an `llm` stage's prompt in the configuration |
-| A different note layout | an `llm` or `run` stage that writes the Markdown |
+| A different summary, a translation, a glossary, study questions | a `rewrite` or `write` stage's prompt in the configuration |
+| A different note layout | a `write` or `run` stage that writes the Markdown |
 | Processing that needs no language model, such as fixed replacements | a `run` stage |
 | Another output format, such as Word or HTML | a `run` stage, for example with pandoc |
 | Syncing to a note app | a program run after notepipe, on the note folder |
@@ -103,13 +105,13 @@ live instead:
 
 ## Guarantees
 
-- **Notes are replaced whole.** A new note is built completely before it replaces the previous one. A run that fails or
-  is cancelled before its note is written leaves the previous note as it was. If a run is interrupted while swapping
-  folders, the next run finishes or undoes the swap from a transaction record before it writes a note.
+- **Notes are never modified.** A note folder is built completely before it appears, and is never changed afterwards. A
+  rerun with unchanged results leaves it as it is, with your edits; a changed result goes into a new folder next to it.
+  A run that fails or is cancelled writes nothing.
 - **Finished work is reused.** Downloads, screenshots, speech transcripts and successful AI responses are cached per
-  source and keyed by the inputs that affect them, so changing an AI prompt does not repeat speech recognition, and a
-  rerun with nothing changed repeats no paid or slow work and leaves the note as it is. Failed responses are never
-  cached. `run` stages, whose dependencies notepipe cannot see, run every time.
+  source and keyed by the inputs that affect them, so changing a `rewrite` or `write` prompt does not repeat speech
+  recognition, and a rerun with nothing changed repeats no paid or slow work and leaves the note as it is. Failed
+  responses are never cached. `run` stages, whose dependencies notepipe cannot see, run every time.
 - **Cancellation is clean.** Ctrl-C (and SIGTERM on Unix) stops the run and every program it started. A descendant
   that starts a session of its own is not stopped.
 - **Data goes only where the configuration sends it.** notepipe contacts the providers and runs the programs that the

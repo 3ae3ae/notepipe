@@ -68,11 +68,10 @@ Every intermediate file lives in the recording's work directory (`notepipe -v` p
 model changed. Independent stages — such as `transcript` and `screenshots` — run at the same time, and the entire graph
 is type-checked before any media or network work begins.
 
-### 2. Almost nothing is hardcoded
-Even `proofread` and `summary` are not built-in features: they are two `type = "llm"` stages in your `config.toml` with
-plain-text prompts you can edit, duplicate or delete. You can rewire the graph to translate paragraphs, generate study
-questions, run a Python or `jq` script between stages, replace the default Markdown assembly with your own layout, or
-call `pandoc` to publish a `.docx` file alongside `note.md`.
+### 2. Almost nothing is hardcoded Even `proofread` and `summary` are not built-in features: they are a `rewrite` and a
+`write` stage in your `config.toml` with plain-text prompts you can edit, duplicate or delete. You can rewire the graph
+to translate paragraphs, generate study questions, run a Python or `jq` script between stages, replace the default
+Markdown assembly with your own layout, or call `pandoc` to publish a `.docx` file alongside `note.md`.
 
 ### 3. Composes with standard Unix tools
 Inside the pipeline, a `type = "run"` stage turns any command-line tool into a pipeline step, piping a file in on
@@ -300,7 +299,8 @@ downstream stages can read:
 | `transcript` | `media` | `transcript` (`.json`) | Tries `sources` in order (`subtitles`, `speech`). For speech, detects voice segments locally with `earshot`, splits long stretches at quiet points, and transcribes via `provider`. |
 | `screenshots` | `media` | `images` (folder) | Samples video frames via `ffmpeg`, compares them with SSIM (`sensitivity`, optional `region`), waits for animations to settle (`mode = "stable"`), and saves full-res JPEGs. |
 | `document` | `transcript` + optional `images` | `document` (`.json`) | Puts each transcript line, whole, under the screenshot shown at its midpoint and merges lines into paragraphs with script-aware word spacing. |
-| `llm` | `document`, `transcript` or `markdown` | `document` (`.json`) or `markdown` (`.md`) | Sends the input to `provider` with `prompt`. An `output` ending in `.json` rewrites a document's paragraphs in batches (keeping original text in `raw`); ending in `.md` produces one Markdown response (using chunked map-reduce for long recordings). |
+| `rewrite` | `document` | `document` | Sends the paragraphs to `provider` with `prompt` in batches, as plain text between marker lines, and replaces each with its answer (keeping the original text in `raw`). |
+| `write` | `document`, `transcript` or `markdown` | `markdown` | Sends the input to `provider` with `prompt` and writes one Markdown answer (in parts, then combined, for long recordings). |
 | `markdown` | one or more `document` / `markdown` files | `markdown` (`.md`) | Joins its inputs in order, rendering documents as `![](<images/0001.jpg>)` followed by their paragraphs, without adding front matter or headings. |
 | `run` | any stage outputs | `file` (or `produces` kind) | Runs an external command without a shell. Setting `produces = "transcript" \| "document" \| "markdown"` validates the output so later stages can read it. |
 
@@ -341,7 +341,7 @@ command = ["python3", "fix-terms.py", "--glossary", "glossary.tsv"]
 
 # 2. Proofread the glossary-fixed document, attaching each section's screenshot for visual spelling context
 [stages.proofread]
-type = "llm"
+type = "rewrite"
 input = "terms.json"
 output = "proofread.json"
 provider = "openai"
@@ -349,9 +349,9 @@ model = "gpt-6-luna"
 images = true
 prompt = '''…'''
 
-# 3. Rewrite each paragraph into Korean (.json output preserves timestamps, screenshots and `raw` text)
+# 3. Rewrite each paragraph into Korean (a rewrite stage keeps timestamps, screenshots and `raw` text)
 [stages.translate]
-type = "llm"
+type = "rewrite"
 input = "proofread.json"
 output = "translated.json"
 publish = "note.json"
@@ -359,9 +359,9 @@ provider = "openai"
 model = "gpt-6-luna"
 prompt = "Translate each item into Korean. Keep technical identifiers, code and LaTeX math unchanged."
 
-# 4. Produce a standalone Markdown section (.md output answers once for the whole recording)
+# 4. Produce a standalone Markdown section (a write stage answers once for the whole recording)
 [stages.actions]
-type = "llm"
+type = "write"
 input = "proofread.json"
 output = "actions.md"
 provider = "openai"
@@ -420,15 +420,15 @@ concurrency = 1
 | Service | `base_url` | Notes |
 |---|---|---|
 | **OpenAI** | `https://api.openai.com/v1` | Default (`whisper-1`, `gpt-6-luna`, …) |
-| **Anthropic** | `https://api.anthropic.com/v1` | Any Claude model for `llm` stages |
+| **Anthropic** | `https://api.anthropic.com/v1` | Any Claude model for `rewrite` and `write` stages |
 | **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | Any Gemini model |
 | **Groq** | `https://api.groq.com/openai/v1` | e.g. `whisper-large-v3-turbo` for speech or chat models |
 | **Mistral** | `https://api.mistral.ai/v1` | e.g. `voxtral-mini-latest` for speech or chat models |
 | **OpenRouter** | `https://openrouter.ai/api/v1` | Any routed chat or multimodal model |
 | **Ollama / LM Studio / vLLM** | `http://localhost:11434/v1` (or your server's URL) | Set `concurrency = 1` for single-GPU local servers |
 
-For audio-capable chat models, set `api = "chat"` under `[stages.transcript.speech]` to send speech segments to
-`/chat/completions` instead of `/audio/transcriptions`.
+For audio-capable chat models, set `api = "chat"` and a `prompt` under `[stages.transcript.speech]` to send speech
+segments to `/chat/completions` instead of `/audio/transcriptions`.
 
 ### Plug in local speech engines and other APIs (Adapters)
 
@@ -479,7 +479,7 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   - `{"type": "progress", "stage": "…", "current": 4, "total": 18}`
   - `{"type": "tokens", "stage": "proofread", "prompt": 1420, "completion": 980}`
   - `{"type": "log", "level": "info" | "warn" | "error" | "debug", "message": "…"}`
-  - `{"type": "done", "note_dir": "…", "files": {"markdown": "…", "proofread": "…"}, "work_dir": "…", "warnings": []}`
+  - `{"type": "done", "note_dir": "…", "files": {"markdown": "…", "proofread": "…"}, "work_dir": "…", "unchanged": false, "warnings": []}`
   - `{"type": "error", "message": "…", "warnings": []}`
 - **Structured document (`note.json`, schema 3):**
   ```json
@@ -505,10 +505,9 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   }
   ```
 - **Operational guarantees:**
-  - **Crash-safe publishing.** A note is assembled in a staging directory and swapped into `<out>/<title>/` whole.
-    Failed or cancelled runs leave an existing note untouched; an interrupted swap is completed or rolled back on the
-    next run. Folders not created by `notepipe` (missing `.notepipe.json`) are never overwritten; distinct recordings
-    sharing a title receive `-2`, `-3`, … suffixes.
+  - **Notes are never modified.** A note is assembled under a hidden name and renamed into `<out>/<title>/`, so a
+    failed or cancelled run writes nothing. A rerun with unchanged results leaves the note as it is, edits included; a
+    changed result, or another recording with the same title, goes into a new folder with a `-2`, `-3`, … suffix.
   - **Content-addressed caching and resume.** Downloads, screenshots, speech segments and validated LLM responses are
     cached in the source's work folder by the inputs that affect them. Editing the summary prompt sends only the summary's requests again;
     an interrupted transcription resumes from the first unfinished segment (`--no-resume` starts fresh).
