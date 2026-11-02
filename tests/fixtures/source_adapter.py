@@ -80,7 +80,7 @@ if args.behavior == 'fragmented':
 print(result, flush=True)
 
 if args.behavior in {'escaped', 'escaped-hang'}:
-    child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'], start_new_session=True)
+    child = subprocess.Popen([sys.executable, '-c', 'import signal;signal.pause()'], start_new_session=True)
     (args.record / 'escaped-pid').write_text(str(child.pid))
     if args.behavior == 'escaped-hang':
         time.sleep(30)
