@@ -3440,3 +3440,54 @@ fn lifecycle_provider_exit_between_consumers_stops_the_run() {
     );
     assert!(start.elapsed() < std::time::Duration::from_secs(10));
 }
+
+#[test]
+fn retries_survive_failure_and_cached_reruns_start_no_provider() {
+    let root = tempfile::tempdir().unwrap();
+    let source = video(root.path());
+    let record = root.path().join("provider");
+    let release = root.path().join("release");
+    let mut cfg = speech_config(&record, "missing-text-first");
+    cfg["pipeline"] = json!(["download", "transcript", "draft", "summary", "fail"]);
+    cfg["stages"]["draft"]["input"] = json!("transcript.json");
+    cfg["stages"]["summary"] = json!({"type":"llm","input":"draft.json","output":"summary.md","publish":"summary.md","provider":"speech"});
+    cfg["stages"]["fail"] = json!({"type":"run","input":"summary.md","output":"failure","command":[python(),"-c","import pathlib,sys;sys.exit(0 if pathlib.Path(sys.argv[1]).is_file() else 7)",release]});
+
+    let failed = run(root.path(), &source, &cfg, &[]);
+    let message = error(&failed);
+    assert!(message.contains("fail"), "{message}");
+    let all = events(&failed);
+    let failure = all.last().unwrap();
+    assert_eq!(failure["type"], "error");
+    let warnings = failure["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1, "{failure}");
+    let warning = warnings[0].as_str().unwrap();
+    assert!(warning.starts_with("Speech at "), "{warning}");
+    assert!(warning.contains("attempt 1 of 3 failed:"), "{warning}");
+    assert!(warning.contains("; retrying in "), "{warning}");
+    assert_eq!(
+        std::fs::read_to_string(record.join("endpoint")).unwrap(),
+        "/v1/chat/completions"
+    );
+    let requests = count(&record);
+    assert!(requests >= 3);
+    assert_eq!(
+        std::fs::read_to_string(record.join("starts")).unwrap(),
+        "start\n"
+    );
+
+    std::fs::write(release, "ready").unwrap();
+    let cached = run(root.path(), &source, &cfg, &[]);
+    assert_eq!(done(&cached)["warnings"], json!([]));
+    assert_eq!(count(&record), requests);
+    assert_eq!(
+        std::fs::read_to_string(record.join("starts")).unwrap(),
+        "start\n"
+    );
+    assert!(!events(&cached).iter().any(|event| {
+        event["type"] == "tokens"
+            || event["stage"]
+                .as_str()
+                .is_some_and(|stage| stage.ends_with("/provider"))
+    }));
+}
