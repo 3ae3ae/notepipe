@@ -364,7 +364,7 @@ pub(crate) fn send_chat(
     let item = crate::dispatch::Item::stage(stage, detail);
     let mut request_body = body.clone();
     let response = crate::dispatch::request(&item, &|| s.check_cancelled(), || {
-        let response = request_chat_once(agent, s, &request_body, validate);
+        let response = request_chat_once(agent, s, &request_body, stage, validate);
         match response {
             Err(mut error)
                 if error.unsupported_response_format
@@ -387,14 +387,6 @@ pub(crate) fn send_chat(
             Err(error) => Err(error),
         }
     })?;
-    let usage = &response["usage"];
-    if response[crate::dispatch::CACHED] != true {
-        crate::progress::note_tokens(
-            stage,
-            usage["prompt_tokens"].as_u64().unwrap_or(0),
-            usage["completion_tokens"].as_u64().unwrap_or(0),
-        );
-    }
     Ok(response["choices"][0]["message"]["content"]
         .as_str()
         .unwrap()
@@ -405,6 +397,7 @@ fn request_chat_once(
     agent: &ureq::Agent,
     s: &LlmSettings,
     body: &Value,
+    stage: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> std::result::Result<Value, crate::dispatch::Failure> {
     s.check_cancelled()
@@ -413,6 +406,7 @@ fn request_chat_once(
         &s.cache_identity(),
         body,
         &s.api_key,
+        stage,
         || {
             let _permit = s
                 .acquire_permit()

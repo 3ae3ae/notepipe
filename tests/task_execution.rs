@@ -470,8 +470,8 @@ fn rejected_chat_answers_retry_count_usage_and_report_warnings() {
         assert!(warning.contains("; retrying in ") && warning.ends_with(" s"));
         let all = events(&output);
         let tokens = all.iter().rfind(|e| e["type"] == "tokens").unwrap();
-        assert_eq!(tokens["prompt"], 3);
-        assert_eq!(tokens["completion"], 2);
+        assert_eq!(tokens["prompt"], 6);
+        assert_eq!(tokens["completion"], 4);
         let cached = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
         assert_eq!(done(&cached)["warnings"], json!([]));
         assert!(!events(&cached).iter().any(|e| e["type"] == "tokens"));
@@ -586,6 +586,12 @@ fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
                 _ => 1,
             }
         );
+        if target == "filter" {
+            let all = events(&output);
+            let tokens = all.iter().find(|event| event["type"] == "tokens").unwrap();
+            assert_eq!(tokens["prompt"], 3);
+            assert_eq!(tokens["completion"], 2);
+        }
     }
 }
 
@@ -2266,6 +2272,11 @@ fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         assert!(records.len() > 1);
+        let all = events(&output);
+        let tokens = all.iter().rfind(|e| e["type"] == "tokens").unwrap();
+        let counted = calls - usize::from(behavior == "invalid-json-first");
+        assert_eq!(tokens["prompt"], counted * 3);
+        assert_eq!(tokens["completion"], counted * 2);
         let warnings = completed["warnings"].as_array().unwrap();
         assert_eq!(calls, records.len() + 1);
         let warning = warnings[0].as_str().unwrap();

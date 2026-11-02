@@ -183,6 +183,7 @@ fn run_api(
                 key: &api_key,
                 mode: api.mode,
                 language: &api.language,
+                stage,
 
                 check_control: &check_control,
             };
@@ -291,6 +292,7 @@ fn post_cloud(
     Ok(crate::dispatch::request(item, t.check_control, || {
         crate::dispatch::json_request(
             t.key,
+            t.stage,
             || {
                 let url = (t.url)().map_err(crate::dispatch::Failure::local)?;
                 let mut request = t.client.post(&url).set("Content-Type", content_type);
@@ -327,6 +329,7 @@ struct ApiTarget<'a> {
     key: &'a str,
     mode: crate::settings::AsrMode,
     language: &'a str,
+    stage: &'a str,
     check_control: &'a (dyn Fn() -> Result<()> + Sync),
 }
 
@@ -458,6 +461,7 @@ mod tests {
             key: "",
             mode: crate::settings::AsrMode::Transcriptions,
             language: "",
+            stage: "transcript",
             check_control: &crate::runtime::check_cancelled,
         };
         let error = transcribe_api(
@@ -490,6 +494,7 @@ mod tests {
                 key: "",
                 mode: crate::settings::AsrMode::Transcriptions,
                 language: "",
+                stage: "transcript",
                 check_control: &crate::runtime::check_cancelled,
             },
             audio,
@@ -579,6 +584,7 @@ mod http_tests {
                 key: "",
                 mode: AsrMode::Chat,
                 language: "",
+                stage: "transcript",
                 check_control: &crate::runtime::check_cancelled,
             };
             let error = post_cloud(
@@ -623,6 +629,7 @@ mod http_tests {
             key: "",
             mode: AsrMode::Transcriptions,
             language: "",
+            stage: "transcript",
             check_control: &check,
         };
         let error = post_cloud(
@@ -774,6 +781,7 @@ mod http_tests {
                     key: if with_options { "test-key" } else { "" },
                     mode,
                     language: if with_options { "ko" } else { "" },
+                    stage: "transcript",
                     check_control: &crate::runtime::check_cancelled,
                 };
                 let dir = tempfile::tempdir().unwrap();
@@ -847,6 +855,8 @@ mod http_tests {
                 key: "",
                 mode: AsrMode::Chat,
                 language,
+
+                stage: "transcript",
                 check_control: &crate::runtime::check_cancelled,
             };
             let (_, body) = transcription_request(&target, b"audio").unwrap();
