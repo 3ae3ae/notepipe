@@ -218,6 +218,7 @@ async fn run_inner(
     runtime::finish_blocking().await;
     {
         let mut warnings = runtime::lock_recover(&warnings);
+        warnings.extend(_dispatch.take_warnings());
         if let Err(error) = cleanup_media(cfg, &work, &mut warnings) {
             warnings.push(format!(
                 "Could not remove cached media {}: {error:#}",

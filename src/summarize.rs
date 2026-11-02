@@ -22,13 +22,13 @@ fn system(stage: &Stage) -> String {
 }
 fn send(agent: &ureq::Agent, settings: &LlmSettings, stage: &Stage, user: &str) -> Result<String> {
     let body = llm::chat_body(settings, &system(stage), user, stage.input)?;
-    llm::send_chat(agent, settings, &body, &stage.name, &|content| {
-        anyhow::ensure!(
-            !content.trim().is_empty(),
-            "Empty transcript-stage response"
-        );
-        Ok(())
-    })
+    llm::send_chat(
+        agent,
+        settings,
+        &body,
+        &stage.name,
+        &llm::check_control_characters,
+    )
 }
 fn context(meta: &MediaMeta) -> String {
     let mut context = String::new();

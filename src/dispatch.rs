@@ -1,4 +1,4 @@
-//! Validated HTTP requests and a success-only cache for LLM responses.
+//! Bounded HTTP requests, shared retries and a success-only response cache.
 
 use crate::{checkpoint::atomic_write, runtime};
 use anyhow::Result;
@@ -7,10 +7,50 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
+const MAX_ATTEMPTS: u32 = 3;
 const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 pub const CACHED: &str = "notepipe_cached";
+
+pub fn request<T>(
+    item: &str,
+    control: &dyn Fn() -> Result<()>,
+    mut attempt_once: impl FnMut() -> std::result::Result<T, Failure>,
+) -> std::result::Result<T, Failure> {
+    let mut run = || {
+        for attempt in 1..=MAX_ATTEMPTS {
+            control().map_err(Failure::local)?;
+            match attempt_once() {
+                Ok(value) => return Ok(value),
+                Err(error) if error.retryable && attempt < MAX_ATTEMPTS => {
+                    control().map_err(Failure::local)?;
+                    let wait = runtime::retry_backoff(attempt);
+                    warn(format!(
+                        "{}: attempt {attempt} of 3 failed: {}; retrying in {:.1} s",
+                        item,
+                        error.message,
+                        wait.as_secs_f64()
+                    ));
+                    let deadline = Instant::now() + wait;
+                    loop {
+                        control().map_err(Failure::local)?;
+                        let left = deadline.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            break;
+                        }
+                        runtime::interruptible_sleep(left.min(Duration::from_millis(200)))
+                            .map_err(Failure::local)?;
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!()
+    };
+    run()
+}
 
 #[derive(Debug)]
 pub struct Failure {
@@ -42,8 +82,9 @@ impl Failure {
 }
 fn classify_rejection(status: u16, body: &[u8]) -> Failure {
     Failure {
-        retryable: status == 429 || (500..=599).contains(&status),
-        unsupported_response_format: rejects_response_format(status, body),
+        retryable: !rejects_output_limit(body) && (status == 429 || (500..=599).contains(&status)),
+        unsupported_response_format: !rejects_output_limit(body)
+            && rejects_response_format(status, body),
         message: if rejects_output_limit(body) {
             "The model stopped at its output limit.".into()
         } else {
@@ -65,7 +106,7 @@ fn rejection_message(status: u16) -> String {
     }
 }
 
-/// Classify the named request field without retaining provider error text.
+/// Classify the named request field, including servers that return plain text errors.
 fn rejects_response_format(status: u16, body: &[u8]) -> bool {
     matches!(status, 400 | 422)
         && body
@@ -73,7 +114,7 @@ fn rejects_response_format(status: u16, body: &[u8]) -> bool {
             .any(|part| part.eq_ignore_ascii_case(b"response_format"))
 }
 
-/// The adapter contract's code for a result cut off at the model's output limit; provider text is still not kept.
+/// The adapter contract's code for a result cut off at the model's output limit.
 fn rejects_output_limit(body: &[u8]) -> bool {
     serde_json::from_slice::<Value>(body)
         .is_ok_and(|value| value["error"]["code"] == "output_limit")
@@ -87,12 +128,25 @@ pub struct HttpResponse {
 struct Cache {
     dir: PathBuf,
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    warnings: Mutex<Vec<String>>,
 }
 static ACTIVE: OnceLock<Mutex<Option<Arc<Cache>>>> = OnceLock::new();
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct Guard(Arc<Cache>);
+impl Guard {
+    pub fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut *runtime::lock_recover(&self.0.warnings))
+    }
+}
+
+pub fn warn(message: String) {
+    tracing::warn!("{message}");
+    if let Some(cache) = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None))).as_ref() {
+        runtime::lock_recover(&cache.warnings).push(message);
+    }
+}
 impl Drop for Guard {
     fn drop(&mut self) {
         let mut current = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None)));
@@ -109,6 +163,7 @@ pub fn install(work_dir: &Path) -> Result<Guard> {
     let cache = Arc::new(Cache {
         dir: work_dir.join("llm"),
         locks: Mutex::new(HashMap::new()),
+        warnings: Mutex::new(Vec::new()),
     });
     let mut current = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None)));
     anyhow::ensure!(current.is_none(), "Another task is already active");
@@ -182,29 +237,39 @@ pub fn json_request(
     if !(200..300).contains(&response.status) {
         return Err(classify_rejection(response.status, &response.body));
     }
-    let value = serde_json::from_slice(&response.body)
-        .map_err(|_| Failure::local("The service response is not valid JSON"))?;
-    // A validator may return a retryable Failure; any other error is final.
-    validate(&value).map_err(|error| error.downcast::<Failure>().unwrap_or_else(Failure::local))?;
+    let value: Value = serde_json::from_slice(&response.body)
+        .map_err(|_| Failure::new(true, "The service response is not valid JSON"))?;
+
+    validate(&value).map_err(|error| {
+        error
+            .downcast::<Failure>()
+            .unwrap_or_else(|error| Failure::new(true, error.to_string()))
+    })?;
     Ok(value)
 }
 
-/// Provider error bodies are used only for safe classification and are never persisted.
+pub fn check_finish_reason(value: &Value) -> Result<()> {
+    if value["error"]["code"] == "output_limit" {
+        return Err(Failure::local("the model stopped at its output limit").into());
+    }
+    let message = match value["choices"][0]["finish_reason"].as_str() {
+        Some("length") => "the model stopped at its output limit",
+        Some("content_filter") => "the model's content filter stopped the answer",
+        _ => return Ok(()),
+    };
+    Err(Failure::local(message).into())
+}
+
+/// Provider error bodies are classified before validation and never persisted.
 pub fn receive(
     result: std::result::Result<ureq::Response, ureq::Error>,
 ) -> std::result::Result<HttpResponse, Failure> {
     use std::io::Read;
     let response = match result {
         Ok(response) | Err(ureq::Error::Status(_, response)) => response,
-        Err(ureq::Error::Transport(error)) => {
+        Err(ureq::Error::Transport(_error)) => {
             return Err(Failure::new(
-                matches!(
-                    error.kind(),
-                    ureq::ErrorKind::Dns
-                        | ureq::ErrorKind::ConnectionFailed
-                        | ureq::ErrorKind::Io
-                        | ureq::ErrorKind::ProxyConnect
-                ),
+                true,
                 "Could not complete the service connection",
             ));
         }
@@ -228,14 +293,105 @@ pub fn receive(
 mod tests {
     use super::*;
     #[test]
-    fn output_limit_code_uses_a_fixed_message_without_changing_retryability() {
+    fn malformed_speech_json_and_missing_text_are_retryable() {
+        let _serial = runtime::lock_recover(&TEST_LOCK);
+        for body in [b"not JSON".as_slice(), br#"{"text":null}"#] {
+            let root = tempfile::tempdir().unwrap();
+            let cache = install(root.path()).unwrap();
+            let mut attempts = 0;
+            let value = request("Speech", &|| Ok(()), || {
+                attempts += 1;
+                json_request(
+                    || {
+                        Ok(if attempts == 1 {
+                            HttpResponse {
+                                status: 200,
+                                body: body.to_vec(),
+                            }
+                        } else {
+                            response(200, serde_json::json!({"text":""}))
+                        })
+                    },
+                    valid,
+                )
+            })
+            .unwrap();
+            assert_eq!(value["text"], "");
+            assert_eq!(attempts, 2);
+            let warnings = cache.take_warnings();
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].starts_with("Speech: attempt 1 of 3 failed: "));
+        }
+    }
+
+    #[test]
+    fn cancellation_during_backoff_stops_without_another_attempt() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _serial = runtime::lock_recover(&TEST_LOCK);
+        let cancelled = AtomicBool::new(false);
+        let (entered, started) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let stop = &cancelled;
+            scope.spawn(move || {
+                started.recv_timeout(Duration::from_secs(5)).unwrap();
+                std::thread::sleep(Duration::from_millis(50));
+                stop.store(true, Ordering::Relaxed);
+            });
+            let mut attempts = 0;
+            let start = Instant::now();
+            let error = request(
+                "Stage cancelled",
+                &|| {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Err(runtime::Cancelled.into());
+                    }
+                    Ok(())
+                },
+                || {
+                    attempts += 1;
+                    entered.send(()).unwrap();
+                    Err::<(), _>(Failure::new(true, "temporary failure"))
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.message, "Cancelled");
+            assert!(!error.retryable);
+            assert_eq!(attempts, 1);
+            assert!(start.elapsed() < Duration::from_secs(1));
+        });
+    }
+
+    #[test]
+    fn stopped_answers_are_final_even_when_their_content_looks_complete() {
+        for (value, reason) in [
+            (
+                serde_json::json!({"choices":[{"finish_reason":"length","message":{"content":"Complete"}}]}),
+                "the model stopped at its output limit",
+            ),
+            (
+                serde_json::json!({"choices":[{"finish_reason":"content_filter","message":{"content":"Complete"}}]}),
+                "the model's content filter stopped the answer",
+            ),
+            (
+                serde_json::json!({"error":{"code":"output_limit"}}),
+                "the model stopped at its output limit",
+            ),
+        ] {
+            let error = json_request(|| Ok(response(200, value)), check_finish_reason).unwrap_err();
+            assert!(!error.retryable);
+            assert_eq!(error.message, reason);
+        }
+    }
+
+    #[test]
+    fn output_limit_code_is_final_even_for_retryable_http_statuses() {
         for status in [400, 422, 429, 500] {
             let error = classify_rejection(
                 status,
                 br#"{"error":{"code":"output_limit","message":"x"}}"#,
             );
             assert_eq!(error.message, "The model stopped at its output limit.");
-            assert_eq!(error.retryable, status == 429 || status >= 500);
+            assert!(!error.retryable);
             assert!(!error.unsupported_response_format);
         }
     }
@@ -434,7 +590,7 @@ mod tests {
         let error = receive(ureq::get("invalid private-test-key").call())
             .err()
             .unwrap();
-        assert!(!error.retryable);
+        assert!(error.retryable);
         assert!(!error.to_string().contains("private-test-key"));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();

@@ -405,12 +405,171 @@ fn llm_errors_stop_publication_and_keep_the_previous_note() {
         if mode == "empty" {
             assert_eq!(message, "Stage proofread would remove every paragraph");
         }
-        if mode == "retry" {
+        if matches!(mode, "invalid" | "ids" | "retry") {
             assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
         }
         assert_eq!(std::fs::read(path).unwrap(), previous, "{mode}: {message}");
     }
 }
+#[test]
+fn rejected_chat_answers_retry_count_usage_and_report_warnings() {
+    for bad in ["missing", "invalid", "ids", "control"] {
+        let root = tempfile::tempdir().unwrap();
+        let source = local(root.path());
+        video(root.path());
+        let provider = MockAi::respond_with(move |call, _| {
+            let content = if call == 0 {
+                match bad {
+                    "invalid" => json!("not paragraphs"),
+                    "ids" => json!(json!({"segments":[{"id":99,"text":"Wrong"}]}).to_string()),
+                    "control" => {
+                        json!(json!({"segments":[{"id":0,"text":"Bad\u{0008}text"}]}).to_string())
+                    }
+                    _ => Value::Null,
+                }
+            } else {
+                json!(json!({"segments":[{"id":0,"text":"Accepted"}]}).to_string())
+            };
+            Some((
+                200,
+                json!({"choices":[{"message":{"content":content}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}),
+            ))
+        });
+        let mut cfg = config();
+        with_llm(&mut cfg, &provider.url);
+        cfg["pipeline"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|name| name != "summary");
+        cfg["stages"]["markdown"]["input"] = json!("proofread.json");
+        let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
+        let completed = done(&output);
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "{bad}"
+        );
+        let warnings = completed["warnings"].as_array().unwrap();
+        assert_eq!(warnings.len(), 1);
+        let warning = warnings[0].as_str().unwrap();
+        assert!(
+            warning.starts_with("Stage proofread: attempt 1 of 3 failed:"),
+            "{warning}"
+        );
+        assert!(warning.contains("; retrying in ") && warning.ends_with(" s"));
+        let all = events(&output);
+        let tokens = all.iter().rfind(|e| e["type"] == "tokens").unwrap();
+        assert_eq!(tokens["prompt"], 3);
+        assert_eq!(tokens["completion"], 2);
+        let cached = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
+        assert_eq!(done(&cached)["warnings"], json!([]));
+        assert!(!events(&cached).iter().any(|e| e["type"] == "tokens"));
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+}
+
+#[test]
+fn response_format_fallback_shares_the_three_attempt_budget() {
+    for succeeds in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = local(root.path());
+        video(root.path());
+        let provider = MockAi::respond_with(move |call, body| {
+            Some(if call == 0 {
+                assert!(body.get("response_format").is_some());
+                (
+                    422,
+                    json!({"error":{"message":"response_format unsupported"}}),
+                )
+            } else {
+                assert!(body.get("response_format").is_none());
+                if call < 2 || !succeeds {
+                    (503, json!({"error":{"message":"Still loading"}}))
+                } else {
+                    (
+                        200,
+                        json!({"choices":[{"message":{"content":json!({"segments":[{"id":0,"text":"Accepted"}]}).to_string()}}]}),
+                    )
+                }
+            })
+        });
+        let mut cfg = config();
+        with_llm(&mut cfg, &provider.url);
+        cfg["pipeline"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|name| name != "summary");
+        cfg["stages"]["markdown"]["input"] = json!("proofread.json");
+        let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
+        if succeeds {
+            assert_eq!(done(&output)["warnings"].as_array().unwrap().len(), 2);
+        } else {
+            assert_eq!(
+                error(&output),
+                "The service did not complete this request (HTTP 503)."
+            );
+        }
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+}
+
+#[test]
+fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
+    for target in ["part", "combine", "unsplit", "filter", "control"] {
+        let root = tempfile::tempdir().unwrap();
+        let source = local(root.path());
+        if matches!(target, "part" | "combine") {
+            std::fs::write(source.with_extension("srt"), format!("1\n00:00:00,000 --> 00:00:01,000\n{}\n\n2\n00:00:03,000 --> 00:00:04,000\n{}\n", "x".repeat(1100), "y".repeat(1100))).unwrap();
+        }
+        let provider = MockAi::respond_with(move |_, body| {
+            let merge = body["messages"][1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Below are results for consecutive parts");
+            Some(if target == "filter" {
+                (
+                    200,
+                    json!({"choices":[{"finish_reason":"content_filter","message":{"content":"Incomplete"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}),
+                )
+            } else if target == "control" {
+                (
+                    200,
+                    json!({"choices":[{"message":{"content":"Bad\u{0008}Markdown"}}]}),
+                )
+            } else if target != "combine" || merge {
+                (
+                    400,
+                    json!({"error":{"message":"  Request\n\trefused\u{0000}here  "}}),
+                )
+            } else {
+                (200, json!({"choices":[{"message":{"content":"A part"}}]}))
+            })
+        });
+        let mut cfg = config();
+        cfg["providers"] = json!({"ai":{"base_url":provider.url,"concurrency":1}});
+        cfg["pipeline"] = json!(["download", "transcript", "summary"]);
+        cfg["stages"]["summary"] = json!({"type":"llm","provider":"ai","input":"transcript.json","output":"summary.md","publish":"summary.md","chunk_size":1000});
+        let output = run(root.path(), &source, &cfg, &[]);
+        let reason = match target {
+            "filter" => "the model's content filter stopped the answer",
+            "control" => {
+                "The model's answer contains control characters, usually from a backslash it did not escape"
+            }
+            _ => {
+                "The service rejected the request parameters (HTTP 400); check the model and service settings for this task."
+            }
+        };
+        assert_eq!(error(&output), reason);
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            match target {
+                "combine" | "control" => 3,
+                _ => 1,
+            }
+        );
+    }
+}
+
 fn with_run(cfg: &mut Value, command: Value, produces: Option<&str>) {
     cfg["pipeline"] = json!([
         "download",
@@ -2069,6 +2228,43 @@ fn explicit_subtitles_override_downloaded_tracks_without_starting_the_provider()
 }
 
 #[test]
+fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
+    for behavior in ["missing-text-first", "invalid-json-first"] {
+        let root = tempfile::tempdir().unwrap();
+        let source = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/speech.wav"
+        ));
+        let record = root.path().join("asr");
+        let cfg = speech_config(&record, behavior);
+        let output = run(root.path(), source, &cfg, &["--skip", "screenshots"]);
+        let completed = done(&output);
+        let calls = count(&record);
+        let checkpoint = checkpoint(Path::new(completed["work_dir"].as_str().unwrap()));
+        let records: Vec<Value> = std::fs::read_to_string(checkpoint)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(records.len() > 1);
+        let warnings = completed["warnings"].as_array().unwrap();
+        assert_eq!(calls, records.len() + 1);
+        let warning = warnings[0].as_str().unwrap();
+        assert!(warning.starts_with("Speech") && warning.contains(": attempt 1 of 3 failed:"));
+        assert!(warning.contains(if behavior == "invalid-json-first" {
+            "The service response is not valid JSON"
+        } else {
+            "The speech service returned no text"
+        }));
+
+        let cached = run(root.path(), source, &cfg, &["--skip", "screenshots"]);
+        assert_eq!(done(&cached)["warnings"], json!([]));
+        assert!(!events(&cached).iter().any(|e| e["type"] == "tokens"));
+        assert_eq!(count(&record), calls);
+    }
+}
+
+#[test]
 fn speech_output_limit_fails_without_retrying() {
     let root = tempfile::tempdir().unwrap();
     let source = Path::new(concat!(
@@ -2588,7 +2784,7 @@ exec "$REAL_FFMPEG" "$@"
     assert_eq!(output.status.code(), Some(130));
     assert!(!events(&output).iter().any(|event| event["type"] == "done"));
     assert!(!record.join("request").exists());
-    assert!(record.join("terminated").is_file());
+    assert!(!record.exists());
 }
 
 #[test]
