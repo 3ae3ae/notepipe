@@ -1382,7 +1382,53 @@ fn downloads_reserve_info_json_for_media_subtitles_and_other_files() {
     }
 }
 #[test]
-fn invalid_subtitle_timestamp_warnings_reach_done_even_with_cached_transcripts() {
+fn subtitle_transcripts_ignore_old_cache_entries_and_are_not_cached() {
+    use sha2::{Digest, Sha256};
+
+    for explicit in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = local(root.path());
+        let subtitle = source.with_extension("srt");
+        let mut cfg = config();
+        cfg["pipeline"] = json!(["download", "transcript", "draft", "markdown"]);
+        cfg["stages"]["draft"]["input"] = json!("transcript.json");
+        let flags = if explicit {
+            vec!["--subtitle", subtitle.to_str().unwrap()]
+        } else {
+            vec![]
+        };
+        let first = done(&run(root.path(), &source, &cfg, &flags));
+        let work = Path::new(first["work_dir"].as_str().unwrap());
+        let key = format!("{:x}", Sha256::digest(std::fs::read(&subtitle).unwrap()));
+        let cache = work.join(format!(".cache/transcript-{key}.json"));
+        let stale = serde_json::to_vec(&json!({
+            "language": "en",
+            "events": [{"start": 0, "end": 1, "text": "Old parser output."}]
+        }))
+        .unwrap();
+        std::fs::write(&cache, &stale).unwrap();
+        let second = done(&run(root.path(), &source, &cfg, &flags));
+        assert_eq!(
+            document(&second, "draft")["sections"][0]["speech"][0]["text"],
+            "Original speech."
+        );
+        assert_eq!(std::fs::read(&cache).unwrap(), stale);
+        std::fs::remove_file(&cache).unwrap();
+        done(&run(root.path(), &source, &cfg, &flags));
+        assert!(
+            !std::fs::read_dir(work.join(".cache"))
+                .unwrap()
+                .any(|entry| entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("transcript-"))
+        );
+    }
+}
+
+#[test]
+fn invalid_subtitle_timestamp_warnings_reach_done_on_reruns() {
     for (headers, count, noun) in [
         (vec!["bad --> 00:02.000"], 1, "cue"),
         (
