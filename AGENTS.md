@@ -17,10 +17,10 @@ Before adding code to `src/`, check it against this list. If any answer is yes, 
 configuration or in documentation — not in the core:
 
 - Does it depend on a particular website, service vendor, model, operating system or package manager?
-- Does it need a local model, a GPU runtime or a platform SDK?
-- Does it decide how a note should read (wording, structure, which content to drop) instead of leaving that to the user's
-  prompts and settings?
-- Does it favor one language, region or script?
+- Does it need a model download, a GPU runtime or a platform SDK?
+- Does it decide what a note says (wording, structure, which content to drop), what it is called or where it lives,
+  instead of leaving that to the user?
+- Does it favor one language, region, script or notation, or change text that passes through it?
 - Is it an option, mode or abstraction that no current caller needs?
 
 ## Layout
@@ -35,7 +35,8 @@ configuration or in documentation — not in the core:
 
 - Prefer the smallest complete change. Delete rather than keep; do not add options, abstractions or dependencies that the
   change does not need.
-- CLI messages are English. Prompts sent to models are English defaults that users can replace.
+- CLI messages are English. Prompts are English defaults that users replace; the core's own format instructions are
+  fixed and say nothing about content.
 - Machine-readable output (`--json`, `note.json`) is a contract: keep field names stable.
 
 ## Before committing

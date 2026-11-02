@@ -5,27 +5,33 @@ reference for deciding where a change belongs.
 
 ## Principles
 
-**Do one thing.** notepipe turns a recording into a readable note. Everything in the core serves that path from a local
-media file to a note folder.
+Small, transparent, composable, and under your control.
 
-**Speak standard interfaces.** The core uses ffmpeg for media, OpenAI-compatible HTTP APIs for speech recognition and
-language models, and a few small, documented [program contracts](adapters.md) for everything else. Any service, engine
-or website that fits those interfaces works; none is built in.
+**Do one thing.** notepipe turns a recording into a note. Everything in the core serves that path from a local media
+file to a note folder.
 
-**Stay light.** The default installation contains no speech recognition or language models and no platform SDKs. Speech
-recognition and stages run wherever you point them: a cloud API, a server on your network, or a local engine started
-as a program.
+**Keep it small and explicit.** Every option has a current use, and every operation has a name of its own. Each change
+is the smallest one that fully solves its problem, judged by the system it leaves behind: a special case for one
+symptom solves nothing.
 
-**Stay neutral.** The engine prefers no vendor, website, language or region: nothing in its code depends on one, and it
-contacts only what the configuration names. The configuration it creates uses OpenAI so that a fresh install works with
-an API key, and it is a file you change like any other. Prompts are English defaults that you replace; notes follow the language of the
-recording, not of the tool. The CLI speaks English, the common language of developer tools.
+**Hide nothing.** Every stage leaves a file you can open. When a run stops, it says where and why. Problems are
+reported as warnings or errors.
 
-**Produce plain, durable output.** A note is a folder of Markdown, images and JSON that any editor, script or note app can
-read. notepipe never leaves you with a half-written note and never discards a good one for a failed run.
+**Keep the core light.** The core holds only what every run needs, and no speech recognition or language models or
+platform SDKs. Engines, models and websites come as adapters that you install, swap or remove on their own.
 
-**Keep it small and explicit.** Every option has a current use. Problems are reported as warnings or errors, not hidden.
-Each change is the smallest one that fully solves its problem.
+**Speak standard interfaces.** Stages pass files to each other. The core uses ffmpeg for media, OpenAI-compatible HTTP
+APIs for speech recognition and language models, and a few small, documented [program contracts](adapters.md) for
+everything else. Any piece that fits these interfaces can replace another without touching the rest; none is built in.
+
+**Leave the decisions to you.** notepipe never decides what a note says. It gives a new note its first name; after
+that, what the note is called and where it lives are yours.
+
+**Stay neutral.** The engine prefers no vendor, website, language, region or notation: nothing in its code depends on
+one, and every script and notation passes through it unchanged. It contacts only what the configuration names.
+
+**Produce plain, durable output.** A note is a folder of Markdown, images and JSON that any editor, script or note app
+can read. notepipe never leaves you with a half-written note and never discards a good one for a failed run.
 
 ## How a note is made
 
@@ -101,8 +107,9 @@ live instead:
   is cancelled before its note is written leaves the previous note as it was. If a run is interrupted while swapping
   folders, the next run finishes or undoes the swap from a transaction record before it writes a note.
 - **Finished work is reused.** Downloads, screenshots, transcripts and successful AI responses are cached per source and
-  keyed by the inputs that affect them, so changing an AI prompt does not repeat speech recognition. Failed responses are
-  never cached.
+  keyed by the inputs that affect them, so changing an AI prompt does not repeat speech recognition, and a rerun with
+  nothing changed repeats no paid or slow work and leaves the note as it is. Failed responses are never cached. `run`
+  stages, whose dependencies notepipe cannot see, run every time.
 - **Cancellation is clean.** Ctrl-C (and SIGTERM on Unix) stops the run and every program it started.
 - **Data goes only where the configuration sends it.** notepipe contacts the providers and runs the programs that the
   configuration names, and nothing else; it has no telemetry. The configuration it creates names OpenAI.
