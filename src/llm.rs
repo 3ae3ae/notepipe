@@ -3,6 +3,7 @@ use crate::timeline::{Section, TranscriptEvent};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 use std::path::Path;
+#[cfg(test)]
 use std::time::Duration;
 
 pub(crate) const PARAGRAPHS_CONTRACT: &str = r#"Output a JSON object {"segments":[{"id":number,"text":result}]} with exactly one entry per input id. Inside JSON strings, escape every backslash as \\."#;
@@ -137,14 +138,8 @@ pub fn endpoint(base_url: &str) -> String {
 }
 /// HTTP agent shared by all stages of a run, so they reuse one connection pool.
 pub(crate) fn chat_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(300))
-        .timeout_read(STALL_TIMEOUT)
-        .redirects(0)
-        .build()
+    crate::dispatch::http_agent()
 }
-
-const STALL_TIMEOUT: Duration = Duration::from_secs(90);
 
 pub fn paragraphs(
     sections: &mut [Section],
@@ -424,15 +419,11 @@ fn request_chat_once(
             if !s.api_key.is_empty() {
                 request = request.set("Authorization", &format!("Bearer {}", s.api_key));
             }
-            let (cancelled, body) = (s.cancelled.clone(), body.clone());
-            crate::runtime::interruptible_http(&|| s.check_cancelled(), move || {
-                if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Err(crate::dispatch::Failure::local(crate::runtime::Cancelled));
-                }
-                crate::runtime::check_cancelled().map_err(crate::dispatch::Failure::local)?;
-                crate::dispatch::receive(request.send_json(body))
-            })
-            .map_err(crate::dispatch::Failure::local)?
+            crate::dispatch::send_http(
+                &|| s.check_cancelled(),
+                request,
+                serde_json::to_vec(body).map_err(crate::dispatch::Failure::local)?,
+            )
         },
         |value| {
             crate::dispatch::check_finish_reason(value)?;
