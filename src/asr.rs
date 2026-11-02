@@ -275,7 +275,13 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
     let result = post_cloud(t, &content_type, &body, &item);
     let _ = std::fs::remove_file(chunk);
     let value = result?;
-
+    if let Some(warning) = value["warning"]
+        .as_str()
+        .map(|warning| crate::dispatch::diagnostic(warning, t.key))
+        .filter(|warning| !warning.is_empty())
+    {
+        crate::dispatch::warn(format!("{}: {warning}", item.label));
+    }
     let text = match t.mode {
         crate::settings::AsrMode::Transcriptions => {
             value["text"].as_str().unwrap_or_default().to_owned()
