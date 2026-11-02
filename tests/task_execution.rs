@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
-use support::MockAi;
+use support::{MockAi, paragraph_answer};
 
 fn config() -> Value {
     json!({"pipeline":["download","transcript","screenshots","draft","markdown"],"providers":{},"stages":{
@@ -151,11 +151,14 @@ fn document(done: &Value, name: &str) -> Value {
 }
 fn mock() -> MockAi {
     MockAi::respond_with(|_, body| {
-        let content = if body.get("response_format").is_some() {
-            let items: Value =
-                serde_json::from_str(body["messages"][1]["content"][0]["text"].as_str().unwrap())
-                    .unwrap();
-            json!({"segments":items.as_array().unwrap().iter().map(|item|json!({"id":item["id"],"text":"Corrected speech."})).collect::<Vec<_>>()}).to_string()
+        let content = if body["messages"][1]["content"].is_array() {
+            let count = body["messages"][1]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("<<<np-") && !line.ends_with(":end>>>"))
+                .count();
+            paragraph_answer(body, &vec!["Corrected speech."; count])
         } else {
             "## Summary\n\nA recording.".into()
         };
@@ -408,7 +411,7 @@ fn summaries_read_the_selected_document_transcript_or_markdown() {
     let bodies = provider.bodies.lock().unwrap();
     let users = bodies
         .iter()
-        .filter(|b| b.get("response_format").is_none())
+        .filter(|b| b["messages"][1]["content"].is_string())
         .map(|b| b["messages"][1]["content"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert!(users[0].starts_with("Title: lecture\n\nTranscript"));
@@ -433,14 +436,14 @@ fn llm_errors_stop_publication_and_keep_the_previous_note() {
             if mode == "retry" {
                 return Some((500, json!({})));
             }
-            let content = match mode {
-                "invalid" => "invalid".into(),
-                "ids" => json!({"segments":[{"id":99,"text":"bad"}]}).to_string(),
-                _ => json!({"segments":[{"id":0,"text":"Corrected"}]}).to_string(),
-            };
-            if mode == "summary" && body.get("response_format").is_none() {
+            if mode == "summary" && body["messages"][1]["content"].is_string() {
                 return Some((400, json!({})));
             }
+            let content = match mode {
+                "invalid" => "invalid".into(),
+                "ids" => paragraph_answer(body, &["bad"]).replace(":0>>>", ":99>>>"),
+                _ => paragraph_answer(body, &["Corrected"]),
+            };
             Some((
                 200,
                 json!({"choices":[{"finish_reason":if mode=="truncated"{"length"}else{"stop"},"message":{"content":content}}]}),
@@ -460,27 +463,36 @@ fn llm_errors_stop_publication_and_keep_the_previous_note() {
             }),
             "{message}"
         );
+        if matches!(mode, "invalid" | "ids") {
+            assert!(
+                message.ends_with("The answer's blocks do not match the paragraphs sent"),
+                "{message}"
+            );
+        }
         assert_eq!(std::fs::read(path).unwrap(), previous, "{mode}: {message}");
     }
 }
 #[test]
 fn rejected_chat_answers_retry_count_usage_and_report_warnings() {
-    for bad in ["missing", "invalid", "ids", "control"] {
+    for bad in ["missing", "invalid", "ids", "end"] {
         let root = tempfile::tempdir().unwrap();
         let source = local(root.path());
         video(root.path());
-        let provider = MockAi::respond_with(move |call, _| {
+        let provider = MockAi::respond_with(move |call, body| {
             let content = if call == 0 {
                 match bad {
                     "invalid" => json!("not paragraphs"),
-                    "ids" => json!(json!({"segments":[{"id":99,"text":"Wrong"}]}).to_string()),
-                    "control" => {
-                        json!(json!({"segments":[{"id":0,"text":"Bad\u{0008}text"}]}).to_string())
-                    }
+                    "ids" => json!(paragraph_answer(body, &["Wrong"]).replace(":0>>>", ":99>>>")),
+                    "end" => json!(
+                        paragraph_answer(body, &["Wrong"])
+                            .rsplit_once('\n')
+                            .unwrap()
+                            .0
+                    ),
                     _ => Value::Null,
                 }
             } else {
-                json!(json!({"segments":[{"id":0,"text":"Accepted"}]}).to_string())
+                json!(paragraph_answer(body, &["Accepted"]))
             };
             Some((
                 200,
@@ -522,48 +534,28 @@ fn rejected_chat_answers_retry_count_usage_and_report_warnings() {
 }
 
 #[test]
-fn response_format_fallback_shares_the_three_attempt_budget() {
-    for succeeds in [false, true] {
-        let root = tempfile::tempdir().unwrap();
-        let source = local(root.path());
-        video(root.path());
-        let provider = MockAi::respond_with(move |call, body| {
-            Some(if call == 0 {
-                assert!(body.get("response_format").is_some());
-                (
-                    422,
-                    json!({"error":{"message":"response_format unsupported"}}),
-                )
-            } else {
-                assert!(body.get("response_format").is_none());
-                if call < 2 || !succeeds {
-                    (503, json!({"error":{"message":"Still loading"}}))
-                } else {
-                    (
-                        200,
-                        json!({"choices":[{"message":{"content":json!({"segments":[{"id":0,"text":"Accepted"}]}).to_string()}}]}),
-                    )
-                }
-            })
-        });
-        let mut cfg = config();
-        with_llm(&mut cfg, &provider.url);
-        cfg["pipeline"]
-            .as_array_mut()
-            .unwrap()
-            .retain(|name| name != "summary");
-        cfg["stages"]["markdown"]["input"] = json!("proofread.json");
-        let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
-        if succeeds {
-            assert_eq!(done(&output)["warnings"].as_array().unwrap().len(), 2);
-        } else {
-            assert_eq!(
-                error(&output),
-                "Stage proofread failed for paragraphs at 00:00–00:01: The service did not complete this request (HTTP 503). The service said: Still loading"
-            );
-        }
-        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
-    }
+fn response_format_rejection_is_final_without_a_fallback_request() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let provider = MockAi::respond_with(|_, body| {
+        assert!(body.get("response_format").is_none());
+        Some((
+            422,
+            json!({"error":{"message":"response_format unsupported"}}),
+        ))
+    });
+    let mut cfg = config();
+    with_llm(&mut cfg, &provider.url);
+    assert!(
+        error(&run(
+            root.path(),
+            &source,
+            &cfg,
+            &["--skip", "screenshots,summary"]
+        ))
+        .contains("HTTP 422")
+    );
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -571,10 +563,10 @@ fn removing_every_paragraph_warns_and_reuses_the_answer_on_rerun() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
     video(root.path());
-    let provider = MockAi::respond_with(|_, _| {
+    let provider = MockAi::respond_with(|_, body| {
         Some((
             200,
-            json!({"choices":[{"message":{"content":json!({"segments":[{"id":0,"text":""}]}).to_string()}}]}),
+            json!({"choices":[{"message":{"content":paragraph_answer(body, &[" \t"])}}]}),
         ))
     });
     let mut cfg = config();
@@ -604,8 +596,34 @@ fn removing_every_paragraph_warns_and_reuses_the_answer_on_rerun() {
 }
 
 #[test]
+fn write_answers_preserve_latex_tabs_and_control_characters() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let text = "$\\hat{y} \\beta \\frac{1}{2} \\theta \\nabla$\t\u{8}";
+    let provider = MockAi::respond_with(move |_, body| {
+        assert!(body.get("response_format").is_none());
+        Some((200, json!({"choices":[{"message":{"content":text}}]})))
+    });
+    let mut cfg = config();
+    with_llm(&mut cfg, &provider.url);
+    cfg["stages"]["summary"]["input"] = json!("transcript.json");
+    cfg["stages"]["summary"]["publish"] = json!("answer");
+    let completed = done(&run(
+        root.path(),
+        &source,
+        &cfg,
+        &["--skip", "screenshots,proofread"],
+    ));
+    assert_eq!(
+        std::fs::read(completed["files"]["summary"].as_str().unwrap()).unwrap(),
+        text.as_bytes()
+    );
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
 fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
-    for target in ["part", "combine", "unsplit", "filter", "control"] {
+    for target in ["part", "combine", "unsplit", "filter"] {
         let root = tempfile::tempdir().unwrap();
         let source = local(root.path());
         if matches!(target, "part" | "combine") {
@@ -620,11 +638,6 @@ fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
                 (
                     200,
                     json!({"choices":[{"finish_reason":"content_filter","message":{"content":"Incomplete"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}),
-                )
-            } else if target == "control" {
-                (
-                    200,
-                    json!({"choices":[{"message":{"content":"Bad\u{0008}Markdown"}}]}),
                 )
             } else if target != "combine" || merge {
                 (
@@ -647,9 +660,6 @@ fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
         };
         let reason = match target {
             "filter" => "the model's content filter stopped the answer",
-            "control" => {
-                "The model's answer contains control characters, usually from a backslash it did not escape"
-            }
             _ => {
                 "The service rejected the request parameters (HTTP 400); check the model and service settings for this task. The service said: Request refused here"
             }
@@ -661,7 +671,7 @@ fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
         assert_eq!(
             provider.calls.load(std::sync::atomic::Ordering::SeqCst),
             match target {
-                "combine" | "control" => 3,
+                "combine" => 3,
                 _ => 1,
             }
         );
@@ -1580,8 +1590,8 @@ fn a_failed_sibling_stops_paragraph_batches_chunks_and_markdown_retries() {
             Some(if mode == "markdown" {
                 (503, json!({"error":"retry"}))
             } else {
-                let content = if body.get("response_format").is_some() {
-                    json!({"segments":[{"id":0,"text":"Rewritten."}]}).to_string()
+                let content = if body["messages"][1]["content"].is_array() {
+                    paragraph_answer(body, &["Rewritten."])
                 } else {
                     "Summary.".into()
                 };
@@ -2004,9 +2014,9 @@ fn an_empty_paragraph_is_removed_and_later_rewrites_keep_the_first_original() {
             .unwrap()
             .starts_with("TRANSLATE");
         let content = if translate {
-            json!({"segments":[{"id":0,"text":"Translated speech."}]})
+            paragraph_answer(body, &["Translated speech."])
         } else {
-            json!({"segments":[{"id":0,"text":""},{"id":1,"text":"Corrected speech."}]})
+            paragraph_answer(body, &["", "Corrected speech."])
         };
         Some((
             200,
@@ -3174,7 +3184,7 @@ fn distinct_command_providers_start_once_each_and_stop_after_their_stages() {
 }
 
 #[test]
-fn custom_paragraph_requests_cache_a_validated_response_format_fallback() {
+fn custom_paragraph_requests_attach_images_and_cache_validated_blocks() {
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());
     std::fs::write(
@@ -3194,14 +3204,11 @@ fn custom_paragraph_requests_cache_a_validated_response_format_fallback() {
         assert_eq!(body["top_p"], 0.8);
         assert!(body.get("max_tokens").is_none());
         assert_eq!(body["messages"][1]["content"][1]["type"], "image_url");
-        Some(if body.get("response_format").is_some() {
-            (422, json!({"detail":"response_format: private-test-key"}))
-        } else {
-            (
-                200,
-                json!({"choices":[{"message":{"content":r#"{"segments":[{"id":0,"text":"Cached fallback."}]}"#}}]}),
-            )
-        })
+        assert!(body.get("response_format").is_none());
+        Some((
+            200,
+            json!({"choices":[{"message":{"content":paragraph_answer(body, &["Cached blocks."])}}]}),
+        ))
     });
     let mut cfg = config();
     with_llm(&mut cfg, &provider.url);
@@ -3212,17 +3219,9 @@ fn custom_paragraph_requests_cache_a_validated_response_format_fallback() {
     for _ in 0..2 {
         let completed = done(&run(root.path(), &source, &cfg, &["--skip", "summary"]));
         let doc = document(&completed, "proofread");
-        assert_eq!(doc["sections"][0]["speech"][0]["text"], "Cached fallback.");
+        assert_eq!(doc["sections"][0]["speech"][0]["text"], "Cached blocks.");
         assert_eq!(doc["sections"][0]["speech"][0]["raw"], "Original speech.");
-        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-        let cache = Path::new(completed["work_dir"].as_str().unwrap()).join(".cache/llm");
-        for entry in std::fs::read_dir(cache).unwrap() {
-            assert!(
-                !std::fs::read_to_string(entry.unwrap().path())
-                    .unwrap()
-                    .contains("private-test-key")
-            );
-        }
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
 

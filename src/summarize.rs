@@ -27,15 +27,8 @@ fn send(
     user: &str,
     detail: &str,
 ) -> Result<String> {
-    let body = llm::chat_body(settings, &system(stage), user, llm::Input::Transcript)?;
-    llm::send_chat(
-        agent,
-        settings,
-        &body,
-        &stage.name,
-        detail,
-        &llm::check_control_characters,
-    )
+    let body = llm::chat_body(settings, &system(stage), user)?;
+    llm::send_chat(agent, settings, &body, &stage.name, detail, &|_| Ok(()))
 }
 fn context(meta: &MediaMeta) -> String {
     let mut context = String::new();

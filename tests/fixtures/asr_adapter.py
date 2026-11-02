@@ -112,9 +112,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_response(200)
             content = 'Fixture summary.'
-            if self.path == '/v1/chat/completions' and json.loads(body).get('response_format'):
-                items = json.loads(json.loads(body)['messages'][1]['content'][0]['text'])
-                content = json.dumps({'segments': [{'id': item['id'], 'text': item['text']} for item in items]})
+            if self.path == '/v1/chat/completions':
+                user = json.loads(body)['messages'][1]['content']
+                if isinstance(user, list):
+                    content = user[0]['text']
             first = len((args.record / 'calls').read_text().splitlines()) == 1
             text = '' if args.behavior == 'empty' or (args.behavior == 'empty-first' and first) else 'Fixture transcript.'
             value = {'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': text}

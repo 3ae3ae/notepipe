@@ -112,3 +112,23 @@ impl Drop for MockAi {
         }
     }
 }
+
+pub(crate) fn paragraph_answer(body: &serde_json::Value, texts: &[&str]) -> String {
+    let input = body["messages"][1]["content"][0]["text"].as_str().unwrap();
+    let tag = input
+        .lines()
+        .next()
+        .unwrap()
+        .strip_prefix("<<<")
+        .unwrap()
+        .split_once(':')
+        .unwrap()
+        .0;
+    let mut answer = texts
+        .iter()
+        .enumerate()
+        .map(|(id, text)| format!("<<<{tag}:{id}>>>\n{text}\n"))
+        .collect::<String>();
+    answer.push_str(&format!("<<<{tag}:end>>>"));
+    answer
+}
