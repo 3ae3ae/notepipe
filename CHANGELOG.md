@@ -6,6 +6,29 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+Configurations, caches and note folders from earlier versions do not carry over: rewrite the configuration
+(`notepipe config init --force` writes the new default), and expect the first run of each source to repeat its speech
+recognition and model requests.
+
+### Changed
+
+- `type = "llm"` is replaced by two types. `rewrite` changes a document's paragraphs in batches (`batch_size`,
+  `images`); `write` produces one Markdown answer (`chunk_size`). The output's name no longer decides what a stage does.
+- A `rewrite` stage sends and receives paragraphs as plain text between numbered marker lines instead of JSON, so LaTeX
+  backslashes and every other character pass through unchanged. `response_format` is no longer sent; an answer whose
+  blocks do not match the paragraphs is asked again.
+- A local source is identified by the SHA-256 of its contents, so a moved or renamed recording reuses all earlier work.
+  `.notepipe.json` holds that identity instead of a path; the document's `meta.source` still holds the location.
+- A note folder is never modified. A rerun with unchanged results publishes nothing and says `Note unchanged`, leaving
+  edits as they are (`--json`: `"unchanged": true` in `done`); a changed result goes into a new folder next to the old
+  one. Replacing a note, its transaction record and recovery, and the `.notepipe.lock` in the output folder are gone.
+- Speech with `api = "chat"` takes its instruction from a `prompt` in the speech table, which it requires; the fixed
+  instruction that asked for natural punctuation is gone.
+
+### Fixed
+
+- A file whose modification time is before 1970 can be processed.
+
 ## [0.4.7] - 2026-11-03
 
 ### Changed
