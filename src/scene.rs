@@ -11,7 +11,7 @@ use image_compare::Algorithm;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::Path;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
 /// Width of sampled frames: enough to see layout changes while keeping decoding and SSIM cheap.
@@ -51,7 +51,7 @@ fn ssim(a: &GrayImage, b: &GrayImage) -> f64 {
 
 /// Extracts one full-resolution JPEG at an exact time.
 async fn extract_frame(media: &Path, t: f64, dest: &Path) -> Result<()> {
-    let ss = format!("{t:.3}");
+    let ss = format!("{t:.6}");
     // -q:v 2 is a high JPEG quality (2–31, lower is better), so text on screen stays readable.
     media::run_cmd(
         Command::new("ffmpeg")
@@ -84,8 +84,9 @@ async fn sample_timestamps(
 ) -> Result<Vec<(f64, f64)>> {
     let interval = cfg.sample_interval;
     let (tw, th) = scaled_wh(info.width, info.height, SAMPLE_WIDTH);
-    let fps = 1.0 / interval;
-    let vf = format!("fps={fps:.6},scale={tw}:{th},format=gray");
+    let vf = format!(
+        "select='isnan(prev_selected_t)+gte(t-prev_selected_t,{interval})',settb=AVTB,showinfo,scale={tw}:{th},format=gray"
+    );
 
     tracing::info!(
         w = info.width,
@@ -99,23 +100,47 @@ async fn sample_timestamps(
 
     let mut child = Command::new("ffmpeg")
         .kill_on_drop(true)
-        .args(["-hide_banner", "-loglevel", "error", "-an"])
+        .args(["-hide_banner", "-loglevel", "info", "-an"])
         .arg("-i")
         .arg(media)
-        .args(["-map", "0:V:0", "-vf", &vf, "-f", "rawvideo", "pipe:1"])
+        .args([
+            "-map",
+            "0:V:0",
+            "-vf",
+            &vf,
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .context("Could not start ffmpeg frame sampling")?;
     let mut stdout = child.stdout.take().context("ffmpeg stdout")?;
-    // Drain stderr continuously: an unread pipe fills its 64 KB buffer and deadlocks ffmpeg.
-    // Its tail is kept for error messages.
-    let mut stderr_buf: Vec<u8> = Vec::new();
-    let mut stderr = child.stderr.take().context("ffmpeg stderr")?;
+    // Pair each raw frame with its source presentation time; keep draining diagnostics to avoid a full stderr pipe.
+    let stderr = child.stderr.take().context("ffmpeg stderr")?;
+    let (timestamp_tx, mut timestamps) = tokio::sync::mpsc::unbounded_channel();
     let stderr_task = tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        let _ = stderr.read_to_end(&mut stderr_buf).await;
-        stderr_buf
+        let mut lines = BufReader::new(stderr).lines();
+        let mut tail = String::new();
+        while let Some(line) = lines.next_line().await? {
+            if let Some((_, rest)) = line.split_once(" pts:")
+                && let Some(t) = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|t| t.parse::<f64>().ok())
+                && t.is_finite()
+            {
+                // Integer microseconds avoid showinfo's rounded pts_time value.
+                let _ = timestamp_tx.send(t / 1_000_000.);
+            }
+            tail.push('\n');
+            tail.push_str(&line);
+            tail = crate::error::tail_lines(&tail, 5);
+        }
+        Ok::<_, std::io::Error>(tail)
     });
     let frame_len = (tw as usize) * (th as usize);
     let mut buf = vec![0u8; frame_len];
@@ -158,10 +183,10 @@ async fn sample_timestamps(
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => return Err(e.into()),
         }
-        // Nominal time t = i * interval. Rounding in the fps filter and variable frame rates shift real frames
-        // by less than one interval, which is fine at this precision,
-        // so frame timestamps are not parsed.
-        let t = i as f64 * interval;
+        let t = timestamps
+            .recv()
+            .await
+            .context("ffmpeg did not report a sampled frame timestamp")?;
         i += 1;
         pb.inc(1);
         // Reuse the frame buffer: move it into a GrayImage and take it back with into_raw;
@@ -223,9 +248,8 @@ async fn sample_timestamps(
         }
     }
     let status = child.wait().await?;
-    let stderr_bytes = stderr_task.await.unwrap_or_default();
+    let tail = stderr_task.await.context("ffmpeg stderr")??;
     if !status.success() {
-        let tail = crate::error::tail_lines(&String::from_utf8_lossy(&stderr_bytes), 5);
         anyhow::bail!("Frame sampling failed ({status}): {tail}");
     }
     pb.finish();
