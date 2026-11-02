@@ -148,7 +148,7 @@ mod tests {
             title: "Title".into(),
             author: String::new(),
             source: String::new(),
-            duration: 0.,
+            duration: None,
             seek_url: None,
         };
         let stage = crate::llm::test_stage(
@@ -219,7 +219,7 @@ mod tests {
             extra: Default::default(),
             title: "Recording".into(),
             author: "Author".into(),
-            duration: 120.,
+            duration: Some(120.),
             source: "https://example.test/media".into(),
             seek_url: None,
         };

@@ -91,7 +91,7 @@ async fn sample_timestamps(
     tracing::info!(
         w = info.width,
         h = info.height,
-        duration = format_args!("{:.0}s", info.duration),
+        duration = ?info.duration,
         interval,
         sensitivity = cfg.similarity,
         min_gap = cfg.cooldown,
@@ -149,7 +149,9 @@ async fn sample_timestamps(
     // denominator so users see forward progress; actual samples may land one
     // or two frames off, which the label tolerates. Candidate selection
     // happens within this scan.
-    let estimate = (info.duration / interval).round().max(1.0) as u64;
+    let estimate = info
+        .duration
+        .map_or(0, |duration| (duration / interval).round().max(1.0) as u64);
     let pb = crate::progress::Bar::new(
         format!(
             "{}/scan",

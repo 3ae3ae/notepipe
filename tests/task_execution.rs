@@ -1446,6 +1446,7 @@ fn invalid_subtitle_timestamp_warnings_reach_done_on_reruns() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let source = local(root.path());
+        video(root.path());
         let mut content = "WEBVTT\n\n".to_owned();
         for header in headers {
             content.push_str(&format!("{header}\nSkipped words.\n\n"));
@@ -1712,7 +1713,10 @@ fn out_is_relative_to_starting_directory_and_cli_out_overrides_it() {
     .unwrap();
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
-    assert!(output.stderr.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .starts_with("Warning: Could not read the duration of lecture.mp4: ")
+    );
 }
 
 #[test]
@@ -2862,6 +2866,35 @@ fn lifecycle_live_provider_errors_do_not_attach_diagnostics() {
     );
 }
 
+#[test]
+fn lifecycle_unknown_duration_is_null_and_warns_on_success() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let cfg = config();
+    let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
+    let all = events(&output);
+    let final_event = all.last().unwrap();
+    assert_eq!(final_event["type"], "done");
+    assert!(final_event["warnings"].as_array().unwrap().iter().any(|w| {
+        w.as_str()
+            .unwrap()
+            .starts_with("Could not read the duration of lecture.mp4: ")
+    }));
+    let work = std::fs::read_dir(root.path().join("cache/notepipe/work"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.is_dir())
+        .unwrap();
+    for (path, pointer) in [
+        ("media/info.json", "/duration"),
+        ("draft.json", "/meta/duration"),
+    ] {
+        let value: Value =
+            serde_json::from_slice(&std::fs::read(work.join(path)).unwrap()).unwrap();
+        assert_eq!(value.pointer(pointer), Some(&Value::Null));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn lifecycle_escaped_descendant_pipes_do_not_hold_exit_or_cancellation() {
@@ -2926,6 +2959,62 @@ fn lifecycle_escaped_descendant_pipes_do_not_hold_exit_or_cancellation() {
             );
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn lifecycle_unknown_duration_keeps_screenshots_rendering_and_summary() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let source = video(root.path());
+    std::fs::write(
+        source.with_extension("srt"),
+        "1\n00:00:00,000 --> 00:00:01,000\nWords.\n",
+    )
+    .unwrap();
+    let bin = root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let probe = bin.join("ffprobe");
+    std::fs::write(&probe, "#!/bin/sh\ncase \"$*\" in\n*json*) printf '%s\\n' '{\"streams\":[{\"width\":64,\"height\":32}],\"format\":{}}' ;;\n*) printf 'N/A\\n' ;;\nesac\n").unwrap();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let service = mock();
+    let mut cfg = config();
+    with_llm(&mut cfg, &service.url);
+    cfg["stages"]["screenshots"]["mode"] = json!("first");
+    cfg["stages"]["screenshots"]["frame_interval"] = json!(0.5);
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
+    let mut child = command
+        .arg(&source)
+        .args(["--config", "-", "--json"])
+        .current_dir(root.path())
+        .env("XDG_CACHE_HOME", root.path().join("cache"))
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&cfg).unwrap())
+        .unwrap();
+    let completed = done(&child.wait_with_output().unwrap());
+    let document = document(&completed, "proofread");
+    assert_eq!(document["meta"]["duration"], Value::Null);
+    assert_eq!(completed["warnings"].as_array().unwrap().len(), 1);
+    assert!(
+        !document["sections"][0]["image"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    let markdown =
+        std::fs::read_to_string(completed["files"]["markdown"].as_str().unwrap()).unwrap();
+    assert!(markdown.contains("![](") && markdown.contains("Summary"));
 }
 
 #[test]
