@@ -402,7 +402,7 @@ impl ConfigFile {
                 "Stage {name}: output must be a plain name in the work folder, such as transcript.json"
             );
             if let Some(a) = outputs.insert(stage.output.to_lowercase(), name) {
-                anyhow::bail!("Stages {a} and {name} both write {}", stage.output);
+                anyhow::bail!("Stages {a} and {name} write the same file");
             }
             if let Some(publish) = &stage.publish {
                 anyhow::ensure!(
@@ -414,7 +414,7 @@ impl ConfigFile {
                         publish != "-",
                         "Only one stage can publish to standard output"
                     );
-                    anyhow::bail!("Stages {a} and {name} both publish {publish}");
+                    anyhow::bail!("Stages {a} and {name} publish the same file");
                 }
                 anyhow::ensure!(
                     publish != "-" || !matches!(stage.output_kind(), Kind::Media | Kind::Images),
@@ -716,12 +716,12 @@ mod tests {
             (
                 "output",
                 "draft.json",
-                "Stages draft and summary both write draft.json",
+                "Stages draft and summary write the same file",
             ),
             (
                 "publish",
                 "note.json",
-                "Stages proofread and summary both publish note.json",
+                "Stages proofread and summary publish the same file",
             ),
         ] {
             let mut cfg = config();
@@ -754,7 +754,7 @@ mod tests {
                 cfg["stages"]["b"][key] = json!(b);
                 assert_eq!(
                     resolve(&cfg, &[]).unwrap_err().to_string(),
-                    format!("Stages a and b both {verb} {b}")
+                    format!("Stages a and b {verb} the same file")
                 );
             }
         }

@@ -508,7 +508,17 @@ impl Run {
             }
         }
         runtime::check_cancelled()?;
+        let lock = self.cache_lock("outputs");
+        let _lock = lock.lock().await;
         let output = self.work.join(&stage.output);
+        for (other, stage) in &self.cfg.stages {
+            if other != name {
+                anyhow::ensure!(
+                    !artifact::same_file(&output, &self.work.join(&stage.output))?,
+                    "Stages {other} and {name} write the same file"
+                );
+            }
+        }
         if target.is_dir() || output.symlink_metadata().is_ok_and(|m| m.is_dir()) {
             replace_output(&target, &output)?;
         } else {
