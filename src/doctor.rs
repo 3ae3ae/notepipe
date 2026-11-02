@@ -108,7 +108,7 @@ pub fn run() -> Result<()> {
                     continue;
                 }
                 match crate::adapter::resolve_executable(program) {
-                    Ok(path) if path.is_file() => {
+                    Ok(path) if which::which(&path).is_ok() => {
                         check(&mut out, true, label, &format!("  {}", path.display()))
                     }
                     _ if optional => out.push(format!(
