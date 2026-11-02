@@ -10,8 +10,6 @@ use std::time::{Duration, Instant};
 
 // Tuning constants; segmentation constants are next to normalize_segments.
 
-/// HTTP attempts per request: the first try plus two retries.
-const MAX_ATTEMPTS: u32 = 3;
 /// Timeout of one transcription request.
 const API_HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 /// Empty-result tripwire: speech detection found speech in these segments, yet the endpoint keeps returning
@@ -157,11 +155,13 @@ fn run_api(
         .prefix("notepipe-asr-")
         .tempdir()
         .context("Could not create a temporary working directory")?;
-    let mut resolved = api.clone();
-    if let Some(provider) = &api.provider {
-        resolved.base_url = provider.base(stage, &check_control)?;
-    }
-    let url = crate::config::asr_endpoint(&resolved)?;
+    let url = || {
+        let mut resolved = api.clone();
+        if let Some(provider) = &api.provider {
+            resolved.base_url = provider.base(stage, &check_control)?;
+        }
+        crate::config::asr_endpoint(&resolved)
+    };
     let pb = crate::progress::Bar::new(format!("{stage}/speech"), segs.len() as u64).with_template(
         "{spinner:.green} asr {pos}/{len} [{bar:32.cyan/blue}] {elapsed} {eta} {msg}",
     );
@@ -284,38 +284,16 @@ fn run_api(
     Ok(events)
 }
 
-/// Bounded retries: retryable errors back off with [`crate::runtime::retry_backoff`] (cancellable while waiting),
-/// up to MAX_ATTEMPTS attempts; deterministic errors (authentication, bad parameters) return at once.
-fn with_retry<T>(
-    check_control: &dyn Fn() -> Result<()>,
-    mut attempt_once: impl FnMut() -> std::result::Result<T, crate::dispatch::Failure>,
-) -> Result<T> {
-    let mut attempt = 1;
-    loop {
-        check_control()?;
-        match attempt_once() {
-            Ok(value) => return Ok(value),
-            Err(error) if error.retryable && attempt < MAX_ATTEMPTS => {
-                check_control()?;
-                crate::runtime::interruptible_sleep(crate::runtime::retry_backoff(attempt))?;
-                attempt += 1;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-}
-
-/// Send a chunk with bounded retries; only its transcription checkpoint is persisted.
+/// Send a chunk with shared retries; only its transcription checkpoint is persisted.
 fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_json::Value> {
-    with_retry(t.check_control, || {
+    Ok(crate::dispatch::request("Speech", t.check_control, || {
         crate::dispatch::json_request(
             || {
-                let request = t.client.post(t.url).set("Content-Type", content_type);
-                let request = if t.key.is_empty() {
-                    request
-                } else {
-                    request.set("Authorization", &format!("Bearer {}", t.key))
-                };
+                let url = (t.url)().map_err(crate::dispatch::Failure::local)?;
+                let mut request = t.client.post(&url).set("Content-Type", content_type);
+                if !t.key.is_empty() {
+                    request = request.set("Authorization", &format!("Bearer {}", t.key));
+                }
                 (t.check_control)().map_err(crate::dispatch::Failure::local)?;
                 let body = body.to_vec();
                 crate::runtime::interruptible_http(t.check_control, move || {
@@ -324,25 +302,20 @@ fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_js
                 .map_err(crate::dispatch::Failure::local)?
             },
             |value| {
+                crate::dispatch::check_finish_reason(value)?;
                 anyhow::ensure!(
                     value.get("error").is_none_or(serde_json::Value::is_null),
                     "The speech service returned an error"
                 );
                 let has_text = match t.mode {
                     crate::settings::AsrMode::Transcriptions => value["text"].is_string(),
-                    crate::settings::AsrMode::Chat => {
-                        anyhow::ensure!(
-                            value["choices"][0]["finish_reason"] != "length",
-                            "The speech model stopped at its output limit"
-                        );
-                        chat_content_has_text(value)
-                    }
+                    crate::settings::AsrMode::Chat => chat_content_has_text(value),
                 };
                 anyhow::ensure!(has_text, "The speech service returned no text");
                 Ok(())
             },
         )
-    })
+    })?)
 }
 
 /// Instruction for audio chat models: a faithful transcript with natural punctuation, like dedicated ASR output.
@@ -351,7 +324,7 @@ const CHAT_TRANSCRIBE_PROMPT: &str = r#"Transcribe this audio. Output only the t
 /// Transcription endpoint: address, credentials and dialect, borrowed by all workers.
 struct ApiTarget<'a> {
     client: &'a ureq::Agent,
-    url: &'a str,
+    url: &'a (dyn Fn() -> Result<String> + Sync),
     model: &'a str,
     key: &'a str,
     mode: crate::settings::AsrMode,
@@ -474,7 +447,7 @@ mod tests {
         let (content_type, body) = transcription_request(
             &ApiTarget {
                 client: &ureq::agent(),
-                url: "http://localhost",
+                url: &|| Ok("http://localhost".into()),
                 model: "whisper-1",
                 key: "",
                 mode: crate::settings::AsrMode::Transcriptions,
@@ -505,7 +478,7 @@ mod tests {
             Ok(())
         };
         let mut attempts = 0;
-        let error = with_retry(&check, || {
+        let error = crate::dispatch::request("Speech", &check, || {
             attempts += 1;
             cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
             let mut error = crate::dispatch::Failure::local("retryable response");
@@ -559,7 +532,7 @@ mod http_tests {
             });
             let target = ApiTarget {
                 client: &ureq::agent(),
-                url: &format!("{}/chat/completions", mock.url),
+                url: &|| Ok(format!("{}/chat/completions", mock.url)),
                 model: "",
                 key: "",
                 mode: AsrMode::Chat,
@@ -569,10 +542,7 @@ mod http_tests {
             let error = post_cloud(&target, "application/json", b"{}").unwrap_err();
             let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
             assert!(!failure.retryable);
-            assert_eq!(
-                error.to_string(),
-                "The speech model stopped at its output limit"
-            );
+            assert_eq!(error.to_string(), "the model stopped at its output limit");
             assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
             assert!(!root.path().join("llm").exists());
         }
@@ -597,7 +567,7 @@ mod http_tests {
         };
         let target = ApiTarget {
             client: &crate::runtime::http_agent(Duration::from_millis(100)),
-            url: &url,
+            url: &|| Ok(url.clone()),
             model: "",
             key: "",
             mode: AsrMode::Transcriptions,
@@ -742,7 +712,7 @@ mod http_tests {
                 let url = crate::config::asr_endpoint(&api).unwrap();
                 let target = ApiTarget {
                     client: &crate::runtime::http_agent(API_HTTP_TIMEOUT),
-                    url: &url,
+                    url: &|| Ok(url.clone()),
                     model: if with_options { "test-model" } else { "" },
                     key: if with_options { "test-key" } else { "" },
                     mode,
@@ -815,12 +785,11 @@ mod http_tests {
         for language in ["zh", "pt", "pt-BR", "zh-Hant", "xx-custom", " KO_kr "] {
             let target = ApiTarget {
                 client: &client,
-                url: "",
+                url: &|| Ok(String::new()),
                 model: "",
                 key: "",
                 mode: AsrMode::Chat,
                 language,
-
                 check_control: &crate::runtime::check_cancelled,
             };
             let (_, body) = transcription_request(&target, b"audio").unwrap();

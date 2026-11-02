@@ -115,7 +115,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.path == '/v1/chat/completions' and json.loads(body).get('response_format'):
                 items = json.loads(json.loads(body)['messages'][1]['content'][0]['text'])
                 content = json.dumps({'segments': [{'id': item['id'], 'text': item['text']} for item in items]})
-            response = json.dumps({'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': 'Fixture transcript.'}).encode()
+            first = len((args.record / 'calls').read_text().splitlines()) == 1
+            value = {'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': 'Fixture transcript.'}
+            if args.behavior == 'missing-text-first' and first:
+                value = {'text': None}
+            response = b'not JSON' if args.behavior == 'invalid-json-first' and first else json.dumps(value).encode()
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))
         self.end_headers()

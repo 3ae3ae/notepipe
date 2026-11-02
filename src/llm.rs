@@ -2,13 +2,12 @@
 use crate::timeline::{Section, TranscriptEvent};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
-use std::{path::Path, time::Duration};
+use std::path::Path;
+use std::time::Duration;
 
 pub(crate) const PARAGRAPHS_CONTRACT: &str = r#"Output a JSON object {"segments":[{"id":number,"text":result}]} with exactly one entry per input id. Inside JSON strings, escape every backslash as \\."#;
 pub(crate) const IMAGE_NOTE: &str =
     r#" Each request includes the screenshot shown during this passage."#;
-
-const MAX_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
@@ -137,8 +136,6 @@ pub fn endpoint(base_url: &str) -> String {
     crate::config::append_endpoint_suffix(base_url.trim(), "/chat/completions")
 }
 /// HTTP agent shared by all stages of a run, so they reuse one connection pool.
-/// A response that sends nothing for [`STALL_TIMEOUT`] has stalled; it is
-/// abandoned then instead of holding the task for the whole request budget.
 pub(crate) fn chat_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(300))
@@ -216,6 +213,7 @@ pub fn paragraphs(
     for sec in sections.iter_mut() {
         sec.speech.retain(|e| !e.text.trim().is_empty());
     }
+
     Ok(crate::runtime::lock_recover(&image_warnings).clone())
 }
 
@@ -257,19 +255,20 @@ fn chat(
         );
         // JSON mode turns a backslash the model left unescaped, as in \hat or \frac, into a control
         // character. That happens now and then, so the request is sent again.
-        if parsed
-            .iter()
-            .any(|(_, text)| text.chars().any(|c| c.is_control() && c != '\n'))
-        {
-            return Err(crate::dispatch::Failure::new(
-                true,
-                "The model's answer contains control characters, usually from a backslash it did not escape",
-            )
-            .into());
+        for (_, text) in &parsed {
+            check_control_characters(text)?;
         }
         Ok(())
     })?;
     parse_segments(&content).context("Invalid paragraphs response")
+}
+
+pub(crate) fn check_control_characters(text: &str) -> Result<()> {
+    anyhow::ensure!(
+        !text.chars().any(|c| c.is_control() && c != '\n'),
+        "The model's answer contains control characters, usually from a backslash it did not escape"
+    );
+    Ok(())
 }
 fn build_chat_body(
     settings: &LlmSettings,
@@ -352,61 +351,60 @@ pub(crate) fn clean_trailing_commas(s: &str) -> String {
     out
 }
 
-/// Sends a chat/completions request and returns message.content.
-/// Only responses whose content passes `validate` enter the success cache.
-///
-/// Some OpenAI-compatible endpoints reject `response_format: json_object`;
-/// only when the service explicitly rejects it (400/422) is the request retried once without it.
+/// Only validated responses enter the cache; response_format fallback shares the retry budget.
 pub(crate) fn send_chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
-    body: &serde_json::Value,
+    body: &Value,
     stage: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> Result<String> {
-    let resp = match request_chat(agent, s, body, validate) {
-        Ok(r) => r,
-        Err(first) => {
-            let degradable = first
-                .downcast_ref::<crate::dispatch::Failure>()
-                .is_some_and(|failure| failure.unsupported_response_format);
-            if !(degradable && body.get("response_format").is_some()) {
-                return Err(first);
+    let item = format!("Stage {stage}");
+    let mut request_body = body.clone();
+    let response = crate::dispatch::request(&item, &|| s.check_cancelled(), || {
+        let response = request_chat_once(agent, s, &request_body, validate);
+        match response {
+            Err(mut error)
+                if error.unsupported_response_format
+                    && request_body.get("response_format").is_some() =>
+            {
+                request_body
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("response_format");
+                error.retryable = true;
+                Err(error)
             }
-            let mut relaxed = body.clone();
-            if let Some(object) = relaxed.as_object_mut() {
-                object.remove("response_format");
+            Ok(response) => {
+                if request_body != *body {
+                    crate::dispatch::cache_validated_response(&s.cache_identity(), body, &response)
+                        .map_err(crate::dispatch::Failure::local)?;
+                }
+                Ok(response)
             }
-            // Try the relaxed request once; the original was already retried MAX_ATTEMPTS times.
-            let response = request_chat_once(agent, s, &relaxed, validate)?;
-            crate::dispatch::cache_validated_response(&s.cache_identity(), body, &response)?;
-            tracing::debug!("{}", "Retry succeeded without response_format");
-            response
+            Err(error) => Err(error),
         }
-    };
-    // Report token usage as it accumulates (prompt and completion).
-    let usage = &resp["usage"];
-    if resp[crate::dispatch::CACHED] != true {
+    })?;
+    let usage = &response["usage"];
+    if response[crate::dispatch::CACHED] != true {
         crate::progress::note_tokens(
             stage,
             usage["prompt_tokens"].as_u64().unwrap_or(0),
             usage["completion_tokens"].as_u64().unwrap_or(0),
         );
     }
-    // The response cache validates content before reuse.
-    Ok(resp["choices"][0]["message"]["content"]
+    Ok(response["choices"][0]["message"]["content"]
         .as_str()
-        .unwrap_or_default()
-        .to_string())
+        .unwrap()
+        .to_owned())
 }
 
-/// One attempt; validation errors omit provider response bodies which may echo credentials.
 fn request_chat_once(
     agent: &ureq::Agent,
     s: &LlmSettings,
-    body: &serde_json::Value,
+    body: &Value,
     validate: &dyn Fn(&str) -> Result<()>,
-) -> std::result::Result<serde_json::Value, crate::dispatch::Failure> {
+) -> std::result::Result<Value, crate::dispatch::Failure> {
     s.check_cancelled()
         .map_err(crate::dispatch::Failure::local)?;
     crate::dispatch::cached_json_request(
@@ -437,15 +435,10 @@ fn request_chat_once(
             .map_err(crate::dispatch::Failure::local)?
         },
         |value| {
-            // A gateway may return HTTP 200 with an error object. Missing content is a
-            // protocol failure, never an empty success.
+            crate::dispatch::check_finish_reason(value)?;
             anyhow::ensure!(
-                value.get("error").is_none_or(serde_json::Value::is_null),
+                value.get("error").is_none_or(Value::is_null),
                 "The AI service returned an error"
-            );
-            anyhow::ensure!(
-                value["choices"][0]["finish_reason"] != "length",
-                "The model stopped at its output limit; raise the limit in the stage's request"
             );
             let content = value["choices"][0]["message"]["content"]
                 .as_str()
@@ -454,33 +447,6 @@ fn request_chat_once(
             validate(content)
         },
     )
-}
-
-/// Sends the request, retrying retryable errors with cancellable backoff, at most [`MAX_ATTEMPTS`] times.
-fn request_chat(
-    agent: &ureq::Agent,
-    s: &LlmSettings,
-    body: &serde_json::Value,
-    validate: &dyn Fn(&str) -> Result<()>,
-) -> Result<serde_json::Value> {
-    let mut attempt = 1;
-    loop {
-        match request_chat_once(agent, s, body, validate) {
-            Ok(resp) => return Ok(resp),
-            Err(f) if f.retryable && attempt < MAX_ATTEMPTS => {
-                let wait = crate::runtime::retry_backoff(attempt);
-                tracing::warn!(
-                    attempt,
-                    of = MAX_ATTEMPTS,
-                    ?wait,
-                    "AI request failed; retrying shortly"
-                );
-                crate::runtime::interruptible_sleep(wait)?;
-                attempt += 1;
-            }
-            Err(f) => return Err(f.into()),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -639,22 +605,19 @@ mod tests {
                 Ok(())
             };
             let agent = chat_agent();
-            let error = request_chat(&agent, &settings, &body, &validate).unwrap_err();
+            let error = send_chat(&agent, &settings, &body, "proofread", &validate).unwrap_err();
             let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
             assert!(!failure.retryable);
             assert!(!failure.unsupported_response_format);
-            assert_eq!(
-                error.to_string(),
-                "The model stopped at its output limit; raise the limit in the stage's request"
-            );
+            assert_eq!(error.to_string(), "the model stopped at its output limit");
             assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
             assert_eq!(validations.get(), 0);
             assert!(!root.path().join("llm").exists());
 
-            let response = request_chat(&agent, &settings, &body, &validate).unwrap();
-            assert_eq!(response["choices"][0]["message"]["content"], content);
-            let cached = request_chat(&agent, &settings, &body, &validate).unwrap();
-            assert_eq!(cached[crate::dispatch::CACHED], true);
+            let response = send_chat(&agent, &settings, &body, "proofread", &validate).unwrap();
+            assert_eq!(response, content);
+            let cached = send_chat(&agent, &settings, &body, "proofread", &validate).unwrap();
+            assert_eq!(cached, content);
             assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
             assert_eq!(validations.get(), 2);
         }
@@ -704,7 +667,7 @@ mod tests {
         assert!(
             report
                 .to_string()
-                .contains("The model stopped at its output limit")
+                .contains("the model stopped at its output limit")
         );
         assert_eq!(sections[0].speech, vec![event]);
         assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
