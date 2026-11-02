@@ -84,24 +84,17 @@ struct Provider {
     definition: settings::Provider,
     key: String,
     limit: Arc<runtime::RequestLimit>,
-    state: tokio::sync::Mutex<(usize, Option<crate::adapter::Adapter>)>,
+    process: Option<Arc<crate::adapter::Provider>>,
+    users: tokio::sync::Mutex<usize>,
 }
 impl Provider {
-    async fn base(&self, name: &str) -> Result<String> {
-        let mut state = self.state.lock().await;
-        if let Some(base) = &self.definition.base_url {
-            return Ok(base.clone());
-        }
-        if state.1.is_none() {
-            state.1 = Some(start_ai_adapter(self.definition.argv(), name.into()).await?);
-        }
-        Ok(format!("{}/v1", state.1.as_ref().unwrap().base))
-    }
     async fn finished(&self) {
-        let mut state = self.state.lock().await;
-        state.0 -= 1;
-        if state.0 == 0 {
-            state.1.take();
+        let mut users = self.users.lock().await;
+        *users -= 1;
+        if *users == 0
+            && let Some(process) = &self.process
+        {
+            process.stop();
         }
     }
 }
@@ -129,13 +122,19 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
                         limit: Arc::new(runtime::RequestLimit::new(
                             definition.concurrency as usize,
                         )),
+                        process: definition.command.as_ref().map(|_| {
+                            Arc::new(crate::adapter::Provider::new(
+                                provider.to_owned(),
+                                definition.argv(),
+                            ))
+                        }),
                         definition,
                         key,
-                        state: tokio::sync::Mutex::new((0, None)),
+                        users: tokio::sync::Mutex::new(0),
                     },
                 );
             }
-            providers.get_mut(provider).unwrap().state.get_mut().0 += 1;
+            *providers.get_mut(provider).unwrap().users.get_mut() += 1;
         }
     }
     if let Some(path) = &cfg.subtitle {
@@ -177,7 +176,9 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let result = execute(run.clone(), &mut warnings).await;
     if result.is_err() {
         for provider in run.providers.values() {
-            provider.state.lock().await.1.take();
+            if let Some(process) = &provider.process {
+                process.stop();
+            }
         }
     }
     runtime::finish_blocking().await;
@@ -434,7 +435,7 @@ impl Run {
                         &ai,
                         provider.key.clone(),
                     );
-                    settings.base_url = provider.base(name).await?;
+                    settings.provider = provider.process.clone();
                     settings.limit = Some(provider.limit.clone());
                     let _cancel = runtime::CancelOnDrop(settings.cancelled.clone());
                     if stage.llm_writes_document() {
@@ -763,9 +764,8 @@ impl Run {
             progress::stage_label(&format!("{name}/audio"), "done", "Extracting audio");
             cfg.out_dir = self.work.join(format!(".cache/asr-{key}"));
             let provider = &self.providers[&t.speech.provider];
-            cfg.asr.base_url = provider.base(name).await?;
+            cfg.asr.provider = provider.process.clone();
             cfg.asr.api_key = provider.key.clone();
-            cfg.asr.command.clear();
             cfg.asr.limit = Some(provider.limit.clone());
             progress::stage_label(&format!("{name}/speech"), "start", "Transcribing speech");
             let events = asr::run(&cfg, &audio).await?;
@@ -950,21 +950,6 @@ fn run_program(
         }
     };
     apply().map_err(|error| stderr.attach(error, name))
-}
-async fn start_ai_adapter(argv: Vec<String>, stage: String) -> Result<crate::adapter::Adapter> {
-    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let _cancel_on_drop = runtime::CancelOnDrop(cancelled.clone());
-    crate::runtime::spawn_blocking(move || {
-        let check = || {
-            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(runtime::Cancelled.into());
-            }
-            runtime::check_cancelled()
-        };
-        check()?;
-        crate::adapter::Adapter::start_with_control(&argv, &stage, &check)
-    })
-    .await?
 }
 fn cleanup_media(cfg: &PipelineConfig, work: &Path, warnings: &mut Vec<String>) -> Result<()> {
     if work

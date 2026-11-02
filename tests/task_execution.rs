@@ -2023,6 +2023,7 @@ fn silent_audio_reports_no_speech_and_speech_first_falls_back_to_subtitles() {
         );
     }
     assert_eq!(count(&record), 0);
+    assert!(!record.join("starts").exists());
 }
 
 #[test]
@@ -2757,4 +2758,56 @@ fn pipeline_stage_names_reach_boundaries_progress_and_token_events() {
         event["stage"].as_str(),
         Some("fetch" | "subtitle" | "audio" | "transcribe" | "render" | "adapter/start")
     )));
+}
+
+#[test]
+fn lifecycle_cached_chat_and_segment_checkpoints_start_no_provider() {
+    let root = tempfile::tempdir().unwrap();
+    let source = video(root.path());
+    let record = root.path().join("provider");
+    let mut cfg = speech_config(&record, "healthy");
+    cfg["stages"]["transcript"]["speech"]["max_segment"] = json!(30.0);
+    cfg["pipeline"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("proofread"));
+    cfg["stages"]["draft"]
+        .as_object_mut()
+        .unwrap()
+        .remove("publish");
+    cfg["stages"]["proofread"] = json!({"type":"llm","input":"draft.json","output":"proofread.json","publish":"note.json","provider":"speech"});
+    cfg["pipeline"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("summary"));
+    cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","publish":"summary.md","provider":"speech"});
+    let first = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    let work = Path::new(first["work_dir"].as_str().unwrap());
+    for entry in std::fs::read_dir(work.join(".cache")).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("transcript-")
+        {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    let requests = count(&record);
+    let cp = checkpoint(work);
+    let before = std::fs::read_to_string(&cp).unwrap();
+    let rerun = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
+    done(&rerun);
+    assert_eq!(
+        count(&record),
+        requests,
+        "before: {before} after: {} events: {}",
+        std::fs::read_to_string(&cp).unwrap(),
+        String::from_utf8_lossy(&rerun.stdout)
+    );
+    assert_eq!(
+        std::fs::read_to_string(record.join("starts")).unwrap(),
+        "start\n"
+    );
 }

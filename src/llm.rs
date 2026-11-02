@@ -30,6 +30,8 @@ pub struct Stage {
 
 #[derive(Debug, Clone)]
 pub struct LlmSettings {
+    pub stage: String,
+    pub provider: Option<std::sync::Arc<crate::adapter::Provider>>,
     pub limit: Option<std::sync::Arc<crate::runtime::RequestLimit>>,
     pub cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub base_url: String,
@@ -42,6 +44,8 @@ pub struct LlmSettings {
 impl Default for LlmSettings {
     fn default() -> Self {
         Self {
+            stage: String::new(),
+            provider: None,
             limit: None,
             cancelled: Default::default(),
             base_url: String::new(),
@@ -56,6 +60,8 @@ impl Default for LlmSettings {
 impl LlmSettings {
     pub fn for_stage(provider: &crate::settings::Provider, stage: &Stage, key: String) -> Self {
         Self {
+            stage: stage.name.clone(),
+            provider: None,
             limit: None,
             cancelled: Default::default(),
             base_url: provider.base_url.clone().unwrap_or_default(),
@@ -394,7 +400,6 @@ fn request_chat_once(
 ) -> std::result::Result<serde_json::Value, crate::dispatch::Failure> {
     s.check_cancelled()
         .map_err(crate::dispatch::Failure::local)?;
-    let url = endpoint(&s.base_url);
     crate::dispatch::cached_json_request(
         &s.cache_identity(),
         body,
@@ -402,15 +407,22 @@ fn request_chat_once(
             let _permit = s
                 .acquire_permit()
                 .map_err(crate::dispatch::Failure::local)?;
+            let base = match &s.provider {
+                Some(provider) => provider.base(&s.stage, &|| s.check_cancelled()),
+                None => Ok(s.base_url.clone()),
+            }
+            .map_err(crate::dispatch::Failure::local)?;
+            let url = endpoint(&base);
             let mut request = agent.post(&url).set("Content-Type", "application/json");
             if !s.api_key.is_empty() {
                 request = request.set("Authorization", &format!("Bearer {}", s.api_key));
             }
-            let (settings, body) = (s.clone(), body.clone());
+            let (cancelled, body) = (s.cancelled.clone(), body.clone());
             crate::runtime::interruptible_http(&|| s.check_cancelled(), move || {
-                settings
-                    .check_cancelled()
-                    .map_err(crate::dispatch::Failure::local)?;
+                if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(crate::dispatch::Failure::local(crate::runtime::Cancelled));
+                }
+                crate::runtime::check_cancelled().map_err(crate::dispatch::Failure::local)?;
                 crate::dispatch::receive(request.send_json(body))
             })
             .map_err(crate::dispatch::Failure::local)?

@@ -26,6 +26,8 @@ impl std::fmt::Display for AsrMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Asr {
     #[serde(skip)]
+    pub provider: Option<std::sync::Arc<crate::adapter::Provider>>,
+    #[serde(skip)]
     pub limit: Option<std::sync::Arc<crate::runtime::RequestLimit>>,
     pub mode: AsrMode,
     pub base_url: String,
@@ -41,6 +43,7 @@ pub struct Asr {
 impl Default for Asr {
     fn default() -> Self {
         Self {
+            provider: None,
             limit: None,
             mode: AsrMode::default(),
             base_url: String::new(),

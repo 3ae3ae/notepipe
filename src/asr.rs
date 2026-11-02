@@ -157,7 +157,11 @@ fn run_api(
         .prefix("notepipe-asr-")
         .tempdir()
         .context("Could not create a temporary working directory")?;
-    let url = crate::config::asr_endpoint(api)?;
+    let mut resolved = api.clone();
+    if let Some(provider) = &api.provider {
+        resolved.base_url = provider.base(stage, &check_control)?;
+    }
+    let url = crate::config::asr_endpoint(&resolved)?;
     let pb = crate::progress::Bar::new(format!("{stage}/speech"), segs.len() as u64).with_template(
         "{spinner:.green} asr {pos}/{len} [{bar:32.cyan/blue}] {elapsed} {eta} {msg}",
     );
