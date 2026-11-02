@@ -1568,9 +1568,12 @@ fn work_outputs_reject_hard_links_and_filesystem_name_aliases() {
     std::fs::hard_link(work.join("a.md"), work.join("b.md")).unwrap();
     let output = run(root.path(), &source, &cfg, &[]);
     assert_eq!(error(&output), "Stages b and a write the same file");
+    // Python prints \r\n on Windows; the test is about which stage's file survived.
     assert_eq!(
-        std::fs::read_to_string(work.join("a.md")).unwrap(),
-        "First\n"
+        std::fs::read_to_string(work.join("a.md"))
+            .unwrap()
+            .trim_end(),
+        "First"
     );
     let (a, b) = ("é.md", "e\u{301}.md");
     std::fs::write(work.join(a), "Existing").unwrap();
