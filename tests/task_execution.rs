@@ -71,6 +71,13 @@ fn program(mode: &str) -> Value {
         mode
     ])
 }
+fn download_cache(work: &Path, cfg: &Value) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    work.join(".cache/download").join(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&cfg["stages"]["download"]["command"]).unwrap())
+    ))
+}
 fn spawn(
     root: &Path,
     source: &str,
@@ -844,6 +851,63 @@ fn stdout_is_empty_when_a_later_stage_fails() {
     assert!(!root.path().join("lecture").exists());
 }
 #[test]
+fn moved_and_renamed_local_sources_reuse_work_and_note_identity() {
+    use sha2::{Digest, Sha256};
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let provider = mock();
+    let mut cfg = config();
+    with_llm(&mut cfg, &provider.url);
+    let first = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    let note = Path::new(first["note_dir"].as_str().unwrap());
+    let marker: Value =
+        serde_json::from_slice(&std::fs::read(note.join(".notepipe.json")).unwrap()).unwrap();
+    assert_eq!(
+        marker,
+        json!({"source":format!("sha256:{:x}", Sha256::digest(b"media"))})
+    );
+    assert_eq!(
+        document(&first, "proofread")["meta"]["source"],
+        marker["source"]
+    );
+    let requests = provider.calls.load(std::sync::atomic::Ordering::SeqCst);
+    let moved = root.path().join("elsewhere/renamed.mp4");
+    std::fs::create_dir(moved.parent().unwrap()).unwrap();
+    std::fs::rename(&source, &moved).unwrap();
+    std::fs::rename(source.with_extension("srt"), moved.with_extension("srt")).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&moved)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_secs(1))
+        .unwrap();
+    let second = done(&run(root.path(), &moved, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(second["work_dir"], first["work_dir"]);
+    assert_eq!(second["note_dir"], first["note_dir"]);
+    assert_eq!(
+        provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+        requests
+    );
+}
+
+#[test]
+fn download_command_changes_fetch_again_without_changing_source_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let first_record = root.path().join("first-download");
+    let second_record = root.path().join("second-download");
+    let mut cfg = config();
+    cfg["stages"]["download"]["command"] = source_adapter_command(&first_record, "files");
+    let source = Path::new("https://example.test/media?query=one#part");
+    let first = done(&run(root.path(), source, &cfg, &["--skip", "screenshots"]));
+    cfg["stages"]["download"]["command"] = source_adapter_command(&second_record, "files");
+    let second = done(&run(root.path(), source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(second["work_dir"], first["work_dir"]);
+    assert_eq!(second["note_dir"], first["note_dir"]);
+    assert_eq!(count(&first_record), 1);
+    assert_eq!(count(&second_record), 1);
+}
+
+#[test]
 fn ownership_marker_replaces_its_folder_and_leaves_unowned_folders_alone() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
@@ -857,6 +921,7 @@ fn ownership_marker_replaces_its_folder_and_leaves_unowned_folders_alone() {
     let other = root.path().join("other");
     std::fs::create_dir(&other).unwrap();
     let source = local(&other);
+    std::fs::write(&source, "different recording").unwrap();
     let third = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     assert_eq!(
         third["note_dir"],
@@ -952,7 +1017,7 @@ fn downloaded_media_is_temporary_and_completed_caches_survive_llm_changes() {
     let first = done(&run(root.path(), source, &cfg, &[]));
     let work = Path::new(first["work_dir"].as_str().unwrap());
     assert!(!work.join("media/media.mp4").exists());
-    assert!(!work.join(".cache/download/files/media.mp4").exists());
+    assert!(!download_cache(work, &cfg).join("files/media.mp4").exists());
     cfg["stages"]["summary"]["prompt"] = json!("CHANGED SUMMARY");
     done(&run(root.path(), source, &cfg, &[]));
     assert_eq!(
@@ -966,7 +1031,8 @@ fn downloaded_media_is_temporary_and_completed_caches_survive_llm_changes() {
         serde_json::from_slice(&std::fs::read(work.join("media/info.json")).unwrap()).unwrap();
     assert_eq!(info["author"], "Fixture author");
     std::fs::remove_file(
-        work.join(".cache/download/files")
+        download_cache(work, &cfg)
+            .join("files")
             .join(info["subtitles"][0]["path"].as_str().unwrap()),
     )
     .unwrap();
@@ -1220,11 +1286,7 @@ fn signals_clean_media_without_waiting_for_http_and_forced_exits_are_cleaned_on_
                 .unwrap(),
             );
         }
-        for path in [
-            ".cache/download/files/media.mp4",
-            "media/media.mp4",
-            ".cache/audio-removed-stage.wav",
-        ] {
+        for path in ["media/media.mp4", ".cache/audio-removed-stage.wav"] {
             assert!(!work.join(path).exists(), "{path}");
         }
     }
@@ -1976,7 +2038,13 @@ fn edited_explicit_subtitles_rebuild_the_note_in_the_same_folder() {
         }
         previous = completed["note_dir"].clone();
         let doc = document(&completed, "draft");
-        assert_eq!(doc["meta"]["source"], json!(source.canonicalize().unwrap()));
+        assert_eq!(
+            doc["meta"]["source"],
+            format!(
+                "sha256:{:x}",
+                <sha2::Sha256 as sha2::Digest>::digest(b"media")
+            )
+        );
         assert_eq!(doc["sections"][0]["speech"][0]["text"], text);
         assert_eq!(
             std::fs::read_to_string(completed["files"]["markdown"].as_str().unwrap()).unwrap(),
@@ -2036,7 +2104,7 @@ fn llm_changes_reuse_download_asr_and_frames_and_rebuild_named_outputs() {
         .join("complete.json");
     let frame_time = frames.metadata().unwrap().modified().unwrap();
     // Rebuild stage outputs from caches, including after a run stranded downloaded media.
-    let stranded = work.join(".cache/download/files/media.mp4");
+    let stranded = download_cache(work, &cfg).join("files/media.mp4");
     std::fs::write(&stranded, "leftover media").unwrap();
     std::fs::remove_file(work.join("transcript.json")).unwrap();
     std::fs::remove_dir_all(work.join("images")).unwrap();
@@ -2122,7 +2190,7 @@ fn remote_reruns_download_only_when_active_stages_need_media() {
         let first = done(&run(root.path(), source, &cfg, &[]));
         let work = Path::new(first["work_dir"].as_str().unwrap());
         assert_eq!(count(&download), 1);
-        assert!(!work.join(".cache/download/files/media.mp4").exists());
+        assert!(!download_cache(work, &cfg).join("files/media.mp4").exists());
         assert!(!work.join("media/media.mp4").exists());
         if cache != "run" {
             let path = std::fs::read_dir(work.join(".cache"))
@@ -2546,7 +2614,7 @@ fn first_signal_abandons_slow_chat_and_speech_responses_before_cleanup() {
                 .map(|e| e.unwrap().path())
                 .find(|p| p.is_dir())
                 .unwrap();
-            assert!(!work.join(".cache/download/files/media.wav").exists());
+            assert!(!download_cache(&work, &cfg).join("files/media.wav").exists());
             assert!(!work.join("media/media.wav").exists());
             assert!(!work.join(".cache/audio-transcript.wav").exists());
             assert!(!work.join(".cache/llm").exists());
@@ -2629,7 +2697,7 @@ fn audio_only_caches_reuse_missing_media_and_vision_stages_send_text() {
     assert_eq!(first["warnings"], json!([]));
     let work = Path::new(first["work_dir"].as_str().unwrap());
     assert!(!work.join("media/media.wav").exists());
-    assert!(!work.join(".cache/download/files/media.wav").exists());
+    assert!(!download_cache(work, &cfg).join("files/media.wav").exists());
     let images: Value =
         serde_json::from_slice(&std::fs::read(work.join("images/images.json")).unwrap()).unwrap();
     assert_eq!(images, json!([]));
@@ -2744,7 +2812,7 @@ fn new_note_folders_and_files_follow_umask_on_replacement() {
 }
 
 #[test]
-fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() {
+fn source_command_changes_keep_one_work_folder_and_preserve_adapter_seek_templates() {
     let root = tempfile::tempdir().unwrap();
     let record = root.path().join("source");
     let mut cfg = config();
@@ -2773,7 +2841,7 @@ fn source_command_changes_separate_caches_and_preserve_adapter_seek_templates() 
         }
         works.push(completed["work_dir"].clone());
     }
-    assert_ne!(works[0], works[1]);
+    assert_eq!(works[0], works[1]);
     assert_eq!(works[0], works[2]);
     assert_eq!(count(&record), 2);
 }
@@ -3300,7 +3368,7 @@ fn lifecycle_cleanup_warnings_survive_failure_and_cancellation() {
         cfg["stages"]["download"]["command"] =
             source_adapter_command(&root.path().join("source"), "files");
         let ready = root.path().join("ready");
-        cfg["stages"]["fail"] = json!({"type":"run","input":"media","output":"failure","publish":"failure","command":[python(),"-c",format!("import pathlib,sys,time;m=pathlib.Path(sys.argv[1]);(m.parent/'.cache/download/complete.json').write_text('invalid');pathlib.Path(sys.argv[2]).write_text('ready');{}", if cancel {"time.sleep(30)"} else {"sys.exit(7)"}),"{input}",ready]});
+        cfg["stages"]["fail"] = json!({"type":"run","input":"media","output":"failure","publish":"failure","command":[python(),"-c",format!("import pathlib,sys,time;m=pathlib.Path(sys.argv[1]);next((m.parent/'.cache/download').glob('*/complete.json')).write_text('invalid');pathlib.Path(sys.argv[2]).write_text('ready');{}", if cancel {"time.sleep(30)"} else {"sys.exit(7)"}),"{input}",ready]});
         let mut child = spawn(root.path(), source, &cfg, &[], true);
         wait_for_file(&mut child, &ready);
         if cancel {
