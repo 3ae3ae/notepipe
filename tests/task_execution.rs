@@ -370,7 +370,7 @@ fn summaries_read_the_selected_document_transcript_or_markdown() {
 }
 #[test]
 fn llm_errors_stop_publication_and_keep_the_previous_note() {
-    for mode in ["invalid", "ids", "truncated", "empty", "retry", "summary"] {
+    for mode in ["invalid", "ids", "truncated", "retry", "summary"] {
         let root = tempfile::tempdir().unwrap();
         let source = local(root.path());
         let original = done(&run(
@@ -388,7 +388,6 @@ fn llm_errors_stop_publication_and_keep_the_previous_note() {
             let content = match mode {
                 "invalid" => "invalid".into(),
                 "ids" => json!({"segments":[{"id":99,"text":"bad"}]}).to_string(),
-                "empty" => json!({"segments":[{"id":0,"text":""}]}).to_string(),
                 _ => json!({"segments":[{"id":0,"text":"Corrected"}]}).to_string(),
             };
             if mode == "summary" && body.get("response_format").is_none() {
@@ -402,22 +401,17 @@ fn llm_errors_stop_publication_and_keep_the_previous_note() {
         let mut cfg = config();
         with_llm(&mut cfg, &provider.url);
         let message = error(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
-        if mode == "empty" {
-            assert_eq!(message, "Stage proofread would remove every paragraph");
-        }
         if matches!(mode, "invalid" | "ids" | "retry") {
             assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
         }
-        if mode != "empty" {
-            assert!(
-                message.starts_with(if mode == "summary" {
-                    "Stage summary failed: "
-                } else {
-                    "Stage proofread failed for paragraphs at 00:00–00:01: "
-                }),
-                "{message}"
-            );
-        }
+        assert!(
+            message.starts_with(if mode == "summary" {
+                "Stage summary failed: "
+            } else {
+                "Stage proofread failed for paragraphs at 00:00–00:01: "
+            }),
+            "{message}"
+        );
         assert_eq!(std::fs::read(path).unwrap(), previous, "{mode}: {message}");
     }
 }
@@ -522,6 +516,43 @@ fn response_format_fallback_shares_the_three_attempt_budget() {
         }
         assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
+}
+
+#[test]
+fn removing_every_paragraph_warns_and_reuses_the_answer_on_rerun() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    video(root.path());
+    let provider = MockAi::respond_with(|_, _| {
+        Some((
+            200,
+            json!({"choices":[{"message":{"content":json!({"segments":[{"id":0,"text":""}]}).to_string()}}]}),
+        ))
+    });
+    let mut cfg = config();
+    with_llm(&mut cfg, &provider.url);
+    cfg["pipeline"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|name| name != "summary");
+    cfg["stages"]["markdown"]["input"] = json!("proofread.json");
+    cfg["stages"]["again"] =
+        json!({"type":"llm","input":"proofread.json","output":"again.json","provider":"ai"});
+    let stages = cfg["pipeline"].as_array_mut().unwrap();
+    stages.insert(stages.len() - 1, json!("again"));
+    cfg["stages"]["markdown"]["input"] = json!("again.json");
+    for _ in 0..2 {
+        let completed = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+        assert_eq!(
+            completed["warnings"],
+            json!(["Stage proofread removed every paragraph"])
+        );
+        assert_eq!(
+            document(&completed, "proofread")["sections"][0]["speech"],
+            json!([])
+        );
+    }
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]
