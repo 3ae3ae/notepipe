@@ -417,6 +417,11 @@ impl ConfigFile {
                     anyhow::bail!("Stages {a} and {name} both publish {publish}");
                 }
                 anyhow::ensure!(
+                    publish != "-" || !matches!(stage.output_kind(), Kind::Media | Kind::Images),
+                    "Stage {name}: standard output takes a file, and {} is a folder",
+                    stage.output
+                );
+                anyhow::ensure!(
                     !matches!(stage.kind, StageType::Download(_)),
                     "Stage {name}: a download output cannot be published"
                 );
@@ -975,6 +980,17 @@ mod tests {
             ..Default::default()
         };
         assert!(crate::options::resolve("local".into(), &opts, &ConfigFile::default()).is_err());
+    }
+    #[test]
+    fn folder_outputs_cannot_publish_to_standard_output() {
+        for (name, output) in [("download", "media"), ("screenshots", "images")] {
+            let mut cfg = config();
+            cfg["stages"][name]["publish"] = json!("-");
+            assert_eq!(
+                resolve(&cfg, &[]).unwrap_err().to_string(),
+                format!("Stage {name}: standard output takes a file, and {output} is a folder")
+            );
+        }
     }
 }
 
