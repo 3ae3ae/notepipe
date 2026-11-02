@@ -47,7 +47,7 @@ if args.behavior == 'orphan':
     deadline.daemon = True
     deadline.start()
 if args.behavior in {'escaped', 'escaped-hang'}:
-    child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'], start_new_session=True)
+    child = subprocess.Popen([sys.executable, '-c', 'import signal;signal.pause()'], start_new_session=True)
     (args.record / 'escaped-pid').write_text(str(child.pid))
 if args.behavior == 'stubborn':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -131,9 +131,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(response)
         if args.behavior == 'exit-idle':
             def exit_idle():
+                while not (args.record / 'between-consumers').exists():
+                    time.sleep(0.01)
                 os.write(2, b'last diagnostic\n')
                 os._exit(7)
-            threading.Timer(0.1, exit_idle).start()
+            threading.Thread(target=exit_idle, daemon=True).start()
 
 
 server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)

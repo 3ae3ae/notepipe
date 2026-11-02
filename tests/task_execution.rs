@@ -1026,6 +1026,17 @@ fn wait_for_file(child: &mut std::process::Child, path: &Path) {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
+fn wait_for_exit(child: &mut std::process::Child) -> bool {
+    // A CI hang guard, below the 600-second HTTP deadline; blocked fixtures prove ordering separately.
+    let start = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if start.elapsed() > std::time::Duration::from_secs(120) {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    true
+}
 fn transaction(root: &Path, phase: &str) {
     std::fs::write(root.join(".notepipe-transaction.json"),serde_json::to_vec(&json!({"name":"lecture","staging":".lecture.notepipe-new-recorded","old":".lecture.notepipe-old-recorded","phase":phase})).unwrap()).unwrap();
 }
@@ -3177,8 +3188,23 @@ fn lifecycle_provider_exit_reports_status_and_lossy_diagnostics() {
                 .push(json!("summary"));
             cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","provider":"speech"});
         }
-        let start = std::time::Instant::now();
-        let message = error(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+        let mut child = spawn(
+            root.path(),
+            source.to_str().unwrap(),
+            &cfg,
+            &["--skip", "screenshots"],
+            true,
+        );
+        let exited = wait_for_exit(&mut child);
+        if !exited {
+            child.kill().unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            exited,
+            "provider exit was not noticed before the HTTP deadline"
+        );
+        let message = error(&output);
         assert!(
             message.contains("Provider speech exited with status 7"),
             "{message}"
@@ -3187,7 +3213,7 @@ fn lifecycle_provider_exit_reports_status_and_lossy_diagnostics() {
             message.contains("invalid: \u{fffd}") && message.contains("last diagnostic"),
             "{message}"
         );
-        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+        assert_eq!(count(&record), 1);
     }
 }
 
@@ -3310,7 +3336,7 @@ fn lifecycle_escaped_descendant_pipes_do_not_hold_exit_or_cancellation() {
             match kind {
                 "run" => {
                     cfg["pipeline"] = json!(["hold"]);
-                    cfg["stages"]["hold"] = json!({"type":"run","output":"answer.md","publish":"answer.md","command":[python(),"-c",format!("import pathlib,subprocess,sys,time;r=pathlib.Path(sys.argv[1]);r.mkdir();p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],start_new_session=True);(r/'escaped-pid').write_text(str(p.pid));print('answer',flush=True);{}",if cancel {"time.sleep(30)"} else {"pass"}),record]});
+                    cfg["stages"]["hold"] = json!({"type":"run","output":"answer.md","publish":"answer.md","command":[python(),"-c",format!("import pathlib,subprocess,sys,time;r=pathlib.Path(sys.argv[1]);r.mkdir();p=subprocess.Popen([sys.executable,'-c','import signal;signal.pause()'],start_new_session=True);(r/'escaped-pid').write_text(str(p.pid));print('answer',flush=True);{}",if cancel {"time.sleep(30)"} else {"pass"}),record]});
                 }
                 "download" => {
                     source_arg = "https://example.test/escaped";
@@ -3332,22 +3358,18 @@ fn lifecycle_escaped_descendant_pipes_do_not_hold_exit_or_cancellation() {
             if cancel {
                 assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
             }
-            let start = std::time::Instant::now();
-            while child.try_wait().unwrap().is_none()
-                && start.elapsed() < std::time::Duration::from_secs(7)
-            {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            let exited = child.try_wait().unwrap().is_some();
+            let exited = wait_for_exit(&mut child);
             let pid: i32 = std::fs::read_to_string(record.join("escaped-pid"))
                 .unwrap()
                 .parse()
                 .unwrap();
             // The fixture owns this escaped process; notepipe deliberately cannot terminate its new session.
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
+            let killed = unsafe { libc::kill(pid, libc::SIGKILL) };
             let output = child.wait_with_output().unwrap();
+            assert_eq!(
+                killed, 0,
+                "the escaped descendant must still hold the pipes"
+            );
             assert!(
                 exited,
                 "{kind} cancel={cancel} waited for an escaped descendant"
@@ -3429,16 +3451,23 @@ fn lifecycle_provider_exit_between_consumers_stops_the_run() {
     cfg["providers"] = json!({"p":{"command":adapter(&record,"exit-idle")}});
     cfg["stages"]["first"] =
         json!({"type":"llm","input":"transcript.json","output":"first.md","provider":"p"});
-    cfg["stages"]["wait"] = json!({"type":"run","input":"first.md","output":"wait.md","produces":"markdown","command":[python(),"-c","import time;time.sleep(30);print('ready')"]});
+    cfg["stages"]["wait"] = json!({"type":"run","input":"first.md","output":"wait.md","produces":"markdown","command":[python(),"-c","import pathlib,sys,time;r=pathlib.Path(sys.argv[1]);(r/'between-consumers').touch();\nwhile not (r/'release').exists(): time.sleep(0.01)\nprint('ready')",record]});
     cfg["stages"]["second"] = json!({"type":"llm","input":"wait.md","output":"second.md","publish":"second.md","provider":"p"});
-    let start = std::time::Instant::now();
-    let message = error(&run(root.path(), &source, &cfg, &[]));
+    let mut child = spawn(root.path(), source.to_str().unwrap(), &cfg, &[], true);
+    let exited = wait_for_exit(&mut child);
+    std::fs::write(record.join("release"), "ready").unwrap();
+    let message = error(&child.wait_with_output().unwrap());
+    assert!(
+        exited,
+        "provider exit did not interrupt the blocked run stage"
+    );
     assert!(
         message.contains("Provider p exited with status 7\n")
             && message.contains("last diagnostic"),
         "{message}"
     );
-    assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    assert!(record.join("between-consumers").is_file());
+    assert_eq!(count(&record), 1, "the second consumer must not run");
 }
 
 #[test]
