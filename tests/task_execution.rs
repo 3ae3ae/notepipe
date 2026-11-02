@@ -1280,6 +1280,24 @@ fn run_transcripts_are_validated_and_document_accepts_reversed_inputs() {
     assert!(error(&run(root.path(), &source, &cfg, &[])).contains("Invalid subtitle timestamps"));
 }
 #[test]
+fn transcript_extensions_cannot_replace_document_fields() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    for name in ["schema", "meta", "sections"] {
+        let mut transcript =
+            json!({"language":"en","events":[{"start":0,"end":1,"text":"Words."}]});
+        transcript[name] = json!("reserved");
+        let cfg = json!({"pipeline":["import","document"],"stages":{
+            "import":{"type":"run","output":"transcript.json","produces":"transcript","command":[python(),"-c","import sys;print(sys.argv[1])",transcript.to_string()]},
+            "document":{"type":"document","input":"transcript.json","output":"document.json","publish":"note.json"}
+        }});
+        assert_eq!(
+            error(&run(root.path(), &source, &cfg, &[])),
+            format!("Transcript field {name} is reserved")
+        );
+    }
+}
+#[test]
 fn published_names_follow_filesystem_identity() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());

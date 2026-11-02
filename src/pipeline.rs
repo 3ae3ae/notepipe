@@ -411,6 +411,12 @@ impl Run {
                         artifact::has_readable_body(&sections),
                         "No readable transcript"
                     );
+                    for name in ["schema", "meta", "sections"] {
+                        anyhow::ensure!(
+                            !transcript.extra.contains_key(name),
+                            "Transcript field {name} is reserved"
+                        );
+                    }
                     let document = Document {
                         schema: 3,
                         meta,
