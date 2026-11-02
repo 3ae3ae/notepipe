@@ -81,7 +81,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         (args.record / 'authorization').write_text(self.headers.get('Authorization', ''))
         (args.record / 'endpoint').write_text(self.path)
         if args.behavior == 'exit-request':
-            os.write(2, b'invalid: diagnostic\nlast diagnostic\n')
+            os.write(2, b'invalid: \xff\nlast diagnostic\n')
             os._exit(7)
         if args.behavior == 'slow':
             (args.record / 'transcribing').write_text('ready')

@@ -2813,7 +2813,7 @@ fn lifecycle_cached_chat_and_segment_checkpoints_start_no_provider() {
 }
 
 #[test]
-fn lifecycle_provider_exit_reports_status_and_diagnostics() {
+fn lifecycle_provider_exit_reports_status_and_lossy_diagnostics() {
     for speech in [false, true] {
         let root = tempfile::tempdir().unwrap();
         let source = if speech {
@@ -2838,7 +2838,7 @@ fn lifecycle_provider_exit_reports_status_and_diagnostics() {
             "{message}"
         );
         assert!(
-            message.contains("invalid: diagnostic") && message.contains("last diagnostic"),
+            message.contains("invalid: \u{fffd}") && message.contains("last diagnostic"),
             "{message}"
         );
         assert!(start.elapsed() < std::time::Duration::from_secs(10));

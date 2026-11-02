@@ -326,8 +326,17 @@ impl StderrTail {
         use std::io::BufRead;
         let shared = self.lines.clone();
         std::thread::spawn(move || {
-            let reader = std::io::BufReader::new(reader);
-            for line in reader.lines().map_while(Result::ok) {
+            let mut reader = std::io::BufReader::new(reader);
+            let mut bytes = Vec::new();
+            while reader.read_until(b'\n', &mut bytes).is_ok_and(|n| n > 0) {
+                if bytes.last() == Some(&b'\n') {
+                    bytes.pop();
+                    if bytes.last() == Some(&b'\r') {
+                        bytes.pop();
+                    }
+                }
+                let line = String::from_utf8_lossy(&bytes).into_owned();
+                bytes.clear();
                 // tracing targets must be constants, so the source name goes into the message.
                 tracing::debug!("[{target}] {line}");
                 if let Ok(mut v) = shared.lock()
@@ -597,6 +606,18 @@ pub fn file_digest(path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drain_keeps_reading_after_invalid_utf8() {
+        let tail = StderrTail::default();
+        tail.drain(
+            std::io::Cursor::new(b"first\ninvalid: \xff\r\nlast\n"),
+            "test",
+        )
+        .join()
+        .unwrap();
+        assert_eq!(tail.tail(), "first\ninvalid: \u{fffd}\nlast");
+    }
 
     #[cfg(unix)]
     #[test]
