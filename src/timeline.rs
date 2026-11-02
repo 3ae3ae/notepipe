@@ -67,8 +67,6 @@ pub(crate) fn parse_timestamp(value: &str) -> Option<f64> {
 
 /// Merging:
 /// Each speech event belongs to the last screenshot at or before its midpoint; earlier events go to the first.
-/// An event spanning a screenshot change is split only at punctuation or a space near the change;
-/// without a natural break it stays whole, since a late screenshot is better than a word cut in half.
 pub fn merge(
     frames: Vec<FrameEvent>,
     speech: Vec<TranscriptEvent>,
@@ -92,94 +90,16 @@ pub fn merge(
         let next = sections.get(i + 1).map(|s| s.t).unwrap_or(f64::INFINITY);
         sections[i].end = next.min(media_end.max(sections[i].t));
     }
-    let boundaries: Vec<f64> = sections.iter().map(|s| s.t).collect();
-    for ev in speech {
-        for piece in split_at_natural_boundaries(ev, &boundaries) {
-            let mid = (piece.start + piece.end) / 2.0;
-            let idx = match sections[..].binary_search_by(|s| s.t.total_cmp(&mid)) {
-                Ok(i) => i,
-                Err(0) => 0, // before the first screenshot
-                Err(i) => i - 1,
-            };
-            sections[idx].speech.push(piece);
-        }
+    for event in speech {
+        let mid = event.start + (event.end - event.start) / 2.0;
+        let idx = match sections.binary_search_by(|s| s.t.total_cmp(&mid)) {
+            Ok(i) => i,
+            Err(0) => 0, // before the first screenshot
+            Err(i) => i - 1,
+        };
+        sections[idx].speech.push(event);
     }
     sections
-}
-
-/// Splits text only at punctuation or a space near a boundary.
-///
-/// Time does not map reliably to character positions, so without a natural break the whole event stays
-/// under one screenshot rather than being cut mid-word; an event spanning several boundaries stays whole
-/// if any of them has no safe break.
-fn split_at_natural_boundaries(event: TranscriptEvent, boundaries: &[f64]) -> Vec<TranscriptEvent> {
-    let inner: Vec<f64> = boundaries
-        .iter()
-        .copied()
-        .filter(|&b| b > event.start + 0.3 && b < event.end - 0.3)
-        .collect();
-    if inner.is_empty() {
-        return vec![event];
-    }
-
-    let points = std::iter::once(event.start)
-        .chain(inner)
-        .chain(std::iter::once(event.end))
-        .collect::<Vec<_>>();
-    let chars: Vec<char> = event.text.chars().collect();
-    let total = event.end - event.start;
-    let mut char_pos = 0usize;
-    let mut cut_positions = Vec::with_capacity(points.len() - 1);
-
-    for (index, window) in points.windows(2).enumerate() {
-        let end_char = if index + 2 == points.len() {
-            chars.len()
-        } else {
-            let ideal = (chars.len() as f64 * ((window[1] - event.start) / total)).round() as usize;
-            match snap_to_natural_break(&chars, ideal, char_pos + 1, chars.len()) {
-                Some(p) => p,
-                // Some boundary has no natural break: keep the event whole.
-                None => return vec![event],
-            }
-        };
-        cut_positions.push(end_char);
-        char_pos = end_char;
-    }
-
-    let mut start_char = 0usize;
-    points
-        .windows(2)
-        .zip(cut_positions)
-        .map(|(window, end_char)| {
-            let text: String = chars[start_char..end_char].iter().collect();
-            start_char = end_char;
-            TranscriptEvent {
-                extra: event.extra.clone(),
-                start: window[0],
-                end: window[1],
-                text,
-                raw: event.raw.clone(),
-            }
-        })
-        .collect()
-}
-
-/// Finds the nearest punctuation or space within WINDOW characters of the ideal cut; the cut falls after it.
-fn snap_to_natural_break(chars: &[char], ideal: usize, lo: usize, hi: usize) -> Option<usize> {
-    const WINDOW: i32 = 6;
-    const BREAKS: &str = "。！？；：，、,.!?;: ";
-    for offset in 0..=WINDOW {
-        for candidate in [ideal as i32 - offset, ideal as i32 + offset] {
-            if candidate < lo as i32 || candidate > hi as i32 {
-                continue;
-            }
-            let index = candidate as usize;
-            if index >= 1 && index <= chars.len() && BREAKS.contains(chars[index - 1]) {
-                return Some(index);
-            }
-        }
-    }
-    None
 }
 
 /// Joins consecutive transcript fragments under one screenshot into readable paragraphs.
@@ -192,8 +112,8 @@ pub fn coalesce_sections(sections: &mut [Section]) {
         let mut current: Option<TranscriptEvent> = None;
 
         for event in std::mem::take(&mut section.speech) {
-            let text = event.text.trim();
-            if text.is_empty() {
+            let text = event.text.as_str();
+            if text.trim().is_empty() {
                 continue;
             }
 
@@ -212,14 +132,15 @@ pub fn coalesce_sections(sections: &mut [Section]) {
 
             match current.as_mut() {
                 Some(paragraph) => {
+                    if paragraph.raw.is_some() || event.raw.is_some() {
+                        let raw = paragraph.raw.get_or_insert_with(|| paragraph.text.clone());
+                        append_text(raw, event.raw.as_deref().unwrap_or(text));
+                    }
                     append_text(&mut paragraph.text, text);
-                    paragraph.end = event.end;
+                    paragraph.end = paragraph.end.max(event.end);
                 }
                 None => {
-                    current = Some(TranscriptEvent {
-                        text: text.to_string(),
-                        ..event
-                    });
+                    current = Some(event);
                 }
             }
         }
@@ -330,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_uses_natural_breaks_or_keeps_complete_speech() {
+    fn merge_assigns_complete_speech_by_midpoint() {
         let frames = vec![frame(0.0), frame(60.0), frame(120.0)];
         let speech = vec![sp(10.0, 20.0), sp(50.0, 70.0), sp(5.0, 8.0)];
         let s = merge(frames, speech, 120.0);
@@ -344,93 +265,71 @@ mod tests {
     }
 
     #[test]
-    fn merge_splits_at_punctuation_near_boundary() {
-        let frames = vec![frame(0.0), frame(5.0)];
-        let speech = vec![TranscriptEvent {
-            extra: Default::default(),
-            start: 0.0,
-            end: 10.0,
-            text: "前半句，后半句。".into(),
-            raw: None,
-        }];
-        let s = merge(frames, speech, 10.0);
-        // A comma near the 5 s boundary: split there so text follows the screenshot.
-        assert_eq!(s[0].speech.len(), 1);
-        assert_eq!(s[1].speech.len(), 1);
-        assert_eq!(s[0].speech[0].text, "前半句，");
-        assert_eq!(s[1].speech[0].text, "后半句。");
+    fn merge_keeps_whole_events_at_their_midpoints() {
+        for text in [
+            "前半句，后半句。",
+            "compiler optimization lecture",
+            "一二三四五六七八九十",
+        ] {
+            let event = TranscriptEvent {
+                text: text.into(),
+                raw: Some("original text".into()),
+                extra: serde_json::from_str(r#"{"speaker":"a"}"#).unwrap(),
+                ..sp(1.0, 11.0)
+            };
+            for midpoint in [4.0, 6.0, 8.0] {
+                let sections = merge(
+                    vec![frame(0.0), frame(midpoint), frame(9.0)],
+                    vec![event.clone()],
+                    12.0,
+                );
+                let index = usize::from(midpoint <= 6.0);
+                assert_eq!(sections.iter().map(|s| s.speech.len()).sum::<usize>(), 1);
+                assert_eq!(sections[index].speech, vec![event.clone()]);
+            }
+        }
     }
 
     #[test]
-    fn no_punctuation_means_keep_whole() {
-        // No punctuation: the text stays whole however many boundaries there are.
-        let ev = TranscriptEvent {
-            extra: Default::default(),
-            start: 0.0,
-            end: 10.0,
-            text: "一二三四五六七八九十".into(),
-            raw: None,
-        };
-        let parts = split_at_natural_boundaries(ev.clone(), &[5.0]);
-        assert_eq!(parts.len(), 1, "no punctuation, no split");
-        assert_eq!(parts[0].text, ev.text);
-
-        // A boundary within 0.3 s of either end does not split either.
-        let ev2 = TranscriptEvent {
-            extra: Default::default(),
-            start: 0.0,
-            end: 1.0,
-            text: "abc".into(),
-            raw: None,
-        };
-        assert_eq!(split_at_natural_boundaries(ev2, &[0.1]).len(), 1);
+    fn coalesce_preserves_max_end_and_combines_raw_from_every_event() {
+        for raw_at in [None, Some(0), Some(1), Some(2)] {
+            let mut speech = vec![sp(0., 10.), sp(1., 2.), sp(3., 4.)];
+            for (i, event) in speech.iter_mut().enumerate() {
+                event.text = ["字", "文", "本"][i].into();
+                if raw_at == Some(i) {
+                    event.raw = Some("原".into());
+                }
+            }
+            let expected_raw = raw_at.map(|i| {
+                ["字", "文", "本"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, text)| if n == i { "原" } else { text })
+                    .collect::<String>()
+            });
+            let mut sections = merge(vec![frame(0.)], speech, 10.);
+            coalesce_sections(&mut sections);
+            assert_eq!(sections[0].speech.len(), 1);
+            assert_eq!(sections[0].speech[0].end, 10.);
+            assert_eq!(sections[0].speech[0].text, "字文本");
+            assert_eq!(sections[0].speech[0].raw, expected_raw);
+        }
     }
 
     #[test]
-    fn split_snaps_to_nearest_punctuation() {
-        // The proportional cut is index 5; the nearest punctuation is the comma at index 3, so the cut falls after it.
-        let ev = TranscriptEvent {
-            extra: Default::default(),
-            start: 0.0,
-            end: 10.0,
-            text: "你好，世界很好。再见".into(),
-            raw: None,
-        };
-        let parts = split_at_natural_boundaries(ev.clone(), &[5.0]);
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].text, "你好，");
-        assert_eq!(parts[1].text, "世界很好。再见");
-
-        // English: move to the nearest space instead of cutting a word.
-        let ev2 = TranscriptEvent {
-            extra: Default::default(),
-            start: 0.0,
-            end: 10.0,
-            text: "compiler optimization lecture".into(),
-            raw: None,
-        };
-        let parts2 = split_at_natural_boundaries(ev2, &[5.0]);
-        assert_eq!(parts2[0].text, "compiler ");
-        assert_eq!(parts2[1].text, "optimization lecture");
-    }
-
-    #[test]
-    fn multi_boundary_all_or_nothing() {
-        // Two boundaries, only one with punctuation: keep the event whole.
-        let ev = TranscriptEvent {
-            extra: Default::default(),
-            start: 0.0,
-            end: 30.0,
-            text: "零一，二三四五六七八九十".into(),
-            raw: None,
-        };
-        let parts = split_at_natural_boundaries(ev.clone(), &[10.0, 20.0]);
-        assert_eq!(
-            parts.len(),
-            1,
-            "kept whole when any boundary lacks a break: {parts:?}"
-        );
-        assert_eq!(parts[0].text, ev.text);
+    fn coalesce_keeps_boundary_whitespace_and_skips_blank_events() {
+        let speech = ["  code  ", "\t", "    more\n", "next  ", " "]
+            .into_iter()
+            .enumerate()
+            .map(|(i, text)| TranscriptEvent {
+                text: text.into(),
+                ..sp(i as f64, i as f64 + 1.)
+            })
+            .collect();
+        let mut sections = merge(vec![frame(0.)], speech, 10.);
+        coalesce_sections(&mut sections);
+        assert_eq!(sections[0].speech.len(), 1);
+        assert_eq!(sections[0].speech[0].text, "  code      more\nnext  ");
     }
 
     #[test]
