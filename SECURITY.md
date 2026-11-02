@@ -19,10 +19,11 @@ notepipe is a local command-line tool. Keep these properties in mind when you ev
   input and output files are put into their arguments; values from the internet, such as a downloaded title, never
   are.
 - **Credentials** are read from the environment variables that providers name in `api_key_env`, and sent only to that
-  provider; they are never part of the configuration. notepipe does not write API keys to notes, caches or logs, but
-  the programs it starts inherit its environment, keys included, and what they print is theirs. A
-  credential written into a URL or into a program's arguments is part of that setting and can appear in the cache and in
-  `notepipe doctor` output.
+  provider; they are never part of the configuration. notepipe does not write API keys to notes, caches or logs. A
+  provider's error message is shown with that provider's key replaced and is never stored; another secret a service
+  echoes in an error is shown as sent. But the programs it starts inherit its environment, keys included, and what they
+  print is theirs. A credential written into a URL or into a program's arguments is part of that setting and can appear
+  in the cache and in `notepipe doctor` output.
 - **Provider programs** started by notepipe listen on `127.0.0.1` while the stages that use them run. Other processes
   on the same machine can reach that port while it is open.
 - **Media and subtitles** from the internet are untrusted input to ffmpeg and to notepipe's parsers; problems there are in

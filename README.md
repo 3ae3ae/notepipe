@@ -17,8 +17,8 @@
 </p>
 
 Point `notepipe` at a lecture, talk, meeting or podcast and it writes a plain folder of Markdown, slide screenshots and
-structured JSON: a summary at the top, followed by the spoken transcript grouped into paragraphs under the frame that
-was on screen when each passage was spoken.
+structured JSON: a summary at the top, followed by the spoken transcript in paragraphs, each line under the frame that
+was on screen halfway through it.
 
 Look inside and almost nothing is fixed. Downloading, transcription, screenshot capture, timeline assembly, AI
 rewriting, summarization and Markdown rendering are separate stages wired together in one TOML file. Every stage names
@@ -279,7 +279,7 @@ downstream stages can read:
 | `download` | `"source"` | `media` | Resolves a local file (plus adjacent `.srt`/`.vtt` files) in place, or runs `command` to fetch a URL's media, metadata and captions. |
 | `transcript` | `media` | `transcript` (`.json`) | Tries `sources` in order (`subtitles`, `speech`). For speech, detects voice segments locally with `earshot`, splits long stretches at quiet points, and transcribes via `provider`. |
 | `screenshots` | `media` | `images` (folder) | Samples video frames via `ffmpeg`, compares them with SSIM (`sensitivity`, optional `region`), waits for animations to settle (`mode = "stable"`), and saves full-res JPEGs. |
-| `document` | `transcript` + optional `images` | `document` (`.json`) | Aligns transcript lines under the active screenshot (splitting only at natural punctuation/space breaks) and merges fragments into paragraphs with script-aware word spacing. |
+| `document` | `transcript` + optional `images` | `document` (`.json`) | Puts each transcript line, whole, under the screenshot shown at its midpoint and merges lines into paragraphs with script-aware word spacing. |
 | `llm` | `document`, `transcript` or `markdown` | `document` (`.json`) or `markdown` (`.md`) | Sends the input to `provider` with `prompt`. An `output` ending in `.json` rewrites a document's paragraphs in batches (keeping original text in `raw`); ending in `.md` produces one Markdown response (using chunked map-reduce for long recordings). |
 | `markdown` | one or more `document` / `markdown` files | `markdown` (`.md`) | Joins its inputs in order, rendering documents as `![](<images/0001.jpg>)` followed by their paragraphs, without adding front matter or headings. |
 | `run` | any stage outputs | `file` (or `produces` kind) | Runs an external command without a shell. Setting `produces = "transcript" \| "document" \| "markdown"` validates the output so later stages can read it. |
@@ -460,7 +460,7 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   - `{"type": "tokens", "stage": "proofread", "prompt": 1420, "completion": 980}`
   - `{"type": "log", "level": "info" | "warn" | "error" | "debug", "message": "…"}`
   - `{"type": "done", "note_dir": "…", "files": {"markdown": "…", "proofread": "…"}, "work_dir": "…", "warnings": []}`
-  - `{"type": "error", "message": "…"}`
+  - `{"type": "error", "message": "…", "warnings": []}`
 - **Structured document (`note.json`, schema 3):**
   ```json
   {
@@ -492,8 +492,9 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   - **Content-addressed caching and resume.** Downloads, screenshots, speech segments and validated LLM responses are
     cached in the source's work folder by the inputs that affect them. Editing the summary prompt sends only the summary's requests again;
     an interrupted transcription resumes from the first unfinished segment (`--no-resume` starts fresh).
-  - **Clean cancellation.** `Ctrl-C` (or `SIGTERM` on Unix) exits with code `130`, terminates every child process tree
-    `notepipe` spawned, and removes temporary downloaded media and extracted audio.
+  - **Clean cancellation.** `Ctrl-C` (or `SIGTERM` on Unix) exits with code `130`, terminates the process group of every
+    program `notepipe` started (a descendant that starts its own session is outside it), and removes temporary
+    downloaded media and extracted audio.
 
 See [docs/cli.md](https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md) for the complete CLI integration contract and
 [docs/design.md](https://github.com/3ae3ae/notepipe/blob/main/docs/design.md) for architecture and design principles.

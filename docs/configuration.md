@@ -69,8 +69,8 @@ these keys:
 |---|---|
 | `type` | What the stage does: `download`, `transcript`, `screenshots`, `document`, `llm`, `markdown` or `run` |
 | `input` | What it reads: `"source"` (the file or URL on the command line; `download` only) or the `output` of a stage listed earlier in `pipeline`. A string, or a list |
-| `output` | What it writes: a plain name in the work folder, such as `transcript.json`. No `/` or `\`, not starting with `.`, not `source`; each name is written by one stage, and names that differ only in case count as the same |
-| `publish` | Optional: a name to copy the output to in the note folder, such as `note.md`, with the same rules as `output`, or `-` for standard output. Each name, ignoring case, is published by one stage, and only one stage, writing a file rather than a folder, can publish to `-` |
+| `output` | What it writes: a plain name in the work folder, such as `transcript.json`. No `/` or `\`, not starting with `.`, not `source`; each name is written by one stage; names that differ only in case count as the same, and so do names the file system treats as one file |
+| `publish` | Optional: a name to copy the output to in the note folder, such as `note.md`, with the same rules as `output`, or `-` for standard output. Each name, ignoring case and anything else the file system ignores, is published by one stage, and only one stage, writing a file rather than a folder, can publish to `-` |
 
 ### What stages read and write
 
@@ -128,7 +128,8 @@ segments and sent to the provider.
 | `min_silence` | `0.4` | Pauses shorter than this many seconds do not split segments |
 | `max_segment` | `20.0` | Longest stretch of speech in one request, 1 to 600 seconds; up to 0.25 s of silence is added on each side |
 
-`--subtitle FILE` makes FILE the stage's only source. Subtitles that are found but cannot be read are an error.
+`--subtitle FILE` makes FILE the stage's only source. Subtitles that are found but cannot be read are an error; cues
+with times that cannot be read are skipped with a warning. Subtitles are read afresh on every run.
 
 ### `screenshots`
 
@@ -145,10 +146,10 @@ Reads `media` and writes `images`: a screenshot each time the picture changes. A
 
 ### `document`
 
-Reads a `transcript` and, optionally, `images`, and writes a `document`: the transcript's lines grouped under the
-screenshot that was on screen and joined into paragraphs, with word spacing that follows each writing system. Lines
-that carry different extra fields, such as a speaker added by a `run` stage, start a new paragraph. It has no
-settings.
+Reads a `transcript` and, optionally, `images`, and writes a `document`: each transcript line, whole, under the
+screenshot that was on screen at its midpoint, and the lines joined into paragraphs, with word spacing that follows each
+writing system. Lines that carry different extra fields, such as a speaker added by a `run` stage, start a new
+paragraph. It has no settings.
 
 ### `llm`
 
@@ -172,10 +173,12 @@ Reads one file and sends it to a model with a prompt. The end of `output` decide
 notepipe adds instructions for the answer's format to the prompt, and sets `model`, `messages`, `stream` and
 `response_format` itself; `request` cannot change those. Nothing is sent by default for sampling or length limits.
 
-A stage that fails stops the run, and nothing is published: requests that still fail after retries, an answer that is
-not in the expected format or was cut off at the model's output limit, and an answer that would remove every paragraph.
-A paragraph answer whose text holds control characters, which is what JSON mode makes of a backslash the model did not
-escape, is retried like a failed request. An empty answer for one paragraph removes that paragraph.
+A request is tried at most three times. A failed connection, a `429` or `5xx` answer and an answer that is not in the
+expected format are tried again; a paragraph answer whose text holds control characters, which is what JSON mode makes
+of a backslash the model did not escape, counts as not in the expected format. Other client errors, and an answer cut
+off at the model's output limit or stopped by its content filter, fail at once. A stage that fails stops the run,
+nothing is published, and the error names the stage, the part of the recording and what the service said. An empty
+answer for one paragraph removes that paragraph; a stage that removes every paragraph warns and goes on.
 
 The default file holds two `llm` stages:
 
@@ -187,8 +190,8 @@ The default file holds two `llm` stages:
 ### `markdown`
 
 Reads one or more `document` and `markdown` files and writes `markdown`: each input in the order of `input`, separated by a blank
-line. A document becomes its screenshots, as `![](<images/0001.jpg>)`, each followed by the paragraphs spoken while it
-was on screen. Nothing else is added: no front matter, title or headings. To lay the note out differently, write the
+line. A document becomes its screenshots, as `![](<images/0001.jpg>)`, each followed by the paragraphs placed under
+it. Nothing else is added: no front matter, title or headings. To lay the note out differently, write the
 Markdown with an `llm` stage or a `run` stage instead.
 
 ### `run`

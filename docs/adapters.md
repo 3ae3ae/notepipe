@@ -43,12 +43,14 @@ concurrency = 1
 provider = "llama"
 ```
 
-When a stage uses a provider that has a `command`, notepipe:
+When a stage sends a request that is not in the cache to a provider that has a `command`, notepipe:
 
 1. starts `command` with `--host 127.0.0.1 --port <free port>` added at the end;
 2. waits until `GET /health` answers `200` (up to 30 minutes, because a first run may download a model);
 3. sends the stage's requests to `http://127.0.0.1:<port>/v1`;
 4. stops the program and its child processes after the last stage that uses it, or when the run fails or is cancelled.
+
+A rerun answered entirely from the cache starts no program.
 
 All stages that use the same provider share that one process and its `concurrency`. Responses are cached by
 the command and the request, so a later run reuses them even though the port changes. Local engines usually
@@ -71,9 +73,11 @@ A provider program accepts these arguments and serves the API that its stages ca
 Arguments before them are the program's own; users write them in `command`.
 
 `GET /health` returns `200` once the program can answer; before that, return `503` or refuse connections. If the
-process exits, notepipe reports its last output lines.
+process exits while the run uses it, the run stops with its exit status and its last output lines.
 
-On failure respond with a non-2xx status and `{"error": {"message": "…"}}`. When the provider has a key, requests carry
+Answer every request within 600 seconds; notepipe abandons it after that and tries again. On failure respond with a
+non-2xx status and `{"error": {"message": "…"}}`; notepipe shows the message on one line, at most 300 characters, with
+the provider's key replaced, and never stores it. When the provider has a key, requests carry
 `Authorization: Bearer <key>`; a program may check it or forward it.
 
 ## Requests that stages send
@@ -91,10 +95,11 @@ compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as a
 | `language` | no | the transcript stage's `language` as written in the configuration (for example `ko`); not sent for `auto` |
 | `file` | yes | one speech segment: WAV, 16 kHz, mono, 16-bit PCM, about `max_segment` seconds or less (20 by default) plus up to half a second of padding; always the last part |
 
-Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. Return clean text: model-specific
-markers or formatting are the program's job to remove. A transcript cut off at the model's output limit is not a result:
-answer `422` with `{"error": {"code": "output_limit", "message": "…"}}`, which notepipe does not retry and
-reports as the model stopping at its output limit.
+Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. An optional `"warning": "…"` is shown
+next to the segment's time, for example when the program had to decode the segment differently. Return clean text:
+model-specific markers or formatting are the program's job to remove. A transcript cut off at the model's output limit
+is not a result: answer `422` with `{"error": {"code": "output_limit", "message": "…"}}`, which notepipe does not retry
+and reports as the model stopping at its output limit.
 
 ### Chat API
 
@@ -124,11 +129,14 @@ The input, and the answer notepipe expects in `content`:
 {"choices": [{"message": {"content": "…"}}], "usage": {"prompt_tokens": 120, "completion_tokens": 40}}
 ```
 
-`usage` is optional; when present, notepipe reports the counts. `429` and `5xx` responses are retried with backoff, and
-so is a `.json` answer whose text holds control characters other than line breaks.
+`usage` is optional; when present, notepipe counts it, also for answers it rejects. A request is tried at most three
+times with backoff: failed connections, `429` and `5xx` responses, and answers that are not in the expected format,
+including a `.json` answer whose text holds control characters other than line breaks, are tried again. An answer whose
+`finish_reason` is `length` or `content_filter` fails at once.
 
 A program may ignore `response_format`, because the system message asks for JSON as well. If it rejects the field
-instead, it should answer `400` with a message that mentions `response_format`; notepipe then retries without it.
+instead, it should answer `400` with a message that mentions `response_format`; notepipe then sends it again without the
+field, within the same three attempts.
 
 ### Examples
 
@@ -283,7 +291,8 @@ Standard output carries JSON objects, one per line, each at most 1 MiB. Optional
 }
 ```
 
-Only `media` is required. Paths are relative to `DIR` and must stay inside it. Subtitles must be SRT or VTT; `automatic`
+Only `media` is required. Paths are relative to `DIR` and must stay inside it, and no file there may be named
+`info.json`, which notepipe writes itself. Subtitles must be SRT or VTT; `automatic`
 marks machine-generated captions. `seek_url`, if present, is a URL template in which `{t}` is replaced by whole seconds to
 open the item at a given time. Both URLs go into the document's `meta`; notepipe's own layout adds no links, but your
 prompts and programs can.

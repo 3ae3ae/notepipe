@@ -6,6 +6,49 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Changed
+
+- A request is tried at most three times, by one rule for speech and chat: failed connections, `429` and `5xx`
+  responses, and answers that are not in the expected format are tried again; other client errors, the output limit and
+  a content filter stop at once. Every request has 600 seconds; speech used to have 120 and chat 300.
+- A failure names the part of the recording, such as `Speech recognition failed at 12:03–12:21` or `paragraphs at
+  04:10–07:55`, and adds the service's own error message on one line, with the provider's key replaced. The message is
+  shown and never stored. Retries are reported as warnings.
+- Empty speech is silence: the transcript stage no longer stops after ten empty answers, and reports how many segments
+  returned no text. A stage that removes every paragraph warns and goes on instead of failing, which also ends reruns
+  that failed the same way from the cache.
+- A provider program starts only when a request is not in the cache, so a rerun answered from the cache starts no
+  engine.
+- A transcript line is no longer split where the screenshot changes; it goes whole to the screenshot shown at its
+  midpoint. Repeated subtitle cues are kept, and the lines of a cue are joined with the same spacing as paragraphs.
+- The `--json` `error` event carries the warnings collected before the failure, and human output prints them too.
+
+### Fixed
+
+- Subtitle cleanup removed any text in angle brackets, so `vector<int>` or `x<y and z>w` lost text; it now removes only
+  cue markup. Numeric character references, `&apos;`, `&lrm;` and `&rlm;` are decoded, `&nbsp;` becomes a no-break
+  space, files with CR line endings are read, cues with unreadable times are reported, and subtitles are read afresh on
+  every run.
+- Merged paragraphs keep the latest end time, the original text of every line and the spaces between fragments, and
+  Markdown keeps the indentation of its first line.
+- A screenshot shows the frame that triggered it rather than the one before; earlier screenshots are taken again.
+- A resumed transcription sent some finished segments again, because their times changed in the checkpoint's JSON.
+- Tokens of answers that were rejected and asked again are counted.
+- A provider program that exits during the run stops it with its exit status and last output; a program writing
+  output that is not UTF-8 no longer fails; and notepipe no longer waits on pipes held by a descendant after a program
+  ends or the run is cancelled.
+- A duration that cannot be read is unknown (`null`) with a warning, instead of 0.
+- Command-line options replace a configured value that fails validation; publishing a folder to standard output is
+  rejected before any work; and names the file system treats as one file are an error instead of overwriting each
+  other.
+- The download program's canonical `url` is kept in the document's `meta`; a file it returns named `info.json`, and
+  transcript fields named `schema`, `meta` or `sections`, are errors instead of breaking the run.
+- `notepipe doctor` reports a program path that cannot be executed.
+- The llama.cpp adapter (`notepipe-asr-llama` 0.1.5) fits all its decodes of a segment into 570 seconds, answers `504`
+  when they run out, and says in a `warning` when a fallback decoding produced the text. The speech-swift adapter
+  (`notepipe-asr-speech-swift` 0.1.3) answers `output_limit` when decoding stops early, instead of returning the
+  shortened text as complete.
+
 ## [0.4.6] - 2026-10-28
 
 ### Fixed

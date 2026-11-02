@@ -32,4 +32,6 @@ to the model as a hint.
 Each segment may produce 40 tokens plus 25 per second of audio, several times what speech needs. On some short
 segments Qwen3-ASR repeats one word under greedy decoding until it reaches that cap; the adapter then decodes the
 segment again with a repetition penalty, and then with sampling at temperature 0.4. Only when all three reach the cap
-does it report `output_limit`.
+does it report `output_limit`. All decodes of one segment share 570 seconds, inside the 600 seconds notepipe gives a
+request, and the adapter answers `504` when they run out. When a fallback decoding produced the text, the answer carries
+a `warning` that says so, which notepipe shows next to the segment's time.
