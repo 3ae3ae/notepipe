@@ -75,7 +75,7 @@ impl Transcript {
         Ok(transcript)
     }
 }
-fn selected_transcript(path: &Path) -> Result<(String, Vec<timeline::TranscriptEvent>)> {
+fn selected_transcript(path: &Path) -> Result<(String, subtitle::ParsedSubtitle)> {
     let key = runtime::file_digest(path)?;
     let events = subtitle::parse_subtitle(&subtitle::read_subtitle_text(path)?);
     Ok((key, events))
@@ -139,7 +139,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
     }
     if let Some(path) = &cfg.subtitle {
-        subtitle::validate_events(&selected_transcript(path)?.1)?;
+        subtitle::validate_events(&selected_transcript(path)?.1.events)?;
     }
     let mut warnings = if cfg.stages.iter().any(|(name, s)| {
         (!cfg.skip.contains(name) || s.llm_writes_document())
@@ -369,7 +369,8 @@ impl Run {
             match &stage.kind {
                 StageType::Download(_) => self.download(name, &target).await?,
                 StageType::Transcript(t) => {
-                    self.transcript(name, stage, t, &inputs[0], &target).await?
+                    self.transcript(name, stage, t, &inputs[0], &target, &mut warnings)
+                        .await?
                 }
                 StageType::Screenshots(_) => {
                     warnings = self.screenshots(name, stage, &inputs[0], &target).await?
@@ -619,7 +620,7 @@ impl Run {
                 StageType::Transcript(t) => {
                     let selected = self.subtitle(info, files, t)?.filter(|(path, _)| {
                         selected_transcript(path)
-                            .is_ok_and(|(_, events)| timeline::has_readable_events(&events))
+                            .is_ok_and(|(_, parsed)| timeline::has_readable_events(&parsed.events))
                     });
                     let subtitles_first = self.cfg.subtitle.is_some()
                         || t.sources.first().is_some_and(|s| s == "subtitles");
@@ -693,6 +694,7 @@ impl Run {
         t: &settings::Transcript,
         input: &Path,
         target: &Path,
+        warnings: &mut Vec<String>,
     ) -> Result<()> {
         let info = source::Output::info(input)?;
         let selected = if self.cfg.subtitle.is_some() {
@@ -723,7 +725,11 @@ impl Run {
                 let Some((path, language)) = &selected else {
                     continue;
                 };
-                let (key, events) = selected_transcript(path)?;
+                let (key, parsed) = selected_transcript(path)?;
+                if let Some(warning) = parsed.warning(path) {
+                    warnings.push(warning);
+                }
+                let events = parsed.events;
                 if !timeline::has_readable_events(&events) && self.cfg.subtitle.is_none() {
                     continue;
                 }
