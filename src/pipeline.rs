@@ -88,16 +88,22 @@ struct Provider {
     users: tokio::sync::Mutex<usize>,
 }
 impl Provider {
-    async fn finished(&self) {
+    async fn finished(&self) -> Result<()> {
         let mut users = self.users.lock().await;
+        let result = self
+            .process
+            .as_ref()
+            .map_or(Ok(()), |process| process.check());
         *users -= 1;
         if *users == 0
             && let Some(process) = &self.process
         {
             process.stop();
         }
+        result
     }
 }
+
 struct Run {
     cfg: PipelineConfig,
     work: PathBuf,
@@ -237,7 +243,7 @@ async fn execute(
                     let (name, stage) = pending.remove(index);
                     let run = run.clone();
                     jobs.spawn(async move {
-                        let result = if skipped && !passthrough {
+                        let mut result = if skipped && !passthrough {
                             Ok(Vec::new())
                         } else {
                             run.stage(&name, &stage, passthrough).await
@@ -247,7 +253,9 @@ async fn execute(
                                 && matches!(stage.kind, StageType::Transcript(_)))
                             && let Some(provider) = stage.used_provider()
                         {
-                            run.providers[provider].finished().await;
+                            if let Err(error) = run.providers[provider].finished().await {
+                                result = Err(error);
+                            }
                         }
                         (stage.output, result)
                     });
@@ -258,7 +266,7 @@ async fn execute(
         }
         let result = tokio::select! {
             result = jobs.join_next() => result,
-            error = runtime::watch_cancelled(), if failure.is_none() => {
+            error = run.watch_providers(), if failure.is_none() => {
                 failure = Some(error);
                 jobs.abort_all();
                 continue;
@@ -316,6 +324,21 @@ async fn execute(
     Ok((note, files, stdout))
 }
 impl Run {
+    async fn watch_providers(&self) -> anyhow::Error {
+        loop {
+            if let Err(error) = runtime::check_cancelled() {
+                return error;
+            }
+            for provider in self.providers.values() {
+                if let Some(process) = &provider.process
+                    && let Err(error) = process.check()
+                {
+                    return error;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
     fn cache_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
         runtime::lock_recover(&self.cache_locks)
             .entry(key.into())

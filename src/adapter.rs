@@ -46,9 +46,22 @@ impl Provider {
         let mut adapter = crate::runtime::lock_recover(&self.adapter);
         control()?;
         if adapter.is_none() {
-            *adapter = Some(Adapter::start_with_control(&self.argv, stage, control)?);
+            *adapter = Some(Adapter::start_with_control(
+                &self.argv, &self.name, stage, control,
+            )?);
         }
         Ok(format!("{}/v1", adapter.as_ref().unwrap().base))
+    }
+
+    pub fn check(&self) -> Result<()> {
+        // Startup holds the lock while polling health; it already watches the child.
+        if let Ok(mut adapter) = self.adapter.try_lock()
+            && let Some(adapter) = adapter.as_mut()
+            && let Some(status) = adapter.child.try_wait()
+        {
+            return Err(adapter.exit_error(&self.name, status));
+        }
+        Ok(())
     }
 
     pub fn stop(&self) {
@@ -75,6 +88,7 @@ fn resolve_from(program: &str, directory: &Path) -> Result<PathBuf> {
 impl Adapter {
     pub(crate) fn start_with_control(
         argv: &[String],
+        name: &str,
         stage: &str,
         control: &dyn Fn() -> Result<()>,
     ) -> Result<Self> {
@@ -114,15 +128,36 @@ impl Adapter {
             &mut adapter.child,
             Some(control),
         ) {
+            let status = adapter.child.try_wait();
             adapter.stop();
-            if error.downcast_ref::<crate::dispatch::Failure>().is_some() {
+            if error.downcast_ref::<crate::dispatch::Failure>().is_some()
+                || error.downcast_ref::<crate::runtime::Cancelled>().is_some()
+            {
                 return Err(error);
+            }
+            if let Some(status) = status {
+                return Err(adapter.exit_error(name, status));
             }
             return Err(adapter.stderr.attach(error, "Could not start the adapter"));
         }
         tracing::info!(secs = started.elapsed().as_secs_f64(), "Adapter ready");
         crate::progress::stage_label(&format!("{stage}/provider"), "done", "Starting adapter");
         Ok(adapter)
+    }
+
+    fn exit_error(&mut self, name: &str, status: std::process::ExitStatus) -> anyhow::Error {
+        self.stop();
+        let code = status
+            .code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| status.to_string());
+        let message = format!("Provider {name} exited with status {code}");
+        let tail = self.stderr.tail();
+        anyhow::anyhow!(if tail.is_empty() {
+            message
+        } else {
+            format!("{message}\n{tail}")
+        })
     }
 
     pub(crate) fn stop(&mut self) {
@@ -177,9 +212,13 @@ mod tests {
         let Some(argv) = argv(dir.path(), "healthy") else {
             return;
         };
-        let adapter =
-            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
-                .unwrap();
+        let adapter = Adapter::start_with_control(
+            &argv,
+            "fixture",
+            "transcript",
+            &crate::runtime::check_cancelled,
+        )
+        .unwrap();
         assert!(
             std::fs::read_to_string(dir.path().join("health-checks"))
                 .unwrap()
@@ -202,11 +241,19 @@ mod tests {
         let Some(argv) = argv(dir.path(), "exit") else {
             return;
         };
-        let error =
-            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
-                .err()
-                .unwrap();
+        let error = Adapter::start_with_control(
+            &argv,
+            "fixture",
+            "transcript",
+            &crate::runtime::check_cancelled,
+        )
+        .err()
+        .unwrap();
         let error = format!("{error:#}");
+        assert!(
+            error.starts_with("Provider fixture exited with status 3"),
+            "{error}"
+        );
         assert!(error.contains("adapter stderr"), "{error}");
         assert!(error.contains("adapter stdout"), "{error}");
     }
@@ -219,7 +266,7 @@ mod tests {
         };
         let polls = std::cell::Cell::new(0);
         let start = Instant::now();
-        let result = Adapter::start_with_control(&argv, "transcript", &|| {
+        let result = Adapter::start_with_control(&argv, "fixture", "transcript", &|| {
             polls.set(polls.get() + 1);
             // Cancel only once the fixture has installed its SIGTERM handler, which it announces with its pid.
             anyhow::ensure!(
@@ -258,9 +305,13 @@ mod tests {
         let Some(argv) = argv(dir.path(), "stubborn") else {
             return;
         };
-        let adapter =
-            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
-                .unwrap();
+        let adapter = Adapter::start_with_control(
+            &argv,
+            "fixture",
+            "transcript",
+            &crate::runtime::check_cancelled,
+        )
+        .unwrap();
         let pid = adapter.child.id();
         let child: i32 = std::fs::read_to_string(dir.path().join("child-pid"))
             .unwrap()
@@ -295,9 +346,13 @@ mod tests {
         let Some(argv) = argv(dir.path(), "launcher") else {
             return;
         };
-        let mut adapter =
-            Adapter::start_with_control(&argv, "transcript", &crate::runtime::check_cancelled)
-                .unwrap();
+        let mut adapter = Adapter::start_with_control(
+            &argv,
+            "fixture",
+            "transcript",
+            &crate::runtime::check_cancelled,
+        )
+        .unwrap();
         let pid = std::fs::read_to_string(dir.path().join("child-pid"))
             .unwrap()
             .parse()
