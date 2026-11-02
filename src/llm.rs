@@ -199,7 +199,12 @@ pub fn paragraphs(
             }
         });
         let items: Vec<&str> = chunk.iter().map(|event| event.text.as_str()).collect();
-        let results = chat(&agent, s, stage, &items, image.as_deref())?;
+        let detail = format!(
+            "paragraphs at {}–{}",
+            crate::render::fmt_ts(chunk.first().unwrap().start),
+            crate::render::fmt_ts(chunk.last().unwrap().end)
+        );
+        let results = chat(&agent, s, stage, &items, image.as_deref(), &detail)?;
         apply_results(&mut chunk, &results);
         Ok(())
     })?;
@@ -240,9 +245,10 @@ fn chat(
     stage: &Stage,
     items: &[&str],
     image: Option<&str>,
+    detail: &str,
 ) -> Result<Vec<(usize, String)>> {
     let body = build_chat_body(settings, stage, items, image)?;
-    let content = send_chat(agent, settings, &body, &stage.name, &|content| {
+    let content = send_chat(agent, settings, &body, &stage.name, detail, &|content| {
         let parsed = parse_segments(content).context("Invalid paragraphs response")?;
         anyhow::ensure!(
             segment_ids_match(&parsed, items.len()),
@@ -352,9 +358,10 @@ pub(crate) fn send_chat(
     s: &LlmSettings,
     body: &Value,
     stage: &str,
+    detail: &str,
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> Result<String> {
-    let item = format!("Stage {stage}");
+    let item = crate::dispatch::Item::stage(stage, detail);
     let mut request_body = body.clone();
     let response = crate::dispatch::request(&item, &|| s.check_cancelled(), || {
         let response = request_chat_once(agent, s, &request_body, validate);
@@ -405,6 +412,7 @@ fn request_chat_once(
     crate::dispatch::cached_json_request(
         &s.cache_identity(),
         body,
+        &s.api_key,
         || {
             let _permit = s
                 .acquire_permit()
@@ -423,6 +431,7 @@ fn request_chat_once(
                 &|| s.check_cancelled(),
                 request,
                 serde_json::to_vec(body).map_err(crate::dispatch::Failure::local)?,
+                &s.api_key,
             )
         },
         |value| {
@@ -551,7 +560,15 @@ mod tests {
             for url in [&first.url, &second.url] {
                 settings.base_url.clone_from(url);
                 assert_eq!(
-                    send_chat(&chat_agent(), &settings, &body, "proofread", &|_| Ok(())).unwrap(),
+                    send_chat(
+                        &chat_agent(),
+                        &settings,
+                        &body,
+                        "proofread",
+                        "",
+                        &|_| Ok(())
+                    )
+                    .unwrap(),
                     "Cached response."
                 );
             }
@@ -596,18 +613,22 @@ mod tests {
                 Ok(())
             };
             let agent = chat_agent();
-            let error = send_chat(&agent, &settings, &body, "proofread", &validate).unwrap_err();
+            let error =
+                send_chat(&agent, &settings, &body, "proofread", "", &validate).unwrap_err();
             let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
             assert!(!failure.retryable);
             assert!(!failure.unsupported_response_format);
-            assert_eq!(error.to_string(), "the model stopped at its output limit");
+            assert_eq!(
+                error.to_string(),
+                "Stage proofread failed: the model stopped at its output limit"
+            );
             assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
             assert_eq!(validations.get(), 0);
             assert!(!root.path().join("llm").exists());
 
-            let response = send_chat(&agent, &settings, &body, "proofread", &validate).unwrap();
+            let response = send_chat(&agent, &settings, &body, "proofread", "", &validate).unwrap();
             assert_eq!(response, content);
-            let cached = send_chat(&agent, &settings, &body, "proofread", &validate).unwrap();
+            let cached = send_chat(&agent, &settings, &body, "proofread", "", &validate).unwrap();
             assert_eq!(cached, content);
             assert_eq!(mock.calls.load(Ordering::SeqCst), 2);
             assert_eq!(validations.get(), 2);

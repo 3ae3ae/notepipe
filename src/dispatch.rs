@@ -23,8 +23,45 @@ pub fn http_agent() -> ureq::Agent {
         .build()
 }
 
+pub struct Item {
+    pub label: String,
+    pub failure: String,
+}
+impl Item {
+    pub fn speech(start: f64, end: f64) -> Self {
+        let range = format!(
+            "{}–{}",
+            crate::render::fmt_ts(start),
+            crate::render::fmt_ts(end)
+        );
+        Self {
+            label: format!("Speech at {range}"),
+            failure: format!("Speech recognition failed at {range}"),
+        }
+    }
+
+    pub fn stage(name: &str, detail: &str) -> Self {
+        Self {
+            label: format!(
+                "Stage {name}{}{detail}",
+                if detail.is_empty() { "" } else { ", " }
+            ),
+            failure: format!(
+                "Stage {name} failed{}{detail}",
+                if detail.is_empty() {
+                    ""
+                } else if detail.starts_with("while ") {
+                    " "
+                } else {
+                    " for "
+                }
+            ),
+        }
+    }
+}
+
 pub fn request<T>(
-    item: &str,
+    item: &Item,
     control: &dyn Fn() -> Result<()>,
     mut attempt_once: impl FnMut() -> std::result::Result<T, Failure>,
 ) -> std::result::Result<T, Failure> {
@@ -38,7 +75,7 @@ pub fn request<T>(
                     let wait = runtime::retry_backoff(attempt);
                     warn(format!(
                         "{}: attempt {attempt} of 3 failed: {}; retrying in {:.1} s",
-                        item,
+                        item.label,
                         error.message,
                         wait.as_secs_f64()
                     ));
@@ -58,7 +95,29 @@ pub fn request<T>(
         }
         unreachable!()
     };
-    run()
+    run().map_err(|mut error| {
+        error.message = format!("{}: {}", item.failure, error.message);
+        error
+    })
+}
+
+/// Provider diagnostics are displayed only, with credentials removed before normalization or truncation.
+pub fn diagnostic(message: &str, key: &str) -> String {
+    let message = if key.is_empty() {
+        message.to_owned()
+    } else {
+        message.replace(key, "[key]")
+    };
+    let message: String = message
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let message = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if message.chars().count() > 300 {
+        format!("{}…", message.chars().take(299).collect::<String>())
+    } else {
+        message
+    }
 }
 
 #[derive(Debug)]
@@ -89,16 +148,19 @@ impl Failure {
         }
     }
 }
-fn classify_rejection(status: u16, body: &[u8]) -> Failure {
+fn classify_rejection(status: u16, body: &[u8], key: &str) -> Failure {
+    let output_limit = rejects_output_limit(body);
+    let mut message = rejection_message(status);
+    if let Some(text) = serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value["error"]["message"].as_str().map(str::to_owned))
+    {
+        message.push_str(&format!(" The service said: {}", diagnostic(&text, key)));
+    }
     Failure {
-        retryable: !rejects_output_limit(body) && (status == 429 || (500..=599).contains(&status)),
-        unsupported_response_format: !rejects_output_limit(body)
-            && rejects_response_format(status, body),
-        message: if rejects_output_limit(body) {
-            "The model stopped at its output limit.".into()
-        } else {
-            rejection_message(status)
-        },
+        retryable: !output_limit && (status == 429 || (500..=599).contains(&status)),
+        unsupported_response_format: !output_limit && rejects_response_format(status, body),
+        message,
     }
 }
 
@@ -197,12 +259,13 @@ pub(crate) fn cache_validated_response(endpoint: &str, body: &Value, value: &Val
 pub fn cached_json_request(
     endpoint: &str,
     body: &Value,
+    api_key: &str,
     send: impl FnOnce() -> std::result::Result<HttpResponse, Failure>,
     validate: impl Fn(&Value) -> Result<()>,
 ) -> std::result::Result<Value, Failure> {
     let cache = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None))).clone();
     let Some(cache) = cache else {
-        return json_request(send, validate);
+        return json_request(api_key, send, validate);
     };
     let key = runtime::digest(format!("{endpoint}\n{body}").as_bytes());
     let lock = runtime::lock_recover(&cache.locks)
@@ -229,7 +292,7 @@ pub fn cached_json_request(
             return Ok(value);
         }
     }
-    let value = json_request(send, validate)?;
+    let value = json_request(api_key, send, validate)?;
     runtime::check_cancelled().map_err(Failure::local)?;
     atomic_write(&path, &serde_json::to_vec(&value).map_err(Failure::local)?)
         .map_err(Failure::local)?;
@@ -237,6 +300,7 @@ pub fn cached_json_request(
 }
 
 pub fn json_request(
+    key: &str,
     send: impl FnOnce() -> std::result::Result<HttpResponse, Failure>,
     validate: impl FnOnce(&Value) -> Result<()>,
 ) -> std::result::Result<Value, Failure> {
@@ -244,7 +308,7 @@ pub fn json_request(
     let response = send()?;
     runtime::check_cancelled().map_err(Failure::local)?;
     if !(200..300).contains(&response.status) {
-        return Err(classify_rejection(response.status, &response.body));
+        return Err(classify_rejection(response.status, &response.body, key));
     }
     let value: Value = serde_json::from_slice(&response.body)
         .map_err(|_| Failure::new(true, "The service response is not valid JSON"))?;
@@ -274,41 +338,80 @@ pub fn send_http(
     control: &dyn Fn() -> Result<()>,
     request: ureq::Request,
     body: Vec<u8>,
+    key: &str,
 ) -> std::result::Result<HttpResponse, Failure> {
-    send_with_timeout(control, request, body, HTTP_TIMEOUT)
+    send_with_timeout(control, request, body, key, HTTP_TIMEOUT)
 }
 
 fn send_with_timeout(
     control: &dyn Fn() -> Result<()>,
     request: ureq::Request,
     body: Vec<u8>,
+    key: &str,
     timeout: Duration,
 ) -> std::result::Result<HttpResponse, Failure> {
     let started = Instant::now();
+    let url = request.url().to_owned();
+    let (worker_url, key) = (url.clone(), key.to_owned());
     runtime::interruptible_http(
         &|| {
             control()?;
             if started.elapsed() >= timeout {
-                return Err(Failure::new(true, "Could not complete the service connection").into());
+                return Err(
+                    Failure::new(true, connection_message(&url, "no answer within 600 s")).into(),
+                );
             }
             Ok(())
         },
-        move || receive(request.timeout(timeout).send_bytes(&body)),
+        move || {
+            receive(
+                request.timeout(timeout).send_bytes(&body),
+                &worker_url,
+                &key,
+            )
+        },
     )
     .map_err(|error| error.downcast::<Failure>().unwrap_or_else(Failure::local))?
+}
+
+fn connection_message(url: &str, kind: &str) -> String {
+    let url = url::Url::parse(url).expect("HTTP request URL was validated");
+    format!(
+        "could not reach {}:{}: {kind}",
+        url.host_str().unwrap_or_default(),
+        url.port_or_known_default().unwrap_or(0)
+    )
+}
+
+fn io_kind(error: &(dyn std::error::Error + 'static)) -> Option<std::io::ErrorKind> {
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        return Some(error.kind());
+    }
+    error.source().and_then(io_kind)
 }
 
 /// Provider error bodies are classified before validation and never persisted.
 pub fn receive(
     result: std::result::Result<ureq::Response, ureq::Error>,
+    url: &str,
+    key: &str,
 ) -> std::result::Result<HttpResponse, Failure> {
     use std::io::Read;
     let response = match result {
         Ok(response) | Err(ureq::Error::Status(_, response)) => response,
-        Err(ureq::Error::Transport(_error)) => {
+        Err(ureq::Error::Transport(error)) => {
+            let short = error.kind().to_string();
+            let kind = match (error.kind(), io_kind(&error)) {
+                (_, Some(std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock)) => {
+                    "no answer within 600 s"
+                }
+                (_, Some(std::io::ErrorKind::ConnectionRefused)) => "connection refused",
+                (ureq::ErrorKind::Dns, _) => "name not resolved",
+                _ => error.message().unwrap_or(&short),
+            };
             return Err(Failure::new(
                 true,
-                "Could not complete the service connection",
+                connection_message(url, &diagnostic(kind, key)),
             ));
         }
     };
@@ -318,7 +421,15 @@ pub fn receive(
         .into_reader()
         .take(MAX_RESPONSE_BYTES + 1)
         .read_to_end(&mut body)
-        .map_err(|_| Failure::new(true, "Service response was interrupted"))?;
+        .map_err(|error| {
+            let kind = match error.kind() {
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+                    "no answer within 600 s".into()
+                }
+                _ => diagnostic(&error.to_string(), key),
+            };
+            Failure::new(true, connection_message(url, &kind))
+        })?;
     if body.len() as u64 > MAX_RESPONSE_BYTES {
         return Err(Failure::local(
             "Service response exceeds the receiving limit",
@@ -330,6 +441,43 @@ pub fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn provider_diagnostics_are_redacted_normalized_and_bounded_without_being_cached() {
+        let _serial = runtime::lock_recover(&TEST_LOCK);
+        let root = tempfile::tempdir().unwrap();
+        let cache = install(root.path()).unwrap();
+        let message = format!("key-123\n\tkey-123\0 {}", "界".repeat(400));
+        let diagnostic = diagnostic(&message, "key-123");
+        assert!(diagnostic.starts_with("[key] [key] "));
+        assert_eq!(diagnostic.chars().count(), 300);
+        assert!(diagnostic.ends_with('…'));
+        let error = request(&Item::stage("test", ""), &|| Ok(()), || {
+            cached_json_request(
+                "http://localhost",
+                &serde_json::json!({}),
+                "key-123",
+                || {
+                    Ok(response(
+                        401,
+                        serde_json::json!({"error":{"message":message}}),
+                    ))
+                },
+                valid,
+            )
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.message,
+            format!(
+                "Stage test failed: {} The service said: {diagnostic}",
+                rejection_message(401)
+            )
+        );
+        assert!(!error.retryable);
+        assert!(std::fs::read_dir(root.path()).unwrap().next().is_none());
+        assert!(cache.take_warnings().is_empty());
+    }
+
     #[test]
     fn http_attempt_deadline_bounds_blocked_dns_and_receiving_the_body() {
         use std::{
@@ -381,6 +529,7 @@ mod tests {
                 &|| Ok(()),
                 agent.post(&url),
                 Vec::new(),
+                "",
                 Duration::from_millis(100),
             )
             .err()
@@ -388,7 +537,13 @@ mod tests {
             ready.recv_timeout(Duration::from_secs(5)).unwrap();
             assert!(start.elapsed() < Duration::from_secs(1));
             assert!(error.retryable);
-            assert_eq!(error.message, "Could not complete the service connection");
+            assert_eq!(
+                error.message,
+                format!(
+                    "could not reach localhost:{}: no answer within 600 s",
+                    address.port()
+                )
+            );
             release.send(()).unwrap();
             done.recv_timeout(Duration::from_secs(5)).unwrap();
         }
@@ -401,9 +556,10 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let cache = install(root.path()).unwrap();
             let mut attempts = 0;
-            let value = request("Speech", &|| Ok(()), || {
+            let value = request(&Item::speech(61., 62.), &|| Ok(()), || {
                 attempts += 1;
                 json_request(
+                    "",
                     || {
                         Ok(if attempts == 1 {
                             HttpResponse {
@@ -422,7 +578,7 @@ mod tests {
             assert_eq!(attempts, 2);
             let warnings = cache.take_warnings();
             assert_eq!(warnings.len(), 1);
-            assert!(warnings[0].starts_with("Speech: attempt 1 of 3 failed: "));
+            assert!(warnings[0].starts_with("Speech at 01:01–01:02: attempt 1 of 3 failed: "));
         }
     }
 
@@ -442,7 +598,7 @@ mod tests {
             let mut attempts = 0;
             let start = Instant::now();
             let error = request(
-                "Stage cancelled",
+                &Item::stage("cancelled", ""),
                 &|| {
                     if cancelled.load(Ordering::Relaxed) {
                         return Err(runtime::Cancelled.into());
@@ -456,7 +612,7 @@ mod tests {
                 },
             )
             .unwrap_err();
-            assert_eq!(error.message, "Cancelled");
+            assert_eq!(error.message, "Stage cancelled failed: Cancelled");
             assert!(!error.retryable);
             assert_eq!(attempts, 1);
             assert!(start.elapsed() < Duration::from_secs(1));
@@ -479,7 +635,8 @@ mod tests {
                 "the model stopped at its output limit",
             ),
         ] {
-            let error = json_request(|| Ok(response(200, value)), check_finish_reason).unwrap_err();
+            let error =
+                json_request("", || Ok(response(200, value)), check_finish_reason).unwrap_err();
             assert!(!error.retryable);
             assert_eq!(error.message, reason);
         }
@@ -491,8 +648,12 @@ mod tests {
             let error = classify_rejection(
                 status,
                 br#"{"error":{"code":"output_limit","message":"x"}}"#,
+                "",
             );
-            assert_eq!(error.message, "The model stopped at its output limit.");
+            assert_eq!(
+                error.message,
+                format!("{} The service said: x", rejection_message(status))
+            );
             assert!(!error.retryable);
             assert!(!error.unsupported_response_format);
         }
@@ -504,10 +665,10 @@ mod tests {
             r#"{"error":{"code":"other","message":"x"}}"#,
             "output_limit",
         ] {
-            let error = classify_rejection(422, body.as_bytes());
-            assert_eq!(
-                error.message,
-                "The service rejected the request parameters (HTTP 422); check the model and service settings for this task."
+            let error = classify_rejection(422, body.as_bytes(), "");
+            assert!(
+                error.message.starts_with(
+                "The service rejected the request parameters (HTTP 422); check the model and service settings for this task.")
             );
             assert!(!error.retryable);
             assert!(!error.unsupported_response_format);
@@ -556,13 +717,20 @@ mod tests {
             Ok(response(200, serde_json::json!({"text":"response"})))
         };
         let url = "https://example.test/v1/chat/completions";
-        let first = cached_json_request(url, &body, send, valid).unwrap();
+        let first = cached_json_request(url, &body, "", send, valid).unwrap();
         assert_ne!(first[CACHED], true);
-        let cached = cached_json_request(url, &body, send, valid).unwrap();
+        let cached = cached_json_request(url, &body, "", send, valid).unwrap();
         assert_eq!(cached[CACHED], true);
         assert_eq!(calls.get(), 1);
-        cached_json_request("https://other.test/v1/chat/completions", &body, send, valid).unwrap();
-        cached_json_request(url, &serde_json::json!({"model":"other"}), send, valid).unwrap();
+        cached_json_request(
+            "https://other.test/v1/chat/completions",
+            &body,
+            "",
+            send,
+            valid,
+        )
+        .unwrap();
+        cached_json_request(url, &serde_json::json!({"model":"other"}), "", send, valid).unwrap();
         assert_eq!(calls.get(), 3);
         let key = runtime::digest(format!("{url}\n{body}").as_bytes());
         let saved: Value = serde_json::from_slice(
@@ -584,6 +752,7 @@ mod tests {
             let error = cached_json_request(
                 "https://example.test",
                 &body,
+                "private-test-key",
                 || {
                     Ok(response(
                         status,
@@ -605,6 +774,7 @@ mod tests {
                 cached_json_request(
                     "https://example.test",
                     &body,
+                    "private-test-key",
                     || Ok(response(200, value)),
                     valid
                 )
@@ -616,6 +786,7 @@ mod tests {
             cached_json_request(
                 "https://example.test",
                 &body,
+                "private-test-key",
                 || Err(Failure::new(true, "timeout")),
                 valid
             )
@@ -625,6 +796,7 @@ mod tests {
         cached_json_request(
             "https://example.test",
             &body,
+            "private-test-key",
             || Ok(response(200, serde_json::json!({"text":"valid"}))),
             valid,
         )
@@ -656,6 +828,7 @@ mod tests {
         let result = cached_json_request(
             &mock.url,
             &serde_json::json!({}),
+            "",
             || {
                 runtime::interruptible_http(
                     &|| {
@@ -665,7 +838,11 @@ mod tests {
                         Ok(())
                     },
                     move || {
-                        let response = receive(request.send_json(serde_json::json!({})));
+                        let response = receive(
+                            request.send_json(serde_json::json!({})),
+                            "http://localhost",
+                            "",
+                        );
                         let _ = received.send(());
                         response
                     },
@@ -686,26 +863,49 @@ mod tests {
     fn receiving_preserves_the_response_cap_and_safe_transport_errors() {
         let oversized = "x".repeat(MAX_RESPONSE_BYTES as usize + 1);
         let response = ureq::Response::new(200, "OK", &oversized).unwrap();
-        let error = receive(Ok(response)).err().unwrap();
+        let error = receive(Ok(response), "http://localhost", "").err().unwrap();
         assert!(!error.retryable);
         assert!(error.to_string().contains("receiving limit"));
-        let error = receive(ureq::get("invalid private-test-key").call())
-            .err()
-            .unwrap();
+        let error = receive(
+            ureq::get("invalid private-test-key").call(),
+            "http://localhost",
+            "private-test-key",
+        )
+        .err()
+        .unwrap();
         assert!(error.retryable);
         assert!(!error.to_string().contains("private-test-key"));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
-        assert!(
-            receive(
-                runtime::http_agent(std::time::Duration::from_secs(1))
-                    .get(&format!("http://{address}"))
-                    .call()
-            )
-            .err()
-            .unwrap()
-            .retryable
+        let error = receive(
+            runtime::http_agent(std::time::Duration::from_secs(1))
+                .get(&format!("http://{address}"))
+                .call(),
+            &format!("http://{address}"),
+            "",
+        )
+        .err()
+        .unwrap();
+        assert!(error.retryable);
+        assert_eq!(
+            error.message,
+            format!("could not reach {address}: connection refused")
+        );
+        let agent = ureq::AgentBuilder::new()
+            .resolver(|_: &str| Err(std::io::Error::from(std::io::ErrorKind::NotFound)))
+            .build();
+        let error = receive(
+            agent.get("http://provider.invalid:1234").call(),
+            "http://provider.invalid:1234",
+            "",
+        )
+        .err()
+        .unwrap();
+        assert!(error.retryable);
+        assert_eq!(
+            error.message,
+            "could not reach provider.invalid:1234: name not resolved"
         );
     }
 }
