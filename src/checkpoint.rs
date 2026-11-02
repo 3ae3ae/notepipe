@@ -1,4 +1,4 @@
-//! ASR checkpoint: each finished chunk is appended to asr.jsonl, and a rerun skips chunks by their exact time bounds.
+//! ASR checkpoint: each finished chunk is appended to asr.jsonl, and a rerun skips chunks by their time bounds.
 //!
 //! Rules:
 //! - **Empty results count**: a chunk recognized as silence is recorded with `text: ""`;
@@ -65,7 +65,7 @@ pub struct Checkpoint {
     events: Vec<TranscriptEvent>,
 }
 
-/// Times as bit patterns for hashing; they come from the same JSON round trip, so equal times have equal bits.
+/// Bit patterns for hashing; lookup also allows JSON parsing's last-bit rounding.
 fn key(start: f64, end: f64) -> (u64, u64) {
     (start.to_bits(), end.to_bits())
 }
@@ -211,7 +211,13 @@ impl Checkpoint {
 
     /// Whether the chunk is done and can be skipped; silent chunks with empty text count as done.
     pub fn is_done(&self, start: f64, end: f64) -> bool {
-        self.done.contains(&key(start, end))
+        let (start, end) = key(start, end);
+        // Allow JSON parsing's last-bit rounding without merging distinct audio samples.
+        self.done.contains(&(start, end))
+            || (start.saturating_sub(2)..=start.saturating_add(2)).any(|start| {
+                (end.saturating_sub(2)..=end.saturating_add(2))
+                    .any(|end| self.done.contains(&(start, end)))
+            })
     }
 
     /// Finished events that have text, both loaded on resume and recorded in this run.
@@ -331,6 +337,31 @@ mod tests {
                 "configuration and credentials are private"
             );
         }
+    }
+
+    #[test]
+    fn fractional_bounds_are_found_after_json_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let bounds = [
+            (0.032, 0.7500000000000001),
+            (0.7500000000000001, 1.6500000000000001),
+            (1.6500000000000001, 2.272),
+            (3600.7500000000005, 3601.6500000000005),
+        ];
+        let mut cp = Checkpoint::open(dir.path()).unwrap();
+        for (index, &(start, end)) in bounds.iter().enumerate() {
+            cp.record(start, end, if index % 2 == 0 { "words" } else { "" })
+                .unwrap();
+            assert!(cp.is_done(start, end));
+        }
+        drop(cp);
+        let cp = Checkpoint::open(dir.path()).unwrap();
+        for (start, end) in bounds {
+            assert!(cp.is_done(start, end), "lost saved segment {start}..{end}");
+            assert!(!cp.is_done(start + 1. / 16000., end));
+            assert!(!cp.is_done(start, end + 1. / 16000.));
+        }
+        assert_eq!(cp.events().len(), 2, "silent chunks still count as done");
     }
 
     #[test]

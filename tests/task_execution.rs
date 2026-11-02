@@ -2770,7 +2770,6 @@ fn lifecycle_cached_chat_and_segment_checkpoints_start_no_provider() {
     let source = video(root.path());
     let record = root.path().join("provider");
     let mut cfg = speech_config(&record, "healthy");
-    cfg["stages"]["transcript"]["speech"]["max_segment"] = json!(30.0);
     cfg["pipeline"]
         .as_array_mut()
         .unwrap()
