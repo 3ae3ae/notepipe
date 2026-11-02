@@ -119,6 +119,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             value = {'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': 'Fixture transcript.'}
             if args.behavior == 'missing-text-first' and first:
                 value = {'text': None}
+            if args.behavior in ('missing-text-first', 'invalid-json-first'):
+                value['usage'] = {'prompt_tokens': 3, 'completion_tokens': 2}
             response = b'not JSON' if args.behavior == 'invalid-json-first' and first else json.dumps(value).encode()
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(response)))

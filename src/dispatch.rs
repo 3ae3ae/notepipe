@@ -260,12 +260,13 @@ pub fn cached_json_request(
     endpoint: &str,
     body: &Value,
     api_key: &str,
+    stage: &str,
     send: impl FnOnce() -> std::result::Result<HttpResponse, Failure>,
     validate: impl Fn(&Value) -> Result<()>,
 ) -> std::result::Result<Value, Failure> {
     let cache = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None))).clone();
     let Some(cache) = cache else {
-        return json_request(api_key, send, validate);
+        return json_request(api_key, stage, send, validate);
     };
     let key = runtime::digest(format!("{endpoint}\n{body}").as_bytes());
     let lock = runtime::lock_recover(&cache.locks)
@@ -292,7 +293,7 @@ pub fn cached_json_request(
             return Ok(value);
         }
     }
-    let value = json_request(api_key, send, validate)?;
+    let value = json_request(api_key, stage, send, validate)?;
     runtime::check_cancelled().map_err(Failure::local)?;
     atomic_write(&path, &serde_json::to_vec(&value).map_err(Failure::local)?)
         .map_err(Failure::local)?;
@@ -301,6 +302,7 @@ pub fn cached_json_request(
 
 pub fn json_request(
     key: &str,
+    stage: &str,
     send: impl FnOnce() -> std::result::Result<HttpResponse, Failure>,
     validate: impl FnOnce(&Value) -> Result<()>,
 ) -> std::result::Result<Value, Failure> {
@@ -312,7 +314,14 @@ pub fn json_request(
     }
     let value: Value = serde_json::from_slice(&response.body)
         .map_err(|_| Failure::new(true, "The service response is not valid JSON"))?;
-
+    if response.status == 200 {
+        let usage = &value["usage"];
+        crate::progress::note_tokens(
+            stage,
+            usage["prompt_tokens"].as_u64().unwrap_or(0),
+            usage["completion_tokens"].as_u64().unwrap_or(0),
+        );
+    }
     validate(&value).map_err(|error| {
         error
             .downcast::<Failure>()
@@ -456,6 +465,7 @@ mod tests {
                 "http://localhost",
                 &serde_json::json!({}),
                 "key-123",
+                "test",
                 || {
                     Ok(response(
                         401,
@@ -560,6 +570,7 @@ mod tests {
                 attempts += 1;
                 json_request(
                     "",
+                    "speech",
                     || {
                         Ok(if attempts == 1 {
                             HttpResponse {
@@ -635,8 +646,13 @@ mod tests {
                 "the model stopped at its output limit",
             ),
         ] {
-            let error =
-                json_request("", || Ok(response(200, value)), check_finish_reason).unwrap_err();
+            let error = json_request(
+                "",
+                "stopped",
+                || Ok(response(200, value)),
+                check_finish_reason,
+            )
+            .unwrap_err();
             assert!(!error.retryable);
             assert_eq!(error.message, reason);
         }
@@ -717,20 +733,29 @@ mod tests {
             Ok(response(200, serde_json::json!({"text":"response"})))
         };
         let url = "https://example.test/v1/chat/completions";
-        let first = cached_json_request(url, &body, "", send, valid).unwrap();
+        let first = cached_json_request(url, &body, "", "test", send, valid).unwrap();
         assert_ne!(first[CACHED], true);
-        let cached = cached_json_request(url, &body, "", send, valid).unwrap();
+        let cached = cached_json_request(url, &body, "", "test", send, valid).unwrap();
         assert_eq!(cached[CACHED], true);
         assert_eq!(calls.get(), 1);
         cached_json_request(
             "https://other.test/v1/chat/completions",
             &body,
             "",
+            "test",
             send,
             valid,
         )
         .unwrap();
-        cached_json_request(url, &serde_json::json!({"model":"other"}), "", send, valid).unwrap();
+        cached_json_request(
+            url,
+            &serde_json::json!({"model":"other"}),
+            "",
+            "test",
+            send,
+            valid,
+        )
+        .unwrap();
         assert_eq!(calls.get(), 3);
         let key = runtime::digest(format!("{url}\n{body}").as_bytes());
         let saved: Value = serde_json::from_slice(
@@ -753,6 +778,7 @@ mod tests {
                 "https://example.test",
                 &body,
                 "private-test-key",
+                "test",
                 || {
                     Ok(response(
                         status,
@@ -775,6 +801,7 @@ mod tests {
                     "https://example.test",
                     &body,
                     "private-test-key",
+                    "test",
                     || Ok(response(200, value)),
                     valid
                 )
@@ -787,6 +814,7 @@ mod tests {
                 "https://example.test",
                 &body,
                 "private-test-key",
+                "test",
                 || Err(Failure::new(true, "timeout")),
                 valid
             )
@@ -797,6 +825,7 @@ mod tests {
             "https://example.test",
             &body,
             "private-test-key",
+            "test",
             || Ok(response(200, serde_json::json!({"text":"valid"}))),
             valid,
         )
@@ -829,6 +858,7 @@ mod tests {
             &mock.url,
             &serde_json::json!({}),
             "",
+            "test",
             || {
                 runtime::interruptible_http(
                     &|| {
