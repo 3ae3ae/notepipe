@@ -511,11 +511,6 @@ impl Run {
                         let work = self.work.clone();
                         let document = crate::runtime::spawn_blocking(move || {
                             crate::llm::paragraphs(&mut document.sections, &work, &settings, &ai)?;
-                            anyhow::ensure!(
-                                artifact::has_readable_body(&document.sections),
-                                "Stage {} would remove every paragraph",
-                                ai.name
-                            );
                             Ok::<_, anyhow::Error>(document)
                         })
                         .await??;

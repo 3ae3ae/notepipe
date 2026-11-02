@@ -213,7 +213,9 @@ pub fn paragraphs(
     for sec in sections.iter_mut() {
         sec.speech.retain(|e| !e.text.trim().is_empty());
     }
-
+    if !crate::artifact::has_readable_body(sections) {
+        crate::dispatch::warn(format!("Stage {} removed every paragraph", stage.name));
+    }
     Ok(crate::runtime::lock_recover(&image_warnings).clone())
 }
 
