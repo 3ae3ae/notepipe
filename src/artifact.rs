@@ -353,12 +353,18 @@ pub fn publish(
             old: previous.file_name().unwrap().to_string_lossy().into_owned(),
             phase: Phase::Staged,
         };
-        for output in &folder_outputs {
+        for (index, output) in folder_outputs.iter().enumerate() {
             runtime::check_cancelled()?;
-            copy_path(
-                &work.join(&output.output),
-                &staging.path().join(&output.name),
-            )?;
+            let target = staging.path().join(&output.name);
+            for previous in &folder_outputs[..index] {
+                anyhow::ensure!(
+                    !same_file(&target, &staging.path().join(&previous.name))?,
+                    "Stages {} and {} publish the same file",
+                    previous.stage,
+                    output.stage
+                );
+            }
+            copy_path(&work.join(&output.output), &target)?;
             files.insert(
                 output.stage.clone(),
                 destination.join(&output.name).display().to_string(),
@@ -412,15 +418,97 @@ pub fn copy_path(source: &Path, target: &Path) -> Result<()> {
         }
         std::io::copy(
             &mut std::fs::File::open(source)?,
-            &mut std::fs::File::create(target)?,
+            &mut std::fs::File::create_new(target)?,
         )?;
     }
     Ok(())
 }
 
+pub(crate) fn same_file(a: &Path, b: &Path) -> Result<bool> {
+    match (file_identity(a), file_identity(b)) {
+        (Ok(a), Ok(b)) => Ok(a == b),
+        (Err(error), _) | (_, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(false)
+        }
+        (Err(error), _) | (_, Err(error)) => Err(error.into()),
+    }
+}
+
+#[cfg(unix)]
+fn file_identity(path: &Path) -> std::io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = path.metadata()?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(windows)]
+fn file_identity(path: &Path) -> std::io::Result<(u64, u64)> {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
+    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((
+        u64::from(info.dwVolumeSerialNumber),
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn copying_never_overwrites_an_existing_file() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        std::fs::write(&source, "New").unwrap();
+        std::fs::write(&target, "Existing").unwrap();
+        assert!(copy_path(&source, &target).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "Existing");
+    }
+    #[test]
+    fn colliding_publications_preserve_the_previous_note() {
+        let root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        std::fs::write(work.path().join("a"), "First").unwrap();
+        std::fs::write(work.path().join("b"), "Second").unwrap();
+        let mut outputs = vec![Publication {
+            stage: "a".into(),
+            output: "a".into(),
+            name: "note.md".into(),
+            images: vec![],
+        }];
+        let meta = document("source").meta;
+        let mut warnings = vec![];
+        let note = super::publish(root.path(), work.path(), &meta, &outputs, &mut warnings)
+            .unwrap()
+            .0
+            .unwrap();
+        outputs.push(Publication {
+            stage: "b".into(),
+            output: "b".into(),
+            name: "note.md".into(),
+            images: vec![],
+        });
+        assert_eq!(
+            super::publish(root.path(), work.path(), &meta, &outputs, &mut warnings)
+                .unwrap_err()
+                .to_string(),
+            "Stages a and b publish the same file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(note.join("note.md")).unwrap(),
+            "First"
+        );
+    }
     fn document(source: &str) -> Document {
         Document {
             schema: 3,

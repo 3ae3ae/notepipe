@@ -1280,6 +1280,69 @@ fn run_transcripts_are_validated_and_document_accepts_reversed_inputs() {
     assert!(error(&run(root.path(), &source, &cfg, &[])).contains("Invalid subtitle timestamps"));
 }
 #[test]
+fn published_names_follow_filesystem_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let (a, b) = ("é.md", "e\u{301}.md");
+    let probe = root.path().join("probe");
+    std::fs::create_dir(&probe).unwrap();
+    std::fs::write(probe.join(a), "probe").unwrap();
+    let aliases = probe.join(b).exists();
+    for folder in [false, true] {
+        let mut cfg = json!({"pipeline":["a","b"],"stages":{
+            "a":{"type":"run","output":"a.md","publish":a,"command":[python(),"-c","print('First')"]},
+            "b":{"type":"run","output":"b.md","publish":b,"command":[python(),"-c","print('Second')"]}
+        }});
+        if folder {
+            cfg["stages"]["a"] =
+                json!({"type":"screenshots","input":"media","output":"a","publish":a});
+            cfg["stages"]["b"] =
+                json!({"type":"screenshots","input":"media","output":"b","publish":b});
+            cfg["pipeline"] = json!(["download", "a", "b"]);
+            cfg["stages"]["download"] =
+                json!({"type":"download","input":"source","output":"media"});
+        }
+        let output = run(root.path(), &source, &cfg, &[]);
+        if aliases {
+            assert_eq!(error(&output), "Stages a and b publish the same file");
+        } else {
+            done(&output);
+        }
+    }
+}
+#[test]
+fn work_outputs_reject_hard_links_and_filesystem_name_aliases() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let mut cfg = json!({"pipeline":["a","b"],"stages":{
+        "a":{"type":"run","output":"a.md","publish":"first.md","produces":"markdown","command":[python(),"-c","print('First')"]},
+        "b":{"type":"run","input":"a.md","output":"b.md","publish":"second.md","command":[python(),"-c","print('Second')"]}
+    }});
+    let completed = done(&run(root.path(), &source, &cfg, &[]));
+    let work = Path::new(completed["work_dir"].as_str().unwrap());
+    std::fs::remove_file(work.join("b.md")).unwrap();
+    std::fs::hard_link(work.join("a.md"), work.join("b.md")).unwrap();
+    let output = run(root.path(), &source, &cfg, &[]);
+    assert_eq!(error(&output), "Stages b and a write the same file");
+    assert_eq!(
+        std::fs::read_to_string(work.join("a.md")).unwrap(),
+        "First\n"
+    );
+    let (a, b) = ("é.md", "e\u{301}.md");
+    std::fs::write(work.join(a), "Existing").unwrap();
+    let aliases = work.join(b).exists();
+    cfg["stages"]["a"]["output"] = json!(a);
+    cfg["stages"]["b"]["input"] = json!(a);
+    cfg["stages"]["b"]["output"] = json!(b);
+    let output = run(root.path(), &source, &cfg, &[]);
+    if aliases {
+        assert_eq!(error(&output), "Stages b and a write the same file");
+        assert_eq!(std::fs::read_to_string(work.join(a)).unwrap(), "Existing");
+    } else {
+        done(&output);
+    }
+}
+#[test]
 fn explicit_subtitles_are_the_only_transcript_source_and_still_emit_the_stage() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
