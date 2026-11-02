@@ -1,0 +1,130 @@
+--- /dev/null
++++ b/Sources/AudioCommon/ASRStopReason.swift
+@@ -0,0 +1,6 @@
++/// Why the decoder stopped, before token markers are removed from its text.
++public enum ASRStopReason: Int32, Sendable {
++    case endOfSequence = 0
++    case tokenLimit = 3
++    case repeatedWords = 4
++}
+--- a/Sources/Qwen3ASR/CoreMLASRModel.swift
++++ b/Sources/Qwen3ASR/CoreMLASRModel.swift
+@@ -10,6 +10,7 @@
+ /// eliminating the MLX GPU dependency. Requires macOS 15+ / iOS 18+
+ /// for MLState KV cache support.
+ public class CoreMLASRModel {
++    public private(set) var lastStopReason: ASRStopReason = .endOfSequence
+     public let encoder: CoreMLASREncoder
+     public let decoder: CoreMLTextDecoder
+     public let featureExtractor: WhisperFeatureExtractor
+@@ -104,6 +105,7 @@
+         language: String? = nil,
+         maxTokens: Int = 448
+     ) throws -> String {
++        lastStopReason = .endOfSequence
+         let profile = ProcessInfo.processInfo.environment["COREML_ASR_PROFILE"] == "1"
+         let t0 = CFAbsoluteTimeGetCurrent()
+ 
+@@ -204,6 +206,7 @@
+             nextToken = decoder.argmax(logits: logits)
+             generatedTokens.append(nextToken)
+         }
++        lastStopReason = nextToken == imEndId ? .endOfSequence : .tokenLimit
+         if profile {
+             let audioDuration = Double(audio.count) / Double(sampleRate)
+             print("[COREML-ASR-PROFILE] audio=\(audioDuration)s gen=\(generatedTokens.count)")
+--- a/Sources/Qwen3ASR/Qwen3ASR.swift
++++ b/Sources/Qwen3ASR/Qwen3ASR.swift
+@@ -116,6 +116,7 @@
+ ///
+ /// - Warning: This class is not thread-safe. Create separate instances for concurrent use.
+ public class Qwen3ASRModel {
++    public private(set) var lastStopReason: ASRStopReason = .endOfSequence
+     /// Default HuggingFace model identifier — the 0.6B 4-bit MLX bundle.
+     /// Mirrors `ASRModelSize.small.modelId`; kept as a top-level constant so
+     /// the AudioServer registry and other call sites have a single SSOT.
+@@ -270,6 +271,7 @@
+         sampleRate: Int = 16000,
+         options: Qwen3DecodingOptions
+     ) -> String {
++        lastStopReason = .endOfSequence
+         let durationSeconds = sampleRate > 0
+             ? Double(audio.count) / Double(sampleRate)
+             : 0.0
+@@ -307,6 +309,7 @@
+         maxTokens: Int = 448,
+         context: String? = nil
+     ) -> String {
++        lastStopReason = .endOfSequence
+         let durationSeconds = sampleRate > 0
+             ? Double(audio.count) / Double(sampleRate)
+             : 0.0
+@@ -456,6 +459,8 @@
+                 options: decodingOptions
+             )
+         }
++
++        lastStopReason = generatedTokens.last == Int32(T.eosTokenId) ? .endOfSequence : .tokenLimit
+ 
+         // Decode tokens to text
+         if let tokenizer = tokenizer {
+--- a/Sources/WhisperASR/WhisperASR.swift
++++ b/Sources/WhisperASR/WhisperASR.swift
+@@ -32,6 +32,8 @@
+     public let inputSampleRate = WhisperCoreMLRuntime.sampleRate
+     public let modelId: String
+     public let modelFolder: URL
++
++    public var lastStopReason: ASRStopReason { runtime.lastStopReason }
+ 
+     private let runtime: WhisperCoreMLRuntime
+ 
+--- a/Sources/WhisperASR/WhisperCoreMLRuntime.swift
++++ b/Sources/WhisperASR/WhisperCoreMLRuntime.swift
+@@ -8,6 +8,7 @@
+ }
+ 
+ final class WhisperCoreMLRuntime: @unchecked Sendable {
++    private(set) var lastStopReason: ASRStopReason = .endOfSequence
+     static let sampleRate = 16_000
+ 
+     private let modelFolder: URL
+@@ -48,6 +49,7 @@
+     }
+ 
+     func transcribe(audio: [Float], languageHint: String?) throws -> WhisperTranscription {
++        lastStopReason = .endOfSequence
+         guard !audio.isEmpty else {
+             return WhisperTranscription(text: "", language: languageHint)
+         }
+@@ -68,6 +70,7 @@
+             if resolvedLanguage == nil {
+                 resolvedLanguage = result.language
+             }
++            if lastStopReason != .endOfSequence { break }
+             offset = end
+         }
+ 
+@@ -157,6 +160,7 @@
+         var tokenIndex = generationConfig.prefillCacheTokenCount
+         let maxTokenIndex = cacheLength - 1
+ 
++        lastStopReason = .tokenLimit
+         while tokenIndex < maxTokenIndex {
+             state.inputIds[0] = NSNumber(value: Int32(nextToken))
+             state.cacheLength[0] = NSNumber(value: Int32(tokenIndex))
+@@ -171,12 +175,14 @@
+ 
+             let sampled = argmax(logits: logits, generatedTokens: generated)
+             if sampled == generationConfig.endToken {
++                lastStopReason = .endOfSequence
+                 break
+             }
+ 
+             if sampled < generationConfig.specialTokenBegin {
+                 let candidate = generated + [sampled]
+                 if shouldStopForRepeatedWords(candidate) {
++                    lastStopReason = .repeatedWords
+                     break
+                 }
+                 generated = candidate

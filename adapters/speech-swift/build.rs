@@ -8,6 +8,7 @@ fn main() {
     // `swift package update` changes only Package.resolved; without this a local build links a stale library.
     println!("cargo:rerun-if-changed=native/Package.resolved");
     println!("cargo:rerun-if-changed=native/Sources");
+    println!("cargo:rerun-if-changed=native/stop-reasons.patch");
 
     assert!(
         target_os == "macos" && target_arch == "aarch64",
@@ -26,6 +27,36 @@ fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let pkg = manifest.join("native");
     let build_dir = pkg.join(".build/release");
+
+    // shortcut: pinned speech-swift discards stop reasons; remove the patch when upstream exposes them.
+    run(Command::new("swift")
+        .args([
+            "package",
+            "--disable-experimental-prebuilts",
+            "--force-resolved-versions",
+            "resolve",
+        ])
+        .current_dir(&pkg))
+    .or_else(|_| {
+        run(Command::new("swift")
+            .args(["package", "--force-resolved-versions", "resolve"])
+            .current_dir(&pkg))
+    })
+    .expect("Could not resolve Swift dependencies");
+    let checkout = pkg.join(".build/checkouts/speech-swift");
+    let patch = pkg.join("stop-reasons.patch");
+    if run(Command::new("git")
+        .args(["apply", "--reverse", "--check"])
+        .arg(&patch)
+        .current_dir(&checkout))
+    .is_err()
+    {
+        run(Command::new("git")
+            .arg("apply")
+            .arg(&patch)
+            .current_dir(&checkout))
+        .expect("Could not apply speech-swift decoder stop reasons patch");
+    }
 
     // Always run swift build; SwiftPM is incremental, and skipping it when the library exists
     // linked a stale library after Swift-only changes.
