@@ -46,6 +46,9 @@ if args.behavior == 'orphan':
     deadline = threading.Timer(30, lambda: os._exit(0))
     deadline.daemon = True
     deadline.start()
+if args.behavior in {'escaped', 'escaped-hang'}:
+    child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'], start_new_session=True)
+    (args.record / 'escaped-pid').write_text(str(child.pid))
 if args.behavior == 'stubborn':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     code = "import time; from pathlib import Path; Path(%r).write_text('ready'); time.sleep(30)" % str(args.record / 'child-ready')
@@ -83,6 +86,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if args.behavior == 'exit-request':
             os.write(2, b'invalid: \xff\nlast diagnostic\n')
             os._exit(7)
+        if args.behavior == 'escaped-hang':
+            time.sleep(30)
         if args.behavior == 'slow':
             (args.record / 'transcribing').write_text('ready')
             time.sleep(30)

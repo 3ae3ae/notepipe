@@ -45,7 +45,7 @@ media = out / 'media.mp4'
 if args.behavior == 'speech-audio':
     media = out / 'media.wav'
     media.write_bytes(Path(__file__).with_name('speech.wav').read_bytes())
-elif args.behavior in {'files', 'orphan', 'fragmented', 'instant'}:
+elif args.behavior in {'files', 'orphan', 'fragmented', 'instant', 'escaped', 'escaped-hang'}:
     media.write_bytes(b'cached media')
 else:
     command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=64x32:d=3']
@@ -78,3 +78,9 @@ if args.behavior == 'fragmented':
     time.sleep(0.15)
     result = result[20:]
 print(result, flush=True)
+
+if args.behavior in {'escaped', 'escaped-hang'}:
+    child = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'], start_new_session=True)
+    (args.record / 'escaped-pid').write_text(str(child.pid))
+    if args.behavior == 'escaped-hang':
+        time.sleep(30)
