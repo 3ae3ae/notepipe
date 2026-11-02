@@ -671,6 +671,10 @@ impl Run {
             tracing::debug!(media = %resolved.media.display(), title = %resolved.meta.title, "download ready");
         }
         if cache.join("files").is_dir() {
+            anyhow::ensure!(
+                !cache.join("files/info.json").try_exists()?,
+                "The download program returned a file named info.json, which notepipe reserves"
+            );
             artifact::copy_path(&cache.join("files"), target)?;
         }
         artifact::copy_path(&cache.join("complete.json"), &target.join("info.json"))?;
