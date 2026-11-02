@@ -1343,6 +1343,27 @@ fn work_outputs_reject_hard_links_and_filesystem_name_aliases() {
     }
 }
 #[test]
+fn downloads_reserve_info_json_for_media_subtitles_and_other_files() {
+    let root = tempfile::tempdir().unwrap();
+    for role in ["media", "subtitle", "extra"] {
+        let script = "import sys,json,pathlib;p=pathlib.Path(sys.argv[-1]);(p/'media.wav').write_text('media');(p/'info.json').write_text('reserved');role=sys.argv[1];print(json.dumps({'media':'info.json' if role=='media' else 'media.wav','subtitles':[{'path':'info.json'}] if role=='subtitle' else []}))";
+        let cfg = json!({"pipeline":["download","note"],"stages":{
+            "download":{"type":"download","input":"source","output":"media","command":[python(),"-c",script,role]},
+            "note":{"type":"run","output":"note.md","publish":"note.md","command":[python(),"-c","print('Note')"]}
+        }});
+        let output = run(
+            root.path(),
+            Path::new("https://example.test/media"),
+            &cfg,
+            &[],
+        );
+        assert!(error(&output).contains(
+            "The download program returned a file named info.json, which notepipe reserves"
+        ));
+        assert!(!root.path().join("media").exists());
+    }
+}
+#[test]
 fn explicit_subtitles_are_the_only_transcript_source_and_still_emit_the_stage() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
