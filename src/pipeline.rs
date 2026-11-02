@@ -18,19 +18,13 @@ use std::{
 
 pub const NO_SCREENSHOTS: &str = "No screenshots retrieved";
 
-fn source_key(source: &str, adapter: &settings::Source) -> Result<String> {
+fn source_key(source: &str) -> Result<String> {
     let path = Path::new(source);
-    let identity = if path.is_file() {
-        // shortcut: path, size and mtime miss same-size replacements preserving mtime; hash media if needed.
-        let path = path.canonicalize()?;
-        let metadata = path.metadata()?;
-        serde_json::to_vec(
-            &serde_json::json!({"path":path,"size":metadata.len(),"mtime":metadata.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_nanos()}),
-        )?
+    if path.is_file() {
+        Ok(format!("sha256:{}", runtime::file_digest(path)?))
     } else {
-        serde_json::to_vec(&serde_json::json!({"url":source,"command":adapter.command}))?
-    };
-    Ok(runtime::digest(&identity)[..16].into())
+        Ok(source.into())
+    }
 }
 fn screenshot_key(cfg: &PipelineConfig) -> Result<String> {
     // The version changes when screenshots are taken differently.
@@ -119,6 +113,8 @@ impl std::error::Error for Failure {}
 struct Run {
     cfg: PipelineConfig,
     work: PathBuf,
+    identity: String,
+    title: Option<String>,
     providers: BTreeMap<String, Provider>,
     warnings: Arc<std::sync::Mutex<Vec<String>>>,
     cache_locks: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -183,7 +179,8 @@ async fn run_inner(
     runtime::lock_recover(&warnings).extend(recovered);
     let work_root = config::cache_dir().join("work");
     std::fs::create_dir_all(&work_root)?;
-    let key = source_key(&cfg.url, &cfg.source)?;
+    let identity = source_key(&cfg.url)?;
+    let key = runtime::digest(identity.as_bytes());
     let _lock = runtime::lock_file(&work_root.join(format!("{key}.lock")))?;
     let work = work_root.join(key);
     if cfg.no_resume && work.exists() {
@@ -199,10 +196,31 @@ async fn run_inner(
             eprintln!("{message}");
         }
     }
+    let title = if Path::new(&cfg.url).is_file() {
+        let path = work.join(".cache/title.json");
+        let title = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice::<String>(&bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let title = Path::new(&cfg.url)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                write_json(&path, &title)?;
+                title
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Some(title)
+    } else {
+        None
+    };
     let _dispatch = crate::dispatch::install(&work.join(".cache"))?;
     let run = Arc::new(Run {
         cfg: cfg.clone(),
         work: work.clone(),
+        identity,
+        title,
         providers,
         warnings: warnings.clone(),
         cache_locks: Default::default(),
@@ -400,20 +418,26 @@ impl Run {
     fn meta(&self) -> Result<MediaMeta> {
         for (name, stage) in &self.cfg.stages {
             if matches!(stage.kind, StageType::Download(_)) && !self.cfg.skip.contains(name) {
-                return source::Output::info(&self.work.join(&stage.output))?
-                    .metadata(&self.cfg.url);
+                let mut meta = source::Output::info(&self.work.join(&stage.output))?
+                    .metadata(&self.identity)?;
+                if let Some(title) = &self.title {
+                    meta.title = title.clone();
+                }
+                return Ok(meta);
             }
         }
         Ok(MediaMeta {
             extra: Default::default(),
-            title: Path::new(&self.cfg.url)
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
+            title: self.title.clone().unwrap_or_else(|| {
+                Path::new(&self.cfg.url)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            }),
             author: String::new(),
             duration: None,
-            source: self.cfg.url.clone(),
+            source: self.identity.clone(),
             seek_url: None,
         })
     }
@@ -721,7 +745,7 @@ impl Run {
                 &serde_json::json!({"media":path,"title":path.file_stem().unwrap_or_default().to_string_lossy(),"duration":duration,"subtitles":tracks}),
             );
         }
-        let cache = self.work.join(".cache/download");
+        let cache = self.work.join(download_cache(&self.cfg)?);
         let cached = source::Output::read(&cache)?;
         let mut need_media = cached.is_none();
         if let Some(info) = &cached {
@@ -1014,6 +1038,10 @@ fn run_program(
     };
     apply().map_err(|error| stderr.attach(error, name))
 }
+fn download_cache(cfg: &PipelineConfig) -> Result<PathBuf> {
+    Ok(Path::new(".cache/download")
+        .join(runtime::digest(&serde_json::to_vec(&cfg.source.command)?)))
+}
 fn cleanup_media(cfg: &PipelineConfig, work: &Path, warnings: &mut Vec<String>) -> Result<()> {
     if work
         .join(".cache")
@@ -1053,10 +1081,19 @@ fn cleanup_media(cfg: &PipelineConfig, work: &Path, warnings: &mut Vec<String>) 
             remove_temporary(work, Path::new(".cache/download"), false, warnings);
             return Ok(());
         }
-        if let Some(output) = source::Output::read(&work.join(".cache/download"))? {
+        let cache = download_cache(cfg)?;
+        if work
+            .join(&cache)
+            .symlink_metadata()
+            .is_ok_and(|m| m.is_symlink())
+        {
+            remove_temporary(work, &cache, false, warnings);
+            return Ok(());
+        }
+        if let Some(output) = source::Output::read(&work.join(&cache))? {
             remove_temporary(
                 work,
-                &Path::new(".cache/download/files").join(&output.media),
+                &cache.join("files").join(&output.media),
                 false,
                 warnings,
             );
@@ -1071,7 +1108,7 @@ fn cleanup_media(cfg: &PipelineConfig, work: &Path, warnings: &mut Vec<String>) 
                 }
             }
         } else {
-            remove_temporary(work, Path::new(".cache/download/files"), true, warnings);
+            remove_temporary(work, &cache.join("files"), true, warnings);
         }
     }
     Ok(())
@@ -1119,12 +1156,6 @@ mod tests {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().unwrap();
         let work = root.path().join("work");
-        let files = work.join(".cache/download/files");
-        std::fs::create_dir_all(&files).unwrap();
-        let outside = root.path().join("outside.wav");
-        std::fs::write(&outside, "user data").unwrap();
-        std::fs::write(files.join("partial.wav"), "partial download").unwrap();
-        symlink(&outside, files.join("link.wav")).unwrap();
         let mut file = settings::ConfigFile::default();
         file.stages.get_mut("download").unwrap().kind = StageType::Download(settings::Source {
             command: Some(vec!["unused".into()]),
@@ -1135,6 +1166,12 @@ mod tests {
             &file,
         )
         .unwrap();
+        let files = work.join(download_cache(&cfg).unwrap()).join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        let outside = root.path().join("outside.wav");
+        std::fs::write(&outside, "user data").unwrap();
+        std::fs::write(files.join("partial.wav"), "partial download").unwrap();
+        symlink(&outside, files.join("link.wav")).unwrap();
         let mut warnings = Vec::new();
         cleanup_media(&cfg, &work, &mut warnings).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -1222,22 +1259,21 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("local");
         std::fs::write(&path, "original").unwrap();
-        let mut source = settings::Source {
+        let key = source_key(path.to_str().unwrap()).unwrap();
+        assert_eq!(key, format!("sha256:{}", runtime::digest(b"original")));
+        let moved = root.path().join("renamed");
+        std::fs::rename(&path, &moved).unwrap();
+        let file = std::fs::File::options().write(true).open(&moved).unwrap();
+        file.set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(key, source_key(moved.to_str().unwrap()).unwrap());
+        std::fs::write(&moved, "changed!").unwrap();
+        assert_ne!(key, source_key(moved.to_str().unwrap()).unwrap());
+        let url = "https://example.test/video?query=one#part";
+        assert_eq!(source_key(url).unwrap(), url);
+        let source = settings::Source {
             command: Some(vec!["adapter".into()]),
         };
-        let key = source_key(path.to_str().unwrap(), &source).unwrap();
-        std::fs::write(&path, "changed content").unwrap();
-        assert_ne!(key, source_key(path.to_str().unwrap(), &source).unwrap());
-        let url = "https://example.test/video";
-        let key = source_key(url, &source).unwrap();
-        assert_eq!(
-            key,
-            runtime::digest(
-                &serde_json::to_vec(&serde_json::json!({"url":url,"command":["adapter"]})).unwrap()
-            )[..16]
-        );
-        source.command.as_mut().unwrap().push("--option".into());
-        assert_ne!(key, source_key(url, &source).unwrap());
         let mut file = settings::ConfigFile::default();
         file.stages.get_mut("download").unwrap().kind = StageType::Download(source);
         let cfg = crate::options::resolve(url.into(), &Default::default(), &file).unwrap();
