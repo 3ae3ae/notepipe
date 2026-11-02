@@ -20,7 +20,7 @@ pub struct MediaMeta {
     pub extra: serde_json::Map<String, serde_json::Value>,
     pub title: String,
     pub author: String,
-    pub duration: f64,
+    pub duration: Option<f64>,
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seek_url: Option<String>,
@@ -34,7 +34,7 @@ pub(crate) struct Output {
     #[serde(default)]
     author: String,
     #[serde(default)]
-    duration: f64,
+    duration: Option<f64>,
     pub(crate) language: Option<String>,
     url: Option<String>,
     seek_url: Option<String>,
@@ -82,7 +82,8 @@ impl Output {
 
     pub(crate) fn metadata(&self, source: &str) -> Result<MediaMeta> {
         ensure!(
-            self.duration.is_finite() && self.duration >= 0.,
+            self.duration
+                .is_none_or(|duration| duration.is_finite() && duration >= 0.),
             "Invalid download adapter duration"
         );
         if let Some(url) = self.url.as_deref().filter(|url| !url.is_empty()) {

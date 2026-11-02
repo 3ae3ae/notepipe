@@ -28,7 +28,10 @@ impl Document {
         let document: Self = serde_json::from_slice(&std::fs::read(path)?)?;
         anyhow::ensure!(document.schema == 3, "Invalid document schema; expected 3");
         anyhow::ensure!(
-            document.meta.duration.is_finite() && document.meta.duration >= 0.,
+            document
+                .meta
+                .duration
+                .is_none_or(|duration| duration.is_finite() && duration >= 0.),
             "Invalid document duration"
         );
         for section in &document.sections {
@@ -517,7 +520,7 @@ mod tests {
                 title: "Shared title".into(),
                 source: source.into(),
                 author: String::new(),
-                duration: 1.,
+                duration: Some(1.),
                 seek_url: None,
             },
             sections: vec![Section {

@@ -366,7 +366,7 @@ impl Run {
                 .to_string_lossy()
                 .into_owned(),
             author: String::new(),
-            duration: 0.,
+            duration: None,
             source: self.cfg.url.clone(),
             seek_url: None,
         })
@@ -391,7 +391,7 @@ impl Run {
             Document::read(&target, &self.work)?;
         } else {
             match &stage.kind {
-                StageType::Download(_) => self.download(name, &target).await?,
+                StageType::Download(_) => self.download(name, &target, &mut warnings).await?,
                 StageType::Transcript(t) => {
                     self.transcript(name, stage, t, &inputs[0], &target, &mut warnings)
                         .await?
@@ -424,12 +424,12 @@ impl Run {
                         vec![timeline::Section {
                             extra: Default::default(),
                             t: 0.,
-                            end: meta.duration,
+                            end: meta.duration.unwrap_or(0.),
                             image: String::new(),
                             speech: transcript.events,
                         }]
                     } else {
-                        timeline::merge(frames, transcript.events, meta.duration)
+                        timeline::merge(frames, transcript.events, meta.duration.unwrap_or(0.))
                     };
                     timeline::coalesce_sections(&mut sections);
                     anyhow::ensure!(
@@ -665,7 +665,7 @@ impl Run {
         }
         Ok(false)
     }
-    async fn download(&self, name: &str, target: &Path) -> Result<()> {
+    async fn download(&self, name: &str, target: &Path, warnings: &mut Vec<String>) -> Result<()> {
         std::fs::create_dir(target)?;
         if Path::new(&self.cfg.url).is_file() {
             let path = Path::new(&self.cfg.url).canonicalize()?;
@@ -673,7 +673,16 @@ impl Run {
                 .into_iter()
                 .map(|t| serde_json::json!({"path":t.path,"language":t.language,"automatic":false}))
                 .collect::<Vec<_>>();
-            let duration = media::probe_duration(&path).await.unwrap_or(0.);
+            let duration = match media::probe_duration(&path).await {
+                Ok(duration) => Some(duration),
+                Err(error) => {
+                    warnings.push(format!(
+                        "Could not read the duration of {}: {error:#}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ));
+                    None
+                }
+            };
             return write_json(
                 &target.join("info.json"),
                 &serde_json::json!({"media":path,"title":path.file_stem().unwrap_or_default().to_string_lossy(),"duration":duration,"subtitles":tracks}),

@@ -64,7 +64,7 @@ pub async fn extract_audio(media: &Path, dest: &Path) -> Result<()> {
 pub struct VideoInfo {
     pub width: u32,
     pub height: u32,
-    pub duration: f64,
+    pub duration: Option<f64>,
 }
 
 /// The fields used from ffprobe's JSON output.
@@ -121,8 +121,7 @@ pub async fn probe_video(media: &Path) -> Result<Option<VideoInfo>> {
     let duration = probe
         .format
         .and_then(|f| f.duration)
-        .and_then(|d| d.parse::<f64>().ok())
-        .context("Could not read video duration")?;
+        .and_then(|duration| parse_duration_text(&duration).ok());
     Ok(Some(VideoInfo {
         width: stream
             .width
@@ -148,20 +147,39 @@ fn duration_args() -> [&'static str; 6] {
     ]
 }
 
-/// Duration in seconds from ffprobe output; None when ffprobe failed or printed nonsense.
-fn parse_duration_text(text: &str) -> Option<f64> {
-    text.trim().parse::<f64>().ok()
+/// Duration in seconds from ffprobe output.
+fn parse_duration_text(text: &str) -> Result<f64> {
+    text.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|duration| duration.is_finite() && *duration >= 0.)
+        .context("ffprobe returned no valid duration")
 }
 
-fn parse_duration(out: &std::process::Output) -> Option<f64> {
-    out.status
-        .success()
-        .then(|| parse_duration_text(&String::from_utf8_lossy(&out.stdout)))
-        .flatten()
+/// Duration in seconds via ffprobe; callers report failures as warnings.
+pub async fn probe_duration(media: &Path) -> Result<f64> {
+    let out = probe_output(Command::new("ffprobe").args(duration_args()).arg(media))
+        .await
+        .context("Could not run ffprobe for duration")?;
+    if !out.status.success() {
+        return Err(crate::error::cmd_error(
+            "ffprobe",
+            out.status.code(),
+            &String::from_utf8_lossy(&out.stderr),
+        ));
+    }
+    parse_duration_text(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Duration in seconds via ffprobe; None on failure.
-pub async fn probe_duration(media: &Path) -> Option<f64> {
-    let out = probe_output(Command::new("ffprobe").args(duration_args()).arg(media)).await?;
-    parse_duration(&out)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn duration_requires_a_finite_nonnegative_number() {
+        for text in ["", "N/A", "NaN", "inf", "-1"] {
+            assert!(parse_duration_text(text).is_err(), "{text}");
+        }
+        assert_eq!(parse_duration_text("0\n").unwrap(), 0.);
+        assert_eq!(parse_duration_text("12.5\n").unwrap(), 12.5);
+    }
 }
