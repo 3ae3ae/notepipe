@@ -124,7 +124,6 @@ pub fn diagnostic(message: &str, key: &str) -> String {
 pub struct Failure {
     pub retryable: bool,
     pub message: String,
-    pub unsupported_response_format: bool,
 }
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -137,14 +136,12 @@ impl Failure {
         Self {
             retryable: false,
             message: error.to_string(),
-            unsupported_response_format: false,
         }
     }
     pub(crate) fn new(retryable: bool, message: impl Into<String>) -> Self {
         Self {
             retryable,
             message: message.into(),
-            ..Self::local("")
         }
     }
 }
@@ -159,7 +156,6 @@ fn classify_rejection(status: u16, body: &[u8], key: &str) -> Failure {
     }
     Failure {
         retryable: !output_limit && (status == 429 || (500..=599).contains(&status)),
-        unsupported_response_format: !output_limit && rejects_response_format(status, body),
         message,
     }
 }
@@ -175,14 +171,6 @@ fn rejection_message(status: u16) -> String {
         }
         _ => format!("The service did not complete this request (HTTP {}).", status),
     }
-}
-
-/// Classify the named request field, including servers that return plain text errors.
-fn rejects_response_format(status: u16, body: &[u8]) -> bool {
-    matches!(status, 400 | 422)
-        && body
-            .windows(b"response_format".len())
-            .any(|part| part.eq_ignore_ascii_case(b"response_format"))
 }
 
 /// The adapter contract's code for a result cut off at the model's output limit.
@@ -240,20 +228,6 @@ pub fn install(work_dir: &Path) -> Result<Guard> {
     anyhow::ensure!(current.is_none(), "Another task is already active");
     *current = Some(cache.clone());
     Ok(Guard(cache))
-}
-
-/// Save an already validated fallback response under the original request's key too.
-pub(crate) fn cache_validated_response(endpoint: &str, body: &Value, value: &Value) -> Result<()> {
-    let cache = runtime::lock_recover(ACTIVE.get_or_init(|| Mutex::new(None))).clone();
-    if let Some(cache) = cache {
-        runtime::check_cancelled()?;
-        let key = runtime::digest(format!("{endpoint}\n{body}").as_bytes());
-        atomic_write(
-            &cache.dir.join(format!("{key}.json")),
-            &serde_json::to_vec(value)?,
-        )?;
-    }
-    Ok(())
 }
 
 pub fn cached_json_request(
@@ -677,7 +651,6 @@ mod tests {
                 format!("{} The service said: x", rejection_message(status))
             );
             assert!(!error.retryable);
-            assert!(!error.unsupported_response_format);
         }
     }
     #[test]
@@ -693,26 +666,6 @@ mod tests {
                 "The service rejected the request parameters (HTTP 422); check the model and service settings for this task.")
             );
             assert!(!error.retryable);
-            assert!(!error.unsupported_response_format);
-        }
-    }
-    #[test]
-    fn response_format_fallback_uses_only_status_and_the_named_field() {
-        for status in [400, 422] {
-            for body in [
-                r#"{"error":{"param":"response_format"}}"#,
-                r#"{"detail":"response_format: format de sortie invalide"}"#,
-                "response_format 不支持",
-                "Invalid field: RESPONSE_FORMAT",
-            ] {
-                assert!(rejects_response_format(status, body.as_bytes()), "{body}");
-            }
-            for body in ["", "Invalid request parameters", "model is unsupported"] {
-                assert!(!rejects_response_format(status, body.as_bytes()));
-            }
-        }
-        for status in [200, 401, 403, 404, 429, 500] {
-            assert!(!rejects_response_format(status, b"response_format"));
         }
     }
     fn response(status: u16, value: Value) -> HttpResponse {

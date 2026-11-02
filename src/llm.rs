@@ -6,15 +6,9 @@ use std::path::Path;
 #[cfg(test)]
 use std::time::Duration;
 
-pub(crate) const PARAGRAPHS_CONTRACT: &str = r#"Output a JSON object {"segments":[{"id":number,"text":result}]} with exactly one entry per input id. Inside JSON strings, escape every backslash as \\."#;
 pub(crate) const IMAGE_NOTE: &str =
     r#" Each request includes the screenshot shown during this passage."#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Input {
-    Paragraphs,
-    Transcript,
-}
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stage {
     pub name: String,
@@ -115,7 +109,6 @@ pub(crate) fn chat_body(
     settings: &LlmSettings,
     system: &str,
     user: impl Into<Value>,
-    input: Input,
 ) -> Result<Value> {
     validate_request(&settings.request)?;
     let mut body = settings.request.clone();
@@ -123,12 +116,6 @@ pub(crate) fn chat_body(
         body.insert("model".into(), settings.model.clone().into());
     }
     body.insert("messages".into(), serde_json::json!([{"role":"system","content":system},{"role":"user","content":user.into()}]));
-    if input == Input::Paragraphs {
-        body.insert(
-            "response_format".into(),
-            serde_json::json!({"type":"json_object"}),
-        );
-    }
     Ok(body.into())
 }
 
@@ -223,12 +210,6 @@ fn section_image_b64(path: &Path) -> Result<String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(std::fs::read(path)?))
 }
 
-/// Whether the result ids are exactly 0..expected, with none missing, repeated or out of range.
-fn segment_ids_match(polished: &[(usize, String)], expected: usize) -> bool {
-    let ids: std::collections::HashSet<usize> = polished.iter().map(|(id, _)| *id).collect();
-    polished.len() == expected && ids.len() == expected && (0..expected).all(|id| ids.contains(&id))
-}
-
 fn apply_results(chunk: &mut [&mut TranscriptEvent], results: &[(usize, String)]) {
     for (id, text) in results {
         // chat validates every id before applying a batch.
@@ -248,29 +229,34 @@ fn chat(
     image: Option<&str>,
     detail: &str,
 ) -> Result<Vec<(usize, String)>> {
+    let tag = batch_tag(items);
     let body = build_chat_body(settings, stage, items, image)?;
+    let validate = |content: &str| {
+        parse_blocks(content, &tag, items.len())
+            .context("The answer's blocks do not match the paragraphs sent")
+    };
     let content = send_chat(agent, settings, &body, &stage.name, detail, &|content| {
-        let parsed = parse_segments(content).context("Invalid paragraphs response")?;
-        anyhow::ensure!(
-            segment_ids_match(&parsed, items.len()),
-            "Result segments do not match the input"
-        );
-        // JSON mode turns a backslash the model left unescaped, as in \hat or \frac, into a control
-        // character. That happens now and then, so the request is sent again.
-        for (_, text) in &parsed {
-            check_control_characters(text)?;
-        }
-        Ok(())
+        validate(content).map(|_| ())
     })?;
-    parse_segments(&content).context("Invalid paragraphs response")
+    validate(&content)
 }
 
-pub(crate) fn check_control_characters(text: &str) -> Result<()> {
-    anyhow::ensure!(
-        !text.chars().any(|c| c.is_control() && c != '\n'),
-        "The model's answer contains control characters, usually from a backslash it did not escape"
-    );
-    Ok(())
+fn batch_tag(items: &[&str]) -> String {
+    let digest = crate::runtime::digest(items.join("\n").as_bytes());
+    let mut length = 6;
+    while items
+        .iter()
+        .any(|text| text.contains(&format!("<<<np-{}:", &digest[..length])))
+    {
+        length += 1;
+    }
+    format!("np-{}", &digest[..length])
+}
+
+fn blocks_contract(tag: &str) -> String {
+    format!(
+        "The input is a series of blocks, each opened by a line <<<{tag}:ID>>> and the last closed by a line <<<{tag}:end>>>. Output the same series of blocks, one for every input ID in the same order, with your result as plain text between the marker lines, and nothing outside them. Write text exactly as it should appear; nothing is escaped."
+    )
 }
 fn build_chat_body(
     settings: &LlmSettings,
@@ -278,82 +264,61 @@ fn build_chat_body(
     items: &[&str],
     image: Option<&str>,
 ) -> Result<Value> {
-    let payload: Vec<Value> = items
-        .iter()
-        .enumerate()
-        .map(|(id, text)| serde_json::json!({"id":id,"text":text}))
-        .collect();
+    let tag = batch_tag(items);
+    let mut payload = String::new();
+    for (id, text) in items.iter().enumerate() {
+        payload.push_str(&format!("<<<{tag}:{id}>>>\n{text}\n"));
+    }
+    payload.push_str(&format!("<<<{tag}:end>>>"));
     let image = image.filter(|_| stage.images);
-    let mut system = format!("{} {PARAGRAPHS_CONTRACT}", stage.prompt);
+    let mut system = format!("{} {}", stage.prompt, blocks_contract(&tag));
     if image.is_some() {
         system.push_str(IMAGE_NOTE);
     }
-    let mut content =
-        vec![serde_json::json!({"type":"text","text":serde_json::to_string(&payload)?})];
+    let mut content = vec![serde_json::json!({"type":"text","text":payload})];
     if let Some(image) = image {
         content.push(serde_json::json!({"type":"image_url","image_url":{"url":format!("data:image/jpeg;base64,{image}")}}));
     }
-    chat_body(settings, &system, Value::Array(content), Input::Paragraphs)
+    chat_body(settings, &system, Value::Array(content))
 }
 
-/// Parse one segments object or top-level array, allowing fences and trailing commas.
-pub fn parse_segments(content: &str) -> Option<Vec<(usize, String)>> {
-    let content = content.trim();
-    let content = if content.starts_with("```") {
-        content.split_once('\n')?.1.strip_suffix("```")?.trim()
-    } else {
-        content
-    };
-    let value: Value = serde_json::from_str(content)
-        .or_else(|_| serde_json::from_str(&clean_trailing_commas(content)))
-        .ok()?;
-    let items = match &value {
-        Value::Array(items) => items,
-        Value::Object(object) => object.get("segments")?.as_array()?,
-        _ => return None,
-    };
-    parse_items(items)
-}
-
-fn parse_items(v: &[serde_json::Value]) -> Option<Vec<(usize, String)>> {
-    let mut out = vec![];
-    for item in v {
-        let id = item.get("id")?.as_u64()? as usize;
-        let text = item.get("text")?.as_str()?.to_owned();
-        out.push((id, text));
-    }
-    if out.is_empty() { None } else { Some(out) }
-}
-
-pub(crate) fn clean_trailing_commas(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if in_string {
-            out.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
+fn parse_blocks(content: &str, tag: &str, expected: usize) -> Option<Vec<(usize, String)>> {
+    let prefix = format!("<<<{tag}:");
+    let mut blocks = Vec::new();
+    let mut lines = Vec::new();
+    let mut opened = 0;
+    let mut ended = false;
+    for line in content.split('\n') {
+        let marker = line
+            .trim_end()
+            .strip_prefix(&prefix)
+            .and_then(|s| s.strip_suffix(">>>"));
+        if let Some(id) = marker {
+            if ended {
+                return None;
             }
-        } else if ch == '"' {
-            in_string = true;
-            out.push(ch);
-        } else if ch == ',' && matches!(chars.clone().find(|c| !c.is_whitespace()), Some('}' | ']'))
-        {
-            // Repair syntax only; commas inside transcript strings are data.
-        } else {
-            out.push(ch);
+            if opened > 0 {
+                blocks.push((opened - 1, lines.join("\n")));
+                lines.clear();
+            }
+            if id == "end" {
+                if opened != expected {
+                    return None;
+                }
+                ended = true;
+            } else if opened < expected && id == opened.to_string() {
+                opened += 1;
+            } else {
+                return None;
+            }
+        } else if opened > 0 && !ended {
+            lines.push(line);
         }
     }
-    out
+    ended.then_some(blocks)
 }
 
-/// Only validated responses enter the cache; response_format fallback shares the retry budget.
+/// Only validated responses enter the cache.
 pub(crate) fn send_chat(
     agent: &ureq::Agent,
     s: &LlmSettings,
@@ -363,30 +328,8 @@ pub(crate) fn send_chat(
     validate: &dyn Fn(&str) -> Result<()>,
 ) -> Result<String> {
     let item = crate::dispatch::Item::stage(stage, detail);
-    let mut request_body = body.clone();
     let response = crate::dispatch::request(&item, &|| s.check_cancelled(), || {
-        let response = request_chat_once(agent, s, &request_body, stage, validate);
-        match response {
-            Err(mut error)
-                if error.unsupported_response_format
-                    && request_body.get("response_format").is_some() =>
-            {
-                request_body
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("response_format");
-                error.retryable = true;
-                Err(error)
-            }
-            Ok(response) => {
-                if request_body != *body {
-                    crate::dispatch::cache_validated_response(&s.cache_identity(), body, &response)
-                        .map_err(crate::dispatch::Failure::local)?;
-                }
-                Ok(response)
-            }
-            Err(error) => Err(error),
-        }
+        request_chat_once(agent, s, body, stage, validate)
     })?;
     Ok(response["choices"][0]["message"]["content"]
         .as_str()
@@ -455,6 +398,7 @@ pub(crate) fn test_stage(name: &str, value: Value) -> Result<Stage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::paragraph_answer;
 
     #[test]
     fn cancellation_is_checked_after_waiting_for_a_provider_permit() {
@@ -497,7 +441,7 @@ mod tests {
         assert_eq!(effective.base_url, service.base_url.unwrap());
         assert!(effective.api_key.is_empty());
         assert_eq!(effective.concurrency, 2);
-        let body = chat_body(&effective, &stage.prompt, "User", Input::Transcript).unwrap();
+        let body = chat_body(&effective, &stage.prompt, "User").unwrap();
         assert!(body.get("model").is_none());
         assert_eq!(body["messages"][0]["content"], "");
         assert_eq!(body["temperature"], 0.7);
@@ -522,57 +466,49 @@ mod tests {
     }
 
     #[test]
-    fn adapter_cache_survives_port_changes_including_response_format_fallbacks() {
+    fn adapter_cache_survives_port_changes() {
         use crate::test_support::MockAi;
         use serde_json::json;
         use std::sync::atomic::Ordering;
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
-        for fallback in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let _cache = crate::dispatch::install(root.path()).unwrap();
-            let first = MockAi::respond_with(move |_, body| {
-                Some(if fallback && body.get("response_format").is_some() {
-                    (422, json!({"error":{"param":"response_format"}}))
-                } else {
-                    (
-                        200,
-                        json!({"choices":[{"message":{"content":"Cached response."}}]}),
-                    )
-                })
-            });
-            let second = MockAi::respond_with(|_, _| {
-                Some((
-                    200,
-                    json!({"choices":[{"message":{"content":"Unexpected request."}}]}),
-                ))
-            });
-            let mut settings = LlmSettings {
-                adapter: vec!["ai-adapter".into()],
-                base_url: first.url.clone(),
-                ..Default::default()
-            };
-            let body = chat_body(&settings, "System", "User", Input::Paragraphs).unwrap();
-            for url in [&first.url, &second.url] {
-                settings.base_url.clone_from(url);
-                assert_eq!(
-                    send_chat(
-                        &chat_agent(),
-                        &settings,
-                        &body,
-                        "proofread",
-                        "",
-                        &|_| Ok(())
-                    )
-                    .unwrap(),
-                    "Cached response."
-                );
-            }
+        let root = tempfile::tempdir().unwrap();
+        let _cache = crate::dispatch::install(root.path()).unwrap();
+        let first = MockAi::respond_with(|_, body| {
+            assert!(body.get("response_format").is_none());
+            Some((
+                200,
+                json!({"choices":[{"message":{"content":"Cached response."}}]}),
+            ))
+        });
+        let second = MockAi::respond_with(|_, _| {
+            Some((
+                200,
+                json!({"choices":[{"message":{"content":"Unexpected request."}}]}),
+            ))
+        });
+        let mut settings = LlmSettings {
+            adapter: vec!["ai-adapter".into()],
+            base_url: first.url.clone(),
+            ..Default::default()
+        };
+        let body = chat_body(&settings, "System", "User").unwrap();
+        for url in [&first.url, &second.url] {
+            settings.base_url.clone_from(url);
             assert_eq!(
-                first.calls.load(Ordering::SeqCst),
-                if fallback { 2 } else { 1 }
+                send_chat(
+                    &chat_agent(),
+                    &settings,
+                    &body,
+                    "proofread",
+                    "",
+                    &|_| Ok(())
+                )
+                .unwrap(),
+                "Cached response."
             );
-            assert_eq!(second.calls.load(Ordering::SeqCst), 0);
         }
+        assert_eq!(first.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second.calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -581,12 +517,9 @@ mod tests {
         use serde_json::json;
         use std::sync::atomic::Ordering;
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
-        for (input, content) in [
-            (
-                Input::Paragraphs,
-                r#"{"segments":[{"id":0,"text":"Changed."}]}"#,
-            ),
-            (Input::Transcript, "## Summary\nA complete-looking result."),
+        for content in [
+            "<<<np-test:0>>>\nChanged.\n<<<np-test:end>>>",
+            "## Summary\nA complete-looking result.",
         ] {
             let root = tempfile::tempdir().unwrap();
             let _cache = crate::dispatch::install(root.path()).unwrap();
@@ -600,7 +533,7 @@ mod tests {
                 base_url: mock.url.clone(),
                 ..Default::default()
             };
-            let body = chat_body(&settings, "System", "User", input).unwrap();
+            let body = chat_body(&settings, "System", "User").unwrap();
             let validations = std::cell::Cell::new(0);
             let validate = |value: &str| {
                 validations.set(validations.get() + 1);
@@ -612,7 +545,6 @@ mod tests {
                 send_chat(&agent, &settings, &body, "proofread", "", &validate).unwrap_err();
             let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
             assert!(!failure.retryable);
-            assert!(!failure.unsupported_response_format);
             assert_eq!(
                 error.to_string(),
                 "Stage proofread failed: the model stopped at its output limit"
@@ -635,10 +567,10 @@ mod tests {
         use crate::test_support::MockAi;
         use serde_json::json;
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
-        let mock = MockAi::respond_with(|_, _| {
+        let mock = MockAi::respond_with(|_, body| {
             Some((
                 200,
-                json!({"choices":[{"finish_reason":"length","message":{"content":json!({"segments":[{"id":0,"text":"Changed."}]}).to_string()}}]}),
+                json!({"choices":[{"finish_reason":"length","message":{"content":paragraph_answer(body, &["Changed."])}}]}),
             ))
         });
         let event = TranscriptEvent {
@@ -681,87 +613,141 @@ mod tests {
     }
 
     #[test]
-    fn paragraph_answers_with_control_characters_are_requested_again() {
+    fn paragraph_blocks_preserve_latex_whitespace_and_raw_byte_for_byte() {
+        use crate::test_support::MockAi;
+        use serde_json::json;
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        let text = " \n\t$\\hat{y} \\beta \\frac{1}{2} \\theta \\nabla$  \n";
+        let mock = MockAi::respond_with(move |_, body| {
+            assert!(body.get("response_format").is_none());
+            Some((
+                200,
+                json!({"choices":[{"message":{"content":format!("Ignored before\n{}\nIgnored after", paragraph_answer(body, &[text]))}}]}),
+            ))
+        });
+        let settings = LlmSettings {
+            base_url: mock.url.clone(),
+            ..Default::default()
+        };
+        let stage = test_stage(
+            "proofread",
+            json!({"type":"rewrite","output":"plain","provider":"ai"}),
+        )
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut sections = vec![Section {
+            extra: Default::default(),
+            t: 0.,
+            end: 1.,
+            image: String::new(),
+            speech: vec![TranscriptEvent {
+                extra: Default::default(),
+                start: 0.,
+                end: 1.,
+                text: "Original".into(),
+                raw: None,
+            }],
+        }];
+        paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
+        assert_eq!(sections[0].speech[0].text.as_bytes(), text.as_bytes());
+        assert_eq!(sections[0].speech[0].raw.as_deref(), Some("Original"));
+        paragraphs(&mut sections, root.path(), &settings, &stage).unwrap();
+        assert_eq!(sections[0].speech[0].raw.as_deref(), Some("Original"));
+    }
+
+    #[test]
+    fn mismatched_blocks_retry_and_only_the_valid_answer_is_cached() {
         use crate::test_support::MockAi;
         use serde_json::json;
         use std::sync::atomic::Ordering;
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
-        let event = TranscriptEvent {
-            extra: Default::default(),
-            start: 0.,
-            end: 1.,
-            text: "y hat and beta".into(),
-            raw: None,
-        };
-        // The first `bad` answers hold what JSON mode makes of an unescaped "\hat{y}" and "\beta".
-        for (bad, calls, result) in [
-            (1, 2, Some("$\\hat{y}$ and $\\beta$")),
-            (usize::MAX, 3, None),
-        ] {
-            let mock = MockAi::respond_with(move |call, _| {
-                let text = if call < bad {
-                    "$\u{0}y$ and $\u{8}eta$"
-                } else {
-                    "$\\hat{y}$ and $\\beta$"
-                };
-                Some((
-                    200,
-                    json!({"choices":[{"message":{"content":json!({"segments":[{"id":0,"text":text}]}).to_string()}}]}),
-                ))
+        for bad in ["missing", "reordered", "repeated", "end", "extra"] {
+            let root = tempfile::tempdir().unwrap();
+            let _cache = crate::dispatch::install(root.path()).unwrap();
+            let mock = MockAi::respond_with(move |call, body| {
+                let mut answer = paragraph_answer(body, &["First", "Second"]);
+                if call == 0 {
+                    let tag = batch_tag(&["one", "two"]);
+                    answer = match bad {
+                        "missing" => paragraph_answer(body, &["First"]),
+                        "reordered" => answer
+                            .replace(":0>>>", ":TEMP>>>")
+                            .replace(":1>>>", ":0>>>")
+                            .replace(":TEMP>>>", ":1>>>"),
+                        "repeated" => answer.replace(":1>>>", ":0>>>"),
+                        "end" => answer.replace(&format!("<<<{tag}:end>>>"), ""),
+                        _ => paragraph_answer(body, &["First", "Second", "Extra"]),
+                    };
+                }
+                Some((200, json!({"choices":[{"message":{"content":answer}}]})))
             });
-            let mut sections = vec![Section {
-                extra: Default::default(),
-                t: 0.,
-                end: 1.,
-                image: String::new(),
-                speech: vec![event.clone()],
-            }];
             let settings = LlmSettings {
                 base_url: mock.url.clone(),
                 ..Default::default()
             };
-            let root = tempfile::tempdir().unwrap();
-            let outcome = paragraphs(
-                &mut sections,
-                root.path(),
-                &settings,
-                &crate::llm::test_stage(
-                    "proofread",
-                    serde_json::json!({"type":"rewrite","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
-                )
-                .unwrap(),
-            );
-            assert_eq!(mock.calls.load(Ordering::SeqCst), calls);
-            match result {
-                Some(text) => {
-                    outcome.unwrap();
-                    assert_eq!(sections[0].speech[0].text, text);
-                }
-                None => {
-                    assert!(
-                        outcome
-                            .unwrap_err()
-                            .to_string()
-                            .contains("control characters")
-                    );
-                    assert_eq!(sections[0].speech, vec![event.clone()]);
-                }
+            let stage = test_stage(
+                "proofread",
+                json!({"type":"rewrite","output":"plain","provider":"ai"}),
+            )
+            .unwrap();
+            for _ in 0..2 {
+                assert_eq!(
+                    chat(&chat_agent(), &settings, &stage, &["one", "two"], None, "").unwrap(),
+                    vec![(0, "First".into()), (1, "Second".into())]
+                );
+                assert_eq!(mock.calls.load(Ordering::SeqCst), 2, "{bad}");
+                assert_eq!(
+                    std::fs::read_dir(root.path().join("llm")).unwrap().count(),
+                    1
+                );
             }
         }
     }
 
     #[test]
-    fn valid_json_string_content_keeps_formatting_and_escaped_formulas() {
-        let text = "First\n\tIndented $\\frac{1}{2}$";
-        let response = serde_json::json!({"segments":[{"id":0,"text":text}]}).to_string();
-        assert_eq!(parse_segments(&response).unwrap(), vec![(0, text.into())]);
+    fn marker_parser_requires_ordered_ids_and_end_and_ignores_outside_text() {
+        let answer = "Before\n<<<np-test:0>>> \t\n  first\t\n\n<<<np-test:1>>>\n\t \n<<<np-test:end>>> \t\nAfter";
+        assert_eq!(
+            parse_blocks(answer, "np-test", 2).unwrap(),
+            vec![(0, "  first\t\n".into()), (1, "\t ".into())]
+        );
+        assert_eq!(
+            parse_blocks("<<<np-test:0>>>\n<<<np-test:end>>>", "np-test", 1).unwrap(),
+            vec![(0, "".into())]
+        );
+        for answer in [
+            "no blocks",
+            "<<<np-test:0>>>\ntext",
+            "<<<np-test:1>>>\n<<<np-test:end>>>",
+            "<<<np-test:0>>>\n<<<np-test:0>>>\n<<<np-test:end>>>",
+            "<<<np-test:0>>>\n<<<np-test:1>>>\n<<<np-test:end>>>",
+            "<<<np-test:00>>>\n<<<np-test:end>>>",
+            "<<<np-test:0>>>\n<<<np-test:end>>>\n<<<np-test:1>>>",
+            " <<<np-test:0>>>\n<<<np-test:end>>>",
+        ] {
+            assert!(parse_blocks(answer, "np-test", 1).is_none(), "{answer}");
+        }
     }
 
     #[test]
-    fn trailing_comma_repair_preserves_transcript_literals() {
-        let input = r#"{"segments":[{"id":0,"text":"literal ,} and ,] and \"quoted\"", }, ] }"#;
-        let parsed = parse_segments(input).unwrap();
-        assert_eq!(parsed[0].1, "literal ,} and ,] and \"quoted\"");
+    fn batch_tags_hash_joined_text_and_lengthen_for_a_marker_collision() {
+        assert_eq!(
+            batch_tag(&["one", "two"]),
+            format!("np-{}", &crate::runtime::digest(b"one\ntwo")[..6])
+        );
+        // This text's SHA-256 starts with 0000009, colliding with its own six-digit marker.
+        let text = "<<<np-000000: marker 32684245";
+        assert_eq!(batch_tag(&[text]), "np-0000009");
+        let stage = test_stage(
+            "proofread",
+            serde_json::json!({"type":"rewrite","output":"plain","provider":"ai"}),
+        )
+        .unwrap();
+        let body = build_chat_body(&test_settings(), &stage, &[text], None).unwrap();
+        assert_eq!(
+            body["messages"][1]["content"][0]["text"],
+            format!("<<<np-0000009:0>>>\n{text}\n<<<np-0000009:end>>>")
+        );
     }
 
     #[test]
@@ -790,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn polish_records_raw_text_and_mismatched_ids_are_rejected() {
+    fn polish_records_raw_text() {
         let event = |text: &str| TranscriptEvent {
             extra: Default::default(),
             start: 0.0,
@@ -801,22 +787,10 @@ mod tests {
         let (mut a, mut b) = (event("今天讲编译原理"), event("啊"));
         let mut refs = vec![&mut a, &mut b];
         let polished = [(0, "今天讲编译原理".into()), (1, String::new())];
-        assert!(segment_ids_match(&polished, refs.len()));
         apply_results(&mut refs, &polished);
         assert_eq!(a.raw, None, "unchanged text keeps no raw copy");
         assert_eq!(b.text, "", "filler is emptied and removed by the caller");
         assert_eq!(b.raw.as_deref(), Some("啊"), "the original is kept in raw");
-        assert!(!segment_ids_match(&[(0, "x".into()), (1, "y".into())], 1));
-        assert!(!segment_ids_match(&[], 1));
-        assert!(!segment_ids_match(&[(0, "x".into()), (0, "y".into())], 2));
-    }
-
-    #[test]
-    fn parse_pairs_tolerates_trailing_commas() {
-        // Trailing commas, common in reasoning models' output
-        let got =
-            parse_segments("[{\"id\":0,\"text\":\"a\",},{\"id\":1,\"text\":\"b\",},]").unwrap();
-        assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
     }
 
     #[test]
@@ -829,7 +803,11 @@ mod tests {
         .unwrap();
         let items = ["hello"];
         let text_only = build_chat_body(&s, &stage, &items, None).unwrap();
-        assert_eq!(text_only["response_format"]["type"], "json_object");
+        assert!(text_only.get("response_format").is_none());
+        assert_eq!(
+            text_only["messages"][1]["content"][0]["text"],
+            "<<<np-2cf24d:0>>>\nhello\n<<<np-2cf24d:end>>>"
+        );
         assert_eq!(text_only["model"], "m");
         assert!(text_only.get("max_tokens").is_none());
         assert!(text_only.get("temperature").is_none());
@@ -849,10 +827,9 @@ mod tests {
             "data:image/jpeg;base64,aGVsbG8="
         );
         let sys = vision["messages"][0]["content"].as_str().unwrap();
-        assert_eq!(sys, format!("CUSTOM {PARAGRAPHS_CONTRACT}{IMAGE_NOTE}"));
-        assert!(
-            sys.contains("\"segments\""),
-            "the system prompt and response_format both ask for the segments object"
+        assert_eq!(
+            sys,
+            format!("CUSTOM {}{IMAGE_NOTE}", blocks_contract(&batch_tag(&items)))
         );
     }
 
@@ -867,7 +844,7 @@ mod tests {
         let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
         assert_eq!(
             body["messages"][0]["content"],
-            format!("CUSTOM {PARAGRAPHS_CONTRACT}")
+            format!("CUSTOM {}", blocks_contract(&batch_tag(&["Text"])))
         );
         assert!(
             !body["messages"][0]["content"]
@@ -887,12 +864,15 @@ mod tests {
             let body = build_chat_body(&settings, &custom, &["Text"], Some("image")).unwrap();
             assert_eq!(
                 body["messages"][0]["content"],
-                format!("CUSTOM {PARAGRAPHS_CONTRACT}{IMAGE_NOTE}")
+                format!(
+                    "CUSTOM {}{IMAGE_NOTE}",
+                    blocks_contract(&batch_tag(&["Text"]))
+                )
             );
             let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
             assert_eq!(
                 body["messages"][0]["content"],
-                format!("CUSTOM {PARAGRAPHS_CONTRACT}")
+                format!("CUSTOM {}", blocks_contract(&batch_tag(&["Text"])))
             );
         }
     }
@@ -905,7 +885,7 @@ mod tests {
             ..Default::default()
         };
         let effective = LlmSettings::for_stage(&service, &stage, String::new());
-        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
+        let body = chat_body(&effective, "System", "User").unwrap();
         assert_eq!(body["model"], "stage-model");
         assert_eq!(body["temperature"], 0.7);
         assert_eq!(body["top_p"], 0.8);
@@ -931,55 +911,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_segments_object_contract() {
-        // The contract: a top-level {"segments":[...]} object
-        let got =
-            parse_segments("{\"segments\":[{\"id\":0,\"text\":\"a\"},{\"id\":1,\"text\":\"b\"}]}")
-                .unwrap();
-        assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
-        // Code fences and trailing commas are tolerated
-        let got =
-            parse_segments("```json\n{\"segments\":[{\"id\":0,\"text\":\"a\"},]}\n```").unwrap();
-        assert_eq!(got, vec![(0, "a".into())]);
-        // Models that ignore the instruction and return a top-level array
-        let got = parse_segments("[{\"id\":0,\"text\":\"a\"}]").unwrap();
-        assert_eq!(got, vec![(0, "a".into())]);
-        assert!(parse_segments("{\"segments\":[]}").is_none());
-        assert!(parse_segments("no JSON here").is_none());
-        for content in [
-            r#"{"segments":[{"id":0,"text":"a"},{"id":"oops"},{"id":2,"text":"c"}]}"#,
-            r#"[{"id":0,"text":"a"},{"id":"oops"},{"id":2,"text":"c"}]"#,
-        ] {
-            assert!(parse_segments(content).is_none());
-        }
-    }
-
-    #[test]
-    fn response_parsing_rejects_other_shapes_and_surrounding_values() {
-        for content in [
-            r#"{"segments":null,"other":[{"id":0,"text":"wrong array"}]}"#,
-            r#"{"other":[{"id":0,"text":"wrong array"}]}"#,
-            r#"{"segments":[],"other":[{"id":0,"text":"wrong array"}]}"#,
-            r#"{"segments":{"nested":[{"id":0,"text":"wrong array"}]}}"#,
-            r#"[{"id":0,"text":"a"}] [{"id":0,"text":"b"}]"#,
-            r#"Prose [{"id":0,"text":"a"}]"#,
-            r#""[{\"id\":0,\"text\":\"a\"}]""#,
-            "null",
-        ] {
-            assert!(parse_segments(content).is_none(), "accepted {content}");
-        }
-    }
-
-    #[test]
-    fn top_level_arrays_tolerate_fences() {
-        let got =
-            parse_segments("```json\n[{\"id\":0,\"text\":\"a\"},{\"id\":1,\"text\":\"b\"}]\n```")
-                .unwrap();
-        assert_eq!(got, vec![(0, "a".into()), (1, "b".into())]);
-        assert!(parse_segments("no array here").is_none());
-        assert!(parse_segments("[]").is_none());
-    }
-    #[test]
     fn paragraph_images_fall_back_to_text_and_warn_only_for_missing_assets() {
         use crate::test_support::MockAi;
         use serde_json::json;
@@ -989,12 +920,20 @@ mod tests {
             assert_eq!(content.len(), 1);
             let system = body["messages"][0]["content"].as_str().unwrap();
             assert!(!system.contains("Each request includes the screenshot"));
-            let items: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
-            let segments = items.as_array().unwrap().iter().map(|item| json!({"id":item["id"],"text":format!("Processed {}",item["text"].as_str().unwrap())})).collect::<Vec<_>>();
-            Some((
-                200,
-                json!({"choices":[{"message":{"content":json!({"segments":segments}).to_string()}}]}),
-            ))
+            let answer = content[0]["text"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .map(|line| {
+                    if line.starts_with("<<<np-") {
+                        line.to_owned()
+                    } else {
+                        format!("Processed {line}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some((200, json!({"choices":[{"message":{"content":answer}}]})))
         });
         let root = tempfile::tempdir().unwrap();
         let mut sections = ["", "missing.jpg"]
@@ -1053,11 +992,12 @@ mod tests {
             .unwrap()
             .iter()
             .map(|body| {
-                let items: Value = serde_json::from_str(
-                    body["messages"][1]["content"][0]["text"].as_str().unwrap(),
-                )
-                .unwrap();
-                items.as_array().unwrap().len()
+                body["messages"][1]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .lines()
+                    .filter(|line| line.starts_with("<<<np-") && !line.ends_with(":end>>>"))
+                    .count()
             })
             .sum::<usize>();
         assert_eq!(sent, 42);
