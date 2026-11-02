@@ -2254,7 +2254,7 @@ fn explicit_subtitles_override_downloaded_tracks_without_starting_the_provider()
 
 #[test]
 fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
-    for behavior in ["missing-text-first", "invalid-json-first"] {
+    for behavior in ["empty-first", "missing-text-first", "invalid-json-first"] {
         let root = tempfile::tempdir().unwrap();
         let source = Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2278,19 +2278,90 @@ fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
         assert_eq!(tokens["prompt"], counted * 3);
         assert_eq!(tokens["completion"], counted * 2);
         let warnings = completed["warnings"].as_array().unwrap();
-        assert_eq!(calls, records.len() + 1);
-        let warning = warnings[0].as_str().unwrap();
-        assert!(warning.starts_with("Speech at ") && warning.contains(": attempt 1 of 3 failed:"));
-        assert!(warning.contains(if behavior == "invalid-json-first" {
-            "The service response is not valid JSON"
+        if behavior == "empty-first" {
+            assert_eq!(records[0]["text"], "");
+            assert_eq!(
+                warnings,
+                &[json!(format!(
+                    "1 of {} speech segments returned no text",
+                    records.len()
+                ))]
+            );
         } else {
-            "The speech service returned no text"
-        }));
-
+            assert_eq!(calls, records.len() + 1);
+            let warning = warnings[0].as_str().unwrap();
+            assert!(
+                warning.starts_with("Speech at ") && warning.contains(": attempt 1 of 3 failed:")
+            );
+            assert!(warning.contains(if behavior == "invalid-json-first" {
+                "The service response is not valid JSON"
+            } else {
+                "The speech service returned no text"
+            }));
+        }
         let cached = run(root.path(), source, &cfg, &["--skip", "screenshots"]);
         assert_eq!(done(&cached)["warnings"], json!([]));
         assert!(!events(&cached).iter().any(|e| e["type"] == "tokens"));
         assert_eq!(count(&record), calls);
+    }
+}
+
+#[test]
+fn empty_speech_segments_are_checkpointed_past_the_old_tripwire() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("repeated.wav");
+    assert!(
+        Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-stream_loop",
+                "5",
+                "-i",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/speech.wav"),
+                "-c",
+                "copy"
+            ])
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let record = root.path().join("asr");
+    let mut cfg = speech_config(&record, "empty");
+    let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
+    assert_eq!(error(&output), "No speech was recognized in the recording");
+    let calls = count(&record);
+    assert!(calls > 10);
+    std::fs::write(
+        source.with_extension("srt"),
+        "1\n00:00:00,000 --> 00:00:01,000\nFallback subtitles.\n",
+    )
+    .unwrap();
+    cfg["stages"]["transcript"]["sources"] = json!(["speech", "subtitles"]);
+    for _ in 0..2 {
+        let completed = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+        assert_eq!(
+            completed["warnings"],
+            json!([format!(
+                "{calls} of {calls} speech segments returned no text"
+            )])
+        );
+        let checkpoint = checkpoint(Path::new(completed["work_dir"].as_str().unwrap()));
+        let records = std::fs::read_to_string(checkpoint).unwrap();
+        assert_eq!(
+            records
+                .lines()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            calls
+        );
+        assert!(
+            records
+                .lines()
+                .all(|line| serde_json::from_str::<Value>(line).unwrap()["text"] == "")
+        );
     }
 }
 
