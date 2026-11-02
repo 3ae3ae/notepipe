@@ -12,6 +12,39 @@ pub fn resolve(
     opts: &RunOpts,
     file: &settings::ConfigFile,
 ) -> Result<config::PipelineConfig> {
+    let mut file = file.clone();
+    for name in &file.pipeline {
+        if let Some(stage) = file.stages.get_mut(name) {
+            match &mut stage.kind {
+                StageType::Transcript(t) => {
+                    if let Some(language) = &opts.asr_language {
+                        t.language = language.clone();
+                    }
+                }
+                StageType::Screenshots(s) => {
+                    if let Some(v) = opts.screenshot_mode {
+                        s.mode = v;
+                    }
+                    if let Some(v) = opts.similarity {
+                        s.sensitivity = v;
+                    }
+                    if let Some(v) = opts.sample_interval {
+                        s.frame_interval = v;
+                    }
+                    if let Some(v) = opts.cooldown {
+                        s.min_gap = v;
+                    }
+                    if let Some(v) = opts.stable_secs {
+                        s.settle = v;
+                    }
+                    if let Some(v) = &opts.roi {
+                        s.region = Some(v.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     file.validate()?;
     for name in &opts.skip {
         anyhow::ensure!(
@@ -154,34 +187,6 @@ pub fn resolve(
         }
         if skipped && !stage.llm_writes_document() {
             absent.insert(stage.output.clone(), name.clone());
-        }
-        match &mut stage.kind {
-            StageType::Transcript(t) => {
-                if let Some(language) = &opts.asr_language {
-                    t.language = language.clone();
-                }
-            }
-            StageType::Screenshots(s) => {
-                if let Some(v) = opts.screenshot_mode {
-                    s.mode = v;
-                }
-                if let Some(v) = opts.similarity {
-                    s.sensitivity = v;
-                }
-                if let Some(v) = opts.sample_interval {
-                    s.frame_interval = v;
-                }
-                if let Some(v) = opts.cooldown {
-                    s.min_gap = v;
-                }
-                if let Some(v) = opts.stable_secs {
-                    s.settle = v;
-                }
-                if let Some(v) = &opts.roi {
-                    s.region = Some(v.clone());
-                }
-            }
-            _ => {}
         }
         written.insert(stage.output.clone(), stage.output_kind());
         stages.push((name.clone(), stage));
