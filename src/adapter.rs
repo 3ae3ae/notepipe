@@ -18,6 +18,44 @@ pub struct Adapter {
     stopped: bool,
 }
 
+/// Shared by request workers; resolving the URL starts the program on the first cache miss.
+pub struct Provider {
+    name: String,
+    argv: Vec<String>,
+    adapter: std::sync::Mutex<Option<Adapter>>,
+}
+
+impl std::fmt::Debug for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Provider")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Provider {
+    pub fn new(name: String, argv: Vec<String>) -> Self {
+        Self {
+            name,
+            argv,
+            adapter: Default::default(),
+        }
+    }
+
+    pub fn base(&self, stage: &str, control: &dyn Fn() -> Result<()>) -> Result<String> {
+        let mut adapter = crate::runtime::lock_recover(&self.adapter);
+        control()?;
+        if adapter.is_none() {
+            *adapter = Some(Adapter::start_with_control(&self.argv, stage, control)?);
+        }
+        Ok(format!("{}/v1", adapter.as_ref().unwrap().base))
+    }
+
+    pub fn stop(&self) {
+        crate::runtime::lock_recover(&self.adapter).take();
+    }
+}
+
 /// Bare names prefer the canonical executable's directory, then PATH.
 pub fn resolve_executable(program: &str) -> Result<PathBuf> {
     if program.contains(['/', '\\']) {
@@ -121,6 +159,15 @@ mod tests {
             "--behavior".into(),
             behavior.into(),
         ])
+    }
+
+    #[test]
+    fn cancelled_provider_resolution_does_not_start_a_program() {
+        let provider = Provider::new("fixture".into(), vec!["must-not-start".into()]);
+        let error = provider
+            .base("test", &|| Err(crate::runtime::Cancelled.into()))
+            .unwrap_err();
+        assert!(error.downcast_ref::<crate::runtime::Cancelled>().is_some());
     }
 
     #[test]
