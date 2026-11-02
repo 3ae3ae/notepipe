@@ -80,6 +80,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         (args.record / 'request').write_bytes(body)
         (args.record / 'authorization').write_text(self.headers.get('Authorization', ''))
         (args.record / 'endpoint').write_text(self.path)
+        if args.behavior == 'exit-request':
+            os.write(2, b'invalid: diagnostic\nlast diagnostic\n')
+            os._exit(7)
         if args.behavior == 'slow':
             (args.record / 'transcribing').write_text('ready')
             time.sleep(30)
@@ -112,6 +115,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(response)))
         self.end_headers()
         self.wfile.write(response)
+        if args.behavior == 'exit-idle':
+            def exit_idle():
+                os.write(2, b'last diagnostic\n')
+                os._exit(7)
+            threading.Timer(0.1, exit_idle).start()
 
 
 server = http.server.ThreadingHTTPServer((args.host, args.port), Handler)

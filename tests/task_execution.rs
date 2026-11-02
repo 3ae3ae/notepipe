@@ -2811,3 +2811,75 @@ fn lifecycle_cached_chat_and_segment_checkpoints_start_no_provider() {
         "start\n"
     );
 }
+
+#[test]
+fn lifecycle_provider_exit_reports_status_and_diagnostics() {
+    for speech in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = if speech {
+            video(root.path())
+        } else {
+            local(root.path())
+        };
+        let record = root.path().join("provider");
+        let mut cfg = speech_config(&record, "exit-request");
+        if !speech {
+            cfg["stages"]["transcript"]["sources"] = json!(["subtitles"]);
+            cfg["pipeline"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!("summary"));
+            cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","provider":"speech"});
+        }
+        let start = std::time::Instant::now();
+        let message = error(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+        assert!(
+            message.contains("Provider speech exited with status 7"),
+            "{message}"
+        );
+        assert!(
+            message.contains("invalid: diagnostic") && message.contains("last diagnostic"),
+            "{message}"
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    }
+}
+
+#[test]
+fn lifecycle_live_provider_errors_do_not_attach_diagnostics() {
+    let root = tempfile::tempdir().unwrap();
+    let source = video(root.path());
+    let record = root.path().join("provider");
+    let message = error(&run(
+        root.path(),
+        &source,
+        &speech_config(&record, "error"),
+        &["--skip", "screenshots"],
+    ));
+    assert!(
+        !message.contains("adapter stderr") && !message.contains("adapter stdout"),
+        "{message}"
+    );
+}
+
+#[test]
+fn lifecycle_provider_exit_between_consumers_stops_the_run() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let record = root.path().join("provider");
+    let mut cfg = config();
+    cfg["pipeline"] = json!(["download", "transcript", "first", "wait", "second"]);
+    cfg["providers"] = json!({"p":{"command":adapter(&record,"exit-idle")}});
+    cfg["stages"]["first"] =
+        json!({"type":"llm","input":"transcript.json","output":"first.md","provider":"p"});
+    cfg["stages"]["wait"] = json!({"type":"run","input":"first.md","output":"wait.md","produces":"markdown","command":[python(),"-c","import time;time.sleep(30);print('ready')"]});
+    cfg["stages"]["second"] = json!({"type":"llm","input":"wait.md","output":"second.md","publish":"second.md","provider":"p"});
+    let start = std::time::Instant::now();
+    let message = error(&run(root.path(), &source, &cfg, &[]));
+    assert!(
+        message.contains("Provider p exited with status 7\n")
+            && message.contains("last diagnostic"),
+        "{message}"
+    );
+    assert!(start.elapsed() < std::time::Duration::from_secs(10));
+}
