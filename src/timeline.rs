@@ -301,7 +301,7 @@ fn needs_space(paragraph: &str, next: &str) -> bool {
 }
 
 /// Default to a space unless both boundary characters use unspaced scripts.
-fn append_text(paragraph: &mut String, next: &str) {
+pub(crate) fn append_text(paragraph: &mut String, next: &str) {
     if needs_space(paragraph, next) {
         paragraph.push(' ');
     }

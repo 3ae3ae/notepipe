@@ -2,7 +2,7 @@
 //!
 //! Like speech recognition, they produce `TranscriptEvent`s for the rest of the pipeline.
 
-use crate::timeline::TranscriptEvent;
+use crate::timeline::{TranscriptEvent, append_text};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -218,12 +218,9 @@ pub fn file_track(path: PathBuf, language: Option<String>) -> SubtitleTrack {
     }
 }
 
-/// Parses SRT or VTT subtitles into transcript events.
-/// - Timestamps: `HH:MM:SS,mmm` (SRT), `HH:MM:SS.mmm` (VTT) and `MM:SS.mmm`
-/// - Cue markup is removed and supported character references are decoded
-/// - Lines of one cue are joined; rolling captions (common in automatic captions) are de-duplicated
+/// Parses SRT or VTT subtitles, retaining cue boundaries and joining their lines like paragraphs.
 pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
-    let mut out: Vec<TranscriptEvent> = vec![];
+    let mut out = Vec::new();
     let content = content.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = content.lines().collect();
     let mut i = 0;
@@ -237,29 +234,19 @@ pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
                 tracing::warn!(line, "Skipped subtitle with invalid timestamps");
                 continue;
             }
-            let mut text_parts: Vec<String> = vec![];
+            let mut text = String::new();
             while i < lines.len() && !lines[i].trim().is_empty() {
-                let cleaned = clean_cue_text(lines[i]);
-                if !cleaned.is_empty() {
-                    text_parts.push(cleaned);
-                }
+                append_text(&mut text, &clean_cue_text(lines[i]));
                 i += 1;
             }
-            let text = text_parts.join(" ");
-            // Rolling captions: keep the first of adjacent identical cues and extend it.
-            if !text.is_empty() {
-                match out.last_mut() {
-                    Some(prev) if prev.text == text && start <= prev.end => {
-                        prev.end = end.max(prev.end)
-                    }
-                    _ => out.push(TranscriptEvent {
-                        extra: Default::default(),
-                        start,
-                        end,
-                        text,
-                        raw: None,
-                    }),
-                }
+            if !text.trim().is_empty() {
+                out.push(TranscriptEvent {
+                    extra: Default::default(),
+                    start,
+                    end,
+                    text,
+                    raw: None,
+                });
             }
         } else {
             i += 1;
@@ -281,6 +268,7 @@ fn parse_cue_header(line: &str) -> Option<(f64, f64)> {
 /// Removes cue markup and decodes character references once, without changing literal text.
 fn clean_cue_text(line: &str) -> String {
     let mut text = String::with_capacity(line.len());
+    let mut part = String::new();
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
         if c == '<'
@@ -288,18 +276,28 @@ fn clean_cue_text(line: &str) -> String {
             && chars.as_str().as_bytes()[end] == b'>'
             && is_cue_tag(&chars.as_str()[..end])
         {
+            let tag = &chars.as_str()[..end];
+            if tag
+                .split(|c: char| c.is_ascii_whitespace() || c == '/')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("br"))
+            {
+                append_text(&mut text, &part);
+                part.clear();
+            }
             chars = chars.as_str()[end + 1..].chars();
         } else if c == '&'
             && let Some(end) = chars.as_str().find([';', '&'])
             && chars.as_str().as_bytes()[end] == b';'
             && let Some(decoded) = decode_reference(&chars.as_str()[..end])
         {
-            text.push(decoded);
+            part.push(decoded);
             chars = chars.as_str()[end + 1..].chars();
         } else {
-            text.push(c);
+            part.push(c);
         }
     }
+    append_text(&mut text, &part);
     text
 }
 
@@ -584,7 +582,7 @@ mod tests {
         assert_eq!(ev.len(), 2);
         assert!((ev[0].start - 1.0).abs() < 1e-3);
         assert!((ev[0].end - 4.0).abs() < 1e-3);
-        assert_eq!(ev[0].text, "大家好，今天我们讲 编译原理");
+        assert_eq!(ev[0].text, "大家好，今天我们讲编译原理");
         assert!((ev[1].start - 4.5).abs() < 1e-3);
     }
 
@@ -635,10 +633,10 @@ second cue
             ("<v Speaker>one</v><lang en>two</lang>", "onetwo"),
             ("<ruby>one<rt>two</rt></ruby>", "onetwo"),
             ("<00:00:01.000>one<00:02.000>two", "onetwo"),
-            ("<font color=\"red\">one</font><br/>two", "onetwo"),
+            ("<font color=\"red\">one</font><br/>two", "one two"),
             ("a <b> c", "a  c"),
-            ("<I>one</I ><BR / >two", "onetwo"),
-            ("<i class='x'>one</i><br class='x'/>two", "onetwo"),
+            ("<I>one</I ><BR / >two", "one two"),
+            ("<i class='x'>one</i><br class='x'/>two", "one two"),
             ("&lt;b&gt; &amp;lt; &nbsp;&quot;", "<b> &lt; \u{a0}\""),
         ] {
             assert_eq!(clean_cue_text(input), expected, "{input}");
@@ -646,8 +644,7 @@ second cue
     }
 
     #[test]
-    fn dedupes_rolling_captions() {
-        // Rolling duplicates as in automatic captions: adjacent cues with the same text
+    fn identical_adjacent_cues_remain_separate() {
         let srt = "\
 1
 00:00:01,000 --> 00:00:02,000
@@ -662,12 +659,12 @@ second cue
 一门人工智能分支
 ";
         let ev = parse_subtitle(srt);
-        assert_eq!(ev.len(), 2, "adjacent duplicates merge");
-        assert!(
-            (ev[0].end - 3.0).abs() < 1e-3,
-            "a duplicate extends the cue"
-        );
-        assert_eq!(ev[1].text, "一门人工智能分支");
+        assert_eq!(ev.len(), 3);
+        assert_eq!(ev[0].end, 2.0);
+        assert_eq!(ev[1].start, 2.0);
+        assert_eq!(ev[1].end, 3.0);
+        assert_eq!(ev[0].text, ev[1].text);
+        assert_eq!(ev[2].text, "一门人工智能分支");
     }
 
     #[test]
@@ -703,6 +700,30 @@ second cue
             assert_eq!(events[0].text, "first");
             assert_eq!(events[1].text, "second");
         }
+    }
+
+    #[test]
+    fn cue_lines_and_breaks_use_the_document_joiner_with_all_line_endings() {
+        for newline in ["\n", "\r\n", "\r"] {
+            let input = [
+                "WEBVTT",
+                "",
+                "00:00.000 --> 00:02.000",
+                "字幕は<br>保持する。",
+                "次の行",
+                "",
+                "00:02.000 --> 00:03.000",
+                "  code  <br />    more  ",
+                "",
+            ]
+            .join(newline);
+            let events = parse_subtitle(&input);
+            assert_eq!(events.len(), 2);
+            assert_eq!(events[0].text, "字幕は保持する。次の行");
+            assert_eq!(events[1].text, "  code      more  ");
+        }
+        assert_eq!(clean_cue_text("hello<br>world"), "hello world");
+        assert_eq!(clean_cue_text("<b><i>hello</i></b>"), "hello");
     }
 
     #[test]
