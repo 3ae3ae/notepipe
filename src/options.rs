@@ -99,8 +99,10 @@ pub fn resolve(
                 StageType::Transcript(_) => ("transcript", &[Kind::Media]),
                 StageType::Screenshots(_) => ("screenshots", &[Kind::Media]),
                 StageType::Document {} => ("document", &[Kind::Transcript, Kind::Images]),
-                StageType::Llm(_) if stage.llm_writes_document() => ("llm", &[Kind::Document]),
-                StageType::Llm(_) => ("llm", &[Kind::Transcript, Kind::Document, Kind::Markdown]),
+                StageType::Rewrite(_) => ("rewrite", &[Kind::Document]),
+                StageType::Write(_) => {
+                    ("write", &[Kind::Transcript, Kind::Document, Kind::Markdown])
+                }
                 StageType::Markdown {} => ("markdown", &[Kind::Document, Kind::Markdown]),
                 StageType::Run(_) => (
                     "run",
@@ -137,7 +139,8 @@ pub fn resolve(
                 stage.input.len() == 1,
                 "a screenshots stage reads one input",
             ),
-            StageType::Llm(_) => (stage.input.len() == 1, "a llm stage reads one input"),
+            StageType::Rewrite(_) => (stage.input.len() == 1, "a rewrite stage reads one input"),
+            StageType::Write(_) => (stage.input.len() == 1, "a write stage reads one input"),
             StageType::Document {} => (
                 input_kinds
                     .iter()
@@ -165,7 +168,7 @@ pub fn resolve(
             );
         }
         let skipped = opts.skip.contains(name);
-        if !skipped || stage.llm_writes_document() {
+        if !skipped || matches!(stage.kind, StageType::Rewrite(_)) {
             stage.input.retain(|input| {
                 if absent.contains_key(input) {
                     !(matches!(stage.kind, StageType::Markdown {})
@@ -185,7 +188,7 @@ pub fn resolve(
                 "--skip leaves stage {name} with no input"
             );
         }
-        if skipped && !stage.llm_writes_document() {
+        if skipped && !matches!(stage.kind, StageType::Rewrite(_)) {
             absent.insert(stage.output.clone(), name.clone());
         }
         written.insert(stage.output.clone(), stage.output_kind());

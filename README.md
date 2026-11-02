@@ -242,7 +242,7 @@ input = ["transcript.json", "images"]
 output = "draft.json"
 
 [stages.proofread]
-type = "llm"
+type = "rewrite"
 input = "draft.json"
 output = "proofread.json"
 publish = "note.json"
@@ -250,16 +250,36 @@ provider = "openai"
 model = "gpt-6-luna"
 # images = false
 # batch_size = 20
-prompt = '''…'''
+prompt = '''
+You proofread transcripts of spoken recordings. Each input item is a stretch of continuous speech,
+already split at natural pauses. Fix obvious speech-recognition errors (misheard words, homophones,
+misspelled names and terms), remove filler that adds nothing, and repair awkward sentence breaks and
+punctuation so the text reads naturally. Do not summarize, expand, translate, add or remove
+substantive content, or change the meaning. Keep the original language. If an item contains only
+filler or meaningless fragments (such as a lone "um" or "you know"), return an empty text for it;
+never empty an item that has real content. Write mathematical formulas, symbols and expressions as
+LaTeX: wrap inline math in $...$ and put display math on its own line in $$...$$; rewrite spoken
+formulas, such as "x squared", as LaTeX too; do not add $ when there is no math. If a screenshot is
+attached, use it only to correct the spelling of terms and proper names; do not describe or comment
+on it.
+'''
 
 [stages.summary]
-type = "llm"
+type = "write"
 input = "proofread.json"
 output = "summary.md"
 provider = "openai"
 model = "gpt-6-luna"
 # chunk_size = 25000
-prompt = '''…'''
+prompt = '''
+You summarize recordings from their timestamped transcript. Use only what the transcript says: never
+invent facts, numbers, names or opinions, and leave out anything uncertain rather than guess. Write a
+one-sentence overview, a list of 3 to 6 key points, and an outline of 3 to 8 sections in time order
+that covers the whole recording; start each outline item with the section's start time as [mm:ss]
+and describe the section in one or two sentences. Write mathematical formulas as LaTeX in $...$ or
+$$...$$. Use Markdown with headings of level 2 or lower, and do not repeat the title. Write in the
+language of the transcript.
+'''
 
 [stages.markdown]
 type = "markdown"

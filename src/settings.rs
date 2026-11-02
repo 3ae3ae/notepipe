@@ -220,19 +220,47 @@ impl Default for Screenshots {
 const DEFAULT_BATCH_SIZE: i64 = 20;
 const DEFAULT_CHUNK_SIZE: i64 = 25_000;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct Llm {
+pub struct Rewrite {
     pub provider: String,
     pub model: String,
     pub prompt: String,
-    #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-    pub images: Option<bool>,
-    #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-    pub batch_size: Option<i64>,
-    #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-    pub chunk_size: Option<i64>,
+    pub images: bool,
+    pub batch_size: i64,
     pub request: serde_json::Map<String, serde_json::Value>,
+}
+impl Default for Rewrite {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            model: String::new(),
+            prompt: String::new(),
+            images: false,
+            batch_size: DEFAULT_BATCH_SIZE,
+            request: Default::default(),
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Write {
+    pub provider: String,
+    pub model: String,
+    pub prompt: String,
+    pub chunk_size: i64,
+    pub request: serde_json::Map<String, serde_json::Value>,
+}
+impl Default for Write {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            model: String::new(),
+            prompt: String::new(),
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            request: Default::default(),
+        }
+    }
 }
 fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     deserializer: D,
@@ -253,7 +281,8 @@ pub enum StageType {
     Transcript(Transcript),
     Screenshots(Screenshots),
     Document {},
-    Llm(Llm),
+    Rewrite(Rewrite),
+    Write(Write),
     Markdown {},
     Run(Run),
 }
@@ -321,18 +350,14 @@ pub fn plain_name(name: &str) -> bool {
     !name.is_empty() && !name.starts_with('.') && name != "source" && !name.contains(['/', '\\'])
 }
 impl Stage {
-    /// An `llm` stage writing `.json` rewrites the note document; skipped, it passes its input on unchanged.
-    pub fn llm_writes_document(&self) -> bool {
-        matches!(self.kind, StageType::Llm(_)) && self.output.ends_with(".json")
-    }
     pub fn output_kind(&self) -> Kind {
         match &self.kind {
             StageType::Download(_) => Kind::Media,
             StageType::Transcript(_) => Kind::Transcript,
             StageType::Screenshots(_) => Kind::Images,
             StageType::Document {} => Kind::Document,
-            StageType::Llm(_) if self.llm_writes_document() => Kind::Document,
-            StageType::Llm(_) | StageType::Markdown {} => Kind::Markdown,
+            StageType::Rewrite(_) => Kind::Document,
+            StageType::Write(_) | StageType::Markdown {} => Kind::Markdown,
             StageType::Run(r) => r.produces.unwrap_or(Kind::File),
         }
     }
@@ -341,28 +366,42 @@ impl Stage {
             StageType::Transcript(t) if t.sources.iter().any(|s| s == "speech") => {
                 Some(&t.speech.provider)
             }
-            StageType::Llm(l) => Some(&l.provider),
+            StageType::Rewrite(l) => Some(&l.provider),
+            StageType::Write(l) => Some(&l.provider),
             _ => None,
         }
     }
     pub fn ai(&self, name: &str) -> Option<crate::llm::Stage> {
-        let StageType::Llm(l) = &self.kind else {
-            return None;
+        let (provider, model, prompt, request, images, batch_size, chunk_size) = match &self.kind {
+            StageType::Rewrite(l) => (
+                &l.provider,
+                &l.model,
+                &l.prompt,
+                &l.request,
+                l.images,
+                l.batch_size,
+                DEFAULT_CHUNK_SIZE,
+            ),
+            StageType::Write(l) => (
+                &l.provider,
+                &l.model,
+                &l.prompt,
+                &l.request,
+                false,
+                DEFAULT_BATCH_SIZE,
+                l.chunk_size,
+            ),
+            _ => return None,
         };
         Some(crate::llm::Stage {
             name: name.into(),
-            provider: l.provider.clone(),
-            model: l.model.clone(),
-            prompt: l.prompt.trim().into(),
-            images: l.images.unwrap_or(false),
-            batch_size: l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE) as usize,
-            chunk_size: l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE) as usize,
-            request: l.request.clone(),
-            input: if self.llm_writes_document() {
-                crate::llm::Input::Paragraphs
-            } else {
-                crate::llm::Input::Transcript
-            },
+            provider: provider.clone(),
+            model: model.clone(),
+            prompt: prompt.trim().into(),
+            images,
+            batch_size: batch_size as usize,
+            chunk_size: chunk_size as usize,
+            request: request.clone(),
         })
     }
 }
@@ -374,8 +413,22 @@ pub struct ConfigFile {
     pub out: PathBuf,
     #[serde(default)]
     pub providers: BTreeMap<String, Provider>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_stages")]
     pub stages: BTreeMap<String, Stage>,
+}
+fn deserialize_stages<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<BTreeMap<String, Stage>, D::Error> {
+    use serde::de::Error;
+    BTreeMap::<String, serde_json::Value>::deserialize(d)?
+        .into_iter()
+        .map(|(name, value)| {
+            if value["type"] == "llm" {
+                return Err(D::Error::custom(format!("Stage {name}: type \"llm\" is now \"rewrite\" (a document's paragraphs) or \"write\" (one Markdown answer)")));
+            }
+            serde_json::from_value(value).map(|stage| (name, stage)).map_err(D::Error::custom)
+        })
+        .collect()
 }
 fn default_out() -> PathBuf {
     crate::config::DEFAULT_OUT_DIR.into()
@@ -429,30 +482,22 @@ impl ConfigFile {
                     "Stage {name}: a download output cannot be published"
                 );
             }
-            if let StageType::Llm(l) = &stage.kind {
-                anyhow::ensure!(
-                    stage.output.ends_with(".json") || stage.output.ends_with(".md"),
-                    "Stage {name}: an llm output ends in .json (rewrite each paragraph) or .md (one answer)"
-                );
-                for (key, present, ext) in [
-                    ("images", l.images.is_some(), ".json"),
-                    ("batch_size", l.batch_size.is_some(), ".json"),
-                    ("chunk_size", l.chunk_size.is_some(), ".md"),
-                ] {
+            match &stage.kind {
+                StageType::Rewrite(l) => {
                     anyhow::ensure!(
-                        !present || stage.output.ends_with(ext),
-                        "Stage {name}: {key} applies only to an llm output ending in {ext}"
+                        (1..=100).contains(&l.batch_size),
+                        "Stage {name}: batch_size must be 1 to 100"
                     );
+                    crate::llm::validate_request(&l.request)?;
                 }
-                anyhow::ensure!(
-                    (1..=100).contains(&l.batch_size.unwrap_or(DEFAULT_BATCH_SIZE)),
-                    "Stage {name}: batch_size must be 1 to 100"
-                );
-                anyhow::ensure!(
-                    (1000..=1_000_000).contains(&l.chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE)),
-                    "Stage {name}: chunk_size must be 1000 to 1000000"
-                );
-                crate::llm::validate_request(&l.request)?;
+                StageType::Write(l) => {
+                    anyhow::ensure!(
+                        (1000..=1_000_000).contains(&l.chunk_size),
+                        "Stage {name}: chunk_size must be 1000 to 1000000"
+                    );
+                    crate::llm::validate_request(&l.request)?;
+                }
+                _ => {}
             }
             let provider = match &stage.kind {
                 StageType::Transcript(t) if !t.speech.provider.is_empty() => {
@@ -557,7 +602,7 @@ pub fn parse(text: &str) -> Result<ConfigFile> {
     parse_at(text, Path::new("-"))
 }
 fn parse_at(text: &str, path: &Path) -> Result<ConfigFile> {
-    let mut cfg: ConfigFile = if text.trim_start().starts_with('{') {
+    let cfg: ConfigFile = if text.trim_start().starts_with('{') {
         serde_json::from_str(text).map_err(|error: serde_json::Error| {
             let message = error.to_string();
             let suffix = format!(" at line {} column {}", error.line(), error.column());
@@ -584,16 +629,6 @@ fn parse_at(text: &str, path: &Path) -> Result<ConfigFile> {
             )
         })?
     };
-    for stage in cfg.stages.values_mut() {
-        if let StageType::Llm(l) = &mut stage.kind {
-            if stage.output.ends_with(".json") {
-                l.images.get_or_insert(false);
-                l.batch_size.get_or_insert(DEFAULT_BATCH_SIZE);
-            } else if stage.output.ends_with(".md") {
-                l.chunk_size.get_or_insert(DEFAULT_CHUNK_SIZE);
-            }
-        }
-    }
     Ok(cfg)
 }
 pub fn template() -> &'static str {
@@ -648,27 +683,11 @@ mod tests {
         assert_eq!(parse(&serde_json::to_string(&cfg).unwrap()).unwrap(), cfg);
     }
     #[test]
-    fn readme_shows_the_generated_file_with_shortened_prompts() {
-        let mut in_prompt = false;
-        let shortened: String = template()
-            .lines()
-            .filter_map(|line| {
-                if in_prompt {
-                    in_prompt = line != "'''";
-                    return None;
-                }
-                in_prompt = line == "prompt = '''";
-                Some(if in_prompt {
-                    "prompt = '''…'''\n".into()
-                } else {
-                    format!("{line}\n")
-                })
-            })
-            .collect();
+    fn readme_shows_the_generated_file_verbatim() {
         assert!(
             include_str!("../README.md")
                 .replace("\r\n", "\n")
-                .contains(&shortened)
+                .contains(template())
         );
     }
     #[test]
@@ -786,12 +805,12 @@ mod tests {
             (
                 "summary",
                 "media",
-                "Stage summary reads media, which is media; a llm stage reads transcript or document or markdown",
+                "Stage summary reads media, which is media; a write stage reads transcript or document or markdown",
             ),
             (
                 "proofread",
                 "transcript.json",
-                "Stage proofread reads transcript.json, which is transcript; a llm stage reads document",
+                "Stage proofread reads transcript.json, which is transcript; a rewrite stage reads document",
             ),
             (
                 "markdown",
@@ -805,24 +824,61 @@ mod tests {
         }
     }
     #[test]
-    fn llm_extension_and_mode_keys_are_checked() {
-        let mut cfg = config();
-        cfg["stages"]["proofread"]["output"] = json!("bad.txt");
-        assert_eq!(
-            resolve(&cfg, &[]).unwrap_err().to_string(),
-            "Stage proofread: an llm output ends in .json (rewrite each paragraph) or .md (one answer)"
-        );
-        for (stage, key, value, ext) in [
-            ("proofread", "chunk_size", json!(25000), ".md"),
-            ("summary", "images", json!(false), ".json"),
-            ("summary", "batch_size", json!(20), ".json"),
+    fn rewrite_and_write_accept_only_their_own_keys_and_use_type_for_output() {
+        for (stage, key, value) in [
+            ("proofread", "chunk_size", json!(25000)),
+            ("summary", "images", json!(false)),
+            ("summary", "batch_size", json!(20)),
+            ("proofread", "unknown", json!(true)),
+            ("summary", "unknown", json!(true)),
         ] {
             let mut cfg = config();
             cfg["stages"][stage][key] = value;
-            assert_eq!(
-                resolve(&cfg, &[]).unwrap_err().to_string(),
-                format!("Stage {stage}: {key} applies only to an llm output ending in {ext}")
+            assert!(
+                parse(&cfg.to_string())
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&format!("unknown field `{key}`"))
             );
+        }
+        for output in ["plain", "anything.txt", "reverse.md"] {
+            let mut cfg = config();
+            cfg["stages"]["proofread"]["output"] = json!(output);
+            cfg["stages"]["summary"]["input"] = json!(output);
+            cfg["stages"]["markdown"]["input"] = json!(["summary.md", output]);
+            cfg["stages"]["summary"]["output"] = json!("answer.json");
+            cfg["stages"]["markdown"]["input"][0] = json!("answer.json");
+            let resolved = resolve(&cfg, &[]).unwrap();
+            assert_eq!(
+                resolved
+                    .stages
+                    .iter()
+                    .find(|(n, _)| n == "proofread")
+                    .unwrap()
+                    .1
+                    .output_kind(),
+                Kind::Document
+            );
+            assert_eq!(
+                resolved
+                    .stages
+                    .iter()
+                    .find(|(n, _)| n == "summary")
+                    .unwrap()
+                    .1
+                    .output_kind(),
+                Kind::Markdown
+            );
+        }
+        for format in ["json", "toml"] {
+            let mut cfg = config();
+            cfg["stages"]["proofread"]["type"] = json!("llm");
+            let text = if format == "json" {
+                cfg.to_string()
+            } else {
+                toml::to_string(&cfg).unwrap()
+            };
+            assert!(parse(&text).unwrap_err().to_string().contains("Stage proofread: type \"llm\" is now \"rewrite\" (a document's paragraphs) or \"write\" (one Markdown answer)"));
         }
     }
     #[test]
@@ -1098,11 +1154,11 @@ mod validation_tests {
                 json!(["media", "media"]),
                 "a screenshots stage reads one input",
             ),
-            ("proofread", json!([]), "a llm stage reads one input"),
+            ("proofread", json!([]), "a rewrite stage reads one input"),
             (
                 "summary",
                 json!(["draft.json", "draft.json"]),
-                "a llm stage reads one input",
+                "a write stage reads one input",
             ),
             (
                 "draft",
@@ -1186,7 +1242,7 @@ mod validation_tests {
                 crate::options::resolve("local".into(), &Default::default(), &cfg)
                     .unwrap_err()
                     .to_string(),
-                "Stage summary: a llm stage reads one input"
+                "Stage summary: a write stage reads one input"
             );
         }
         let mut cfg = serde_json::to_value(ConfigFile::default()).unwrap();

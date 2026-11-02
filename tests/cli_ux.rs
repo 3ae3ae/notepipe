@@ -763,8 +763,7 @@ fn doctor_treats_only_download_programs_as_optional_and_deduplicates_provider_ke
         "markdown"
     ]);
     for name in ["one", "two"] {
-        cfg["stages"][name] =
-            json!({"type":"llm","input":"draft.json","output":format!("{name}.md"),"provider":"p"});
+        cfg["stages"][name] = json!({"type":"write","input":"draft.json","output":format!("{name}.md"),"provider":"p"});
     }
     cli.config_value(&cfg);
     let output = cli.run(&["doctor"]);

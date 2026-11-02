@@ -180,8 +180,8 @@ fn with_llm(cfg: &mut Value, base: &str) {
         "summary",
         "markdown"
     ]);
-    cfg["stages"]["proofread"] = json!({"type":"llm","input":"draft.json","output":"proofread.json","publish":"note.json","provider":"ai","prompt":"PROOFREAD"});
-    cfg["stages"]["summary"] = json!({"type":"llm","input":"proofread.json","output":"summary.md","provider":"ai","prompt":"SUMMARY"});
+    cfg["stages"]["proofread"] = json!({"type":"rewrite","input":"draft.json","output":"proofread.json","publish":"note.json","provider":"ai","prompt":"PROOFREAD"});
+    cfg["stages"]["summary"] = json!({"type":"write","input":"proofread.json","output":"summary.md","provider":"ai","prompt":"SUMMARY"});
     cfg["stages"]["markdown"]["input"] = json!(["summary.md", "proofread.json"]);
 }
 fn tree(root: &Path) -> String {
@@ -340,6 +340,46 @@ fn skipped_proofread_is_published_verbatim_and_skipped_summary_is_omitted() {
             .as_object()
             .unwrap()
             .contains_key("summary")
+    );
+}
+#[test]
+fn rewrite_and_write_run_and_skip_independently_of_output_extensions() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let provider = mock();
+    let mut cfg = config();
+    with_llm(&mut cfg, &provider.url);
+    cfg["stages"]["proofread"]["output"] = json!("rewritten.md");
+    cfg["stages"]["summary"]["input"] = json!("rewritten.md");
+    cfg["stages"]["summary"]["output"] = json!("written.json");
+    cfg["stages"]["summary"]["publish"] = json!("answer");
+    cfg["stages"]["markdown"]["input"] = json!(["written.json", "rewritten.md"]);
+    let completed = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(
+        document(&completed, "proofread")["sections"][0]["speech"][0]["text"],
+        "Corrected speech."
+    );
+    assert_eq!(
+        std::fs::read_to_string(completed["files"]["summary"].as_str().unwrap()).unwrap(),
+        "## Summary\n\nA recording."
+    );
+    std::fs::remove_file(Path::new(completed["work_dir"].as_str().unwrap()).join("written.json"))
+        .unwrap();
+    let completed = done(&run(
+        root.path(),
+        &source,
+        &cfg,
+        &["--skip", "screenshots,proofread,summary"],
+    ));
+    assert_eq!(
+        document(&completed, "proofread")["sections"][0]["speech"][0]["text"],
+        "Original speech."
+    );
+    assert!(completed["files"].get("summary").is_none());
+    assert!(
+        !Path::new(completed["work_dir"].as_str().unwrap())
+            .join("written.json")
+            .exists()
     );
 }
 #[test]
@@ -545,7 +585,7 @@ fn removing_every_paragraph_warns_and_reuses_the_answer_on_rerun() {
         .retain(|name| name != "summary");
     cfg["stages"]["markdown"]["input"] = json!("proofread.json");
     cfg["stages"]["again"] =
-        json!({"type":"llm","input":"proofread.json","output":"again.json","provider":"ai"});
+        json!({"type":"rewrite","input":"proofread.json","output":"again.json","provider":"ai"});
     let stages = cfg["pipeline"].as_array_mut().unwrap();
     stages.insert(stages.len() - 1, json!("again"));
     cfg["stages"]["markdown"]["input"] = json!("again.json");
@@ -598,7 +638,7 @@ fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
         let mut cfg = config();
         cfg["providers"] = json!({"ai":{"base_url":provider.url,"concurrency":1}});
         cfg["pipeline"] = json!(["download", "transcript", "summary"]);
-        cfg["stages"]["summary"] = json!({"type":"llm","provider":"ai","input":"transcript.json","output":"summary.md","publish":"summary.md","chunk_size":1000});
+        cfg["stages"]["summary"] = json!({"type":"write","provider":"ai","input":"transcript.json","output":"summary.md","publish":"summary.md","chunk_size":1000});
         let output = run(root.path(), &source, &cfg, &[]);
         let detail = match target {
             "part" => " for part 1 of 2",
@@ -693,7 +733,7 @@ fn run_validates_document_images_and_preserves_unknown_fields_through_llm() {
         .as_object_mut()
         .unwrap()
         .remove("publish");
-    cfg["stages"]["proofread"] = json!({"type":"llm","input":"custom.json","output":"proofread.json","publish":"note.json","provider":"ai"});
+    cfg["stages"]["proofread"] = json!({"type":"rewrite","input":"custom.json","output":"proofread.json","publish":"note.json","provider":"ai"});
     cfg["providers"] = json!({"ai":{"base_url":provider.url}});
     cfg["stages"]["markdown"]["input"] = json!("proofread.json");
     let completed = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
@@ -1053,7 +1093,7 @@ fn changed_prompt_results_write_the_next_folder_and_preserve_every_original_file
     let mut cfg = json!({"pipeline":["download","transcript","summary"],"providers":{"ai":{"base_url":provider.url}},"stages":{
         "download":{"type":"download","input":"source","output":"media","command":["unused"]},
         "transcript":{"type":"transcript","input":"media","output":"transcript.json","sources":["subtitles"]},
-        "summary":{"type":"llm","input":"transcript.json","output":"summary.md","publish":"note.md","provider":"ai","prompt":"ORIGINAL"}
+        "summary":{"type":"write","input":"transcript.json","output":"summary.md","publish":"note.md","provider":"ai","prompt":"ORIGINAL"}
     }});
     let first = done(&run(root.path(), &source, &cfg, &[]));
     let note = Path::new(first["note_dir"].as_str().unwrap());
@@ -1114,7 +1154,7 @@ fn transcript_and_screenshots_overlap_and_two_llm_stages_share_one_provider_budg
         "markdown"
     ]);
     for name in ["summary", "outline"] {
-        cfg["stages"][name] = json!({"type":"llm","input":"transcript.json","output":format!("{name}.md"),"provider":"p","prompt":name});
+        cfg["stages"][name] = json!({"type":"write","input":"transcript.json","output":format!("{name}.md"),"provider":"p","prompt":name});
     }
     cfg["stages"]["markdown"]["input"] = json!(["summary.md", "outline.md", "draft.json"]);
     let output = run(root.path(), &source, &cfg, &[]);
@@ -1356,7 +1396,7 @@ fn signals_clean_media_without_waiting_for_http_and_forced_exits_are_cleaned_on_
         let mut cfg = json!({"pipeline":["download","transcript","summary"],"providers":{"ai":{"base_url":service.url}},"stages":{
             "download":{"type":"download","input":"source","output":"media","command":[python(),concat!(env!("CARGO_MANIFEST_DIR"),"/tests/fixtures/source_adapter.py"),"--record",root.path().join("download"),"--behavior","files"]},
             "transcript":{"type":"transcript","input":"media","output":"transcript.json","sources":["subtitles"],"publish":"transcript.json"},
-            "summary":{"type":"llm","input":"transcript.json","output":"summary.md","publish":"note.md","provider":"ai"}
+            "summary":{"type":"write","input":"transcript.json","output":"summary.md","publish":"note.md","provider":"ai"}
         }});
         let stubborn = root.path().join("stubborn-ready");
         if forced {
@@ -1558,7 +1598,7 @@ fn a_failed_sibling_stops_paragraph_batches_chunks_and_markdown_retries() {
         };
         let mut cfg = json!({"pipeline":["seed","answer","fail"],"providers":{"ai":{"base_url":service.url,"concurrency":1}},"stages":{
             "seed":{"type":"run","output":input,"produces":kind,"command":[python(),"-c","import sys;sys.stdout.write(sys.argv[1])",text]},
-            "answer":{"type":"llm","input":input,"output":output,"publish":output,"provider":"ai"},
+            "answer":{"type":if mode == "paragraphs" { "rewrite" } else { "write" },"input":input,"output":output,"publish":output,"provider":"ai"},
             "fail":{"type":"run","output":"failure","command":[python(),"-c","import pathlib,sys,time;r=pathlib.Path(sys.argv[1]);\nwhile not r.exists():time.sleep(.01)\npathlib.Path(sys.argv[2]).write_text('failed');sys.exit(7)",received,failed]}
         }});
         cfg["stages"]["answer"][if mode == "paragraphs" {
@@ -1988,7 +2028,7 @@ fn an_empty_paragraph_is_removed_and_later_rewrites_keep_the_first_original() {
         .as_object_mut()
         .unwrap()
         .remove("publish");
-    cfg["stages"]["translate"] = json!({"type":"llm","input":"proofread.json","output":"translated.json","publish":"note.json","provider":"ai","prompt":"TRANSLATE"});
+    cfg["stages"]["translate"] = json!({"type":"rewrite","input":"proofread.json","output":"translated.json","publish":"note.json","provider":"ai","prompt":"TRANSLATE"});
     cfg["stages"]["markdown"]["input"] = json!("translated.json");
     let completed = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     let doc = document(&completed, "translate");
@@ -2712,7 +2752,7 @@ fn first_signal_abandons_slow_chat_and_speech_responses_before_cleanup() {
                     .as_array_mut()
                     .unwrap()
                     .push(json!("summary"));
-                cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","publish":"note.md","provider":"p"});
+                cfg["stages"]["summary"] = json!({"type":"write","input":"transcript.json","output":"summary.md","publish":"note.md","provider":"p"});
             }
             let mut child = spawn(root.path(), "https://example.test/slow", &cfg, &[], true);
             wait_for_file(&mut child, &record.join("transcribing"));
@@ -3099,7 +3139,7 @@ fn distinct_command_providers_start_once_each_and_stop_after_their_stages() {
     for (name, provider) in [("first", "one"), ("second", "two"), ("third", "one")] {
         cfg["providers"][provider] =
             json!({"command":adapter(&root.path().join(provider),"healthy")});
-        cfg["stages"][name] = json!({"type":"llm","input":"transcript.json","output":format!("{name}.md"),"provider":provider,"prompt":name});
+        cfg["stages"][name] = json!({"type":"write","input":"transcript.json","output":format!("{name}.md"),"provider":provider,"prompt":name});
     }
     cfg["stages"]["markdown"]["input"] = json!(["first.md", "second.md", "third.md"]);
     let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
@@ -3268,12 +3308,12 @@ fn lifecycle_cached_chat_and_segment_checkpoints_start_no_provider() {
         .as_object_mut()
         .unwrap()
         .remove("publish");
-    cfg["stages"]["proofread"] = json!({"type":"llm","input":"draft.json","output":"proofread.json","publish":"note.json","provider":"speech"});
+    cfg["stages"]["proofread"] = json!({"type":"rewrite","input":"draft.json","output":"proofread.json","publish":"note.json","provider":"speech"});
     cfg["pipeline"]
         .as_array_mut()
         .unwrap()
         .push(json!("summary"));
-    cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","publish":"summary.md","provider":"speech"});
+    cfg["stages"]["summary"] = json!({"type":"write","input":"transcript.json","output":"summary.md","publish":"summary.md","provider":"speech"});
     let first = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     let work = Path::new(first["work_dir"].as_str().unwrap());
     for entry in std::fs::read_dir(work.join(".cache")).unwrap() {
@@ -3322,7 +3362,7 @@ fn lifecycle_provider_exit_reports_status_and_lossy_diagnostics() {
                 .as_array_mut()
                 .unwrap()
                 .push(json!("summary"));
-            cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","provider":"speech"});
+            cfg["stages"]["summary"] = json!({"type":"write","input":"transcript.json","output":"summary.md","provider":"speech"});
         }
         let mut child = spawn(
             root.path(),
@@ -3486,7 +3526,7 @@ fn lifecycle_escaped_descendant_pipes_do_not_hold_exit_or_cancellation() {
                 _ => {
                     cfg["pipeline"] = json!(["download", "transcript", "summary"]);
                     cfg["providers"] = json!({"p":{"command":adapter(&record, if cancel {"escaped-hang"} else {"escaped"})}});
-                    cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","publish":"summary.md","provider":"p"});
+                    cfg["stages"]["summary"] = json!({"type":"write","input":"transcript.json","output":"summary.md","publish":"summary.md","provider":"p"});
                 }
             }
             let mut child = spawn(root.path(), source_arg, &cfg, &[], true);
@@ -3586,9 +3626,9 @@ fn lifecycle_provider_exit_between_consumers_stops_the_run() {
     cfg["pipeline"] = json!(["download", "transcript", "first", "wait", "second"]);
     cfg["providers"] = json!({"p":{"command":adapter(&record,"exit-idle")}});
     cfg["stages"]["first"] =
-        json!({"type":"llm","input":"transcript.json","output":"first.md","provider":"p"});
+        json!({"type":"write","input":"transcript.json","output":"first.md","provider":"p"});
     cfg["stages"]["wait"] = json!({"type":"run","input":"first.md","output":"wait.md","produces":"markdown","command":[python(),"-c","import pathlib,sys,time;r=pathlib.Path(sys.argv[1]);(r/'between-consumers').touch();\nwhile not (r/'release').exists(): time.sleep(0.01)\nprint('ready')",record]});
-    cfg["stages"]["second"] = json!({"type":"llm","input":"wait.md","output":"second.md","publish":"second.md","provider":"p"});
+    cfg["stages"]["second"] = json!({"type":"write","input":"wait.md","output":"second.md","publish":"second.md","provider":"p"});
     let mut child = spawn(root.path(), source.to_str().unwrap(), &cfg, &[], true);
     let exited = wait_for_exit(&mut child);
     std::fs::write(record.join("release"), "ready").unwrap();
@@ -3615,7 +3655,7 @@ fn retries_survive_failure_and_cached_reruns_start_no_provider() {
     let mut cfg = speech_config(&record, "missing-text-first");
     cfg["pipeline"] = json!(["download", "transcript", "draft", "summary", "fail"]);
     cfg["stages"]["draft"]["input"] = json!("transcript.json");
-    cfg["stages"]["summary"] = json!({"type":"llm","input":"draft.json","output":"summary.md","publish":"summary.md","provider":"speech"});
+    cfg["stages"]["summary"] = json!({"type":"write","input":"draft.json","output":"summary.md","publish":"summary.md","provider":"speech"});
     cfg["stages"]["fail"] = json!({"type":"run","input":"summary.md","output":"failure","command":[python(),"-c","import pathlib,sys;sys.exit(0 if pathlib.Path(sys.argv[1]).is_file() else 7)",release]});
 
     let failed = run(root.path(), &source, &cfg, &[]);

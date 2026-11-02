@@ -20,7 +20,6 @@ pub struct Stage {
     pub name: String,
     pub provider: String,
     pub model: String,
-    pub input: Input,
     pub prompt: String,
     pub images: bool,
     pub request: Map<String, Value>,
@@ -294,7 +293,7 @@ fn build_chat_body(
     if let Some(image) = image {
         content.push(serde_json::json!({"type":"image_url","image_url":{"url":format!("data:image/jpeg;base64,{image}")}}));
     }
-    chat_body(settings, &system, Value::Array(content), stage.input)
+    chat_body(settings, &system, Value::Array(content), Input::Paragraphs)
 }
 
 /// Parse one segments object or top-level array, allowing fences and trailing commas.
@@ -492,13 +491,13 @@ mod tests {
             concurrency: 2,
             ..Default::default()
         };
-        let stage: Stage = crate::llm::test_stage("custom", serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"  ","request":{"temperature":0.7}})).unwrap();
+        let stage: Stage = crate::llm::test_stage("custom", serde_json::json!({"type":"write","output":"test.md","provider":"ai","prompt":"  ","request":{"temperature":0.7}})).unwrap();
         assert!(stage.prompt.is_empty());
         let effective = LlmSettings::for_stage(&service, &stage, String::new());
         assert_eq!(effective.base_url, service.base_url.unwrap());
         assert!(effective.api_key.is_empty());
         assert_eq!(effective.concurrency, 2);
-        let body = chat_body(&effective, &stage.prompt, "User", stage.input).unwrap();
+        let body = chat_body(&effective, &stage.prompt, "User", Input::Transcript).unwrap();
         assert!(body.get("model").is_none());
         assert_eq!(body["messages"][0]["content"], "");
         assert_eq!(body["temperature"], 0.7);
@@ -667,7 +666,7 @@ mod tests {
             &settings,
             &crate::llm::test_stage(
                 "proofread",
-                serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
+                serde_json::json!({"type":"rewrite","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
             )
             .unwrap(),
         )
@@ -728,7 +727,7 @@ mod tests {
                 &settings,
                 &crate::llm::test_stage(
                     "proofread",
-                    serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
+                    serde_json::json!({"type":"rewrite","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
                 )
                 .unwrap(),
             );
@@ -825,7 +824,7 @@ mod tests {
         let s = test_settings();
         let mut stage: Stage = crate::llm::test_stage(
             "proofread",
-            serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"rewrite","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         let items = ["hello"];
@@ -862,7 +861,7 @@ mod tests {
         let settings = LlmSettings::default();
         let mut custom: Stage = crate::llm::test_stage(
             "annotate",
-            serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"rewrite","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         let body = build_chat_body(&settings, &custom, &["Text"], None).unwrap();
@@ -878,7 +877,7 @@ mod tests {
         );
         let empty_prompt: Stage = crate::llm::test_stage(
             "custom",
-            serde_json::json!({"type":"llm","output":"test.md","provider":"ai"}),
+            serde_json::json!({"type":"write","output":"test.md","provider":"ai"}),
         )
         .unwrap();
         assert!(empty_prompt.prompt.is_empty());
@@ -900,13 +899,13 @@ mod tests {
 
     #[test]
     fn stage_requests_merge_with_the_protocol_and_protected_keys_are_rejected() {
-        let stage: Stage = crate::llm::test_stage("summary", serde_json::json!({"type":"llm","output":"test.md","provider":"ai","model":"stage-model","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
+        let stage: Stage = crate::llm::test_stage("summary", serde_json::json!({"type":"write","output":"test.md","provider":"ai","model":"stage-model","request":{"temperature":0.7,"top_p":0.8}})).unwrap();
         let service = crate::settings::Provider {
             base_url: Some("https://example.test/v1".into()),
             ..Default::default()
         };
         let effective = LlmSettings::for_stage(&service, &stage, String::new());
-        let body = chat_body(&effective, "System", "User", stage.input).unwrap();
+        let body = chat_body(&effective, "System", "User", Input::Transcript).unwrap();
         assert_eq!(body["model"], "stage-model");
         assert_eq!(body["temperature"], 0.7);
         assert_eq!(body["top_p"], 0.8);
@@ -924,7 +923,7 @@ mod tests {
             assert!(
                 crate::llm::test_stage(
                     "summary",
-                    serde_json::json!({"type":"llm","output":"test.md","provider":"ai","request":request})
+                    serde_json::json!({"type":"write","output":"test.md","provider":"ai","request":request})
                 )
                 .is_err()
             );
@@ -1024,7 +1023,7 @@ mod tests {
         };
         let mut stage = crate::llm::test_stage(
             "proofread",
-            serde_json::json!({"type":"llm","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"rewrite","output":"test.json","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         stage.name = "annotate".into();

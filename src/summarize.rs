@@ -27,7 +27,7 @@ fn send(
     user: &str,
     detail: &str,
 ) -> Result<String> {
-    let body = llm::chat_body(settings, &system(stage), user, stage.input)?;
+    let body = llm::chat_body(settings, &system(stage), user, llm::Input::Transcript)?;
     llm::send_chat(
         agent,
         settings,
@@ -133,7 +133,7 @@ mod tests {
     fn transcript_contracts_do_not_override_user_instructions() {
         let mut stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"write","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         assert_eq!(system(&stage), format!("CUSTOM {TRANSCRIPT_CONTRACT}"));
@@ -168,7 +168,7 @@ mod tests {
         };
         let stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"write","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         assert!(
@@ -211,7 +211,7 @@ mod tests {
         });
         let mut stage = crate::llm::test_stage(
             "summary",
-            serde_json::json!({"type":"llm","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
+            serde_json::json!({"type":"write","output":"test.md","provider":"ai","prompt":"CUSTOM"}),
         )
         .unwrap();
         stage.prompt = "EXTRACT ACTION ITEMS.".into();
