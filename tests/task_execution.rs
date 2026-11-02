@@ -1382,6 +1382,58 @@ fn downloads_reserve_info_json_for_media_subtitles_and_other_files() {
     }
 }
 #[test]
+fn invalid_subtitle_timestamp_warnings_reach_done_even_with_cached_transcripts() {
+    for (headers, count, noun) in [
+        (vec!["bad --> 00:02.000"], 1, "cue"),
+        (
+            vec![
+                "bad --> 00:02.000",
+                "NaN --> 3",
+                "2 --> inf",
+                "3 --> 2",
+                "2 --> 2",
+                "1e308:0:0 --> 2",
+            ],
+            6,
+            "cues",
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let source = local(root.path());
+        let mut content = "WEBVTT\n\n".to_owned();
+        for header in headers {
+            content.push_str(&format!("{header}\nSkipped words.\n\n"));
+        }
+        content.push_str("00:00.000 --> 00:01.000\nGood words.\n");
+        std::fs::write(source.with_extension("srt"), &content).unwrap();
+        let mut cfg = config();
+        cfg["pipeline"] = json!(["download", "transcript", "draft", "markdown"]);
+        cfg["stages"]["draft"]["input"] = json!("transcript.json");
+        for explicit in [false, true] {
+            for _ in 0..2 {
+                let subtitle = source.with_extension("srt");
+                let flags = if explicit {
+                    vec!["--subtitle", subtitle.to_str().unwrap()]
+                } else {
+                    vec![]
+                };
+                let completed = done(&run(root.path(), &source, &cfg, &flags));
+                assert_eq!(
+                    completed["warnings"],
+                    json!([format!(
+                        "Skipped {count} subtitle {noun} with invalid timestamps in lecture.srt (first at line 3)"
+                    )])
+                );
+                assert_eq!(
+                    document(&completed, "draft")["sections"][0]["speech"][0]["text"],
+                    "Good words."
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn explicit_subtitles_are_the_only_transcript_source_and_still_emit_the_stage() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());

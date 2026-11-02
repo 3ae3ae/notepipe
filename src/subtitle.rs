@@ -218,41 +218,68 @@ pub fn file_track(path: PathBuf, language: Option<String>) -> SubtitleTrack {
     }
 }
 
-/// Parses SRT or VTT subtitles, retaining cue boundaries and joining their lines like paragraphs.
-pub fn parse_subtitle(content: &str) -> Vec<TranscriptEvent> {
-    let mut out = Vec::new();
+pub struct ParsedSubtitle {
+    pub events: Vec<TranscriptEvent>,
+    invalid_timestamps: usize,
+    first_invalid_line: usize,
+}
+
+impl ParsedSubtitle {
+    pub fn warning(&self, path: &Path) -> Option<String> {
+        (self.invalid_timestamps > 0).then(|| {
+            let n = self.invalid_timestamps;
+            let cue = if n == 1 { "cue" } else { "cues" };
+            let file = path.file_name().unwrap_or_default().to_string_lossy();
+            let line = self.first_invalid_line;
+            format!("Skipped {n} subtitle {cue} with invalid timestamps in {file} (first at line {line})")
+        })
+    }
+}
+
+/// Parses SRT or VTT subtitles, retaining cue boundaries and reporting invalid timestamps.
+pub fn parse_subtitle(content: &str) -> ParsedSubtitle {
+    let mut parsed = ParsedSubtitle {
+        events: Vec::new(),
+        invalid_timestamps: 0,
+        first_invalid_line: 0,
+    };
     let content = content.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = content.lines().collect();
     let mut i = 0;
     while i < lines.len() {
-        let line = lines[i];
-        if let Some((start, end)) = parse_cue_header(line) {
+        if !lines[i].contains("-->") {
             i += 1;
-            // Untrusted input: drop cues with non-finite times,
-            // which would break sorting and binary search later.
-            if !start.is_finite() || !end.is_finite() || end <= start {
-                tracing::warn!(line, "Skipped subtitle with invalid timestamps");
-                continue;
+            continue;
+        }
+        let times = parse_cue_header(lines[i])
+            .filter(|(start, end)| start.is_finite() && end.is_finite() && end > start);
+        if times.is_none() {
+            if parsed.invalid_timestamps == 0 {
+                parsed.first_invalid_line = i + 1;
             }
-            let mut text = String::new();
-            while i < lines.len() && !lines[i].trim().is_empty() {
+            parsed.invalid_timestamps += 1;
+        }
+        i += 1;
+        let mut text = String::new();
+        while i < lines.len() && !lines[i].trim().is_empty() && !lines[i].contains("-->") {
+            if times.is_some() {
                 append_text(&mut text, &clean_cue_text(lines[i]));
-                i += 1;
             }
-            if !text.trim().is_empty() {
-                out.push(TranscriptEvent {
-                    extra: Default::default(),
-                    start,
-                    end,
-                    text,
-                    raw: None,
-                });
-            }
-        } else {
             i += 1;
         }
+        if let Some((start, end)) = times
+            && !text.trim().is_empty()
+        {
+            parsed.events.push(TranscriptEvent {
+                extra: Default::default(),
+                start,
+                end,
+                text,
+                raw: None,
+            });
+        }
     }
-    out
+    parsed
 }
 
 fn parse_cue_header(line: &str) -> Option<(f64, f64)> {
@@ -545,7 +572,7 @@ mod tests {
             .chain(text.encode_utf16().flat_map(u16::to_le_bytes))
             .collect();
         std::fs::write(&file, bytes).unwrap();
-        let events = parse_subtitle(&read_subtitle_text(&file).unwrap());
+        let events = parse_subtitle(&read_subtitle_text(&file).unwrap()).events;
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].start, 1.125);
         assert_eq!(events[0].end, 2.375);
@@ -558,10 +585,15 @@ mod tests {
     fn repeated_words_after_a_pause_remain_separate() {
         let events = parse_subtitle(
             "1\n00:00:01,000 --> 00:00:02,000\nhello\n\n2\n00:00:10,000 --> 00:00:11,000\nhello\n",
-        );
+        )
+        .events;
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].end, 2.0);
-        assert!(parse_subtitle("00:00:02,000 --> 00:00:01,000\nbackwards\n").is_empty());
+        assert!(
+            parse_subtitle("00:00:02,000 --> 00:00:01,000\nbackwards\n")
+                .events
+                .is_empty()
+        );
         assert!(crate::timeline::parse_timestamp("00:00:01.bad").is_none());
         assert!(crate::timeline::parse_timestamp("00:99:01.000").is_none());
     }
@@ -578,7 +610,7 @@ mod tests {
 00:00:04,500 --> 00:00:07,250
 这是第二段
 ";
-        let ev = parse_subtitle(srt);
+        let ev = parse_subtitle(srt).events;
         assert_eq!(ev.len(), 2);
         assert!((ev[0].start - 1.0).abs() < 1e-3);
         assert!((ev[0].end - 4.0).abs() < 1e-3);
@@ -599,7 +631,7 @@ NOTE 这是注释
 00:03.500 --> 00:05.000
 second cue
 ";
-        let ev = parse_subtitle(vtt);
+        let ev = parse_subtitle(vtt).events;
         assert_eq!(ev.len(), 2);
         assert_eq!(ev[0].text, "hello world\u{a0}!");
         assert!((ev[0].start - 61.0).abs() < 1e-3);
@@ -658,7 +690,7 @@ second cue
 00:00:03,000 --> 00:00:04,000
 一门人工智能分支
 ";
-        let ev = parse_subtitle(srt);
+        let ev = parse_subtitle(srt).events;
         assert_eq!(ev.len(), 3);
         assert_eq!(ev[0].end, 2.0);
         assert_eq!(ev[1].start, 2.0);
@@ -695,7 +727,7 @@ second cue
                 "",
             ]
             .join(newline);
-            let events = parse_subtitle(&input);
+            let events = parse_subtitle(&input).events;
             assert_eq!(events.len(), 2);
             assert_eq!(events[0].text, "first");
             assert_eq!(events[1].text, "second");
@@ -717,13 +749,44 @@ second cue
                 "",
             ]
             .join(newline);
-            let events = parse_subtitle(&input);
+            let events = parse_subtitle(&input).events;
             assert_eq!(events.len(), 2);
             assert_eq!(events[0].text, "字幕は保持する。次の行");
             assert_eq!(events[1].text, "  code      more  ");
         }
         assert_eq!(clean_cue_text("hello<br>world"), "hello world");
         assert_eq!(clean_cue_text("<b><i>hello</i></b>"), "hello");
+    }
+
+    #[test]
+    fn invalid_timestamp_headers_are_reported_once_with_their_line_number() {
+        for newline in ["\n", "\r\n", "\r"] {
+            let input = [
+                "WEBVTT",
+                "",
+                "bad --> 2",
+                "bad words",
+                "3 --> 2",
+                "bad words",
+                "",
+                "00:00.000 --> 00:01.000",
+                "good words",
+                "",
+            ]
+            .join(newline);
+            let parsed = parse_subtitle(&input);
+            assert_eq!(parsed.events.len(), 1);
+            assert_eq!(parsed.events[0].text, "good words");
+            assert_eq!(
+                parsed.warning(Path::new("folder/track.vtt")).unwrap(),
+                "Skipped 2 subtitle cues with invalid timestamps in track.vtt (first at line 3)"
+            );
+        }
+        assert!(
+            parse_subtitle("0 --> 1\nwords\n")
+                .warning(Path::new("track.srt"))
+                .is_none()
+        );
     }
 
     #[test]
