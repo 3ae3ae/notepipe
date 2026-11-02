@@ -377,6 +377,7 @@ async fn execute(run: Arc<Run>) -> Result<(artifact::Published, Option<PathBuf>)
     let published = artifact::publish(
         &run.cfg.out_root,
         &run.work,
+        &run.identity,
         &meta,
         &outputs,
         &mut runtime::lock_recover(&run.warnings),
@@ -418,7 +419,7 @@ impl Run {
         for (name, stage) in &self.cfg.stages {
             if matches!(stage.kind, StageType::Download(_)) && !self.cfg.skip.contains(name) {
                 let mut meta = source::Output::info(&self.work.join(&stage.output))?
-                    .metadata(&self.identity)?;
+                    .metadata(&self.cfg.url)?;
                 if let Some(title) = &self.title {
                     meta.title = title.clone();
                 }
@@ -436,7 +437,7 @@ impl Run {
             }),
             author: String::new(),
             duration: None,
-            source: self.identity.clone(),
+            source: self.cfg.url.clone(),
             seek_url: None,
         })
     }

@@ -852,13 +852,18 @@ fn stdout_is_empty_when_a_later_stage_fails() {
     assert!(!root.path().join("lecture").exists());
 }
 #[test]
-fn moved_and_renamed_local_sources_reuse_work_and_note_identity() {
+fn moved_and_renamed_local_sources_reuse_work_and_publish_the_new_location() {
     use sha2::{Digest, Sha256};
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
     let provider = mock();
     let mut cfg = config();
     with_llm(&mut cfg, &provider.url);
+    cfg["pipeline"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("recording"));
+    cfg["stages"]["recording"] = json!({"type":"run","input":"proofread.json","output":"recording.md","publish":"recording.md","command":[python(),"-c","import json,pathlib,sys;print(pathlib.Path(json.load(sys.stdin)['meta']['source']).name)"]});
     let first = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     let note = Path::new(first["note_dir"].as_str().unwrap());
     let marker: Value =
@@ -867,10 +872,25 @@ fn moved_and_renamed_local_sources_reuse_work_and_note_identity() {
         marker,
         json!({"source":format!("sha256:{:x}", Sha256::digest(b"media"))})
     );
+    let first_document = document(&first, "proofread");
     assert_eq!(
-        document(&first, "proofread")["meta"]["source"],
-        marker["source"]
+        first_document["meta"]["source"],
+        json!(source.canonicalize().unwrap())
     );
+    assert_eq!(
+        std::fs::read_to_string(note.join("recording.md")).unwrap(),
+        "lecture.mp4\n"
+    );
+    std::fs::write(note.join("personal.md"), "Personal additions").unwrap();
+    std::fs::write(note.join("note.md"), "User edit").unwrap();
+    let original: Vec<_> = std::fs::read_dir(note)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
     let requests = provider.calls.load(std::sync::atomic::Ordering::SeqCst);
     let moved = root.path().join("elsewhere/renamed.mp4");
     std::fs::create_dir(moved.parent().unwrap()).unwrap();
@@ -883,13 +903,56 @@ fn moved_and_renamed_local_sources_reuse_work_and_note_identity() {
         .set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_secs(1))
         .unwrap();
     let second = done(&run(root.path(), &moved, &cfg, &["--skip", "screenshots"]));
-    assert_eq!(second["unchanged"], true);
+    assert_eq!(second["unchanged"], false);
     assert_eq!(second["work_dir"], first["work_dir"]);
-    assert_eq!(second["note_dir"], first["note_dir"]);
+    assert_eq!(
+        second["note_dir"],
+        json!(root.path().canonicalize().unwrap().join("lecture-2"))
+    );
+    let second_document = document(&second, "proofread");
+    assert_eq!(
+        second_document["meta"]["source"],
+        json!(moved.canonicalize().unwrap())
+    );
+    assert_eq!(
+        second_document["meta"]["title"],
+        first_document["meta"]["title"]
+    );
+    assert_eq!(
+        std::fs::read_to_string(second["files"]["recording"].as_str().unwrap()).unwrap(),
+        "renamed.mp4\n"
+    );
+    let second_note = Path::new(second["note_dir"].as_str().unwrap());
+    let second_marker: Value =
+        serde_json::from_slice(&std::fs::read(second_note.join(".notepipe.json")).unwrap())
+            .unwrap();
+    assert_eq!(second_marker, marker);
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(
+            Path::new(second["work_dir"].as_str().unwrap()).join(".cache/published.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        record[root.path().canonicalize().unwrap().to_str().unwrap()]["source"],
+        marker["source"]
+    );
     assert_eq!(
         provider.calls.load(std::sync::atomic::Ordering::SeqCst),
         requests
     );
+    let third = done(&run(root.path(), &moved, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(third["unchanged"], true);
+    assert_eq!(third["note_dir"], second["note_dir"]);
+    assert_eq!(
+        provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+        requests
+    );
+    assert_eq!(std::fs::read_dir(note).unwrap().count(), original.len());
+    for (path, bytes) in original {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
 }
 
 #[test]
@@ -2098,13 +2161,7 @@ fn edited_explicit_subtitles_write_a_new_note_folder() {
         }
         previous = completed["note_dir"].clone();
         let doc = document(&completed, "draft");
-        assert_eq!(
-            doc["meta"]["source"],
-            format!(
-                "sha256:{:x}",
-                <sha2::Sha256 as sha2::Digest>::digest(b"media")
-            )
-        );
+        assert_eq!(doc["meta"]["source"], json!(source.canonicalize().unwrap()));
         assert_eq!(doc["sections"][0]["speech"][0]["text"], text);
         assert_eq!(
             std::fs::read_to_string(completed["files"]["markdown"].as_str().unwrap()).unwrap(),
