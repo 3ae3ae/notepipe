@@ -408,6 +408,16 @@ fn llm_errors_stop_publication_and_keep_the_previous_note() {
         if matches!(mode, "invalid" | "ids" | "retry") {
             assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
         }
+        if mode != "empty" {
+            assert!(
+                message.starts_with(if mode == "summary" {
+                    "Stage summary failed: "
+                } else {
+                    "Stage proofread failed for paragraphs at 00:00–00:01: "
+                }),
+                "{message}"
+            );
+        }
         assert_eq!(std::fs::read(path).unwrap(), previous, "{mode}: {message}");
     }
 }
@@ -453,7 +463,8 @@ fn rejected_chat_answers_retry_count_usage_and_report_warnings() {
         assert_eq!(warnings.len(), 1);
         let warning = warnings[0].as_str().unwrap();
         assert!(
-            warning.starts_with("Stage proofread: attempt 1 of 3 failed:"),
+            warning
+                .starts_with("Stage proofread, paragraphs at 00:00–00:01: attempt 1 of 3 failed:"),
             "{warning}"
         );
         assert!(warning.contains("; retrying in ") && warning.ends_with(" s"));
@@ -506,7 +517,7 @@ fn response_format_fallback_shares_the_three_attempt_budget() {
         } else {
             assert_eq!(
                 error(&output),
-                "The service did not complete this request (HTTP 503)."
+                "Stage proofread failed for paragraphs at 00:00–00:01: The service did not complete this request (HTTP 503). The service said: Still loading"
             );
         }
         assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
@@ -550,16 +561,24 @@ fn markdown_failures_name_the_part_combination_or_unsplit_stage() {
         cfg["pipeline"] = json!(["download", "transcript", "summary"]);
         cfg["stages"]["summary"] = json!({"type":"llm","provider":"ai","input":"transcript.json","output":"summary.md","publish":"summary.md","chunk_size":1000});
         let output = run(root.path(), &source, &cfg, &[]);
+        let detail = match target {
+            "part" => " for part 1 of 2",
+            "combine" => " while combining 2 parts",
+            _ => "",
+        };
         let reason = match target {
             "filter" => "the model's content filter stopped the answer",
             "control" => {
                 "The model's answer contains control characters, usually from a backslash it did not escape"
             }
             _ => {
-                "The service rejected the request parameters (HTTP 400); check the model and service settings for this task."
+                "The service rejected the request parameters (HTTP 400); check the model and service settings for this task. The service said: Request refused here"
             }
         };
-        assert_eq!(error(&output), reason);
+        assert_eq!(
+            error(&output),
+            format!("Stage summary failed{detail}: {reason}")
+        );
         assert_eq!(
             provider.calls.load(std::sync::atomic::Ordering::SeqCst),
             match target {
@@ -2250,7 +2269,7 @@ fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
         let warnings = completed["warnings"].as_array().unwrap();
         assert_eq!(calls, records.len() + 1);
         let warning = warnings[0].as_str().unwrap();
-        assert!(warning.starts_with("Speech") && warning.contains(": attempt 1 of 3 failed:"));
+        assert!(warning.starts_with("Speech at ") && warning.contains(": attempt 1 of 3 failed:"));
         assert!(warning.contains(if behavior == "invalid-json-first" {
             "The service response is not valid JSON"
         } else {
@@ -2286,7 +2305,7 @@ fn speech_output_limit_fails_without_retrying() {
     assert!(!output.status.success());
     assert_eq!(count(&record), 1);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("The model stopped at its output limit.")
+        String::from_utf8_lossy(&output.stderr).contains("The service rejected the request parameters (HTTP 422); check the model and service settings for this task. The service said: x")
     );
 }
 

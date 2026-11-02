@@ -252,8 +252,7 @@ fn run_api(
                     }
                 }
                 Err(e) => {
-                    err =
-                        Some(e.context(format!("Speech transcription failed for segment {}.", i)));
+                    err = Some(e);
                     abort.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
@@ -283,16 +282,22 @@ fn run_api(
 }
 
 /// Send a chunk with shared retries; only its transcription checkpoint is persisted.
-fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_json::Value> {
-    Ok(crate::dispatch::request("Speech", t.check_control, || {
+fn post_cloud(
+    t: &ApiTarget,
+    content_type: &str,
+    body: &[u8],
+    item: &crate::dispatch::Item,
+) -> Result<serde_json::Value> {
+    Ok(crate::dispatch::request(item, t.check_control, || {
         crate::dispatch::json_request(
+            t.key,
             || {
                 let url = (t.url)().map_err(crate::dispatch::Failure::local)?;
                 let mut request = t.client.post(&url).set("Content-Type", content_type);
                 if !t.key.is_empty() {
                     request = request.set("Authorization", &format!("Bearer {}", t.key));
                 }
-                crate::dispatch::send_http(t.check_control, request, body.to_vec())
+                crate::dispatch::send_http(t.check_control, request, body.to_vec(), t.key)
             },
             |value| {
                 crate::dispatch::check_finish_reason(value)?;
@@ -327,14 +332,20 @@ struct ApiTarget<'a> {
 
 /// Transcribes one chunk; `Ok(None)` means it contains no speech.
 fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<Option<String>> {
-    cut_wav(wav, seg.cut_start, seg.cut_end, chunk).context("Could not split audio")?;
-    (t.check_control)()?;
-    let bytes = std::fs::read(chunk)
-        .with_context(|| format!("Reading audio segment: {}", chunk.display()))?;
-    let (content_type, body) = transcription_request(t, &bytes)?;
-    let result = post_cloud(t, &content_type, &body);
+    let item = crate::dispatch::Item::speech(seg.start, seg.end);
+    let prepare = (|| {
+        cut_wav(wav, seg.cut_start, seg.cut_end, chunk).context("Could not split audio")?;
+        (t.check_control)()?;
+        let bytes = std::fs::read(chunk)
+            .with_context(|| format!("Reading audio segment: {}", chunk.display()))?;
+        transcription_request(t, &bytes)
+    })();
+    let (content_type, body) =
+        prepare.map_err(|error| anyhow::anyhow!("{}: {error:#}", item.failure))?;
+    let result = post_cloud(t, &content_type, &body, &item);
     let _ = std::fs::remove_file(chunk);
     let value = result?;
+
     let text = match t.mode {
         crate::settings::AsrMode::Transcriptions => {
             value["text"].as_str().unwrap_or_default().to_owned()
@@ -435,6 +446,40 @@ mod tests {
     }
 
     #[test]
+    fn audio_preparation_errors_name_the_speech_segment() {
+        if crate::runtime::which("ffmpeg").is_none() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let target = ApiTarget {
+            client: &ureq::agent(),
+            url: &|| Ok("http://localhost".into()),
+            model: "",
+            key: "",
+            mode: crate::settings::AsrMode::Transcriptions,
+            language: "",
+            check_control: &crate::runtime::check_cancelled,
+        };
+        let error = transcribe_api(
+            &target,
+            &root.path().join("chunk.wav"),
+            Seg {
+                start: 61.,
+                end: 62.,
+                cut_start: 0.,
+                cut_end: 1.,
+            },
+            &root.path().join("missing.wav"),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("Speech recognition failed at 01:01–01:02: Could not split audio:")
+        );
+    }
+
+    #[test]
     fn transcription_upload_preserves_audio_bytes() {
         let audio = b"RIFF\0\xff\r\nWAVE";
         let (content_type, body) = transcription_request(
@@ -471,15 +516,19 @@ mod tests {
             Ok(())
         };
         let mut attempts = 0;
-        let error = crate::dispatch::request("Speech", &check, || {
-            attempts += 1;
-            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
-            let mut error = crate::dispatch::Failure::local("retryable response");
-            error.retryable = true;
-            Err::<(), _>(error)
-        })
-        .unwrap_err();
-        assert_eq!(error.to_string(), "test retry cancellation");
+        let error =
+            crate::dispatch::request(&crate::dispatch::Item::speech(0., 1.), &check, || {
+                attempts += 1;
+                cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+                let mut error = crate::dispatch::Failure::local("retryable response");
+                error.retryable = true;
+                Err::<(), _>(error)
+            })
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Speech recognition failed at 00:00–00:01: test retry cancellation"
+        );
         assert_eq!(attempts, 1);
     }
 
@@ -532,10 +581,19 @@ mod http_tests {
                 language: "",
                 check_control: &crate::runtime::check_cancelled,
             };
-            let error = post_cloud(&target, "application/json", b"{}").unwrap_err();
+            let error = post_cloud(
+                &target,
+                "application/json",
+                b"{}",
+                &crate::dispatch::Item::speech(0., 1.),
+            )
+            .unwrap_err();
             let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
             assert!(!failure.retryable);
-            assert_eq!(error.to_string(), "the model stopped at its output limit");
+            assert_eq!(
+                error.to_string(),
+                "Speech recognition failed at 00:00–00:01: the model stopped at its output limit"
+            );
             assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
             assert!(!root.path().join("llm").exists());
         }
@@ -567,7 +625,13 @@ mod http_tests {
             language: "",
             check_control: &check,
         };
-        let error = post_cloud(&target, "application/json", b"{}").unwrap_err();
+        let error = post_cloud(
+            &target,
+            "application/json",
+            b"{}",
+            &crate::dispatch::Item::speech(0., 1.),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("test send cancellation"));
         assert_eq!(
             listener.accept().unwrap_err().kind(),

@@ -20,13 +20,20 @@ Combine them into one result for the whole recording, following the same instruc
 fn system(stage: &Stage) -> String {
     format!("{} {TRANSCRIPT_CONTRACT}", stage.prompt)
 }
-fn send(agent: &ureq::Agent, settings: &LlmSettings, stage: &Stage, user: &str) -> Result<String> {
+fn send(
+    agent: &ureq::Agent,
+    settings: &LlmSettings,
+    stage: &Stage,
+    user: &str,
+    detail: &str,
+) -> Result<String> {
     let body = llm::chat_body(settings, &system(stage), user, stage.input)?;
     llm::send_chat(
         agent,
         settings,
         &body,
         &stage.name,
+        detail,
         &llm::check_control_characters,
     )
 }
@@ -79,12 +86,19 @@ pub async fn run(
     );
     crate::runtime::spawn_blocking(move || {
         let agent = llm::chat_agent();
-        let partials = crate::runtime::map_pool(chunks, settings.concurrency, |chunk| {
+        let count = chunks.len();
+        let chunks = chunks.into_iter().enumerate().collect();
+        let partials = crate::runtime::map_pool(chunks, settings.concurrency, |(index, chunk)| {
             send(
                 &agent,
                 &settings,
                 &stage,
                 &format!("{context}{}", TRANSCRIPT_USER.replace("{}", &chunk)),
+                &if count == 1 {
+                    String::new()
+                } else {
+                    format!("part {} of {count}", index + 1)
+                },
             )
         })?;
         if partials.len() == 1 {
@@ -99,6 +113,7 @@ pub async fn run(
             &settings,
             &stage,
             &format!("{context}{}", TRANSCRIPT_MERGE_USER.replace("{}", &parts)),
+            &format!("while combining {count} parts"),
         )
     })
     .await
@@ -107,7 +122,7 @@ pub async fn run(
 
 pub async fn markdown(settings: &LlmSettings, stage: &Stage, text: &str) -> Result<String> {
     let (settings, stage, text) = (settings.clone(), stage.clone(), text.to_owned());
-    crate::runtime::spawn_blocking(move || send(&llm::chat_agent(), &settings, &stage, &text))
+    crate::runtime::spawn_blocking(move || send(&llm::chat_agent(), &settings, &stage, &text, ""))
         .await?
 }
 
