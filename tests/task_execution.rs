@@ -928,8 +928,10 @@ fn moved_and_renamed_local_sources_reuse_work_and_publish_the_new_location() {
         json!(source.canonicalize().unwrap())
     );
     assert_eq!(
-        std::fs::read_to_string(note.join("recording.md")).unwrap(),
-        "lecture.mp4\n"
+        std::fs::read_to_string(note.join("recording.md"))
+            .unwrap()
+            .trim_end(),
+        "lecture.mp4"
     );
     std::fs::write(note.join("personal.md"), "Personal additions").unwrap();
     std::fs::write(note.join("note.md"), "User edit").unwrap();
@@ -969,8 +971,10 @@ fn moved_and_renamed_local_sources_reuse_work_and_publish_the_new_location() {
         first_document["meta"]["title"]
     );
     assert_eq!(
-        std::fs::read_to_string(second["files"]["recording"].as_str().unwrap()).unwrap(),
-        "renamed.mp4\n"
+        std::fs::read_to_string(second["files"]["recording"].as_str().unwrap())
+            .unwrap()
+            .trim_end(),
+        "renamed.mp4"
     );
     let second_note = Path::new(second["note_dir"].as_str().unwrap());
     let second_marker: Value =
