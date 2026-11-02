@@ -111,13 +111,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             response = b'{}'
         else:
             self.send_response(200)
-            content = 'Fixture summary.'
-            if self.path == '/v1/chat/completions':
-                user = json.loads(body)['messages'][1]['content']
-                if isinstance(user, list):
-                    content = user[0]['text']
             first = len((args.record / 'calls').read_text().splitlines()) == 1
             text = '' if args.behavior == 'empty' or (args.behavior == 'empty-first' and first) else 'Fixture transcript.'
+            content = text
+            if self.path == '/v1/chat/completions':
+                messages = json.loads(body)['messages']
+                if len(messages) > 1:
+                    user = messages[1]['content']
+                    content = user[0]['text'] if isinstance(user, list) else 'Fixture summary.'
             value = {'choices': [{'message': {'content': content}}]} if self.path == '/v1/chat/completions' else {'text': text}
             if args.behavior == 'warning':
                 value['warning'] = '  Diagnostic\n\t' + '界' * 400

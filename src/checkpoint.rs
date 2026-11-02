@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 /// Schema version of the checkpoint identity. Bump it only when the checkpoint format or meaning changes:
 /// it is independent of the package version, so upgrades do not discard ASR progress,
 /// and every bump invalidates all existing checkpoints once.
-const CHECKPOINT_SCHEMA_VERSION: u32 = 3;
+const CHECKPOINT_SCHEMA_VERSION: u32 = 4;
 
 /// What a checkpoint was produced with; it can be reused only by an identical identity.
 /// Every field that changes the transcript must be part of it.
@@ -27,6 +27,7 @@ pub struct AsrIdentity {
     pub mode: crate::settings::AsrMode,
     pub endpoint_or_command: String,
     pub model: String,
+    pub prompt: String,
     pub language: String,
     pub max_speech: f32,
     pub vad_threshold: f32,
@@ -50,6 +51,7 @@ impl AsrIdentity {
             mode: asr.mode,
             endpoint_or_command,
             model: asr.model.clone(),
+            prompt: asr.prompt.clone(),
             language: asr.language.clone(),
             max_speech: asr.max_speech,
             vad_threshold: asr.vad_threshold,
@@ -572,12 +574,13 @@ mod identity_tests {
             ..Default::default()
         };
         let identity = AsrIdentity::new(&asr);
-        assert_eq!(identity.schema_version, 3);
+        assert_eq!(identity.schema_version, 4);
         assert_eq!(identity.endpoint_or_command, "https://example.test/v1");
         let changes: &[fn(&mut Asr)] = &[
             |a| a.mode = AsrMode::Chat,
             |a| a.base_url.push_str("other"),
             |a| a.model.push('2'),
+            |a| a.prompt = "Transcribe verbatim.".into(),
             |a| a.language = "ko".into(),
             |a| a.max_speech = 30.0,
             |a| a.vad_threshold = 0.6,

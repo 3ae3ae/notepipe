@@ -33,6 +33,7 @@ pub struct Asr {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    pub prompt: String,
     pub language: String,
     pub concurrency: usize,
     pub command: Vec<String>,
@@ -49,6 +50,7 @@ impl Default for Asr {
             base_url: String::new(),
             api_key: String::new(),
             model: String::new(),
+            prompt: String::new(),
             language: String::new(),
             concurrency: 4,
             command: Vec::new(),
@@ -160,6 +162,8 @@ pub struct Speech {
     pub provider: String,
     pub api: AsrMode,
     pub model: String,
+    #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     pub threshold: f32,
     pub min_silence: f32,
     pub max_segment: f32,
@@ -170,6 +174,7 @@ impl Default for Speech {
             provider: String::new(),
             api: AsrMode::default(),
             model: String::new(),
+            prompt: None,
             threshold: 0.5,
             min_silence: 0.4,
             max_segment: crate::config::DEFAULT_MAX_SPEECH,
@@ -514,6 +519,14 @@ impl ConfigFile {
             }
             match &stage.kind {
                 StageType::Transcript(t) => {
+                    anyhow::ensure!(
+                        t.speech.api != AsrMode::Chat || t.speech.prompt.is_some(),
+                        "Stage {name}: speech with api = \"chat\" needs a prompt"
+                    );
+                    anyhow::ensure!(
+                        t.speech.api == AsrMode::Chat || t.speech.prompt.is_none(),
+                        "Stage {name}: a speech prompt applies only to api = \"chat\""
+                    );
                     anyhow::ensure!(
                         !t.sources.is_empty()
                             && t.sources
@@ -976,6 +989,46 @@ mod tests {
             }
             target[key] = json!("unknown");
             assert!(parse(&cfg.to_string()).is_err(), "{table}.{key}");
+        }
+    }
+    #[test]
+    fn speech_prompt_is_required_only_for_chat() {
+        let mut cfg = config();
+        cfg["stages"]["transcript"]["speech"]["api"] = json!("chat");
+        assert_eq!(
+            resolve(&cfg, &[]).unwrap_err().to_string(),
+            "Stage transcript: speech with api = \"chat\" needs a prompt"
+        );
+        for prompt in ["", "  Transcribe verbatim.\nKeep every word.  "] {
+            cfg["stages"]["transcript"]["speech"]["prompt"] = json!(prompt);
+            let resolved = resolve(&cfg, &[]).unwrap();
+            let (name, stage) = resolved
+                .stages
+                .iter()
+                .find(|(name, _)| name == "transcript")
+                .unwrap();
+            assert_eq!(
+                crate::options::stage_config(&resolved, name, stage)
+                    .unwrap()
+                    .asr
+                    .prompt,
+                prompt
+            );
+            let parsed = parse(&cfg.to_string()).unwrap();
+            assert_eq!(
+                parse(&toml::to_string_pretty(&parsed).unwrap()).unwrap(),
+                parsed
+            );
+            cfg["stages"]["transcript"]["speech"]["api"] = json!("transcriptions");
+            assert_eq!(
+                resolve(&cfg, &[]).unwrap_err().to_string(),
+                "Stage transcript: a speech prompt applies only to api = \"chat\""
+            );
+            cfg["stages"]["transcript"]["speech"]["api"] = json!("chat");
+        }
+        for prompt in [json!(null), json!(42)] {
+            cfg["stages"]["transcript"]["speech"]["prompt"] = prompt;
+            assert!(parse(&cfg.to_string()).is_err());
         }
     }
     #[test]
