@@ -76,10 +76,9 @@ impl Transcript {
         Ok(transcript)
     }
 }
-fn selected_transcript(path: &Path) -> Result<(String, subtitle::ParsedSubtitle)> {
-    let key = runtime::file_digest(path)?;
-    let events = subtitle::parse_subtitle(&subtitle::read_subtitle_text(path)?);
-    Ok((key, events))
+fn selected_transcript(path: &Path) -> Result<subtitle::ParsedSubtitle> {
+    let content = subtitle::read_subtitle_text(path)?;
+    Ok(subtitle::parse_subtitle(&content))
 }
 struct Provider {
     definition: settings::Provider,
@@ -140,7 +139,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
     }
     if let Some(path) = &cfg.subtitle {
-        subtitle::validate_events(&selected_transcript(path)?.1.events)?;
+        subtitle::validate_events(&selected_transcript(path)?.events)?;
     }
     let mut warnings = if cfg.stages.iter().any(|(name, s)| {
         (!cfg.skip.contains(name) || s.llm_writes_document())
@@ -621,7 +620,7 @@ impl Run {
                 StageType::Transcript(t) => {
                     let selected = self.subtitle(info, files, t)?.filter(|(path, _)| {
                         selected_transcript(path)
-                            .is_ok_and(|(_, parsed)| timeline::has_readable_events(&parsed.events))
+                            .is_ok_and(|parsed| timeline::has_readable_events(&parsed.events))
                     });
                     let subtitles_first = self.cfg.subtitle.is_some()
                         || t.sources.first().is_some_and(|s| s == "subtitles");
@@ -722,11 +721,11 @@ impl Run {
         } else {
             t.sources.clone()
         } {
-            let (key, language, selected_events) = if source == "subtitles" {
+            if source == "subtitles" {
                 let Some((path, language)) = &selected else {
                     continue;
                 };
-                let (key, parsed) = selected_transcript(path)?;
+                let parsed = selected_transcript(path)?;
                 if let Some(warning) = parsed.warning(path) {
                     warnings.push(warning);
                 }
@@ -735,10 +734,17 @@ impl Run {
                     continue;
                 }
                 subtitle::validate_events(&events)?;
-                (key, language.clone(), Some(events))
-            } else {
-                (transcript_key(&cfg.asr)?, cfg.asr.language.clone(), None)
-            };
+                return write_json(
+                    target,
+                    &Transcript {
+                        events,
+                        language: language.clone(),
+                        extra: Default::default(),
+                    },
+                );
+            }
+            let key = transcript_key(&cfg.asr)?;
+            let language = cfg.asr.language.clone();
             let lock = self.cache_lock(&format!("transcript-{key}"));
             let _lock = lock.lock().await;
             let cache = self.transcript_cache(&key);
@@ -749,26 +755,21 @@ impl Run {
                 write_json(target, &transcript)?;
                 return Ok(());
             }
-            let events = if let Some(events) = selected_events {
-                events
-            } else {
-                let audio = self.work.join(format!(".cache/audio-{name}.wav"));
-                crate::error::require_cmd("ffmpeg")?;
-                crate::error::require_cmd("ffprobe")?;
-                progress::stage_label(&format!("{name}/audio"), "start", "Extracting audio");
-                media::extract_audio(&info.file(input, &self.cfg.url)?, &audio).await?;
-                progress::stage_label(&format!("{name}/audio"), "done", "Extracting audio");
-                cfg.out_dir = self.work.join(format!(".cache/asr-{key}"));
-                let provider = &self.providers[&t.speech.provider];
-                cfg.asr.base_url = provider.base(name).await?;
-                cfg.asr.api_key = provider.key.clone();
-                cfg.asr.command.clear();
-                cfg.asr.limit = Some(provider.limit.clone());
-                progress::stage_label(&format!("{name}/speech"), "start", "Transcribing speech");
-                let events = asr::run(&cfg, &audio).await?;
-                progress::stage_label(&format!("{name}/speech"), "done", "Transcribing speech");
-                events
-            };
+            let audio = self.work.join(format!(".cache/audio-{name}.wav"));
+            crate::error::require_cmd("ffmpeg")?;
+            crate::error::require_cmd("ffprobe")?;
+            progress::stage_label(&format!("{name}/audio"), "start", "Extracting audio");
+            media::extract_audio(&info.file(input, &self.cfg.url)?, &audio).await?;
+            progress::stage_label(&format!("{name}/audio"), "done", "Extracting audio");
+            cfg.out_dir = self.work.join(format!(".cache/asr-{key}"));
+            let provider = &self.providers[&t.speech.provider];
+            cfg.asr.base_url = provider.base(name).await?;
+            cfg.asr.api_key = provider.key.clone();
+            cfg.asr.command.clear();
+            cfg.asr.limit = Some(provider.limit.clone());
+            progress::stage_label(&format!("{name}/speech"), "start", "Transcribing speech");
+            let events = asr::run(&cfg, &audio).await?;
+            progress::stage_label(&format!("{name}/speech"), "done", "Transcribing speech");
             if !timeline::has_readable_events(&events) {
                 continue;
             }
