@@ -6,7 +6,7 @@
 //! - `progress`: stage, current, total, optional message
 //! - `tokens`: stage, prompt, completion
 //! - `done`: work_dir, note_dir, files, warnings
-//! - `error`: message
+//! - `error`: message, warnings
 
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::Mutex;

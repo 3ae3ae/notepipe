@@ -104,13 +104,39 @@ impl Provider {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct Failure {
+    error: anyhow::Error,
+    pub warnings: Vec<String>,
+}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.error)
+    }
+}
+impl std::error::Error for Failure {}
+
 struct Run {
     cfg: PipelineConfig,
     work: PathBuf,
     providers: BTreeMap<String, Provider>,
+    warnings: Arc<std::sync::Mutex<Vec<String>>>,
     cache_locks: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
+    let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
+    run_inner(cfg, warnings.clone()).await.map_err(|error| {
+        Failure {
+            error,
+            warnings: runtime::lock_recover(&warnings).clone(),
+        }
+        .into()
+    })
+}
+async fn run_inner(
+    cfg: &PipelineConfig,
+    warnings: Arc<std::sync::Mutex<Vec<String>>>,
+) -> Result<()> {
     let mut providers = BTreeMap::new();
     for (name, stage) in &cfg.stages {
         if cfg.skip.contains(name)
@@ -146,7 +172,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     if let Some(path) = &cfg.subtitle {
         subtitle::validate_events(&selected_transcript(path)?.events)?;
     }
-    let mut warnings = if cfg.stages.iter().any(|(name, s)| {
+    let recovered = if cfg.stages.iter().any(|(name, s)| {
         (!cfg.skip.contains(name) || s.llm_writes_document())
             && s.publish.as_deref().is_some_and(|p| p != "-")
     }) {
@@ -154,6 +180,7 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     } else {
         Vec::new()
     };
+    runtime::lock_recover(&warnings).extend(recovered);
     let work_root = config::cache_dir().join("work");
     std::fs::create_dir_all(&work_root)?;
     let key = source_key(&cfg.url, &cfg.source)?;
@@ -177,9 +204,10 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         cfg: cfg.clone(),
         work: work.clone(),
         providers,
+        warnings: warnings.clone(),
         cache_locks: Default::default(),
     });
-    let result = execute(run.clone(), &mut warnings).await;
+    let result = execute(run.clone()).await;
     if result.is_err() {
         for provider in run.providers.values() {
             if let Some(process) = &provider.process {
@@ -188,9 +216,17 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         }
     }
     runtime::finish_blocking().await;
-    cleanup_media(cfg, &work, &mut warnings)?;
-    runtime::check_cancelled()?;
+    {
+        let mut warnings = runtime::lock_recover(&warnings);
+        if let Err(error) = cleanup_media(cfg, &work, &mut warnings) {
+            warnings.push(format!(
+                "Could not remove cached media {}: {error:#}",
+                work.join(".cache/download").display()
+            ));
+        }
+    }
     let (note_dir, files, stdout) = result?;
+    runtime::check_cancelled()?;
     if let Some(path) = stdout {
         use std::io::Write;
         std::io::copy(
@@ -199,7 +235,8 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
         )?;
         std::io::stdout().flush()?;
     }
-    for warning in &warnings {
+    let warnings = runtime::lock_recover(&warnings);
+    for warning in warnings.iter() {
         eprintln!("Warning: {warning}");
     }
     progress::done(&work, note_dir.as_deref(), &files, &warnings);
@@ -213,7 +250,6 @@ pub async fn run(cfg: &PipelineConfig) -> Result<()> {
 }
 async fn execute(
     run: Arc<Run>,
-    warnings: &mut Vec<String>,
 ) -> Result<(Option<PathBuf>, BTreeMap<String, String>, Option<PathBuf>)> {
     let mut pending = run.cfg.stages.clone();
     let download = run
@@ -244,7 +280,7 @@ async fn execute(
                     let run = run.clone();
                     jobs.spawn(async move {
                         let mut result = if skipped && !passthrough {
-                            Ok(Vec::new())
+                            Ok(())
                         } else {
                             run.stage(&name, &stage, passthrough).await
                         };
@@ -253,8 +289,9 @@ async fn execute(
                                 && matches!(stage.kind, StageType::Transcript(_)))
                             && let Some(provider) = stage.used_provider()
                         {
-                            if let Err(error) = run.providers[provider].finished().await {
-                                result = Err(error);
+                            let stopped = run.providers[provider].finished().await;
+                            if stopped.is_err() {
+                                result = stopped;
                             }
                         }
                         (stage.output, result)
@@ -279,9 +316,8 @@ async fn execute(
                 Err(error) => return Err(error.into()),
             };
             match result {
-                Ok(stage_warnings) => {
+                Ok(()) => {
                     ready.insert(output.clone());
-                    warnings.extend(stage_warnings);
                 }
                 Err(error) if failure.is_none() => {
                     failure = Some(error);
@@ -320,10 +356,19 @@ async fn execute(
         std::fs::File::open(path)?;
     }
     let meta = run.meta()?;
-    let (note, files) = artifact::publish(&run.cfg.out_root, &run.work, &meta, &outputs, warnings)?;
+    let (note, files) = artifact::publish(
+        &run.cfg.out_root,
+        &run.work,
+        &meta,
+        &outputs,
+        &mut runtime::lock_recover(&run.warnings),
+    )?;
     Ok((note, files, stdout))
 }
 impl Run {
+    fn warn(&self, warning: String) {
+        runtime::lock_recover(&self.warnings).push(warning);
+    }
     async fn watch_providers(&self) -> anyhow::Error {
         loop {
             if let Err(error) = runtime::check_cancelled() {
@@ -371,7 +416,7 @@ impl Run {
             seek_url: None,
         })
     }
-    async fn stage(&self, name: &str, stage: &Stage, passthrough: bool) -> Result<Vec<String>> {
+    async fn stage(&self, name: &str, stage: &Stage, passthrough: bool) -> Result<()> {
         runtime::check_cancelled()?;
         if !passthrough {
             progress::stage(name, "start");
@@ -380,7 +425,6 @@ impl Run {
             .prefix(".stage-")
             .tempdir_in(&self.work)?;
         let target = staging.path().join(&stage.output);
-        let mut warnings = Vec::new();
         let inputs = stage
             .input
             .iter()
@@ -391,13 +435,12 @@ impl Run {
             Document::read(&target, &self.work)?;
         } else {
             match &stage.kind {
-                StageType::Download(_) => self.download(name, &target, &mut warnings).await?,
+                StageType::Download(_) => self.download(name, &target).await?,
                 StageType::Transcript(t) => {
-                    self.transcript(name, stage, t, &inputs[0], &target, &mut warnings)
-                        .await?
+                    self.transcript(name, stage, t, &inputs[0], &target).await?
                 }
                 StageType::Screenshots(_) => {
-                    warnings = self.screenshots(name, stage, &inputs[0], &target).await?
+                    self.screenshots(name, stage, &inputs[0], &target).await?
                 }
                 StageType::Document {} => {
                     let transcript = stage
@@ -459,28 +502,22 @@ impl Run {
                         provider.key.clone(),
                     );
                     settings.provider = provider.process.clone();
+                    settings.warnings = Some(self.warnings.clone());
                     settings.limit = Some(provider.limit.clone());
                     let _cancel = runtime::CancelOnDrop(settings.cancelled.clone());
                     if stage.llm_writes_document() {
                         let mut document = Document::read(&inputs[0], &self.work)?;
                         let work = self.work.clone();
-                        let (document, stage_warnings) =
-                            crate::runtime::spawn_blocking(move || {
-                                let warnings = crate::llm::paragraphs(
-                                    &mut document.sections,
-                                    &work,
-                                    &settings,
-                                    &ai,
-                                )?;
-                                anyhow::ensure!(
-                                    artifact::has_readable_body(&document.sections),
-                                    "Stage {} would remove every paragraph",
-                                    ai.name
-                                );
-                                Ok::<_, anyhow::Error>((document, warnings))
-                            })
-                            .await??;
-                        warnings = stage_warnings;
+                        let document = crate::runtime::spawn_blocking(move || {
+                            crate::llm::paragraphs(&mut document.sections, &work, &settings, &ai)?;
+                            anyhow::ensure!(
+                                artifact::has_readable_body(&document.sections),
+                                "Stage {} would remove every paragraph",
+                                ai.name
+                            );
+                            Ok::<_, anyhow::Error>(document)
+                        })
+                        .await??;
                         write_json(&target, &document)?;
                     } else {
                         let text = match self.kind(&stage.input[0]) {
@@ -558,7 +595,7 @@ impl Run {
         if !passthrough {
             progress::stage(name, "done");
         }
-        Ok(warnings)
+        Ok(())
     }
     fn images(&self, stage: &Stage) -> Result<Vec<String>> {
         if stage.output_kind() == Kind::Document {
@@ -665,7 +702,7 @@ impl Run {
         }
         Ok(false)
     }
-    async fn download(&self, name: &str, target: &Path, warnings: &mut Vec<String>) -> Result<()> {
+    async fn download(&self, name: &str, target: &Path) -> Result<()> {
         std::fs::create_dir(target)?;
         if Path::new(&self.cfg.url).is_file() {
             let path = Path::new(&self.cfg.url).canonicalize()?;
@@ -676,7 +713,7 @@ impl Run {
             let duration = match media::probe_duration(&path).await {
                 Ok(duration) => Some(duration),
                 Err(error) => {
-                    warnings.push(format!(
+                    self.warn(format!(
                         "Could not read the duration of {}: {error:#}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
@@ -727,7 +764,6 @@ impl Run {
         t: &settings::Transcript,
         input: &Path,
         target: &Path,
-        warnings: &mut Vec<String>,
     ) -> Result<()> {
         let info = source::Output::info(input)?;
         let selected = if self.cfg.subtitle.is_some() {
@@ -760,7 +796,7 @@ impl Run {
                 };
                 let parsed = selected_transcript(path)?;
                 if let Some(warning) = parsed.warning(path) {
-                    warnings.push(warning);
+                    self.warn(warning);
                 }
                 let events = parsed.events;
                 if !timeline::has_readable_events(&events) && self.cfg.subtitle.is_none() {
@@ -825,13 +861,12 @@ impl Run {
         stage: &Stage,
         input: &Path,
         target: &Path,
-    ) -> Result<Vec<String>> {
+    ) -> Result<()> {
         let mut cfg = crate::options::stage_config(&self.cfg, name, stage)?;
         let cache = self.frames_cache(&screenshot_key(&cfg)?);
         let lock = self.cache_lock(&format!("frames-{}", screenshot_key(&cfg)?));
         let _lock = lock.lock().await;
         cfg.out_dir = cache.clone();
-        let mut warnings = Vec::new();
         let frames = match read_frames(&cache)? {
             Some(output) => output,
             None => {
@@ -847,7 +882,7 @@ impl Run {
                         output
                     }
                     Err(error) => {
-                        warnings.push(format!("Screenshots: {error:#}"));
+                        self.warn(format!("Screenshots: {error:#}"));
                         scene::Output::NoVideo
                     }
                 }
@@ -857,7 +892,7 @@ impl Run {
         let mut images = Vec::new();
         if let scene::Output::Frames(frames) = frames {
             if frames.is_empty() {
-                warnings.push(NO_SCREENSHOTS.into());
+                self.warn(NO_SCREENSHOTS.into());
             }
             for (i, frame) in frames.iter().enumerate() {
                 let image = format!("{:04}.jpg", i + 1);
@@ -869,7 +904,7 @@ impl Run {
             }
         }
         write_json(&target.join("images.json"), &images)?;
-        Ok(warnings)
+        Ok(())
     }
 }
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {

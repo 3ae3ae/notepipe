@@ -32,6 +32,7 @@ pub struct Stage {
 pub struct LlmSettings {
     pub stage: String,
     pub provider: Option<std::sync::Arc<crate::adapter::Provider>>,
+    pub warnings: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
     pub limit: Option<std::sync::Arc<crate::runtime::RequestLimit>>,
     pub cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub base_url: String,
@@ -46,6 +47,7 @@ impl Default for LlmSettings {
         Self {
             stage: String::new(),
             provider: None,
+            warnings: None,
             limit: None,
             cancelled: Default::default(),
             base_url: String::new(),
@@ -62,6 +64,7 @@ impl LlmSettings {
         Self {
             stage: stage.name.clone(),
             provider: None,
+            warnings: None,
             limit: None,
             cancelled: Default::default(),
             base_url: provider.base_url.clone().unwrap_or_default(),
@@ -193,7 +196,13 @@ pub fn paragraphs(
             Err(error) => {
                 let warning = format!("{}: screenshot for section {section} could not be read; batch sent as text: {}: {error:#}", stage.name, path.display());
                 let mut warnings = crate::runtime::lock_recover(&image_warnings);
-                if !warnings.contains(&warning) { tracing::warn!("{warning}"); warnings.push(warning); }
+                if !warnings.contains(&warning) {
+                    tracing::warn!("{warning}");
+                    if let Some(shared) = &s.warnings {
+                        crate::runtime::lock_recover(shared).push(warning.clone());
+                    }
+                    warnings.push(warning);
+                }
                 None
             }
         });
@@ -1090,5 +1099,16 @@ mod tests {
                 .all(|header| !header.to_ascii_lowercase().contains("authorization:"))
         );
         assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 6);
+        let failed = MockAi::respond_with(|_, _| Some((400, json!({}))));
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let settings = LlmSettings {
+            base_url: failed.url.clone(),
+            warnings: Some(shared.clone()),
+            ..settings
+        };
+        assert!(paragraphs(&mut sections[1..], root.path(), &settings, &stage).is_err());
+        let retained = crate::runtime::lock_recover(&shared);
+        assert_eq!(retained.len(), 1);
+        assert!(retained[0].contains("missing.jpg"));
     }
 }
