@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import threading
+from time import monotonic
 import urllib.error
 import urllib.request
 import wave
@@ -21,7 +22,11 @@ MAX_UPLOAD = 64 * 1024 * 1024
 # Several times what speech needs, so only a model that repeats itself reaches it.
 TOKENS_PER_SECOND = 25
 # Decoding settings tried in turn while a segment reaches its output cap.
-FALLBACKS = [{}, {"repeat_penalty": 1.1}, {"temperature": 0.4, "repeat_penalty": 1.1}]
+FALLBACKS = [
+    ({}, None),
+    ({"repeat_penalty": 1.1}, "The first decoding reached the output cap; decoded again with a repetition penalty."),
+    ({"temperature": 0.4, "repeat_penalty": 1.1}, "The first decoding reached the output cap; decoded again with a repetition penalty and sampling at temperature 0.4."),
+]
 
 
 def multipart(content_type, body):
@@ -91,6 +96,33 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, deadline):
+        super().__init__()
+        self.deadline = deadline
+        self.timer = None
+
+    def http_open(self, request):
+        def connect(host, **kwargs):
+            connection = http.client.HTTPConnection(host, **kwargs)
+            connection.connect()
+            upstream = connection.sock
+
+            def expire():
+                try:
+                    upstream.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+            # Socket timeouts alone restart on each read, so a trickling response can outlive the budget.
+            self.timer = threading.Timer(max(0, self.deadline - monotonic()), expire)
+            self.timer.daemon = True
+            self.timer.start()
+            return connection
+
+        return self.do_open(connect, request)
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
@@ -144,16 +176,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.error(400, "Invalid multipart upload")
             return
 
+        deadline = monotonic() + 570
         try:
             # Greedy decoding can repeat one word until the cap, as Qwen3-ASR does on some short segments;
             # decoding again with a repetition penalty, then with sampling, ends the loop.
-            for fallback in FALLBACKS:
+            for fallback, warning in FALLBACKS:
                 request = urllib.request.Request(
                     self.server.base_url + "/v1/chat/completions", data=transcription_request(fields, fallback),
                     headers={"Content-Type": "application/json"}, method="POST",
                 )
-                with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect).open(request, timeout=120) as response:
-                    raw = response.read(MAX_UPLOAD + 1)
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                upstream = DeadlineHTTPHandler(deadline)
+                try:
+                    with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect, upstream).open(request, timeout=remaining) as response:
+                        raw = response.read(MAX_UPLOAD + 1)
+                finally:
+                    if upstream.timer is not None:
+                        upstream.timer.cancel()
+                if monotonic() >= deadline:
+                    raise TimeoutError
                 if len(raw) > MAX_UPLOAD:
                     raise ValueError("Upstream response exceeds 64 MiB")
                 value = json.loads(raw)
@@ -170,14 +213,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 phrase = self.responses.get(error.code, ("Request failed", ""))[0]
                 self.error(error.code, f"Upstream HTTP {error.code}: {phrase}")
             return
-        except (OSError, ValueError, KeyError, IndexError, TypeError, http.client.HTTPException):
-            self.error(502, "Invalid response from llama-server")
+        except (OSError, ValueError, KeyError, IndexError, TypeError, http.client.HTTPException) as error:
+            if isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError) or monotonic() >= deadline:
+                self.error(504, "The speech model did not finish within the time limit")
+            else:
+                self.error(502, "Invalid response from llama-server")
             return
         if value["choices"][0].get("finish_reason") == "length":
             # Every fallback reached the cap. A 4xx is not retried: asking again stops at the same limit.
             self.reply(422, {"error": {"code": "output_limit", "message": "The speech model stopped at its output limit"}})
             return
-        self.reply(200, {"text": sanitize_qwen_text(text)})
+        result = {"text": sanitize_qwen_text(text)}
+        if warning:
+            result["warning"] = warning
+        self.reply(200, result)
 
 
 def main():
