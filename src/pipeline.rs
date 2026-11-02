@@ -288,7 +288,7 @@ async fn execute(run: Arc<Run>) -> Result<(artifact::Published, Option<PathBuf>)
             while index < pending.len() {
                 let (name, stage) = &pending[index];
                 let skipped = run.cfg.skip.contains(name);
-                let passthrough = skipped && stage.llm_writes_document();
+                let passthrough = skipped && matches!(stage.kind, StageType::Rewrite(_));
                 if (skipped && !passthrough)
                     || ((matches!(stage.kind, StageType::Download(_))
                         || download.is_none_or(|output| ready.contains(output)))
@@ -354,7 +354,7 @@ async fn execute(run: Arc<Run>) -> Result<(artifact::Published, Option<PathBuf>)
     let mut outputs = Vec::new();
     let mut stdout = None;
     for (name, stage) in &run.cfg.stages {
-        if run.cfg.skip.contains(name) && !stage.llm_writes_document() {
+        if run.cfg.skip.contains(name) && !matches!(stage.kind, StageType::Rewrite(_)) {
             continue;
         }
         if let Some(publish) = &stage.publish {
@@ -518,7 +518,7 @@ impl Run {
                     };
                     write_json(&target, &document)?;
                 }
-                StageType::Llm(_) => {
+                StageType::Rewrite(_) | StageType::Write(_) => {
                     let ai = stage.ai(name).unwrap();
                     let provider = &self.providers[&ai.provider];
                     let mut settings = crate::llm::LlmSettings::for_stage(
@@ -530,7 +530,7 @@ impl Run {
                     settings.warnings = Some(self.warnings.clone());
                     settings.limit = Some(provider.limit.clone());
                     let _cancel = runtime::CancelOnDrop(settings.cancelled.clone());
-                    if stage.llm_writes_document() {
+                    if matches!(stage.kind, StageType::Rewrite(_)) {
                         let mut document = Document::read(&inputs[0], &self.work)?;
                         let work = self.work.clone();
                         let document = crate::runtime::spawn_blocking(move || {

@@ -48,7 +48,7 @@ input = ["transcript.json", "images"]
 output = "draft.json"
 
 [stages.proofread]
-type = "llm"
+type = "rewrite"
 input = "draft.json"
 output = "proofread.json"
 publish = "note.json"
@@ -71,7 +71,7 @@ on it.
 '''
 
 [stages.summary]
-type = "llm"
+type = "write"
 input = "proofread.json"
 output = "summary.md"
 provider = "openai"
