@@ -43,6 +43,7 @@ fn make_test_video(path: &std::path::Path) {
 fn sections(
     video: &std::path::Path,
     dir: &std::path::Path,
+    interval: &str,
     options: &[&str],
 ) -> Vec<serde_json::Value> {
     use std::io::Write;
@@ -60,7 +61,7 @@ fn sections(
             "--sensitivity",
             "0.9",
             "--frame-interval",
-            "0.5",
+            interval,
         ])
         .args(options)
         .arg("--out")
@@ -109,6 +110,7 @@ fn scene_detects_slides_with_true_timestamps() {
     let frames = sections(
         &video,
         &dir,
+        "0.5",
         &[
             "--min-gap",
             "10",
@@ -168,6 +170,7 @@ drawbox=color=gray:t=fill:enable='gte(t,3.5)'";
     let frames = sections(
         &video,
         &dir,
+        "0.5",
         &[
             "--min-gap",
             "2",
@@ -301,5 +304,71 @@ fn audio_only_and_attached_cover_inputs_publish_without_screenshot_warnings() {
         )
         .unwrap();
         assert_eq!(document["sections"][0]["image"], "");
+    }
+}
+
+#[test]
+fn first_mode_extracts_the_sampled_frame_at_its_real_presentation_time() {
+    if !have_ffmpeg() {
+        return;
+    }
+    for (rate, expected_time) in [("10", 2.), ("7/2", 16. / 7.)] {
+        let root = tempfile::tempdir().unwrap();
+        let video = root.path().join("between-samples.mp4");
+        let output = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg(format!("color=c=white:s=64x32:d=4:r={rate}"))
+            .args(["-vf", "drawbox=color=black:t=fill:enable='gte(t,1.2)'"])
+            .arg(&video)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let frames = sections(
+            &video,
+            root.path(),
+            "1",
+            &[
+                "--min-gap",
+                "0",
+                "--screenshot-mode",
+                "first",
+                "--settle",
+                "0",
+            ],
+        );
+        assert_eq!(frames.len(), 2, "{frames:?}");
+        let time = frames[1]["t"].as_f64().unwrap();
+        assert!(
+            (time - expected_time).abs() <= 0.000001,
+            "expected the sampled frame at {expected_time}, got {time}"
+        );
+        let note_dir = std::fs::read_dir(root.path().join("notes"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.is_dir())
+            .unwrap();
+        for (frame, expected) in frames.iter().zip([255i16, 0]) {
+            let image = image::open(note_dir.join(frame["image"].as_str().unwrap()))
+                .unwrap()
+                .to_luma8();
+            let actual = i16::from(image.get_pixel(32, 16)[0]);
+            assert!(
+                (actual - expected).abs() <= 2,
+                "screenshot at {} shows {actual}, expected {expected}",
+                frame["t"]
+            );
+        }
     }
 }

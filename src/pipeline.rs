@@ -33,8 +33,9 @@ fn source_key(source: &str, adapter: &settings::Source) -> Result<String> {
     Ok(runtime::digest(&identity)[..16].into())
 }
 fn screenshot_key(cfg: &PipelineConfig) -> Result<String> {
+    // The version changes when screenshots are taken differently.
     Ok(runtime::digest(&serde_json::to_vec(
-        &serde_json::json!({"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi}),
+        &serde_json::json!({"version":2,"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi}),
     )?))
 }
 fn transcript_key(asr: &settings::Asr) -> Result<String> {
@@ -1199,6 +1200,10 @@ mod tests {
             .1;
         let mut cfg = crate::options::stage_config(&cfg, "screenshots", stage).unwrap();
         let key = screenshot_key(&cfg).unwrap();
+        let old_key = runtime::digest(
+            &serde_json::to_vec(&serde_json::json!({"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi})).unwrap(),
+        );
+        assert_ne!(key, old_key);
         cfg.asr.model = "changed".into();
         assert_eq!(key, screenshot_key(&cfg).unwrap());
         cfg.similarity = 0.5;
