@@ -953,6 +953,29 @@ mod tests {
             "ko"
         );
     }
+    #[test]
+    fn cli_overrides_replace_invalid_configured_tuning_before_validation() {
+        for (key, invalid, flag, valid) in [
+            ("sensitivity", 0., "--sensitivity", "0.85"),
+            ("frame_interval", 0., "--frame-interval", "1"),
+            ("min_gap", -1., "--min-gap", "0"),
+            ("settle", -1., "--settle", "0"),
+        ] {
+            use clap::Parser;
+            let mut cfg = config();
+            cfg["stages"]["screenshots"][key] = json!(invalid);
+            let cfg = parse(&cfg.to_string()).unwrap();
+            assert!(crate::options::resolve("local".into(), &Default::default(), &cfg).is_err());
+            let cli = crate::cli::Cli::try_parse_from(["notepipe", "local", flag, valid]).unwrap();
+            crate::options::resolve("local".into(), &cli.opts, &cfg).unwrap();
+            assert!(cfg.validate().is_err());
+        }
+        let opts = crate::cli::RunOpts {
+            similarity: Some(0.),
+            ..Default::default()
+        };
+        assert!(crate::options::resolve("local".into(), &opts, &ConfigFile::default()).is_err());
+    }
 }
 
 #[cfg(test)]
