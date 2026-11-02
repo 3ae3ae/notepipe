@@ -491,6 +491,7 @@ mod tests {
     #[test]
     fn http_attempt_deadline_bounds_blocked_dns_and_receiving_the_body() {
         use std::{
+            cell::Cell,
             io::{Read, Write},
             sync::mpsc,
         };
@@ -506,9 +507,7 @@ mod tests {
                 ureq::AgentBuilder::new()
                     .resolver(move |_: &str| {
                         entered.send(()).unwrap();
-                        runtime::lock_recover(&gate)
-                            .recv_timeout(Duration::from_secs(5))
-                            .unwrap();
+                        let _ = runtime::lock_recover(&gate).recv_timeout(Duration::from_secs(120));
                         finished.send(()).unwrap();
                         Ok(vec![address])
                     })
@@ -517,7 +516,7 @@ mod tests {
                 std::thread::spawn(move || {
                     let (mut stream, _) = listener.accept().unwrap();
                     stream
-                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .set_read_timeout(Some(Duration::from_secs(120)))
                         .unwrap();
                     let mut buffer = [0; 4096];
                     let _ = stream.read(&mut buffer).unwrap();
@@ -527,16 +526,23 @@ mod tests {
                         )
                         .unwrap();
                     entered.send(()).unwrap();
-                    gate.recv_timeout(Duration::from_secs(5)).unwrap();
+                    let _ = gate.recv_timeout(Duration::from_secs(120));
                     let _ = stream.write_all(b"}");
                     finished.send(()).unwrap();
                 });
                 http_agent()
             };
-            let url = format!("http://localhost:{}", address.port());
-            let start = Instant::now();
+            let host = if dns { "localhost" } else { "127.0.0.1" };
+            let url = format!("http://{host}:{}", address.port());
+            let polls = Cell::new(0);
             let error = send_with_timeout(
-                &|| Ok(()),
+                &|| {
+                    // The first check precedes spawning; the next waits for the operation under test.
+                    if polls.replace(polls.get() + 1) == 1 {
+                        ready.recv_timeout(Duration::from_secs(120))?;
+                    }
+                    Ok(())
+                },
                 agent.post(&url),
                 Vec::new(),
                 "",
@@ -544,18 +550,18 @@ mod tests {
             )
             .err()
             .unwrap();
-            ready.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert!(start.elapsed() < Duration::from_secs(1));
+            // Returning must not depend on DNS or the response body being released.
+            assert_eq!(done.try_recv(), Err(mpsc::TryRecvError::Empty));
             assert!(error.retryable);
             assert_eq!(
                 error.message,
                 format!(
-                    "could not reach localhost:{}: no answer within 600 s",
+                    "could not reach {host}:{}: no answer within 600 s",
                     address.port()
                 )
             );
             release.send(()).unwrap();
-            done.recv_timeout(Duration::from_secs(5)).unwrap();
+            done.recv_timeout(Duration::from_secs(120)).unwrap();
         }
     }
 
