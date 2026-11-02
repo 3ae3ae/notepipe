@@ -1,5 +1,6 @@
 import base64
 import http.client
+import http.server
 import io
 import json
 import os
@@ -9,13 +10,17 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from unittest.mock import Mock, patch
+import urllib.error
+import urllib.request
 import wave
 
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "src"))
-from notepipe_asr_llama import MAX_UPLOAD, sanitize_qwen_text
+from notepipe_asr_llama import DeadlineHTTPHandler, Handler, MAX_UPLOAD, sanitize_qwen_text
 
 
 def form(audio=b"RIFF\0\xffWAVE", model=None, language=None):
@@ -164,9 +169,23 @@ class AdapterTests(unittest.TestCase):
             {"body": repeating}, {"body": repeating},
             {"body": json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "시련이죠?"}}]})},
         ]))
-        self.assertEqual(self.call(body=form()), (200, {"text": "시련이죠?"}))
+        self.assertEqual(self.call(body=form()), (200, {
+            "text": "시련이죠?",
+            "warning": "The first decoding reached the output cap; decoded again with a repetition penalty and sampling at temperature 0.4.",
+        }))
         self.assertEqual([(r["temperature"], r.get("repeat_penalty")) for r in self.requests()],
                          [(0, None), (0, 1.1), (0.4, 1.1)])
+
+    def test_first_fallback_reports_a_warning(self):
+        self.record.joinpath("response.json").write_text(json.dumps([
+            {"body": json.dumps({"choices": [{"finish_reason": "length", "message": {"content": "repeat"}}]})},
+            {"body": json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": "Done."}}]})},
+        ]))
+        self.assertEqual(self.call(body=form()), (200, {
+            "text": "Done.",
+            "warning": "The first decoding reached the output cap; decoded again with a repetition penalty.",
+        }))
+        self.assertEqual(len(self.requests()), 2)
 
     def test_output_limit_is_a_failure_that_is_not_retried(self):
         self.response(json.dumps({"choices": [{"finish_reason": "length", "message": {"content": "The blue"}}]}))
@@ -226,6 +245,102 @@ class AdapterTests(unittest.TestCase):
         self.assertIn(b"llama-server exited with status 7", stderr)
         self.assertIn(b"child diagnostic 29", stderr)
         self.assertNotIn(b"child diagnostic 0\n", stderr)
+
+
+class DeadlineTests(unittest.TestCase):
+    def setUp(self):
+        self.handler = object.__new__(Handler)
+        self.handler.server = Mock(base_url="http://127.0.0.1:1234")
+        body = form()
+        self.handler.headers = {"Content-Length": str(len(body)), "Content-Type": "multipart/form-data; boundary=test"}
+        self.handler.rfile = io.BytesIO(body)
+        self.handler.path = "/v1/audio/transcriptions"
+        self.handler.reply = Mock()
+        opener = patch("notepipe_asr_llama.urllib.request.build_opener")
+        self.addCleanup(opener.stop)
+        self.opener = opener.start().return_value
+        clock = patch("notepipe_asr_llama.monotonic")
+        self.addCleanup(clock.stop)
+        self.clock = clock.start()
+
+    def responses(self, reasons):
+        responses = []
+        for reason in reasons:
+            response = Mock()
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=False)
+            response.read.return_value = json.dumps({"choices": [{"finish_reason": reason, "message": {"content": "Done."}}]}).encode()
+            responses.append(response)
+        self.opener.open.side_effect = responses
+
+    def assert_timeout(self):
+        self.handler.reply.assert_called_once_with(504, {"error": {"message": "The speech model did not finish within the time limit"}})
+
+    def test_decodes_share_one_570_second_budget(self):
+        self.responses(["length", "length", "stop"])
+        self.clock.side_effect = [100, 100, 200, 200, 400, 400, 500]
+        self.handler.do_POST()
+        self.assertEqual([call.kwargs["timeout"] for call in self.opener.open.call_args_list], [570, 470, 270])
+        self.assertEqual(self.handler.reply.call_args.args[0], 200)
+
+    def test_expired_budget_stops_before_another_decode(self):
+        self.responses(["length"])
+        self.clock.side_effect = [100, 100, 671]
+        self.handler.do_POST()
+        self.assert_timeout()
+        self.assertEqual(self.opener.open.call_count, 1)
+
+    def test_a_late_success_is_a_timeout(self):
+        self.responses(["stop"])
+        self.clock.side_effect = [100, 100, 671]
+        self.handler.do_POST()
+        self.assert_timeout()
+
+    def test_upstream_timeouts_are_504(self):
+        for error in [TimeoutError(), urllib.error.URLError(TimeoutError())]:
+            with self.subTest(error=error):
+                self.handler.rfile.seek(0)
+                self.handler.reply.reset_mock()
+                self.clock.return_value = 100
+                self.opener.open.side_effect = error
+                self.handler.do_POST()
+                self.assert_timeout()
+
+
+class TransportDeadlineTests(unittest.TestCase):
+    def test_deadline_interrupts_a_trickling_response(self):
+        class Trickling(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "20")
+                self.end_headers()
+                try:
+                    for _ in range(20):
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                        time.sleep(0.05)
+                except OSError:
+                    pass
+
+            def log_message(self, *_):
+                pass
+
+        with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Trickling) as server:
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            started = time.monotonic()
+            upstream = DeadlineHTTPHandler(started + 0.2)
+            try:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), upstream)
+                with self.assertRaises((OSError, http.client.HTTPException)):
+                    with opener.open(f"http://127.0.0.1:{server.server_port}", timeout=0.2) as response:
+                        response.read()
+                self.assertLess(time.monotonic() - started, 0.8)
+            finally:
+                if upstream.timer is not None:
+                    upstream.timer.cancel()
+                server.shutdown()
+                thread.join()
 
 
 class CleanupTests(unittest.TestCase):
