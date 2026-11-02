@@ -1,4 +1,4 @@
-//! Build a complete note folder before replacing the previous publication.
+//! Build complete note folders and leave every previous publication untouched.
 use crate::{runtime, source::MediaMeta, timeline::Section};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -104,210 +104,126 @@ fn matches_source(note: &Path, source: &str) -> Result<bool> {
     Ok(marker.as_ref().and_then(|m| m["source"].as_str()) == Some(source))
 }
 
-const TRANSACTION_FILE: &str = ".notepipe-transaction.json";
-
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum Phase {
-    Staged,
-    OldMoved,
-    Published,
+struct Record {
+    folder: PathBuf,
+    files: BTreeMap<PathBuf, String>,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Transaction {
-    name: String,
-    staging: String,
-    old: String,
-    phase: Phase,
+#[derive(Debug, Default)]
+pub struct Published {
+    pub note_dir: Option<PathBuf>,
+    pub files: BTreeMap<String, String>,
+    pub unchanged: bool,
 }
-impl Transaction {
-    fn validate(&self) -> Result<()> {
-        for name in [&self.name, &self.staging, &self.old] {
-            let mut components = Path::new(name).components();
-            anyhow::ensure!(
-                !name.contains(['/', '\\'])
-                    && matches!(components.next(), Some(Component::Normal(_)))
-                    && components.next().is_none(),
-                "Invalid note transaction path"
+
+fn file_digests(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
+    let mut files = BTreeMap::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            for (name, digest) in file_digests(&entry.path())? {
+                files.insert(Path::new(&entry.file_name()).join(name), digest);
+            }
+        } else {
+            files.insert(
+                entry.file_name().into(),
+                runtime::file_digest(&entry.path())?,
             );
         }
-        let names = [&self.name, &self.staging, &self.old].map(|name| name.to_lowercase());
-        anyhow::ensure!(
-            names[0] != names[1] && names[0] != names[2] && names[1] != names[2],
-            "Note transaction paths must be distinct"
-        );
-        anyhow::ensure!(
-            self.staging
-                .starts_with(&format!(".{}.notepipe-new-", self.name))
-                && self
-                    .old
-                    .starts_with(&format!(".{}.notepipe-old-", self.name)),
-            "Note transaction paths do not match the note name"
-        );
-        Ok(())
     }
-
-    fn write(&self, root: &Path) -> Result<()> {
-        self.validate()?;
-        crate::checkpoint::atomic_write(&root.join(TRANSACTION_FILE), &serde_json::to_vec(self)?)
-    }
+    Ok(files)
 }
 
-fn warn(warnings: &mut Vec<String>, message: String) {
-    tracing::warn!("{message}");
-    warnings.push(message);
-}
-
-fn remove_dir_if_exists(path: &Path, kind: &str, warnings: &mut Vec<String>) {
-    if let Err(error) = std::fs::remove_dir_all(path)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        warn(
-            warnings,
-            format!(
-                "Could not remove {kind} {}: {error}. Remove it manually.",
-                path.display()
-            ),
-        );
+fn existing_note(
+    root: &Path,
+    source: &str,
+    record: &Record,
+    staging: &Path,
+) -> Result<Option<PathBuf>> {
+    let mut latest = None;
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.path() == staging || !matches_source(&entry.path(), source)? {
+            continue;
+        }
+        if entry.file_name() == record.folder {
+            return Ok(Some(entry.path()));
+        }
+        let modified = entry.metadata()?.modified()?;
+        if latest.as_ref().is_none_or(|(_, time)| modified > *time) {
+            latest = Some((entry.path(), modified));
+        }
     }
+    Ok(latest.map(|(path, _)| path))
 }
 
-fn discard_record(root: &Path, warnings: &mut Vec<String>) {
-    if let Err(error) = std::fs::remove_file(root.join(TRANSACTION_FILE))
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        warn(
-            warnings,
-            format!(
-                "Could not remove note transaction record {}: {error}",
-                root.join(TRANSACTION_FILE).display()
-            ),
-        );
-    }
-}
-
-fn restore(previous: &Path, destination: &Path) -> Result<()> {
-    let metadata = previous.symlink_metadata().with_context(|| {
-        format!(
-            "Could not inspect previous note backup {}",
-            previous.display()
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn rename_new(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let target = CString::new(target.as_os_str().as_bytes())?;
+    // Ordinary rename can replace an existing empty directory.
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            target.as_ptr(),
+            libc::RENAME_NOREPLACE,
         )
-    })?;
-    anyhow::ensure!(
-        metadata.is_dir(),
-        "Previous note backup {} must be a real directory",
-        previous.display()
-    );
-    std::fs::rename(previous, destination).context("Could not restore the previous note")
-}
-
-fn recover_locked(root: &Path) -> Result<Vec<String>> {
-    let record = root.join(TRANSACTION_FILE);
-    let metadata = match record.symlink_metadata() {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        result => result?,
     };
-    anyhow::ensure!(
-        metadata.is_file(),
-        "Note transaction record must be a regular file: {}",
-        record.display()
-    );
-    let transaction: Transaction = serde_json::from_slice(&std::fs::read(&record)?)
-        .context("Invalid note transaction record")?;
-    transaction.validate()?;
-    let destination = root.join(&transaction.name);
-    let staging = root.join(&transaction.staging);
-    let previous = root.join(&transaction.old);
-    let mut warnings = Vec::new();
-    match transaction.phase {
-        Phase::Staged => {
-            remove_dir_if_exists(&staging, "note staging folder", &mut warnings);
-        }
-        Phase::OldMoved => match destination.symlink_metadata() {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                restore(&previous, &destination)?;
-                remove_dir_if_exists(&staging, "note staging folder", &mut warnings);
-            }
-            Err(error) => return Err(error.into()),
-            Ok(_) => warn(
-                &mut warnings,
-                format!(
-                    "Note recovery conflict: {} exists; previous note {} and staging {} left untouched.",
-                    destination.display(),
-                    previous.display(),
-                    staging.display()
-                ),
-            ),
-        },
-        Phase::Published => {
-            remove_dir_if_exists(&previous, "the previous note backup", &mut warnings)
-        }
+    #[cfg(target_os = "macos")]
+    let result = unsafe { libc::renamex_np(source.as_ptr(), target.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
-    discard_record(root, &mut warnings);
-    Ok(warnings)
 }
 
-pub fn recover(root: &Path) -> Result<Vec<String>> {
-    std::fs::create_dir_all(root)?;
-    let _lock = runtime::lock_file(&root.join(".notepipe.lock"))?;
-    recover_locked(root)
+#[cfg(windows)]
+fn rename_new(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe {
+        windows_sys::Win32::Storage::FileSystem::MoveFileExW(source.as_ptr(), target.as_ptr(), 0)
+    };
+    if result != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
-fn commit(root: &Path, transaction: &mut Transaction, warnings: &mut Vec<String>) -> Result<()> {
-    let destination = root.join(&transaction.name);
-    let staging = root.join(&transaction.staging);
-    let previous = root.join(&transaction.old);
-    let moved = destination.try_exists()?;
-    if moved {
-        // Record the intent first so interruption after the rename is always recoverable.
-        transaction.phase = Phase::OldMoved;
-        if let Err(error) = transaction.write(root).and_then(|()| {
-            std::fs::rename(&destination, &previous).context("Could not preserve the previous note")
-        }) {
-            remove_dir_if_exists(&staging, "note staging folder", warnings);
-            discard_record(root, warnings);
-            return Err(error);
-        }
-    }
-    if let Err(error) = std::fs::rename(&staging, &destination) {
-        if moved {
-            restore(&previous, &destination).with_context(|| format!("Could not publish note: {error}; could not restore the previous note retained at {}", previous.display()))?;
-        }
-        remove_dir_if_exists(&staging, "note staging folder", warnings);
-        discard_record(root, warnings);
-        return Err(error).context("Could not publish note folder");
-    }
-    transaction.phase = Phase::Published;
-    if let Err(error) = transaction.write(root) {
-        warn(
-            warnings,
-            format!(
-                "Note published; could not update note transaction record {}: {error:#}",
-                root.join(TRANSACTION_FILE).display()
-            ),
-        );
-    }
-    remove_dir_if_exists(&previous, "the previous note backup", warnings);
-    discard_record(root, warnings);
-    Ok(())
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn rename_new(_source: &Path, _target: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
 }
 
-fn destination(root: &Path, meta: &MediaMeta) -> Result<PathBuf> {
-    let slug = crate::config::sanitize_filename_with_fallback(&meta.title, "untitled");
+fn commit(root: &Path, staging: &Path, title: &str) -> Result<PathBuf> {
+    let slug = crate::config::sanitize_filename_with_fallback(title, "untitled");
     for number in 1.. {
+        runtime::check_cancelled()?;
         let name = if number == 1 {
             slug.clone()
         } else {
             format!("{slug}-{number}")
         };
-        let path = root.join(name);
-        match path.symlink_metadata() {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(path),
+        let target = root.join(name);
+        match target.symlink_metadata() {
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
-            Ok(_) if matches_source(&path, &meta.source)? => return Ok(path),
-            Ok(_) => {}
+        }
+        match rename_new(staging, &target) {
+            Ok(()) => return Ok(target),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+                    || target.symlink_metadata().is_ok() => {}
+            Err(error) => return Err(error).context("Could not publish note folder"),
         }
     }
     unreachable!()
@@ -319,43 +235,24 @@ pub fn publish(
     meta: &MediaMeta,
     outputs: &[Publication],
     warnings: &mut Vec<String>,
-) -> Result<(Option<PathBuf>, BTreeMap<String, String>)> {
+) -> Result<Published> {
     runtime::check_cancelled()?;
-    let mut files = BTreeMap::new();
+    let mut published = Published::default();
     let folder_outputs = outputs.iter().filter(|o| o.name != "-").collect::<Vec<_>>();
-    let destination = if folder_outputs.is_empty() {
+    published.note_dir = if folder_outputs.is_empty() {
         None
     } else {
         std::fs::create_dir_all(root)?;
         let root = root.canonicalize()?;
-        let _lock = runtime::lock_file(&root.join(".notepipe.lock"))?;
-        warnings.extend(recover_locked(&root)?);
-        anyhow::ensure!(
-            !root.join(TRANSACTION_FILE).try_exists()?,
-            "Unfinished note transaction remains in {}",
-            root.display()
-        );
-        let destination = destination(&root, meta)?;
-        let name = destination.file_name().unwrap().to_string_lossy();
-        let staging = tempfile::Builder::new()
-            .prefix(&format!(".{name}.notepipe-new-"))
-            .tempdir_in(&root)?;
-        let previous = tempfile::Builder::new()
-            .prefix(&format!(".{name}.notepipe-old-"))
-            .tempdir_in(&root)?
-            .keep();
-        std::fs::remove_dir(&previous)?;
-        let mut transaction = Transaction {
-            name: name.into_owned(),
-            staging: staging
-                .path()
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned(),
-            old: previous.file_name().unwrap().to_string_lossy().into_owned(),
-            phase: Phase::Staged,
+        let record_path = work.join(".cache/published.json");
+        let mut records: BTreeMap<PathBuf, Record> = match std::fs::read(&record_path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).context("Invalid publication cache")?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(error) => return Err(error.into()),
         };
+        let staging = tempfile::Builder::new()
+            .prefix(".notepipe-new-")
+            .tempdir_in(&root)?;
         for (index, output) in folder_outputs.iter().enumerate() {
             runtime::check_cancelled()?;
             let target = staging.path().join(&output.name);
@@ -368,10 +265,6 @@ pub fn publish(
                 );
             }
             copy_path(&work.join(&output.output), &target)?;
-            files.insert(
-                output.stage.clone(),
-                destination.join(&output.name).display().to_string(),
-            );
         }
         let images: std::collections::BTreeSet<_> =
             outputs.iter().flat_map(|o| &o.images).collect();
@@ -393,15 +286,47 @@ pub fn publish(
             serde_json::to_vec(&serde_json::json!({"source":meta.source}))?,
         )?;
         runtime::check_cancelled()?;
-        transaction.write(&root)?;
-        let _ = staging.keep();
-        commit(&root, &mut transaction, warnings)?;
+        let digests = file_digests(staging.path())?;
+        let existing = match records.get(&root) {
+            Some(record) if record.files == digests => {
+                existing_note(&root, &meta.source, record, staging.path())?
+            }
+            _ => None,
+        };
+        let destination = if let Some(note) = existing {
+            published.unchanged = true;
+            note
+        } else {
+            let destination = commit(&root, staging.path(), &meta.title)?;
+            records.insert(
+                root.clone(),
+                Record {
+                    folder: destination.file_name().unwrap().into(),
+                    files: digests,
+                },
+            );
+            if let Err(error) =
+                crate::checkpoint::atomic_write(&record_path, &serde_json::to_vec(&records)?)
+            {
+                warnings.push(format!(
+                    "Note published; could not update publication cache {}: {error:#}",
+                    record_path.display()
+                ));
+            }
+            destination
+        };
+        for output in &folder_outputs {
+            published.files.insert(
+                output.stage.clone(),
+                destination.join(&output.name).display().to_string(),
+            );
+        }
         Some(destination)
     };
     for output in outputs.iter().filter(|o| o.name == "-") {
-        files.insert(output.stage.clone(), "-".into());
+        published.files.insert(output.stage.clone(), "-".into());
     }
-    Ok((destination, files))
+    Ok(published)
 }
 
 pub fn copy_path(source: &Path, target: &Path) -> Result<()> {
@@ -493,7 +418,7 @@ mod tests {
         let mut warnings = vec![];
         let note = super::publish(root.path(), work.path(), &meta, &outputs, &mut warnings)
             .unwrap()
-            .0
+            .note_dir
             .unwrap();
         outputs.push(Publication {
             stage: "b".into(),
@@ -560,20 +485,12 @@ mod tests {
                 images: document.images(),
             },
         ];
-        let (note, _) = super::publish(root, work, &document.meta, &outputs, &mut warnings)?;
-        Ok((note.unwrap(), warnings))
+        let published = super::publish(root, work, &document.meta, &outputs, &mut warnings)?;
+        Ok((published.note_dir.unwrap(), warnings))
     }
 
-    fn transaction(name: &str, phase: Phase) -> Transaction {
-        Transaction {
-            name: name.into(),
-            staging: format!(".{name}.notepipe-new-recorded"),
-            old: format!(".{name}.notepipe-old-recorded"),
-            phase,
-        }
-    }
     #[test]
-    fn publishing_replaces_only_its_source_and_preserves_old_notes_on_failure() {
+    fn publishing_reuses_identical_files_and_preserves_old_notes_on_failure() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("notes");
         let mut first = document("https://example.test/one");
@@ -585,7 +502,13 @@ mod tests {
             serde_json::from_slice(&std::fs::read(one.join("note.json")).unwrap()).unwrap();
         assert_eq!(published.sections[0].image, "frame.jpg");
         assert!(one.join(&published.sections[0].image).is_file());
-        let (two, _) = publish(&root, temp.path(), &document("https://example.test/two")).unwrap();
+        let other_work = tempfile::tempdir().unwrap();
+        let (two, _) = publish(
+            &root,
+            other_work.path(),
+            &document("https://example.test/two"),
+        )
+        .unwrap();
         assert_eq!(two.file_name().unwrap(), "Shared-title-2");
         assert_eq!(publish(&root, temp.path(), &first).unwrap().0, one);
         let previous = std::fs::read(one.join("note.md")).unwrap();
@@ -612,355 +535,218 @@ mod tests {
         );
         assert!(note.join("note.md").is_file());
     }
-
     #[test]
-    fn output_lock_protects_recovery_and_publication() {
+    fn changed_images_and_file_sets_get_new_folders_with_complete_digest_records() {
         let root = tempfile::tempdir().unwrap();
-        let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-        assert!(recover(root.path()).is_err());
-        assert!(publish(root.path(), root.path(), &document("one")).is_err());
-        drop(lock);
-        recover(root.path()).unwrap();
-        publish(root.path(), root.path(), &document("one")).unwrap();
-    }
-
-    #[test]
-    fn recovery_conflict_preserves_every_folder_and_discards_the_record() {
-        let root = tempfile::tempdir().unwrap();
-        let transaction = transaction("note", Phase::OldMoved);
-        for name in [&transaction.name, &transaction.staging, &transaction.old] {
-            let path = root.path().join(name);
-            std::fs::create_dir(&path).unwrap();
-            std::fs::write(path.join("content"), name).unwrap();
-        }
-        let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-        transaction.write(root.path()).unwrap();
-        drop(lock);
-        let warnings = recover(root.path()).unwrap();
-        assert_eq!(warnings.len(), 1);
-        for name in [&transaction.name, &transaction.staging, &transaction.old] {
-            let path = root.path().join(name);
-            assert!(warnings[0].contains(&path.display().to_string()));
-            assert_eq!(
-                std::fs::read_to_string(path.join("content")).unwrap(),
-                *name
-            );
-        }
-        assert!(!root.path().join(TRANSACTION_FILE).exists());
-        assert!(recover(root.path()).unwrap().is_empty());
-    }
-
-    #[test]
-    fn failed_second_rename_restores_the_previous_note_immediately() {
-        let root = tempfile::tempdir().unwrap();
-        let (note, _) = publish(root.path(), root.path(), &document("one")).unwrap();
-        let markdown = std::fs::read(note.join("note.md")).unwrap();
-        let json = std::fs::read(note.join("note.json")).unwrap();
-        let mut transaction =
-            transaction(note.file_name().unwrap().to_str().unwrap(), Phase::Staged);
-        let _lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-        transaction.write(root.path()).unwrap();
-        assert!(commit(root.path(), &mut transaction, &mut Vec::new()).is_err());
-        assert_eq!(std::fs::read(note.join("note.md")).unwrap(), markdown);
-        assert_eq!(std::fs::read(note.join("note.json")).unwrap(), json);
-        assert!(!root.path().join(&transaction.old).exists());
-        assert!(!root.path().join(TRANSACTION_FILE).exists());
-    }
-
-    #[test]
-    fn invalid_transaction_records_leave_every_path_untouched() {
-        let root = tempfile::tempdir().unwrap();
-        let names = [
-            "note",
-            ".note.notepipe-new-recorded",
-            ".note.notepipe-old-recorded",
-            "unrelated",
-        ];
-        for name in names {
-            let path = root.path().join(name);
-            std::fs::create_dir(&path).unwrap();
-            std::fs::write(path.join("content"), name).unwrap();
-        }
-        for (key, value) in [
-            ("name", ""),
-            ("name", "."),
-            ("name", ".."),
-            ("name", "/absolute"),
-            ("name", "C:\\absolute"),
-            ("staging", "../outside"),
-            ("staging", "nested/path"),
-            ("staging", "nested\\path"),
-            ("staging", "note"),
-            ("staging", "NOTE"),
-            ("old", ".note.notepipe-new-recorded"),
-            ("old", ".NOTE.NOTEPIPE-NEW-RECORDED"),
-            ("staging", "unrelated"),
-            ("old", "unrelated"),
-            ("staging", ".other.notepipe-new-recorded"),
-            ("old", ".other.notepipe-old-recorded"),
-            ("phase", "unknown"),
-            ("unknown", "field"),
-        ] {
-            let mut record = serde_json::to_value(transaction("note", Phase::Staged)).unwrap();
-            record[key] = value.into();
-            let bytes = serde_json::to_vec(&record).unwrap();
-            let path = root.path().join(TRANSACTION_FILE);
-            let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-            crate::checkpoint::atomic_write(&path, &bytes).unwrap();
-            drop(lock);
-            let error = recover(root.path()).unwrap_err();
-            if matches!(value, "NOTE" | ".NOTE.NOTEPIPE-NEW-RECORDED") {
-                assert!(error.to_string().contains("must be distinct"));
-            }
-            assert_eq!(std::fs::read(path).unwrap(), bytes);
-            for name in names {
-                assert_eq!(
-                    std::fs::read_to_string(root.path().join(name).join("content")).unwrap(),
-                    name
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn recovery_requires_a_directory_backup_and_retains_an_unresolved_record() {
-        let root = tempfile::tempdir().unwrap();
-        let transaction = transaction("note", Phase::OldMoved);
-        let previous = root.path().join(&transaction.old);
-        std::fs::write(&previous, "not a directory").unwrap();
-        let staging = root.path().join(&transaction.staging);
-        std::fs::create_dir(&staging).unwrap();
-        std::fs::write(staging.join("content"), "Staged note").unwrap();
-        let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-        transaction.write(root.path()).unwrap();
-        drop(lock);
-        assert!(
-            recover(root.path())
-                .unwrap_err()
-                .to_string()
-                .contains("must be a real directory")
-        );
-        assert!(!root.path().join(&transaction.name).exists());
+        let work = tempfile::tempdir().unwrap();
+        let mut doc = document("source");
+        doc.sections[0].image = "images/frame.jpg".into();
+        std::fs::create_dir(work.path().join("images")).unwrap();
+        std::fs::write(work.path().join("images/frame.jpg"), "First image").unwrap();
+        let (first, _) = publish(root.path(), work.path(), &doc).unwrap();
+        let original = file_digests(&first).unwrap();
+        let records: BTreeMap<PathBuf, Record> = serde_json::from_slice(
+            &std::fs::read(work.path().join(".cache/published.json")).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            std::fs::read_to_string(previous).unwrap(),
-            "not a directory"
+            records[&root.path().canonicalize().unwrap()].files,
+            original
+        );
+        assert_eq!(original.len(), 4);
+        assert_eq!(
+            original[Path::new("images/frame.jpg")],
+            runtime::digest(b"First image")
+        );
+        std::fs::write(work.path().join("images/frame.jpg"), "Changed image").unwrap();
+        let (second, _) = publish(root.path(), work.path(), &doc).unwrap();
+        assert_eq!(second.file_name().unwrap(), "Shared-title-2");
+        assert_eq!(file_digests(&first).unwrap(), original);
+        assert_eq!(
+            std::fs::read_to_string(second.join("images/frame.jpg")).unwrap(),
+            "Changed image"
+        );
+        doc.sections[0].image.clear();
+        let (third, _) = publish(root.path(), work.path(), &doc).unwrap();
+        assert_eq!(third.file_name().unwrap(), "Shared-title-3");
+        assert!(!third.join("images").exists());
+        assert_eq!(file_digests(&first).unwrap(), original);
+    }
+
+    #[test]
+    fn records_are_separate_per_canonical_root_and_prefer_the_recorded_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let doc = document("source");
+        let first_root = root.path().join("first");
+        let second_root = root.path().join("second");
+        let (first, _) = publish(&first_root, work.path(), &doc).unwrap();
+        let (second, _) = publish(&second_root, work.path(), &doc).unwrap();
+        assert_eq!(
+            publish(&first_root.join("."), work.path(), &doc).unwrap().0,
+            first
+        );
+        assert_eq!(publish(&second_root, work.path(), &doc).unwrap().0, second);
+        let duplicate = first_root.join("newer duplicate");
+        copy_path(&first, &duplicate).unwrap();
+        assert_eq!(publish(&first_root, work.path(), &doc).unwrap().0, first);
+        let renamed = first_root.join("renamed");
+        std::fs::rename(&first, &renamed).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let newest = first_root.join(".notepipe-new-renamed");
+        copy_path(&duplicate, &newest).unwrap();
+        assert!(
+            newest.metadata().unwrap().modified().unwrap()
+                > renamed.metadata().unwrap().modified().unwrap()
         );
         assert_eq!(
-            std::fs::read_to_string(staging.join("content")).unwrap(),
-            "Staged note"
+            publish(&first_root, work.path(), &doc).unwrap().0,
+            newest.canonicalize().unwrap()
         );
-        assert!(root.path().join(TRANSACTION_FILE).is_file());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn recovery_rejects_symlink_records_and_backups_without_touching_their_targets() {
-        use std::os::unix::fs::symlink;
-        for link_record in [true, false] {
-            let temp = tempfile::tempdir().unwrap();
-            let root = temp.path().join("notes");
-            std::fs::create_dir(&root).unwrap();
-            let transaction = transaction("note", Phase::OldMoved);
-            let previous = root.join(&transaction.old);
-            let staging = root.join(&transaction.staging);
-            std::fs::create_dir(&staging).unwrap();
-            std::fs::write(staging.join("content"), "Staged note").unwrap();
-            let record = root.join(TRANSACTION_FILE);
-            let lock = runtime::lock_file(&root.join(".notepipe.lock")).unwrap();
-            transaction.write(&root).unwrap();
-            let target = temp.path().join("target");
-            if link_record {
-                std::fs::rename(&record, &target).unwrap();
-                symlink(&target, &record).unwrap();
-                std::fs::create_dir(&previous).unwrap();
-                std::fs::write(previous.join("content"), "Previous note").unwrap();
-            } else {
-                std::fs::create_dir(&target).unwrap();
-                std::fs::write(target.join("content"), "Previous note").unwrap();
-                symlink(&target, &previous).unwrap();
-            }
-            drop(lock);
-            let error = recover(&root).unwrap_err().to_string();
-            assert!(
-                error.contains(if link_record {
-                    "must be a regular file"
-                } else {
-                    "must be a real directory"
-                }),
-                "{error}"
-            );
-            assert_eq!(
-                std::fs::read(&record).unwrap(),
-                serde_json::to_vec(&transaction).unwrap()
-            );
-            assert_eq!(
-                std::fs::read_to_string(previous.join("content")).unwrap(),
-                "Previous note"
-            );
-            assert_eq!(
-                std::fs::read_to_string(staging.join("content")).unwrap(),
-                "Staged note"
-            );
-            assert!(!root.join(&transaction.name).exists());
-            assert!(
-                if link_record { record } else { previous }
-                    .symlink_metadata()
-                    .unwrap()
-                    .is_symlink()
-            );
-        }
+        assert!(renamed.join("note.md").exists());
     }
 
     #[test]
-    fn completed_publication_survives_record_write_and_removal_errors() {
+    fn concurrent_publications_get_different_complete_folders() {
         let root = tempfile::tempdir().unwrap();
-        let (note, _) = publish(root.path(), root.path(), &document("one")).unwrap();
-        let markdown = std::fs::read(note.join("note.md")).unwrap();
-        let json = std::fs::read(note.join("note.json")).unwrap();
-        let mut transaction =
-            transaction(note.file_name().unwrap().to_str().unwrap(), Phase::Staged);
-        std::fs::rename(&note, root.path().join(&transaction.staging)).unwrap();
-        let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-        let record = root.path().join(TRANSACTION_FILE);
-        std::fs::create_dir(&record).unwrap();
-        std::fs::write(record.join("content"), "Record path conflict").unwrap();
-        let mut warnings = Vec::new();
-        commit(root.path(), &mut transaction, &mut warnings).unwrap();
-        assert_eq!(warnings.len(), 2);
-        assert!(warnings[0].contains("could not update note transaction record"));
-        assert!(warnings[1].contains("Could not remove note transaction record"));
-        assert_eq!(std::fs::read(note.join("note.md")).unwrap(), markdown);
-        assert_eq!(std::fs::read(note.join("note.json")).unwrap(), json);
-        assert_eq!(
-            std::fs::read_to_string(record.join("content")).unwrap(),
-            "Record path conflict"
-        );
-        drop(lock);
-        assert!(
-            recover(root.path())
-                .unwrap_err()
-                .to_string()
-                .contains("must be a regular file")
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn staging_cleanup_failure_does_not_block_recovery_or_a_later_publication() {
-        use std::os::unix::fs::PermissionsExt;
-        for phase in [Phase::Staged, Phase::OldMoved] {
-            let root = tempfile::tempdir().unwrap();
-            let doc = document("one");
-            let (note, _) = publish(root.path(), root.path(), &doc).unwrap();
-            let transaction = transaction(note.file_name().unwrap().to_str().unwrap(), phase);
-            let staging = root.path().join(&transaction.staging);
-            std::fs::create_dir(&staging).unwrap();
-            std::fs::write(staging.join("content"), "Staged note").unwrap();
-            std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o500)).unwrap();
-            if matches!(&transaction.phase, Phase::OldMoved) {
-                std::fs::rename(&note, root.path().join(&transaction.old)).unwrap();
-            }
-            let lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-            transaction.write(root.path()).unwrap();
-            drop(lock);
-            let warnings = recover(root.path()).unwrap();
-            std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
-            assert_eq!(warnings.len(), 1);
-            assert!(warnings[0].contains("Could not remove note staging folder"));
-            assert!(warnings[0].contains(&staging.display().to_string()));
-            assert!(!root.path().join(TRANSACTION_FILE).exists());
-            assert!(note.join("note.md").is_file() && note.join("note.json").is_file());
-            let (published, warnings) = publish(root.path(), root.path(), &doc).unwrap();
-            assert_eq!(published, note);
-            assert!(warnings.is_empty());
-            assert_eq!(
-                std::fs::read_to_string(staging.join("content")).unwrap(),
-                "Staged note"
-            );
+        let barrier = std::sync::Barrier::new(2);
+        let mut notes = std::thread::scope(|scope| {
+            let jobs = ["one", "two"].map(|source| {
+                let barrier = &barrier;
+                let root = root.path();
+                scope.spawn(move || {
+                    let work = tempfile::tempdir().unwrap();
+                    barrier.wait();
+                    publish(root, work.path(), &document(source)).unwrap().0
+                })
+            });
+            jobs.map(|job| job.join().unwrap())
+        });
+        notes.sort();
+        assert_ne!(notes[0], notes[1]);
+        for note in notes {
+            assert!(note.join("note.md").is_file());
+            assert!(note.join("note.json").is_file());
+            assert!(note.join(".notepipe.json").is_file());
         }
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
     }
 
-    #[cfg(unix)]
     #[test]
-    fn failed_publication_keeps_its_original_error_when_staging_cleanup_fails() {
-        use std::os::unix::fs::PermissionsExt;
+    fn atomic_rename_never_replaces_an_existing_entry_and_racing_commits_retry() {
         let root = tempfile::tempdir().unwrap();
-        let (note, _) = publish(root.path(), root.path(), &document("one")).unwrap();
-        let markdown = std::fs::read(note.join("note.md")).unwrap();
-        let json = std::fs::read(note.join("note.json")).unwrap();
-        let mut transaction =
-            transaction(note.file_name().unwrap().to_str().unwrap(), Phase::Staged);
-        let previous = root.path().join(&transaction.old);
-        std::fs::create_dir(&previous).unwrap();
-        std::fs::write(previous.join("content"), "Conflicting folder").unwrap();
-        let staging = root.path().join(&transaction.staging);
-        std::fs::create_dir(&staging).unwrap();
-        std::fs::write(staging.join("content"), "Staged note").unwrap();
-        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o500)).unwrap();
-        let _lock = runtime::lock_file(&root.path().join(".notepipe.lock")).unwrap();
-        transaction.write(root.path()).unwrap();
-        let mut warnings = Vec::new();
-        let error = commit(root.path(), &mut transaction, &mut warnings).unwrap_err();
-        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(
-            error
-                .to_string()
-                .contains("Could not preserve the previous note")
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("Could not remove note staging folder"));
-        assert!(!root.path().join(TRANSACTION_FILE).exists());
-        assert_eq!(std::fs::read(note.join("note.md")).unwrap(), markdown);
-        assert_eq!(std::fs::read(note.join("note.json")).unwrap(), json);
-        assert_eq!(
-            std::fs::read_to_string(previous.join("content")).unwrap(),
-            "Conflicting folder"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn backup_cleanup_failure_keeps_the_new_note_and_reports_a_warning() {
-        use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("notes");
-        let mut doc = document("one");
-        let (note, _) = publish(&root, temp.path(), &doc).unwrap();
-        std::fs::set_permissions(&note, std::fs::Permissions::from_mode(0o500)).unwrap();
-        doc.sections[0].speech[0].text = "Updated body".into();
-        let (note, warnings) = publish(&root, temp.path(), &doc).unwrap();
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("Could not remove the previous note backup"));
-        assert!(
-            std::fs::read_to_string(note.join("note.md"))
-                .unwrap()
-                .contains("Updated body")
-        );
-        let saved: Document =
-            serde_json::from_slice(&std::fs::read(note.join("note.json")).unwrap()).unwrap();
-        assert_eq!(saved.sections[0].speech[0].text, "Updated body");
-        let previous = std::fs::read_dir(&root)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .find(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with(".Shared-title.notepipe-old-")
-            })
+        let staging = tempfile::Builder::new()
+            .prefix(".notepipe-new-")
+            .tempdir_in(root.path())
             .unwrap();
-        assert!(warnings[0].contains(&previous.display().to_string()));
-        assert!(!root.join(TRANSACTION_FILE).exists());
-        std::fs::set_permissions(&previous, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(recover(&root).unwrap().is_empty());
-        assert!(
-            previous.exists(),
-            "unrecorded leftovers must never be retried"
+        std::fs::write(staging.path().join("note.md"), "New note").unwrap();
+        let existing = root.path().join("existing");
+        std::fs::create_dir(&existing).unwrap();
+        let identity = file_identity(&existing).unwrap();
+        assert!(rename_new(staging.path(), &existing).is_err());
+        assert_eq!(file_identity(&existing).unwrap(), identity);
+        assert_eq!(std::fs::read_dir(&existing).unwrap().count(), 0);
+        std::fs::remove_dir(&existing).unwrap();
+        std::fs::write(&existing, "User file").unwrap();
+        assert!(rename_new(staging.path(), &existing).is_err());
+        assert_eq!(std::fs::read_to_string(&existing).unwrap(), "User file");
+        let barrier = std::sync::Barrier::new(2);
+        let destinations = std::thread::scope(|scope| {
+            let jobs = ["First", "Second"].map(|body| {
+                let root = root.path();
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let staging = tempfile::Builder::new()
+                        .prefix(".notepipe-new-")
+                        .tempdir_in(root)
+                        .unwrap();
+                    std::fs::write(staging.path().join("note.md"), body).unwrap();
+                    barrier.wait();
+                    commit(root, staging.path(), "note").unwrap()
+                })
+            });
+            jobs.map(|job| job.join().unwrap())
+        });
+        assert_ne!(destinations[0], destinations[1]);
+        assert!(root.path().join("note/note.md").is_file());
+        assert!(root.path().join("note-2/note.md").is_file());
+    }
+
+    #[test]
+    fn failed_publication_removes_its_staging_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let mut doc = document("source");
+        let (note, _) = publish(root.path(), work.path(), &doc).unwrap();
+        let original = file_digests(&note).unwrap();
+        doc.sections[0].image = "missing.jpg".into();
+        assert!(publish(root.path(), work.path(), &doc).is_err());
+        assert_eq!(file_digests(&note).unwrap(), original);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publication_cache_write_failures_warn_and_keep_the_new_note() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let mut doc = document("source");
+        publish(root.path(), work.path(), &doc).unwrap();
+        let cache = work.path().join(".cache");
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o500)).unwrap();
+        doc.sections[0].speech[0].text = "Changed".into();
+        let result = publish(root.path(), work.path(), &doc);
+        std::fs::set_permissions(cache, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let (note, warnings) = result.unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("Note published; could not update publication cache "));
+        assert_eq!(
+            std::fs::read_to_string(note.join("note.md")).unwrap(),
+            "Changed\n"
         );
-        let (_, warnings) = publish(&root, temp.path(), &doc).unwrap();
-        assert!(warnings.is_empty());
-        assert!(previous.exists(), "a later transaction must use new paths");
-        assert!(!root.join(TRANSACTION_FILE).exists());
-        assert!(note.join("note.json").is_file());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+    }
+    #[test]
+    fn damaged_publication_records_fail_without_touching_the_previous_note() {
+        let root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let doc = document("source");
+        let (note, _) = publish(root.path(), work.path(), &doc).unwrap();
+        let original = file_digests(&note).unwrap();
+        std::fs::write(work.path().join(".cache/published.json"), "invalid").unwrap();
+        assert_eq!(
+            publish(root.path(), work.path(), &doc)
+                .unwrap_err()
+                .to_string(),
+            "Invalid publication cache"
+        );
+        assert_eq!(file_digests(&note).unwrap(), original);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn stdout_publication_writes_no_folder_or_publication_record() {
+        let root = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let outputs = [Publication {
+            stage: "markdown".into(),
+            output: "note.md".into(),
+            name: "-".into(),
+            images: vec![],
+        }];
+        let published = super::publish(
+            root.path(),
+            work.path(),
+            &document("source").meta,
+            &outputs,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(published.note_dir.is_none());
+        assert!(!published.unchanged);
+        assert_eq!(published.files["markdown"], "-");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        assert!(!work.path().join(".cache/published.json").exists());
     }
 }

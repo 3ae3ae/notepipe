@@ -130,7 +130,8 @@ fn done(output: &Output) -> Value {
     );
     let done = events(output).last().unwrap().clone();
     assert_eq!(done["type"], "done");
-    assert_eq!(done.as_object().unwrap().len(), 5);
+    assert_eq!(done.as_object().unwrap().len(), 6);
+    assert!(done["unchanged"].is_boolean());
     assert!(done["work_dir"].as_str().is_some());
     done
 }
@@ -882,6 +883,7 @@ fn moved_and_renamed_local_sources_reuse_work_and_note_identity() {
         .set_modified(std::time::UNIX_EPOCH - std::time::Duration::from_secs(1))
         .unwrap();
     let second = done(&run(root.path(), &moved, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(second["unchanged"], true);
     assert_eq!(second["work_dir"], first["work_dir"]);
     assert_eq!(second["note_dir"], first["note_dir"]);
     assert_eq!(
@@ -908,35 +910,120 @@ fn download_command_changes_fetch_again_without_changing_source_identity() {
 }
 
 #[test]
-fn ownership_marker_replaces_its_folder_and_leaves_unowned_folders_alone() {
+fn unchanged_notes_keep_user_edits_and_find_renamed_folders_and_republish_deleted_notes() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
     let cfg = config();
     let first = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     let note = Path::new(first["note_dir"].as_str().unwrap());
-    std::fs::write(note.join("user-added"), "will be replaced").unwrap();
+    assert_eq!(first["unchanged"], false);
+    std::fs::write(note.join("note.md"), "User edit").unwrap();
+    std::fs::write(note.join("user-added"), "Keep").unwrap();
+    let modified = note.metadata().unwrap().modified().unwrap();
     let second = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     assert_eq!(first["note_dir"], second["note_dir"]);
-    assert!(!note.join("user-added").exists());
-    let other = root.path().join("other");
-    std::fs::create_dir(&other).unwrap();
-    let source = local(&other);
-    std::fs::write(&source, "different recording").unwrap();
-    let third = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(second["unchanged"], true);
     assert_eq!(
-        third["note_dir"],
+        std::fs::read_to_string(note.join("note.md")).unwrap(),
+        "User edit"
+    );
+    assert_eq!(
+        std::fs::read_to_string(note.join("user-added")).unwrap(),
+        "Keep"
+    );
+    assert_eq!(note.metadata().unwrap().modified().unwrap(), modified);
+    let renamed = root.path().canonicalize().unwrap().join("My renamed note");
+    std::fs::rename(note, &renamed).unwrap();
+    let third = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(third["note_dir"], json!(renamed));
+    assert_eq!(third["files"]["markdown"], json!(renamed.join("note.md")));
+    assert_eq!(third["unchanged"], true);
+    assert_eq!(
+        std::fs::read_to_string(renamed.join("note.md")).unwrap(),
+        "User edit"
+    );
+    assert!(renamed.join("user-added").is_file());
+    let human = spawn(
+        root.path(),
+        source.to_str().unwrap(),
+        &cfg,
+        &["--skip", "screenshots"],
+        false,
+    )
+    .wait_with_output()
+    .unwrap();
+    assert!(human.status.success());
+    assert!(
+        String::from_utf8_lossy(&human.stderr)
+            .contains(&format!("Note unchanged: {}", renamed.display()))
+    );
+    std::fs::remove_dir_all(&renamed).unwrap();
+    let fourth = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(fourth["note_dir"], first["note_dir"]);
+    assert_eq!(fourth["unchanged"], false);
+    assert!(!note.join("user-added").exists());
+    std::fs::remove_file(note.join(".notepipe.json")).unwrap();
+    let fifth = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(
+        fifth["note_dir"],
         json!(root.path().canonicalize().unwrap().join("lecture-2"))
     );
-    std::fs::remove_file(note.join(".notepipe.json")).unwrap();
-    std::fs::write(note.join("user-added"), "keep").unwrap();
-    let source = root.path().join("lecture.mp4");
-    let fourth = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
-    assert_eq!(
-        fourth["note_dir"],
-        json!(root.path().canonicalize().unwrap().join("lecture-3"))
-    );
-    assert!(note.join("user-added").is_file());
+    assert_eq!(fifth["unchanged"], false);
+    assert!(note.join("note.md").exists());
+    assert!(!root.path().join(".notepipe.lock").exists());
 }
+
+#[test]
+fn changed_prompt_results_write_the_next_folder_and_preserve_every_original_file() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let provider = MockAi::respond_with(|_, body| {
+        let changed = body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("CHANGED");
+        Some((
+            200,
+            json!({"choices":[{"message":{"content":if changed {"Changed result"} else {"Original result"}}}]}),
+        ))
+    });
+    let mut cfg = json!({"pipeline":["download","transcript","summary"],"providers":{"ai":{"base_url":provider.url}},"stages":{
+        "download":{"type":"download","input":"source","output":"media","command":["unused"]},
+        "transcript":{"type":"transcript","input":"media","output":"transcript.json","sources":["subtitles"]},
+        "summary":{"type":"llm","input":"transcript.json","output":"summary.md","publish":"note.md","provider":"ai","prompt":"ORIGINAL"}
+    }});
+    let first = done(&run(root.path(), &source, &cfg, &[]));
+    let note = Path::new(first["note_dir"].as_str().unwrap());
+    std::fs::write(note.join("personal.md"), "Personal additions").unwrap();
+    let original: Vec<_> = std::fs::read_dir(note)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    cfg["stages"]["summary"]["prompt"] = json!("CHANGED");
+    let second = done(&run(root.path(), &source, &cfg, &[]));
+    assert_eq!(
+        second["note_dir"],
+        json!(root.path().canonicalize().unwrap().join("lecture-2"))
+    );
+    assert_eq!(second["unchanged"], false);
+    assert_eq!(
+        std::fs::read_to_string(second["files"]["summary"].as_str().unwrap()).unwrap(),
+        "Changed result"
+    );
+    assert_eq!(std::fs::read_dir(note).unwrap().count(), original.len());
+    for (path, bytes) in original {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+    let third = done(&run(root.path(), &source, &cfg, &[]));
+    assert_eq!(third["note_dir"], second["note_dir"]);
+    assert_eq!(third["unchanged"], true);
+    assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
 #[test]
 fn transcript_and_screenshots_overlap_and_two_llm_stages_share_one_provider_budget() {
     let root = tempfile::tempdir().unwrap();
@@ -1103,11 +1190,8 @@ fn wait_for_exit(child: &mut std::process::Child) -> bool {
     }
     true
 }
-fn transaction(root: &Path, phase: &str) {
-    std::fs::write(root.join(".notepipe-transaction.json"),serde_json::to_vec(&json!({"name":"lecture","staging":".lecture.notepipe-new-recorded","old":".lecture.notepipe-old-recorded","phase":phase})).unwrap()).unwrap();
-}
 #[test]
-fn failed_transcription_recovers_the_previous_note_and_resumes_completed_chunks() {
+fn failed_transcription_preserves_the_previous_note_and_resumes_completed_chunks() {
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());
     let record = root.path().join("asr");
@@ -1126,13 +1210,8 @@ fn failed_transcription_recovers_the_previous_note_and_resumes_completed_chunks(
     ));
     let path = Path::new(previous["files"]["draft"].as_str().unwrap());
     let bytes = std::fs::read(path).unwrap();
-    let note = Path::new(previous["note_dir"].as_str().unwrap());
-    let old = root.path().join(".lecture.notepipe-old-recorded");
-    std::fs::rename(note, &old).unwrap();
-    transaction(root.path(), "old-moved");
     error(&run(root.path(), &source, &cfg, &[]));
     assert_eq!(std::fs::read(path).unwrap(), bytes);
-    assert!(!old.exists());
     let cp = checkpoint(Path::new(previous["work_dir"].as_str().unwrap()));
     assert_eq!(std::fs::read_to_string(&cp).unwrap().lines().count(), 1);
     std::fs::write(record.join("release"), "ready").unwrap();
@@ -1473,30 +1552,6 @@ fn signals_and_a_failed_sibling_cancel_run_programs() {
         assert!(!output.status.success());
         assert!(!root.path().join("lecture").exists());
     }
-}
-#[cfg(unix)]
-#[test]
-fn cleanup_warnings_reach_the_done_event_and_stderr() {
-    use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
-    let source = local(root.path());
-    let cfg = config();
-    done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
-    let old = root.path().join(".lecture.notepipe-old-recorded");
-    std::fs::create_dir(&old).unwrap();
-    std::fs::write(old.join("content"), "previous").unwrap();
-    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o500)).unwrap();
-    transaction(root.path(), "published");
-    let output = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
-    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let completed = done(&output);
-    assert!(completed["warnings"].as_array().unwrap().iter().any(|w| {
-        w.as_str()
-            .unwrap()
-            .contains(".lecture.notepipe-old-recorded")
-    }));
-    assert!(String::from_utf8_lossy(&output.stderr).contains(".lecture.notepipe-old-recorded"));
-    assert!(!root.path().join(".notepipe-transaction.json").exists());
 }
 #[test]
 fn stages_send_named_environment_keys_and_skips_do_not_require_them() {
@@ -2011,7 +2066,7 @@ fn out_is_relative_to_starting_directory_and_cli_out_overrides_it() {
 }
 
 #[test]
-fn edited_explicit_subtitles_rebuild_the_note_in_the_same_folder() {
+fn edited_explicit_subtitles_write_a_new_note_folder() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
     let subtitle = root.path().join("selected.srt");
@@ -2034,7 +2089,12 @@ fn edited_explicit_subtitles_rebuild_the_note_in_the_same_folder() {
             ],
         ));
         if !previous.is_null() {
-            assert_eq!(completed["note_dir"], previous);
+            assert_ne!(completed["note_dir"], previous);
+            assert_eq!(
+                std::fs::read_to_string(Path::new(previous.as_str().unwrap()).join("note.md"))
+                    .unwrap(),
+                "Selected speech.\n"
+            );
         }
         previous = completed["note_dir"].clone();
         let doc = document(&completed, "draft");
@@ -2112,9 +2172,13 @@ fn llm_changes_reuse_download_asr_and_frames_and_rebuild_named_outputs() {
     let provider = mock();
     with_llm(&mut cfg, &provider.url);
     cfg["providers"]["speech"] = speech;
-    for _ in 0..2 {
+    for index in 0..2 {
         let completed = done(&run(root.path(), source, &cfg, &[]));
-        assert_eq!(completed["note_dir"], first["note_dir"]);
+        assert_eq!(
+            completed["note_dir"],
+            json!(root.path().canonicalize().unwrap().join("Fixture-source-2"))
+        );
+        assert_eq!(completed["unchanged"], index == 1);
         assert_eq!(count(&download), 1);
         assert_eq!(count(&asr), calls);
         assert_eq!(frames.metadata().unwrap().modified().unwrap(), frame_time);
@@ -2754,7 +2818,7 @@ fn audio_only_caches_reuse_missing_media_and_vision_stages_send_text() {
 
 #[cfg(unix)]
 #[test]
-fn new_note_folders_and_files_follow_umask_on_replacement() {
+fn new_note_folders_and_files_follow_umask_without_changing_existing_notes() {
     use std::os::unix::{fs::PermissionsExt, process::CommandExt};
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());
@@ -2767,6 +2831,11 @@ fn new_note_folders_and_files_follow_umask_on_replacement() {
     std::fs::write(&settings, serde_json::to_vec(&config()).unwrap()).unwrap();
     let mut previous = None;
     for mask in [0o022u32, 0o077u32] {
+        std::fs::write(
+            source.with_extension("srt"),
+            format!("1\n00:00:00,000 --> 00:00:02,000\nWords for {mask}.\n"),
+        )
+        .unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_notepipe"));
         command
             .arg(&source)
@@ -2787,7 +2856,7 @@ fn new_note_folders_and_files_follow_umask_on_replacement() {
         let note = PathBuf::from(completed["note_dir"].as_str().unwrap());
         let work = Path::new(completed["work_dir"].as_str().unwrap());
         if let Some(previous) = previous {
-            assert_eq!(note, previous);
+            assert_ne!(note, previous);
         }
         for path in [
             note.clone(),
@@ -2844,67 +2913,6 @@ fn source_command_changes_keep_one_work_folder_and_preserve_adapter_seek_templat
     assert_eq!(works[0], works[1]);
     assert_eq!(works[0], works[2]);
     assert_eq!(count(&record), 2);
-}
-
-#[test]
-fn run_start_recovers_only_the_recorded_transaction_before_source_failure() {
-    for phase in ["staged", "old-moved", "published"] {
-        let root = tempfile::tempdir().unwrap();
-        let notes = root.path().join("notes");
-        let note = notes.join("lecture");
-        let new = notes.join(".lecture.notepipe-new-recorded");
-        let old = notes.join(".lecture.notepipe-old-recorded");
-        std::fs::create_dir_all(&note).unwrap();
-        std::fs::write(note.join("note.md"), "Previous note.").unwrap();
-        std::fs::create_dir(&new).unwrap();
-        std::fs::write(new.join("note.md"), "New note.").unwrap();
-        if phase != "staged" {
-            std::fs::rename(&note, &old).unwrap();
-        }
-        if phase == "published" {
-            std::fs::rename(&new, &note).unwrap();
-        }
-        transaction(&notes, phase);
-        let unrelated = [
-            notes.join(".other.notepipe-new-recorded"),
-            notes.join(".other.notepipe-old-recorded"),
-            notes.join("another-note"),
-        ];
-        for path in &unrelated {
-            std::fs::create_dir(path).unwrap();
-            std::fs::write(path.join("user-file"), "Unrelated content.").unwrap();
-        }
-        let record = root.path().join("source");
-        let mut cfg = config();
-        cfg["out"] = json!(notes);
-        cfg["stages"]["download"]["command"] = source_adapter_command(&record, "exit");
-        assert!(
-            error(&run(
-                root.path(),
-                Path::new("https://example.test/unrelated"),
-                &cfg,
-                &[]
-            ))
-            .contains("7")
-        );
-        assert_eq!(count(&record), 1);
-        assert!(!notes.join(".notepipe-transaction.json").exists());
-        assert!(!new.exists() && !old.exists());
-        assert_eq!(
-            std::fs::read_to_string(note.join("note.md")).unwrap(),
-            if phase == "published" {
-                "New note."
-            } else {
-                "Previous note."
-            }
-        );
-        for path in unrelated {
-            assert_eq!(
-                std::fs::read_to_string(path.join("user-file")).unwrap(),
-                "Unrelated content."
-            );
-        }
-    }
 }
 
 #[cfg(unix)]

@@ -5,7 +5,7 @@
 //! - `stage`: stage, status (start/done)
 //! - `progress`: stage, current, total, optional message
 //! - `tokens`: stage, prompt, completion
-//! - `done`: work_dir, note_dir, files, warnings
+//! - `done`: work_dir, note_dir, files, warnings, unchanged
 //! - `error`: message, warnings
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -47,9 +47,10 @@ pub fn done(
     note_dir: Option<&std::path::Path>,
     files: &std::collections::BTreeMap<String, String>,
     warnings: &[String],
+    unchanged: bool,
 ) {
     emit(
-        serde_json::json!({"type":"done","note_dir":note_dir,"work_dir":work_dir,"files":files,"warnings":warnings}),
+        serde_json::json!({"type":"done","note_dir":note_dir,"work_dir":work_dir,"files":files,"warnings":warnings,"unchanged":unchanged}),
     );
 }
 
