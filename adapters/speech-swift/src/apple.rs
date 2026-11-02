@@ -49,6 +49,25 @@ pub struct Asr {
     handle: *mut c_void,
 }
 
+pub enum Transcript {
+    Text(String),
+    OutputLimit,
+}
+
+pub fn transcript(status: i32, out: &[u8]) -> Result<Transcript> {
+    match status {
+        0 => Ok(Transcript::Text(
+            CStr::from_bytes_until_nul(out)?
+                .to_string_lossy()
+                .into_owned(),
+        )),
+        1 => Ok(Transcript::Text(String::new())),
+        2 => bail!("Apple transcript exceeded the output buffer"),
+        3 | 4 => Ok(Transcript::OutputLimit), // Token limit or Whisper's repeated-word stop.
+        _ => bail!("{}", last_error()),
+    }
+}
+
 impl Asr {
     pub fn load(model: &str) -> Result<Self> {
         let model = CString::new(model)?;
@@ -57,7 +76,7 @@ impl Asr {
         Ok(Self { handle })
     }
 
-    pub fn transcribe(&self, wav: &Path, language: &str) -> Result<String> {
+    pub fn transcribe(&self, wav: &Path, language: &str) -> Result<Transcript> {
         let wav = CString::new(wav.to_string_lossy().as_bytes())?;
         let language = CString::new(language)?;
         let mut out = vec![0u8; 16 * 1024];
@@ -70,14 +89,7 @@ impl Asr {
                 out.len(),
             )
         };
-        match status {
-            0 => Ok(CStr::from_bytes_until_nul(&out)?
-                .to_string_lossy()
-                .into_owned()),
-            1 => Ok(String::new()),
-            2 => bail!("Apple transcript exceeded the output buffer"),
-            _ => bail!("{}", last_error()),
-        }
+        transcript(status, &out)
     }
 }
 

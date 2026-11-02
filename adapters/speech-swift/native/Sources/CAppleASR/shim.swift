@@ -120,16 +120,21 @@ public func notepipeAsrTranscribe(
     do {
         let samples = try loadWav(String(cString: wavPath))
         let text: String
+        let stopReason: ASRStopReason
         switch box.model {
         case .qwen(let m):
             text = try m.transcribe(audio: samples, sampleRate: 16000, language: language, maxTokens: 448)
+            stopReason = m.lastStopReason
         case .qwenMlx(let m):
             text = m.transcribe(audio: samples, sampleRate: 16000, language: language, maxTokens: 448)
+            stopReason = m.lastStopReason
         case .whisper(let m):
             text = try runSync {
                 try await m.transcribeAudio(samples, sampleRate: 16000, language: language)
             }
+            stopReason = m.lastStopReason
         }
+        if stopReason != .endOfSequence { return stopReason.rawValue }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             outText.pointee = 0

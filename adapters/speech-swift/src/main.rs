@@ -30,7 +30,7 @@ fn error(status: u16, message: impl ToString) -> (u16, Value) {
 fn handle(
     request: &mut Request,
     model: &str,
-    transcribe: impl FnOnce(&Path, &str) -> Result<String>,
+    transcribe: impl FnOnce(&Path, &str) -> Result<apple::Transcript>,
 ) -> (u16, Value) {
     if request.method() == &Method::Get && request.url() == "/health" {
         return (200, json!({"status":"ok"}));
@@ -82,7 +82,13 @@ fn handle(
         Err(err) => return error(400, err),
     };
     match transcribe(file.path(), language) {
-        Ok(text) => (200, json!({"text":text})),
+        Ok(apple::Transcript::Text(text)) => (200, json!({"text":text})),
+        Ok(apple::Transcript::OutputLimit) => (
+            422,
+            json!({"error": {
+                "code": "output_limit", "message": "The speech model stopped at its output limit"
+            }}),
+        ),
         Err(err) => error(500, err),
     }
 }
@@ -139,7 +145,7 @@ mod tests {
         check_metallib(&executable).unwrap();
     }
 
-    fn call(method: &str, path: &str, body: &[u8]) -> String {
+    fn call_with_status(method: &str, path: &str, body: &[u8], stop_status: i32) -> String {
         let server = Server::http("127.0.0.1:0").unwrap();
         let address = server.server_addr().to_ip().unwrap();
         let serving = std::thread::spawn(move || {
@@ -147,7 +153,7 @@ mod tests {
             let (status, value) = handle(&mut request, "whisper", |wav, language| {
                 assert_eq!(std::fs::read(wav).unwrap(), b"RIFF\0\xffWAVE");
                 assert_eq!(language, "ko");
-                Ok("Fixture transcript".into())
+                apple::transcript(stop_status, b"Fixture transcript\0")
             });
             request
                 .respond(Response::from_string(value.to_string()).with_status_code(status))
@@ -160,6 +166,27 @@ mod tests {
         stream.read_to_string(&mut response).unwrap();
         serving.join().unwrap();
         response
+    }
+
+    fn call(method: &str, path: &str, body: &[u8]) -> String {
+        call_with_status(method, path, body, 0)
+    }
+
+    #[test]
+    fn decoder_token_and_repetition_limits_return_422_without_partial_text() {
+        let body = b"--test\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nko\r\n--test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n\r\nRIFF\0\xffWAVE\r\n--test--\r\n";
+        for status in [3, 4] {
+            let response = call_with_status("POST", "/v1/audio/transcriptions", body, status);
+            assert!(response.starts_with("HTTP/1.1 422"), "{response}");
+            let value: Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(
+                value,
+                json!({"error": {
+                    "code": "output_limit", "message": "The speech model stopped at its output limit"
+                }})
+            );
+        }
     }
 
     #[test]
