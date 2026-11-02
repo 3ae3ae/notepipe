@@ -353,6 +353,19 @@ impl StderrTail {
     }
 }
 
+/// Pipes may remain open in descendants outside the managed process group.
+pub fn finish_drains(drains: impl IntoIterator<Item = std::thread::JoinHandle<()>>) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    for drain in drains {
+        while !drain.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(WAIT_POLL_INTERVAL);
+        }
+        if drain.is_finished() {
+            let _ = drain.join();
+        }
+    }
+}
+
 /// Output of a bounded command; stdout and stderr are captured through temporary files, not pipes.
 pub struct BoundedOutput {
     pub status: ExitStatus,

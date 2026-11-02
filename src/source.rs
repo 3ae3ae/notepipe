@@ -294,10 +294,16 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path, stage: &str) -> R
         };
         child.stop();
         // An exited child can still have a final result buffered in its pipe.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while !eof {
             runtime::check_cancelled()?;
             let mut bounded = (&mut stdout).take(MAX_LINE_BYTES + 1 - line.len() as u64);
-            if bounded.read_until(b'\n', &mut line).await? == 0 {
+            let Ok(count) =
+                tokio::time::timeout_at(deadline, bounded.read_until(b'\n', &mut line)).await
+            else {
+                break;
+            };
+            if count? == 0 {
                 eof = true;
             } else {
                 accept_line(stage, &line, &mut last)?;
@@ -311,7 +317,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path, stage: &str) -> R
     }
     .await;
     child.stop();
-    let _ = drain.join();
+    runtime::finish_drains([drain]);
     let result = result
         .and_then(|status| {
             ensure!(status.success(), "Download adapter failed ({status})");

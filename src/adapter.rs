@@ -166,9 +166,7 @@ impl Adapter {
         }
         self.stopped = true;
         self.child.stop();
-        for drain in self.drains.drain(..) {
-            let _ = drain.join();
-        }
+        crate::runtime::finish_drains(self.drains.drain(..));
     }
 }
 

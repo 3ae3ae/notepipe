@@ -2862,6 +2862,72 @@ fn lifecycle_live_provider_errors_do_not_attach_diagnostics() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn lifecycle_escaped_descendant_pipes_do_not_hold_exit_or_cancellation() {
+    for kind in ["run", "download", "provider"] {
+        for cancel in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let record = root.path().join("program");
+            let source = local(root.path());
+            let mut cfg = config();
+            let mut source_arg = source.to_str().unwrap();
+            match kind {
+                "run" => {
+                    cfg["pipeline"] = json!(["hold"]);
+                    cfg["stages"]["hold"] = json!({"type":"run","output":"answer.md","publish":"answer.md","command":[python(),"-c",format!("import pathlib,subprocess,sys,time;r=pathlib.Path(sys.argv[1]);r.mkdir();p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],start_new_session=True);(r/'escaped-pid').write_text(str(p.pid));print('answer',flush=True);{}",if cancel {"time.sleep(30)"} else {"pass"}),record]});
+                }
+                "download" => {
+                    source_arg = "https://example.test/escaped";
+                    cfg["pipeline"] = json!(["download", "transcript"]);
+                    cfg["stages"]["transcript"]["publish"] = json!("transcript.json");
+                    cfg["stages"]["download"]["command"] = source_adapter_command(
+                        &record,
+                        if cancel { "escaped-hang" } else { "escaped" },
+                    );
+                }
+                _ => {
+                    cfg["pipeline"] = json!(["download", "transcript", "summary"]);
+                    cfg["providers"] = json!({"p":{"command":adapter(&record, if cancel {"escaped-hang"} else {"escaped"})}});
+                    cfg["stages"]["summary"] = json!({"type":"llm","input":"transcript.json","output":"summary.md","publish":"summary.md","provider":"p"});
+                }
+            }
+            let mut child = spawn(root.path(), source_arg, &cfg, &[], true);
+            wait_for_file(&mut child, &record.join("escaped-pid"));
+            if cancel {
+                assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
+            }
+            let start = std::time::Instant::now();
+            while child.try_wait().unwrap().is_none()
+                && start.elapsed() < std::time::Duration::from_secs(7)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let exited = child.try_wait().unwrap().is_some();
+            let pid: i32 = std::fs::read_to_string(record.join("escaped-pid"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            // The fixture owns this escaped process; notepipe deliberately cannot terminate its new session.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                exited,
+                "{kind} cancel={cancel} waited for an escaped descendant"
+            );
+            assert_eq!(
+                output.status.code(),
+                Some(if cancel { 130 } else { 0 }),
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+}
+
 #[test]
 fn lifecycle_provider_exit_between_consumers_stops_the_run() {
     let root = tempfile::tempdir().unwrap();

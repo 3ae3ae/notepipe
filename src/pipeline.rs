@@ -937,7 +937,7 @@ fn run_program(
         std::thread::sleep(Duration::from_millis(50));
     };
     child.stop();
-    let _ = drain.join();
+    runtime::finish_drains([drain]);
     let mut apply = || -> Result<()> {
         anyhow::ensure!(
             status.success(),
