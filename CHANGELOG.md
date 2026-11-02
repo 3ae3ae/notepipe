@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-03
+
 Configurations, caches and note folders from earlier versions do not carry over: rewrite the configuration
 (`notepipe config init --force` writes the new default), and expect the first run of each source to repeat its speech
 recognition and model requests.
