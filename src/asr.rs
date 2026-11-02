@@ -98,6 +98,7 @@ fn run_api(
                 model: &api.model,
                 key: &api_key,
                 mode: api.mode,
+                prompt: &api.prompt,
                 language: &api.language,
                 stage,
                 check_control: &check_control,
@@ -245,9 +246,6 @@ fn post_cloud(
     })?)
 }
 
-/// Instruction for audio chat models: a faithful transcript with natural punctuation, like dedicated ASR output.
-const CHAT_TRANSCRIBE_PROMPT: &str = r#"Transcribe this audio. Output only the transcript itself with natural punctuation, and no explanation, summary or formatting. If there is no speech, output an empty string."#;
-
 /// Transcription endpoint: address, credentials and dialect, borrowed by all workers.
 struct ApiTarget<'a> {
     client: &'a ureq::Agent,
@@ -255,6 +253,7 @@ struct ApiTarget<'a> {
     model: &'a str,
     key: &'a str,
     mode: crate::settings::AsrMode,
+    prompt: &'a str,
     language: &'a str,
     stage: &'a str,
     check_control: &'a (dyn Fn() -> Result<()> + Sync),
@@ -296,7 +295,7 @@ fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>
     use crate::settings::AsrMode;
     use base64::Engine as _;
     if t.mode == AsrMode::Chat {
-        let mut prompt = CHAT_TRANSCRIBE_PROMPT.to_owned();
+        let mut prompt = t.prompt.to_owned();
         if !t.language.is_empty() {
             prompt.push_str(&format!(" The speech is in {}.", t.language));
         }
@@ -394,6 +393,7 @@ mod tests {
             model: "",
             key: "",
             mode: crate::settings::AsrMode::Transcriptions,
+            prompt: "",
             language: "",
             stage: "transcript",
             check_control: &crate::runtime::check_cancelled,
@@ -427,6 +427,7 @@ mod tests {
                 model: "whisper-1",
                 key: "",
                 mode: crate::settings::AsrMode::Transcriptions,
+                prompt: "",
                 language: "",
                 stage: "transcript",
                 check_control: &crate::runtime::check_cancelled,
@@ -517,6 +518,7 @@ mod http_tests {
                 model: "",
                 key: "",
                 mode: AsrMode::Chat,
+                prompt: "Transcribe verbatim.",
                 language: "",
                 stage: "transcript",
                 check_control: &crate::runtime::check_cancelled,
@@ -562,6 +564,7 @@ mod http_tests {
             model: "",
             key: "",
             mode: AsrMode::Transcriptions,
+            prompt: "",
             language: "",
             stage: "transcript",
             check_control: &check,
@@ -714,6 +717,7 @@ mod http_tests {
                     model: if with_options { "test-model" } else { "" },
                     key: if with_options { "test-key" } else { "" },
                     mode,
+                    prompt: "  User transcription rules.\nKeep every word.  ",
                     language: if with_options { "ko" } else { "" },
                     stage: "transcript",
                     check_control: &crate::runtime::check_cancelled,
@@ -752,9 +756,9 @@ mod http_tests {
                     assert_eq!(
                         prompt,
                         if with_options {
-                            format!("{CHAT_TRANSCRIBE_PROMPT} The speech is in ko.")
+                            format!("{} The speech is in ko.", target.prompt)
                         } else {
-                            CHAT_TRANSCRIBE_PROMPT.into()
+                            target.prompt.into()
                         }
                     );
                     assert_eq!(
@@ -788,6 +792,7 @@ mod http_tests {
                 model: "",
                 key: "",
                 mode: AsrMode::Chat,
+                prompt: "Transcribe verbatim.",
                 language,
 
                 stage: "transcript",

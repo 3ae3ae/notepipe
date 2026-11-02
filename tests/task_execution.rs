@@ -2821,6 +2821,36 @@ fn keyless_remote_asr_obeys_the_provider_concurrency_limit() {
 }
 
 #[test]
+fn chat_speech_prompt_changes_transcribe_again() {
+    let root = tempfile::tempdir().unwrap();
+    let source = video(root.path());
+    let record = root.path().join("asr");
+    let mut cfg = speech_config(&record, "healthy");
+    cfg["stages"]["transcript"]["speech"]["api"] = json!("chat");
+    cfg["stages"]["transcript"]["language"] = json!("ko");
+    cfg["stages"]["transcript"]["speech"]["prompt"] = json!("  Transcribe verbatim.\n  ");
+    done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    let chunks = count(&record);
+    assert!(chunks > 0);
+    let request = || -> Value {
+        serde_json::from_slice(&std::fs::read(record.join("request")).unwrap()).unwrap()
+    };
+    assert_eq!(
+        request()["messages"][0]["content"][0]["text"],
+        "  Transcribe verbatim.\n   The speech is in ko."
+    );
+    done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(count(&record), chunks);
+    cfg["stages"]["transcript"]["speech"]["prompt"] = json!("Keep every word.");
+    done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(count(&record), chunks * 2);
+    assert_eq!(
+        request()["messages"][0]["content"][0]["text"],
+        "Keep every word. The speech is in ko."
+    );
+}
+
+#[test]
 fn speech_language_and_model_select_separate_checkpoints() {
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());

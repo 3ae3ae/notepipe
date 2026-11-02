@@ -276,6 +276,7 @@ pub fn stage_config(
             cfg.asr = settings::Asr {
                 mode: speech.api,
                 model: speech.model.clone(),
+                prompt: speech.prompt.clone().unwrap_or_default(),
                 language: if t.language == "auto" {
                     String::new()
                 } else {
