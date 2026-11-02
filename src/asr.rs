@@ -10,8 +10,6 @@ use std::time::{Duration, Instant};
 
 // Tuning constants; segmentation constants are next to normalize_segments.
 
-/// Timeout of one transcription request.
-const API_HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 /// Empty-result tripwire: speech detection found speech in these segments, yet the endpoint keeps returning
 /// empty text without a single success. Such an endpoint cannot handle audio (wrong configuration, or a gateway
 /// that drops the body), and continuing would only waste requests. A single empty segment is still valid silence.
@@ -166,7 +164,7 @@ fn run_api(
         "{spinner:.green} asr {pos}/{len} [{bar:32.cyan/blue}] {elapsed} {eta} {msg}",
     );
 
-    let client = crate::runtime::http_agent(API_HTTP_TIMEOUT);
+    let client = crate::dispatch::http_agent();
     pb.set_position((segs.len() - pending.len()) as u64);
 
     // Bounded concurrency with std::thread::scope (borrowing, no Arc); network round trips dominate.
@@ -294,12 +292,7 @@ fn post_cloud(t: &ApiTarget, content_type: &str, body: &[u8]) -> Result<serde_js
                 if !t.key.is_empty() {
                     request = request.set("Authorization", &format!("Bearer {}", t.key));
                 }
-                (t.check_control)().map_err(crate::dispatch::Failure::local)?;
-                let body = body.to_vec();
-                crate::runtime::interruptible_http(t.check_control, move || {
-                    crate::dispatch::receive(request.send_bytes(&body))
-                })
-                .map_err(crate::dispatch::Failure::local)?
+                crate::dispatch::send_http(t.check_control, request, body.to_vec())
             },
             |value| {
                 crate::dispatch::check_finish_reason(value)?;
@@ -711,7 +704,7 @@ mod http_tests {
                 };
                 let url = crate::config::asr_endpoint(&api).unwrap();
                 let target = ApiTarget {
-                    client: &crate::runtime::http_agent(API_HTTP_TIMEOUT),
+                    client: &crate::dispatch::http_agent(),
                     url: &|| Ok(url.clone()),
                     model: if with_options { "test-model" } else { "" },
                     key: if with_options { "test-key" } else { "" },

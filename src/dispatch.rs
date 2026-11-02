@@ -10,9 +10,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub const HTTP_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_ATTEMPTS: u32 = 3;
 const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 pub const CACHED: &str = "notepipe_cached";
+
+pub fn http_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout(HTTP_TIMEOUT)
+        .timeout_connect(HTTP_TIMEOUT)
+        .redirects(0)
+        .build()
+}
 
 pub fn request<T>(
     item: &str,
@@ -260,6 +269,35 @@ pub fn check_finish_reason(value: &Value) -> Result<()> {
     Err(Failure::local(message).into())
 }
 
+/// The control deadline also bounds DNS and body reads that the HTTP library cannot interrupt itself.
+pub fn send_http(
+    control: &dyn Fn() -> Result<()>,
+    request: ureq::Request,
+    body: Vec<u8>,
+) -> std::result::Result<HttpResponse, Failure> {
+    send_with_timeout(control, request, body, HTTP_TIMEOUT)
+}
+
+fn send_with_timeout(
+    control: &dyn Fn() -> Result<()>,
+    request: ureq::Request,
+    body: Vec<u8>,
+    timeout: Duration,
+) -> std::result::Result<HttpResponse, Failure> {
+    let started = Instant::now();
+    runtime::interruptible_http(
+        &|| {
+            control()?;
+            if started.elapsed() >= timeout {
+                return Err(Failure::new(true, "Could not complete the service connection").into());
+            }
+            Ok(())
+        },
+        move || receive(request.timeout(timeout).send_bytes(&body)),
+    )
+    .map_err(|error| error.downcast::<Failure>().unwrap_or_else(Failure::local))?
+}
+
 /// Provider error bodies are classified before validation and never persisted.
 pub fn receive(
     result: std::result::Result<ureq::Response, ureq::Error>,
@@ -292,6 +330,70 @@ pub fn receive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn http_attempt_deadline_bounds_blocked_dns_and_receiving_the_body() {
+        use std::{
+            io::{Read, Write},
+            sync::mpsc,
+        };
+        assert_eq!(HTTP_TIMEOUT, Duration::from_secs(600));
+        for dns in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let (release, gate) = mpsc::channel();
+            let (entered, ready) = mpsc::channel();
+            let (finished, done) = mpsc::channel();
+            let agent = if dns {
+                let gate = Mutex::new(gate);
+                ureq::AgentBuilder::new()
+                    .resolver(move |_: &str| {
+                        entered.send(()).unwrap();
+                        runtime::lock_recover(&gate)
+                            .recv_timeout(Duration::from_secs(5))
+                            .unwrap();
+                        finished.send(()).unwrap();
+                        Ok(vec![address])
+                    })
+                    .build()
+            } else {
+                std::thread::spawn(move || {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut buffer = [0; 4096];
+                    let _ = stream.read(&mut buffer).unwrap();
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{",
+                        )
+                        .unwrap();
+                    entered.send(()).unwrap();
+                    gate.recv_timeout(Duration::from_secs(5)).unwrap();
+                    let _ = stream.write_all(b"}");
+                    finished.send(()).unwrap();
+                });
+                http_agent()
+            };
+            let url = format!("http://localhost:{}", address.port());
+            let start = Instant::now();
+            let error = send_with_timeout(
+                &|| Ok(()),
+                agent.post(&url),
+                Vec::new(),
+                Duration::from_millis(100),
+            )
+            .err()
+            .unwrap();
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(start.elapsed() < Duration::from_secs(1));
+            assert!(error.retryable);
+            assert_eq!(error.message, "Could not complete the service connection");
+            release.send(()).unwrap();
+            done.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+    }
+
     #[test]
     fn malformed_speech_json_and_missing_text_are_retryable() {
         let _serial = runtime::lock_recover(&TEST_LOCK);
