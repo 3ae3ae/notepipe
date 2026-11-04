@@ -16,10 +16,9 @@ pub async fn run(cfg: &PipelineConfig, wav: &Path) -> Result<Vec<TranscriptEvent
         .transcript_name
         .clone()
         .unwrap_or_else(|| "transcript".into());
-    let mut cp = crate::checkpoint::Checkpoint::open(&cfg.out_dir)?;
     let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let _cancel_on_drop = crate::runtime::CancelOnDrop(cancelled.clone());
-    crate::runtime::spawn_blocking(move || run_api(&api, &wav, &mut cp, &stage, &cancelled))
+    crate::runtime::spawn_blocking(move || run_api(&api, &wav, &stage, &cancelled))
         .await
         .context("Speech recognition task did not complete")?
 }
@@ -34,7 +33,6 @@ pub(crate) fn no_speech_events() -> Vec<TranscriptEvent> {
 fn run_api(
     api: &crate::settings::Asr,
     wav: &Path,
-    cp: &mut crate::checkpoint::Checkpoint,
     stage: &str,
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<TranscriptEvent>> {
@@ -56,14 +54,15 @@ fn run_api(
         return Ok(no_speech_events());
     }
 
-    // Resume: give the workers only the chunks that are not done yet.
-    let pending: Vec<usize> = (0..segs.len())
-        .filter(|&i| !cp.is_done(segs[i].start, segs[i].end))
-        .collect();
-    if pending.is_empty() {
-        warn_empty_segments(cp, &segs);
-        return Ok(cp.sorted_events());
-    }
+    let identity = if api.command.is_empty() {
+        crate::config::asr_endpoint(api)?
+    } else {
+        let suffix = match api.mode {
+            crate::settings::AsrMode::Transcriptions => "/audio/transcriptions",
+            crate::settings::AsrMode::Chat => "/chat/completions",
+        };
+        format!("adapter:{}{suffix}", api.command.join("\0"))
+    };
 
     let tmp = tempfile::Builder::new()
         .prefix("notepipe-asr-")
@@ -81,7 +80,6 @@ fn run_api(
     );
 
     let client = crate::dispatch::http_agent();
-    pb.set_position((segs.len() - pending.len()) as u64);
 
     // Bounded concurrency with std::thread::scope (borrowing, no Arc); network round trips dominate.
     // Results come back over a channel. After an abort, requests in flight finish on their own and are still joined.
@@ -89,11 +87,13 @@ fn run_api(
     let next = std::sync::atomic::AtomicUsize::new(0);
     let abort = std::sync::atomic::AtomicBool::new(false);
     let mut err: Option<anyhow::Error> = None;
+    let mut events = Vec::new();
     std::thread::scope(|s| {
-        for _ in 0..api.concurrency.min(pending.len()) {
+        for _ in 0..api.concurrency.min(segs.len()) {
             let tx = tx.clone();
             let target = ApiTarget {
                 client: &client,
+                identity: &identity,
                 url: &url,
                 model: &api.model,
                 key: &api_key,
@@ -104,15 +104,15 @@ fn run_api(
                 check_control: &check_control,
             };
             let (tmp_dir, wav) = (tmp.path(), wav);
-            let (segs, pending, next, abort) = (&segs, &pending, &next, &abort);
+            let (segs, next, abort) = (&segs, &next, &abort);
             let check_control = &check_control;
             s.spawn(move || {
                 loop {
                     if abort.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
                     }
-                    let idx = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let Some(i) = pending.get(idx).copied() else {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(&seg) = segs.get(i) else {
                         break;
                     };
                     if let Err(error) = check_control() {
@@ -120,7 +120,6 @@ fn run_api(
                         let _ = tx.send((i, Err(error)));
                         break;
                     }
-                    let seg = segs[i];
                     let r = (|| {
                         let _permit = api
                             .limit
@@ -160,13 +159,14 @@ fn run_api(
             }
             match r {
                 _ if err.is_some() => {} // already failed: drop late results
-                Ok(text) => {
-                    let text = text.as_deref().unwrap_or("");
-                    if let Err(e) = cp.record(segs[i].start, segs[i].end, text) {
-                        err = Some(e);
-                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
+                Ok(Some(text)) => events.push(TranscriptEvent {
+                    extra: Default::default(),
+                    start: segs[i].start,
+                    end: segs[i].end,
+                    text,
+                    raw: None,
+                }),
+                Ok(None) => {}
                 Err(e) => {
                     err = Some(e);
                     abort.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -181,9 +181,8 @@ fn run_api(
         return Err(e);
     }
     check_control()?;
-    warn_empty_segments(cp, &segs);
-    // Events come from the checkpoint, where the loop recorded them, sorted by time.
-    let events: Vec<TranscriptEvent> = cp.sorted_events();
+    events.sort_by(|a, b| a.start.total_cmp(&b.start));
+    warn_empty_segments(events.len(), segs.len());
     tracing::info!(
         n = events.len(),
         secs = format_args!("{:.1}", t0.elapsed().as_secs_f64()),
@@ -192,42 +191,44 @@ fn run_api(
     Ok(events)
 }
 
-fn warn_empty_segments(cp: &crate::checkpoint::Checkpoint, segments: &[Seg]) {
-    let with_text: std::collections::HashSet<_> = cp
-        .sorted_events()
-        .iter()
-        .map(|event| (event.start.to_bits(), event.end.to_bits()))
-        .collect();
-    let empty = segments
-        .iter()
-        .filter(|seg| !with_text.contains(&(seg.start.to_bits(), seg.end.to_bits())))
-        .count();
+fn warn_empty_segments(with_text: usize, total: usize) {
+    let empty = total - with_text;
     if empty > 0 {
         crate::dispatch::warn(format!(
             "{empty} of {} speech segments returned no text",
-            segments.len()
+            total
         ));
     }
 }
 
-/// Send a chunk with shared retries; only its transcription checkpoint is persisted.
 fn post_cloud(
     t: &ApiTarget,
-    content_type: &str,
-    body: &[u8],
+    audio: &[u8],
     item: &crate::dispatch::Item,
 ) -> Result<serde_json::Value> {
+    let fields = serde_json::json!({
+        "version": 1,
+        "api": t.mode,
+        "model": t.model,
+        "prompt": if t.mode == crate::settings::AsrMode::Chat { t.prompt } else { "" },
+        "language": t.language,
+        "audio_sha256": crate::runtime::digest(audio),
+    });
     Ok(crate::dispatch::request(item, t.check_control, || {
-        crate::dispatch::json_request(
+        crate::dispatch::cached_json_request(
+            t.identity,
+            &fields,
             t.key,
             t.stage,
             || {
+                let (content_type, body) =
+                    transcription_request(t, audio).map_err(crate::dispatch::Failure::local)?;
                 let url = (t.url)().map_err(crate::dispatch::Failure::local)?;
-                let mut request = t.client.post(&url).set("Content-Type", content_type);
+                let mut request = t.client.post(&url).set("Content-Type", &content_type);
                 if !t.key.is_empty() {
                     request = request.set("Authorization", &format!("Bearer {}", t.key));
                 }
-                crate::dispatch::send_http(t.check_control, request, body.to_vec(), t.key)
+                crate::dispatch::send_http(t.check_control, request, body, t.key)
             },
             |value| {
                 crate::dispatch::check_finish_reason(value)?;
@@ -249,6 +250,7 @@ fn post_cloud(
 /// Transcription endpoint: address, credentials and dialect, borrowed by all workers.
 struct ApiTarget<'a> {
     client: &'a ureq::Agent,
+    identity: &'a str,
     url: &'a (dyn Fn() -> Result<String> + Sync),
     model: &'a str,
     key: &'a str,
@@ -267,11 +269,10 @@ fn transcribe_api(t: &ApiTarget, chunk: &Path, seg: Seg, wav: &Path) -> Result<O
         (t.check_control)()?;
         let bytes = std::fs::read(chunk)
             .with_context(|| format!("Reading audio segment: {}", chunk.display()))?;
-        transcription_request(t, &bytes)
+        Ok::<_, anyhow::Error>(bytes)
     })();
-    let (content_type, body) =
-        prepare.map_err(|error| anyhow::anyhow!("{}: {error:#}", item.failure))?;
-    let result = post_cloud(t, &content_type, &body, &item);
+    let bytes = prepare.map_err(|error| anyhow::anyhow!("{}: {error:#}", item.failure))?;
+    let result = post_cloud(t, &bytes, &item);
     let _ = std::fs::remove_file(chunk);
     let value = result?;
     if let Some(warning) = value["warning"]
@@ -360,34 +361,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_warning_counts_only_the_current_segments() {
-        let _serial = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
-        let root = tempfile::tempdir().unwrap();
-        let warnings = crate::dispatch::install(root.path()).unwrap();
-        let mut cp = crate::checkpoint::Checkpoint::open(root.path()).unwrap();
-        cp.record(0., 1., "Speech").unwrap();
-        cp.record(1., 2., "").unwrap();
-        cp.record(9., 10., "Old checkpoint entry").unwrap();
-        let segments = [0., 1.].map(|start| Seg {
-            start,
-            end: start + 1.,
-            cut_start: start,
-            cut_end: start + 1.,
-        });
-        warn_empty_segments(&cp, &segments);
-        assert_eq!(
-            warnings.take_warnings(),
-            ["1 of 2 speech segments returned no text"]
-        );
-    }
-
-    #[test]
     fn audio_preparation_errors_name_the_speech_segment() {
         if crate::runtime::which("ffmpeg").is_none() {
             return;
         }
         let root = tempfile::tempdir().unwrap();
         let target = ApiTarget {
+            identity: "test-provider",
             client: &ureq::agent(),
             url: &|| Ok("http://localhost".into()),
             model: "",
@@ -420,21 +400,19 @@ mod tests {
     #[test]
     fn transcription_upload_preserves_audio_bytes() {
         let audio = b"RIFF\0\xff\r\nWAVE";
-        let (content_type, body) = transcription_request(
-            &ApiTarget {
-                client: &ureq::agent(),
-                url: &|| Ok("http://localhost".into()),
-                model: "whisper-1",
-                key: "",
-                mode: crate::settings::AsrMode::Transcriptions,
-                prompt: "",
-                language: "",
-                stage: "transcript",
-                check_control: &crate::runtime::check_cancelled,
-            },
-            audio,
-        )
-        .unwrap();
+        let target = ApiTarget {
+            identity: "test-provider",
+            client: &ureq::agent(),
+            url: &|| Ok("http://localhost".into()),
+            model: "whisper-1",
+            key: "",
+            mode: crate::settings::AsrMode::Transcriptions,
+            prompt: "",
+            language: "",
+            stage: "transcript",
+            check_control: &crate::runtime::check_cancelled,
+        };
+        let (content_type, body) = transcription_request(&target, audio).unwrap();
         let boundary = content_type
             .strip_prefix("multipart/form-data; boundary=")
             .unwrap();
@@ -442,6 +420,9 @@ mod tests {
         assert!(body.windows(audio.len()).any(|slice| slice == audio));
         assert!(body.ends_with(format!("\r\n--{boundary}--\r\n").as_bytes()));
         assert!(String::from_utf8_lossy(&body).contains("name=\"file\"; filename=\"audio.wav\""));
+        let another = transcription_request(&target, audio).unwrap();
+        assert_ne!(content_type, another.0);
+        assert_ne!(body, another.1);
     }
 
     #[test]
@@ -496,6 +477,80 @@ mod http_tests {
     use std::io::{Read, Write};
 
     #[test]
+    fn empty_warning_counts_only_the_current_segments() {
+        use crate::test_support::MockAi;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
+        if crate::runtime::which("ffmpeg").is_none() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let cache = crate::dispatch::install(root.path()).unwrap();
+        let wav = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/speech.wav"
+        ));
+        let mut api = Asr {
+            mode: AsrMode::Chat,
+            command: vec!["adapter".into(), "--model".into(), "fixture".into()],
+            max_speech: 1.,
+            concurrency: 3,
+            ..Default::default()
+        };
+        let segments = earshot_vad(wav, &api, &|| Ok(())).unwrap();
+        assert!(segments.len() > 1);
+        let first_count = segments.len();
+        let mock = MockAi::respond_with(move |call, _| {
+            Some((
+                200,
+                serde_json::json!({
+                    "choices": [{"message": {"content": if call < first_count { "Speech" } else { "" }}}]
+                }),
+            ))
+        });
+        api.base_url = mock.url.clone();
+        let cancelled = AtomicBool::new(false);
+        let first = run_api(&api, wav, "transcript", &cancelled).unwrap();
+        assert_eq!(first.len(), segments.len());
+        for (event, seg) in first.iter().zip(&segments) {
+            assert_eq!((event.start, event.end), (seg.start, seg.end));
+            assert_eq!(event.text, "Speech");
+        }
+        assert!(cache.take_warnings().is_empty());
+        api.max_speech = 30.;
+        let current = earshot_vad(wav, &api, &|| Ok(())).unwrap();
+        assert_eq!(current.len(), 1);
+        assert!(
+            run_api(&api, wav, "transcript", &cancelled)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            cache.take_warnings(),
+            ["1 of 1 speech segments returned no text"]
+        );
+        let requests = mock.calls.load(Ordering::SeqCst);
+        api.base_url = "http://127.0.0.1:1".into();
+        assert!(
+            run_api(&api, wav, "transcript", &cancelled)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            cache.take_warnings(),
+            ["1 of 1 speech segments returned no text"]
+        );
+        api.max_speech = 1.;
+        let cached = run_api(&api, wav, "renamed-transcript", &cancelled).unwrap();
+        assert_eq!(
+            serde_json::to_value(cached).unwrap(),
+            serde_json::to_value(first).unwrap()
+        );
+        assert!(cache.take_warnings().is_empty());
+        assert_eq!(mock.calls.load(Ordering::SeqCst), requests);
+    }
+
+    #[test]
     fn truncated_speech_chat_is_not_retried_or_cached() {
         use crate::test_support::MockAi;
         use serde_json::json;
@@ -513,6 +568,7 @@ mod http_tests {
                 ))
             });
             let target = ApiTarget {
+                identity: "test-provider",
                 client: &ureq::agent(),
                 url: &|| Ok(format!("{}/chat/completions", mock.url)),
                 model: "",
@@ -523,13 +579,8 @@ mod http_tests {
                 stage: "transcript",
                 check_control: &crate::runtime::check_cancelled,
             };
-            let error = post_cloud(
-                &target,
-                "application/json",
-                b"{}",
-                &crate::dispatch::Item::speech(0., 1.),
-            )
-            .unwrap_err();
+            let error =
+                post_cloud(&target, b"audio", &crate::dispatch::Item::speech(0., 1.)).unwrap_err();
             let failure = error.downcast_ref::<crate::dispatch::Failure>().unwrap();
             assert!(!failure.retryable);
             assert_eq!(
@@ -537,7 +588,7 @@ mod http_tests {
                 "Speech recognition failed at 00:00–00:01: the model stopped at its output limit"
             );
             assert_eq!(mock.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-            assert!(!root.path().join("llm").exists());
+            assert!(!root.path().join("responses").exists());
         }
     }
 
@@ -559,6 +610,7 @@ mod http_tests {
             Ok(())
         };
         let target = ApiTarget {
+            identity: "test-provider",
             client: &crate::runtime::http_agent(Duration::from_millis(100)),
             url: &|| Ok(url.clone()),
             model: "",
@@ -569,13 +621,8 @@ mod http_tests {
             stage: "transcript",
             check_control: &check,
         };
-        let error = post_cloud(
-            &target,
-            "application/json",
-            b"{}",
-            &crate::dispatch::Item::speech(0., 1.),
-        )
-        .unwrap_err();
+        let error =
+            post_cloud(&target, b"audio", &crate::dispatch::Item::speech(0., 1.)).unwrap_err();
         assert!(error.to_string().contains("test send cancellation"));
         assert_eq!(
             listener.accept().unwrap_err().kind(),
@@ -584,7 +631,7 @@ mod http_tests {
     }
 
     #[test]
-    fn fast_responses_obey_cancellation_before_dispatch_and_checkpointing() {
+    fn fast_responses_obey_cancellation_before_dispatch_and_caching() {
         use std::sync::atomic::{AtomicBool, Ordering};
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         if crate::runtime::which("ffmpeg").is_none() {
@@ -600,7 +647,7 @@ mod http_tests {
                 max_speech: 1.0,
                 ..Default::default()
             };
-            let mut cp = crate::checkpoint::Checkpoint::open(dir.path()).unwrap();
+            let _cache = crate::dispatch::install(dir.path()).unwrap();
             let cancelled = AtomicBool::new(false);
             let done = AtomicBool::new(false);
             std::thread::scope(|scope| {
@@ -642,20 +689,19 @@ mod http_tests {
                         env!("CARGO_MANIFEST_DIR"),
                         "/tests/fixtures/speech.wav"
                     )),
-                    &mut cp,
                     "transcript",
                     &cancelled,
                 );
                 done.store(true, Ordering::Relaxed);
                 assert!(result.is_err());
                 assert_eq!(server.join().unwrap(), 1);
-                assert!(cp.sorted_events().is_empty());
+                assert!(!dir.path().join("responses").exists());
             });
         }
     }
 
     #[test]
-    fn dialects_send_optional_fields_before_audio_and_preserve_responses() {
+    fn dialects_cache_by_audio_and_preserve_requests_and_responses() {
         let _dispatch = crate::runtime::lock_recover(&crate::dispatch::TEST_LOCK);
         if crate::runtime::which("ffmpeg").is_none() {
             return;
@@ -668,42 +714,51 @@ mod http_tests {
                 let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
                 let base = format!("http://{}/v1", listener.local_addr().unwrap());
                 let server = std::thread::spawn(move || {
-                    let (mut stream, _) = listener.accept().unwrap();
-                    stream
-                        .set_read_timeout(Some(Duration::from_secs(10)))
-                        .unwrap();
-                    let mut request = Vec::new();
-                    let mut buffer = [0; 4096];
-                    let offset = loop {
-                        let read = stream.read(&mut buffer).unwrap();
-                        assert_ne!(read, 0);
-                        request.extend_from_slice(&buffer[..read]);
-                        if let Some(offset) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                            break offset + 4;
+                    let mut requests = Vec::new();
+                    for index in 0..2 {
+                        let (mut stream, _) = listener.accept().unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(10)))
+                            .unwrap();
+                        let mut request = Vec::new();
+                        let mut buffer = [0; 4096];
+                        let offset = loop {
+                            let read = stream.read(&mut buffer).unwrap();
+                            assert_ne!(read, 0);
+                            request.extend_from_slice(&buffer[..read]);
+                            if let Some(offset) = request.windows(4).position(|w| w == b"\r\n\r\n")
+                            {
+                                break offset + 4;
+                            }
+                        };
+                        let head = String::from_utf8_lossy(&request[..offset]).to_ascii_lowercase();
+                        let length: usize = head
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .unwrap()
+                            .trim()
+                            .parse()
+                            .unwrap();
+                        while request.len() < offset + length {
+                            let read = stream.read(&mut buffer).unwrap();
+                            assert_ne!(read, 0);
+                            request.extend_from_slice(&buffer[..read]);
                         }
-                    };
-                    let head = String::from_utf8_lossy(&request[..offset]).to_ascii_lowercase();
-                    let length: usize = head
-                        .lines()
-                        .find_map(|line| line.strip_prefix("content-length:"))
-                        .unwrap()
-                        .trim()
-                        .parse()
-                        .unwrap();
-                    while request.len() < offset + length {
-                        let read = stream.read(&mut buffer).unwrap();
-                        assert_ne!(read, 0);
-                        request.extend_from_slice(&buffer[..read]);
+                        let text = if index == 0 {
+                            " language English<asr_text>Recognized.</asr_text> "
+                        } else {
+                            "Different audio."
+                        };
+                        let response = if mode == AsrMode::Chat {
+                            serde_json::json!({"choices":[{"message":{field:text}}]})
+                        } else {
+                            serde_json::json!({field:text})
+                        }
+                        .to_string();
+                        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+                        requests.push((head, request[offset..].to_vec()));
                     }
-                    let text = " language English<asr_text>Recognized.</asr_text> ";
-                    let response = if mode == AsrMode::Chat {
-                        serde_json::json!({"choices":[{"message":{field:text}}]})
-                    } else {
-                        serde_json::json!({field:text})
-                    }
-                    .to_string();
-                    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
-                    (head, request[offset..].to_vec())
+                    requests
                 });
                 let api = Asr {
                     mode,
@@ -712,6 +767,7 @@ mod http_tests {
                 };
                 let url = crate::config::asr_endpoint(&api).unwrap();
                 let target = ApiTarget {
+                    identity: "test-provider",
                     client: &crate::dispatch::http_agent(),
                     url: &|| Ok(url.clone()),
                     model: if with_options { "test-model" } else { "" },
@@ -723,33 +779,51 @@ mod http_tests {
                     check_control: &crate::runtime::check_cancelled,
                 };
                 let dir = tempfile::tempdir().unwrap();
-                let text = transcribe_api(
-                    &target,
-                    &dir.path().join("chunk.wav"),
-                    Seg {
-                        start: 0.0,
-                        end: 2.4,
-                        cut_start: 0.0,
-                        cut_end: 2.4,
-                    },
-                    Path::new(concat!(
-                        env!("CARGO_MANIFEST_DIR"),
-                        "/tests/fixtures/speech.wav"
-                    )),
-                )
-                .unwrap();
+                let _cache = crate::dispatch::install(dir.path()).unwrap();
+                let wav = Path::new(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/speech.wav"
+                ));
+                let seg = Seg {
+                    start: 0.,
+                    end: 2.4,
+                    cut_start: 0.,
+                    cut_end: 2.4,
+                };
+                let chunk = dir.path().join("chunk.wav");
+                for _ in 0..2 {
+                    assert_eq!(
+                        transcribe_api(&target, &chunk, seg, wav)
+                            .unwrap()
+                            .as_deref(),
+                        Some(" language English<asr_text>Recognized.</asr_text> ")
+                    );
+                }
+                let mut changed = std::fs::read(wav).unwrap();
+                let data = changed
+                    .windows(4)
+                    .position(|bytes| bytes == b"data")
+                    .unwrap()
+                    + 8;
+                changed[data + 1000] ^= 0xff;
+                let other = dir.path().join("other.wav");
+                std::fs::write(&other, changed).unwrap();
                 assert_eq!(
-                    text.as_deref(),
-                    Some(" language English<asr_text>Recognized.</asr_text> ")
+                    transcribe_api(&target, &chunk, seg, &other)
+                        .unwrap()
+                        .as_deref(),
+                    Some("Different audio.")
                 );
-                let (head, body) = server.join().unwrap();
+                let requests = server.join().unwrap();
+                assert_eq!(requests.len(), 2);
+                let (head, body) = &requests[0];
                 assert!(head.starts_with(&format!("post /v1{suffix} ")), "{head}");
                 assert_eq!(head.contains("authorization:"), with_options);
                 if with_options {
                     assert!(head.contains("authorization: bearer test-key"));
                 }
                 if mode == AsrMode::Chat {
-                    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    let json: serde_json::Value = serde_json::from_slice(body).unwrap();
                     assert_eq!(json.get("model").is_some(), with_options);
                     assert_eq!(json["temperature"], 0);
                     let prompt = json["messages"][0]["content"][0]["text"].as_str().unwrap();
@@ -766,7 +840,7 @@ mod http_tests {
                         "wav"
                     );
                 } else {
-                    let text = String::from_utf8_lossy(&body);
+                    let text = String::from_utf8_lossy(body);
                     let audio = text.find("filename=\"audio.wav\"").unwrap();
                     for name in ["model", "language"] {
                         let position = text.find(&format!("name=\"{name}\""));
@@ -787,6 +861,7 @@ mod http_tests {
         let client = ureq::agent();
         for language in ["zh", "pt", "pt-BR", "zh-Hant", "xx-custom", " KO_kr "] {
             let target = ApiTarget {
+                identity: "test-provider",
                 client: &client,
                 url: &|| Ok(String::new()),
                 model: "",

@@ -220,7 +220,7 @@ impl Drop for Guard {
 
 pub fn install(work_dir: &Path) -> Result<Guard> {
     let cache = Arc::new(Cache {
-        dir: work_dir.join("llm"),
+        dir: work_dir.join("responses"),
         locks: Mutex::new(HashMap::new()),
         warnings: Mutex::new(Vec::new()),
     });
@@ -718,7 +718,7 @@ mod tests {
         assert_eq!(calls.get(), 3);
         let key = runtime::digest(format!("{url}\n{body}").as_bytes());
         let saved: Value = serde_json::from_slice(
-            &std::fs::read(root.path().join("llm").join(format!("{key}.json"))).unwrap(),
+            &std::fs::read(root.path().join("responses").join(format!("{key}.json"))).unwrap(),
         )
         .unwrap();
         assert_eq!(saved, first);
@@ -749,7 +749,7 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.retryable, status == 429 || status >= 500);
             assert!(!error.to_string().contains("private-test-key"));
-            assert!(!root.path().join("llm").exists());
+            assert!(!root.path().join("responses").exists());
         }
         for value in [
             serde_json::json!({"error":"private-test-key"}),
@@ -766,7 +766,7 @@ mod tests {
                 )
                 .is_err()
             );
-            assert!(!root.path().join("llm").exists());
+            assert!(!root.path().join("responses").exists());
         }
         assert!(
             cached_json_request(
@@ -779,7 +779,7 @@ mod tests {
             )
             .is_err()
         );
-        assert!(!root.path().join("llm").exists());
+        assert!(!root.path().join("responses").exists());
         cached_json_request(
             "https://example.test",
             &body,
@@ -790,7 +790,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            std::fs::read_dir(root.path().join("llm")).unwrap().count(),
+            std::fs::read_dir(root.path().join("responses"))
+                .unwrap()
+                .count(),
             1
         );
     }
@@ -842,10 +844,10 @@ mod tests {
         );
         assert!(result.unwrap_err().to_string().contains("Cancelled"));
         assert!(start.elapsed() < Duration::from_secs(1));
-        assert!(!root.path().join("llm").exists());
+        assert!(!root.path().join("responses").exists());
         release.send(()).unwrap();
         late.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(!root.path().join("llm").exists());
+        assert!(!root.path().join("responses").exists());
     }
 
     #[test]
