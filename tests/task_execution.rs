@@ -1273,13 +1273,13 @@ fn count(record: &Path) -> usize {
         .lines()
         .count()
 }
-fn checkpoint(work: &Path) -> PathBuf {
-    let path = std::fs::read_dir(work.join(".cache"))
+fn responses(work: &Path) -> Vec<Value> {
+    std::fs::read_dir(work.join(".cache/responses"))
         .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with("asr-"))
-        .unwrap();
-    path.join("asr.jsonl")
+        .map(|entry| {
+            serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap()
+        })
+        .collect()
 }
 fn wait_for_file(child: &mut std::process::Child, path: &Path) {
     let start = std::time::Instant::now();
@@ -1309,34 +1309,41 @@ fn wait_for_exit(child: &mut std::process::Child) -> bool {
 }
 #[test]
 fn failed_transcription_preserves_the_previous_note_and_resumes_completed_chunks() {
-    let root = tempfile::tempdir().unwrap();
-    let source = video(root.path());
-    let record = root.path().join("asr");
-    let cfg = speech_config(&record, "fail-after-first");
-    let subtitle = root.path().join("previous.srt");
-    std::fs::write(
-        &subtitle,
-        "1\n00:00:00,000 --> 00:00:02,000\nPrevious note.\n",
-    )
-    .unwrap();
-    let previous = done(&run(
-        root.path(),
-        &source,
-        &cfg,
-        &["--subtitle", subtitle.to_str().unwrap()],
-    ));
-    let path = Path::new(previous["files"]["draft"].as_str().unwrap());
-    let bytes = std::fs::read(path).unwrap();
-    error(&run(root.path(), &source, &cfg, &[]));
-    assert_eq!(std::fs::read(path).unwrap(), bytes);
-    let cp = checkpoint(Path::new(previous["work_dir"].as_str().unwrap()));
-    assert_eq!(std::fs::read_to_string(&cp).unwrap().lines().count(), 1);
-    std::fs::write(record.join("release"), "ready").unwrap();
-    done(&run(root.path(), &source, &cfg, &[]));
-    assert_eq!(
-        count(&record),
-        std::fs::read_to_string(cp).unwrap().lines().count() + 1
-    );
+    for mode in ["transcriptions", "chat"] {
+        let root = tempfile::tempdir().unwrap();
+        let source = video(root.path());
+        let record = root.path().join("asr");
+        let mut cfg = speech_config(&record, "fail-after-first");
+        cfg["stages"]["transcript"]["speech"]["api"] = json!(mode);
+        if mode == "chat" {
+            cfg["stages"]["transcript"]["speech"]["prompt"] = json!("Transcribe verbatim.");
+        }
+        let subtitle = root.path().join("previous.srt");
+        std::fs::write(
+            &subtitle,
+            "1\n00:00:00,000 --> 00:00:02,000\nPrevious note.\n",
+        )
+        .unwrap();
+        let previous = done(&run(
+            root.path(),
+            &source,
+            &cfg,
+            &["--subtitle", subtitle.to_str().unwrap()],
+        ));
+        let path = Path::new(previous["files"]["draft"].as_str().unwrap());
+        let bytes = std::fs::read(path).unwrap();
+        error(&run(root.path(), &source, &cfg, &[]));
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        let work = Path::new(previous["work_dir"].as_str().unwrap());
+        assert_eq!(responses(work).len(), 1);
+        std::fs::write(record.join("release"), "ready").unwrap();
+        done(&run(root.path(), &source, &cfg, &[]));
+        let transcript: Value =
+            serde_json::from_slice(&std::fs::read(work.join("transcript.json")).unwrap()).unwrap();
+        let segments = transcript["events"].as_array().unwrap().len();
+        assert_eq!(responses(work).len(), segments);
+        assert_eq!(count(&record), segments + 1);
+    }
 }
 #[cfg(unix)]
 #[test]
@@ -1356,32 +1363,39 @@ fn a_failed_sibling_stops_the_scheduler_owned_speech_provider() {
 #[cfg(unix)]
 #[test]
 fn signals_cancel_adapters_and_resume_completed_asr_chunks() {
-    for signal in [libc::SIGINT, libc::SIGTERM] {
-        let root = tempfile::tempdir().unwrap();
-        let source = video(root.path());
-        let record = root.path().join("asr");
-        let cfg = speech_config(&record, "resume");
-        let mut child = spawn(root.path(), source.to_str().unwrap(), &cfg, &[], true);
-        wait_for_file(&mut child, &record.join("transcribing"));
-        assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
-        let output = child.wait_with_output().unwrap();
-        assert_eq!(output.status.code(), Some(130));
-        assert!(!events(&output).iter().any(|e| e["type"] == "done"));
-        assert!(record.join("terminated").is_file());
-        let work = std::fs::read_dir(root.path().join("cache/notepipe/work"))
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .find(|p| p.is_dir())
-            .unwrap();
-        assert!(!work.join(".cache/audio-transcript.wav").exists());
-        let cp = checkpoint(&work);
-        assert_eq!(std::fs::read_to_string(&cp).unwrap().lines().count(), 1);
-        std::fs::write(record.join("release"), "ready").unwrap();
-        done(&run(root.path(), &source, &cfg, &[]));
-        assert_eq!(
-            count(&record),
-            std::fs::read_to_string(cp).unwrap().lines().count() + 1
-        );
+    for mode in ["transcriptions", "chat"] {
+        for signal in [libc::SIGINT, libc::SIGTERM] {
+            let root = tempfile::tempdir().unwrap();
+            let source = video(root.path());
+            let record = root.path().join("asr");
+            let mut cfg = speech_config(&record, "resume");
+            cfg["stages"]["transcript"]["speech"]["api"] = json!(mode);
+            if mode == "chat" {
+                cfg["stages"]["transcript"]["speech"]["prompt"] = json!("Transcribe verbatim.");
+            }
+            let mut child = spawn(root.path(), source.to_str().unwrap(), &cfg, &[], true);
+            wait_for_file(&mut child, &record.join("transcribing"));
+            assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
+            let output = child.wait_with_output().unwrap();
+            assert_eq!(output.status.code(), Some(130));
+            assert!(!events(&output).iter().any(|e| e["type"] == "done"));
+            assert!(record.join("terminated").is_file());
+            let work = std::fs::read_dir(root.path().join("cache/notepipe/work"))
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .find(|p| p.is_dir())
+                .unwrap();
+            assert!(!work.join(".cache/audio-transcript.wav").exists());
+            assert_eq!(responses(&work).len(), 1);
+            std::fs::write(record.join("release"), "ready").unwrap();
+            done(&run(root.path(), &source, &cfg, &[]));
+            let transcript: Value =
+                serde_json::from_slice(&std::fs::read(work.join("transcript.json")).unwrap())
+                    .unwrap();
+            let segments = transcript["events"].as_array().unwrap().len();
+            assert_eq!(responses(&work).len(), segments);
+            assert_eq!(count(&record), segments + 1);
+        }
     }
 }
 #[cfg(unix)]
@@ -2093,11 +2107,7 @@ fn repeated_transcript_and_screenshot_stages_share_caches_without_corruption() {
             assert!((a[key].as_f64().unwrap() - b[key].as_f64().unwrap()).abs() < 1e-9);
         }
     }
-    let cp = checkpoint(work);
-    assert_eq!(
-        count(&record),
-        std::fs::read_to_string(cp).unwrap().lines().count()
-    );
+    assert_eq!(count(&record), responses(work).len());
     assert!(
         Path::new(completed["note_dir"].as_str().unwrap())
             .join("second-images/0001.jpg")
@@ -2541,7 +2551,7 @@ fn explicit_subtitles_override_downloaded_tracks_without_starting_the_provider()
 }
 
 #[test]
-fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
+fn speech_diagnostics_silence_and_usage_reach_done_and_response_cache() {
     for behavior in [
         "warning",
         "empty-first",
@@ -2558,12 +2568,8 @@ fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
         let output = run(root.path(), source, &cfg, &["--skip", "screenshots"]);
         let completed = done(&output);
         let calls = count(&record);
-        let checkpoint = checkpoint(Path::new(completed["work_dir"].as_str().unwrap()));
-        let records: Vec<Value> = std::fs::read_to_string(checkpoint)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
+        let work = Path::new(completed["work_dir"].as_str().unwrap());
+        let records = responses(work);
         assert!(records.len() > 1);
         let all = events(&output);
         let tokens = all.iter().rfind(|e| e["type"] == "tokens").unwrap();
@@ -2572,7 +2578,10 @@ fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
         assert_eq!(tokens["completion"], counted * 2);
         let warnings = completed["warnings"].as_array().unwrap();
         if behavior == "empty-first" {
-            assert_eq!(records[0]["text"], "");
+            assert_eq!(
+                records.iter().filter(|record| record["text"] == "").count(),
+                1
+            );
             assert_eq!(
                 warnings,
                 &[json!(format!(
@@ -2602,15 +2611,34 @@ fn speech_diagnostics_silence_and_usage_reach_done_and_checkpoint() {
                 "The speech service returned no text"
             }));
         }
+        for entry in std::fs::read_dir(work.join(".cache")).unwrap() {
+            let path = entry.unwrap().path();
+            if path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("transcript-")
+            {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
         let cached = run(root.path(), source, &cfg, &["--skip", "screenshots"]);
-        assert_eq!(done(&cached)["warnings"], json!([]));
+        let cached_warnings = done(&cached)["warnings"].clone();
+        assert_eq!(
+            cached_warnings,
+            if matches!(behavior, "warning" | "empty-first") {
+                completed["warnings"].clone()
+            } else {
+                json!([])
+            }
+        );
         assert!(!events(&cached).iter().any(|e| e["type"] == "tokens"));
         assert_eq!(count(&record), calls);
     }
 }
 
 #[test]
-fn empty_speech_segments_are_checkpointed_past_the_old_tripwire() {
+fn empty_speech_segments_are_cached_past_the_old_tripwire() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("repeated.wav");
     assert!(
@@ -2651,20 +2679,10 @@ fn empty_speech_segments_are_checkpointed_past_the_old_tripwire() {
                 "{calls} of {calls} speech segments returned no text"
             )])
         );
-        let checkpoint = checkpoint(Path::new(completed["work_dir"].as_str().unwrap()));
-        let records = std::fs::read_to_string(checkpoint).unwrap();
-        assert_eq!(
-            records
-                .lines()
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            calls
-        );
-        assert!(
-            records
-                .lines()
-                .all(|line| serde_json::from_str::<Value>(line).unwrap()["text"] == "")
-        );
+        let records = responses(Path::new(completed["work_dir"].as_str().unwrap()));
+        assert_eq!(records.len(), calls);
+        assert!(records.iter().all(|value| value["text"] == ""));
+        assert_eq!(count(&record), calls);
     }
 }
 
@@ -2792,10 +2810,7 @@ fn first_signal_abandons_slow_chat_and_speech_responses_before_cleanup() {
             assert!(!download_cache(&work, &cfg).join("files/media.wav").exists());
             assert!(!work.join("media/media.wav").exists());
             assert!(!work.join(".cache/audio-transcript.wav").exists());
-            assert!(!work.join(".cache/llm").exists());
-            if speech {
-                assert!(!checkpoint(&work).exists());
-            }
+            assert!(!work.join(".cache/responses").exists());
             assert!(!root.path().join("Fixture-source").exists());
         }
     }
@@ -2855,7 +2870,7 @@ fn chat_speech_prompt_changes_transcribe_again() {
 }
 
 #[test]
-fn speech_language_and_model_select_separate_checkpoints() {
+fn speech_language_and_model_select_separate_responses() {
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());
     let record = root.path().join("asr");
@@ -2872,22 +2887,18 @@ fn speech_language_and_model_select_separate_checkpoints() {
     done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     assert_eq!(count(&record), chunks * 3);
     let work = Path::new(first["work_dir"].as_str().unwrap());
-    let checkpoints = std::fs::read_dir(work.join(".cache"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("asr-")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(checkpoints.len(), 3);
-    for path in checkpoints {
-        assert!(path.join("asr.jsonl").is_file());
-        assert!(!path.join(".asr_identity").exists());
-        assert!(!path.join(".asr_done").exists());
-    }
+    assert_eq!(responses(work).len(), chunks * 3);
+    assert!(
+        std::fs::read_dir(work.join(".cache"))
+            .unwrap()
+            .all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("asr-")
+            })
+    );
 }
 
 #[test]
@@ -3328,7 +3339,7 @@ fn pipeline_stage_names_reach_boundaries_progress_and_token_events() {
 }
 
 #[test]
-fn lifecycle_cached_chat_and_segment_checkpoints_start_no_provider() {
+fn lifecycle_cached_chat_and_speech_responses_start_no_provider() {
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());
     let record = root.path().join("provider");
@@ -3361,17 +3372,16 @@ fn lifecycle_cached_chat_and_segment_checkpoints_start_no_provider() {
         }
     }
     let requests = count(&record);
-    let cp = checkpoint(work);
-    let before = std::fs::read_to_string(&cp).unwrap();
+    let cached = responses(work).len();
     let rerun = run(root.path(), &source, &cfg, &["--skip", "screenshots"]);
     done(&rerun);
     assert_eq!(
         count(&record),
         requests,
-        "before: {before} after: {} events: {}",
-        std::fs::read_to_string(&cp).unwrap(),
+        "{}",
         String::from_utf8_lossy(&rerun.stdout)
     );
+    assert_eq!(responses(work).len(), cached);
     assert_eq!(
         std::fs::read_to_string(record.join("starts")).unwrap(),
         "start\n"

@@ -551,7 +551,7 @@ mod tests {
             );
             assert_eq!(mock.calls.load(Ordering::SeqCst), 1);
             assert_eq!(validations.get(), 0);
-            assert!(!root.path().join("llm").exists());
+            assert!(!root.path().join("responses").exists());
 
             let response = send_chat(&agent, &settings, &body, "proofread", "", &validate).unwrap();
             assert_eq!(response, content);
@@ -697,7 +697,9 @@ mod tests {
                 );
                 assert_eq!(mock.calls.load(Ordering::SeqCst), 2, "{bad}");
                 assert_eq!(
-                    std::fs::read_dir(root.path().join("llm")).unwrap().count(),
+                    std::fs::read_dir(root.path().join("responses"))
+                        .unwrap()
+                        .count(),
                     1
                 );
             }

@@ -850,7 +850,6 @@ impl Run {
             progress::stage_label(&format!("{name}/audio"), "start", "Extracting audio");
             media::extract_audio(&info.file(input, &self.cfg.url)?, &audio).await?;
             progress::stage_label(&format!("{name}/audio"), "done", "Extracting audio");
-            cfg.out_dir = self.work.join(format!(".cache/asr-{key}"));
             let provider = &self.providers[&t.speech.provider];
             cfg.asr.provider = provider.process.clone();
             cfg.asr.api_key = provider.key.clone();
