@@ -478,13 +478,13 @@ impl ConfigFile {
                     anyhow::bail!("Stages {a} and {name} publish the same file");
                 }
                 anyhow::ensure!(
-                    publish != "-" || !matches!(stage.output_kind(), Kind::Media | Kind::Images),
-                    "Stage {name}: standard output takes a file, and {} is a folder",
-                    stage.output
+                    stage.output_kind() != Kind::Media,
+                    "Stage {name}: a media output cannot be published"
                 );
                 anyhow::ensure!(
-                    !matches!(stage.kind, StageType::Download(_)),
-                    "Stage {name}: a download output cannot be published"
+                    publish != "-" || stage.output_kind() != Kind::Images,
+                    "Stage {name}: standard output takes a file, and {} is a folder",
+                    stage.output
                 );
             }
             match &stage.kind {
@@ -551,11 +551,9 @@ impl ConfigFile {
                 StageType::Run(p) => {
                     validate_command(&p.command)?;
                     anyhow::ensure!(
-                        p.produces.is_none_or(|k| matches!(
-                            k,
-                            Kind::Transcript | Kind::Document | Kind::Markdown
-                        )),
-                        "Stage {name}: produces must be transcript, document or markdown"
+                        p.produces != Some(Kind::Images)
+                            || p.command.iter().any(|arg| arg == "{output}"),
+                        "Stage {name}: a run stage that produces images must use {{output}}"
                     );
                     for arg in &p.command {
                         for placeholder in ["{input}", "{output}"] {
@@ -774,7 +772,7 @@ mod tests {
         cfg["stages"]["download"]["publish"] = json!("media");
         assert_eq!(
             resolve(&cfg, &[]).unwrap_err().to_string(),
-            "Stage download: a download output cannot be published"
+            "Stage download: a media output cannot be published"
         );
     }
     #[test]
@@ -966,7 +964,7 @@ mod tests {
                 json!({"type":"run","input":input,"output":"custom","command":["program"]});
             assert_eq!(
                 resolve(&cfg, &[]).unwrap_err().to_string(),
-                "Stage custom: standard input takes one file; use {input} in command for more"
+                "Stage custom: several inputs, media and images are passed by path; use {input} in command"
             );
         }
     }
@@ -1100,7 +1098,11 @@ mod tests {
             cfg["stages"][name]["publish"] = json!("-");
             assert_eq!(
                 resolve(&cfg, &[]).unwrap_err().to_string(),
-                format!("Stage {name}: standard output takes a file, and {output} is a folder")
+                if name == "download" {
+                    format!("Stage {name}: a media output cannot be published")
+                } else {
+                    format!("Stage {name}: standard output takes a file, and {output} is a folder")
+                }
             );
         }
     }
@@ -1258,6 +1260,42 @@ mod validation_tests {
         );
     }
     #[test]
+    fn run_produces_every_kind_and_media_cannot_be_published() {
+        for kind in [
+            "transcript",
+            "document",
+            "markdown",
+            "media",
+            "images",
+            "file",
+        ] {
+            let cfg = serde_json::json!({"pipeline":["custom"],"stages":{
+                "custom":{"type":"run","output":"custom","produces":kind,"command":["tool","{output}"]}
+            }});
+            let file = parse(&cfg.to_string()).unwrap();
+            file.validate().unwrap();
+        }
+        for (typ, name) in [("download", "download"), ("run", "custom")] {
+            for publish in ["recording", "-"] {
+                let mut stage = serde_json::json!({"type":typ,"output":"media","publish":publish,"command":["tool"]});
+                if typ == "download" {
+                    stage["input"] = json!("source");
+                } else {
+                    stage["produces"] = json!("media");
+                }
+                let cfg = serde_json::json!({"pipeline":[name],"stages":{name:stage}});
+                let file = parse(&cfg.to_string()).unwrap();
+                assert_eq!(
+                    crate::options::resolve("local".into(), &Default::default(), &file)
+                        .unwrap_err()
+                        .to_string(),
+                    format!("Stage {name}: a media output cannot be published")
+                );
+            }
+        }
+    }
+
+    #[test]
     fn pipeline_names_cardinalities_and_outputs_are_validated() {
         let mut cfg = ConfigFile::default();
         cfg.stages.get_mut("download").unwrap().input = vec!["other".into()];
@@ -1307,7 +1345,7 @@ mod validation_tests {
                 .validate()
                 .unwrap_err()
                 .to_string(),
-            "Stage custom: produces must be transcript, document or markdown"
+            "Stage custom: a run stage that produces images must use {output}"
         );
     }
 }

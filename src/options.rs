@@ -112,6 +112,7 @@ pub fn resolve(
                         Kind::Images,
                         Kind::Document,
                         Kind::Markdown,
+                        Kind::File,
                     ],
                 ),
             };
@@ -164,7 +165,7 @@ pub fn resolve(
                         && !input_kinds
                             .iter()
                             .any(|k| matches!(k, Kind::Media | Kind::Images))),
-                "Stage {name}: standard input takes one file; use {{input}} in command for more"
+                "Stage {name}: several inputs, media and images are passed by path; use {{input}} in command"
             );
         }
         let skipped = opts.skip.contains(name);

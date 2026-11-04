@@ -820,10 +820,17 @@ fn run_accepts_multiple_inputs_zero_inputs_and_no_metadata_substitution() {
         .push(json!("consumer"));
     cfg["stages"]["consumer"] =
         json!({"type":"run","input":"joined.md","output":"consumer","command":program("stdin")});
-    assert_eq!(
-        error(&run(root.path(), &source, &cfg, &["--skip", "screenshots"])),
-        "Stage consumer reads joined.md, which is file; a run stage reads media or transcript or images or document or markdown"
-    );
+    for produces in [None, Some("file")] {
+        if let Some(produces) = produces {
+            cfg["stages"]["join"]["produces"] = json!(produces);
+        }
+        let completed = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+        let work = Path::new(completed["work_dir"].as_str().unwrap());
+        assert_eq!(
+            std::fs::read(work.join("consumer")).unwrap(),
+            b"{title} {author} {source}"
+        );
+    }
 }
 #[test]
 fn stdout_is_printed_after_commit_and_only_stdout_writes_no_folder() {
@@ -1730,6 +1737,219 @@ fn stages_send_named_environment_keys_and_skips_do_not_require_them() {
     ));
 }
 #[test]
+fn run_media_uses_recording_files_and_keys_consumers_by_produced_bytes() {
+    for local_source in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("original.wav");
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/speech.wav"),
+            &original,
+        )
+        .unwrap();
+        std::fs::write(
+            original.with_extension("srt"),
+            "1\n00:00:00,000 --> 00:00:01,000\nOriginal sidecar.\n",
+        )
+        .unwrap();
+        let original_bytes = std::fs::read(&original).unwrap();
+        let source = if local_source {
+            original.clone()
+        } else {
+            PathBuf::from("https://example.test/run-media")
+        };
+        let download = root.path().join("download");
+        let asr = root.path().join("asr");
+        let input_record = root.path().join("input");
+        let copy_record = root.path().join("copy-input");
+        let mut cfg = speech_config(&asr, "healthy");
+        cfg["stages"]["download"]["command"] = source_adapter_command(&download, "speech-audio");
+        let media_command = |input: &str, output: &str, variant: &str, record: &Path| {
+            let mut command = program("media");
+            command.as_array_mut().unwrap().extend([
+                json!(input),
+                json!(output),
+                json!(variant),
+                json!(record),
+            ]);
+            command
+        };
+        cfg["pipeline"] = json!([
+            "download",
+            "convert",
+            "copy",
+            "transcript",
+            "screenshots",
+            "draft",
+            "markdown"
+        ]);
+        cfg["stages"]["convert"] = json!({"type":"run","input":"media","output":"converted.wav","produces":"media","command":media_command("{input}", "{output}", "copy", &input_record)});
+        cfg["stages"]["copy"] = json!({"type":"run","input":"converted.wav","output":"copied.wav","produces":"media","command":media_command("{input}", "-", "copy", &copy_record)});
+        cfg["stages"]["transcript"]["input"] = json!("copied.wav");
+        cfg["stages"]["transcript"]["sources"] = json!(["subtitles", "speech"]);
+        cfg["stages"]["screenshots"]["input"] = json!("copied.wav");
+        let first = done(&run(root.path(), &source, &cfg, &[]));
+        let work = Path::new(first["work_dir"].as_str().unwrap());
+        let seen = PathBuf::from(std::fs::read_to_string(&input_record).unwrap());
+        assert_eq!(
+            seen,
+            if local_source {
+                original.canonicalize().unwrap()
+            } else {
+                work.join("media/media.wav")
+            }
+        );
+        assert_eq!(
+            PathBuf::from(std::fs::read_to_string(&copy_record).unwrap()),
+            work.join("converted.wav")
+        );
+        let calls = count(&asr);
+        assert!(calls > 0);
+        for _ in 0..2 {
+            done(&run(root.path(), &source, &cfg, &[]));
+            assert_eq!(count(&asr), calls);
+        }
+        cfg["stages"]["convert"]["command"] =
+            media_command("{input}", "{output}", "0.5", &input_record);
+        done(&run(root.path(), &source, &cfg, &[]));
+        assert!(count(&asr) > calls);
+        for prefix in ["transcript-", "frames-"] {
+            assert_eq!(
+                std::fs::read_dir(work.join(".cache"))
+                    .unwrap()
+                    .filter(|entry| entry
+                        .as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(prefix))
+                    .count(),
+                2
+            );
+        }
+        cfg["pipeline"].as_array_mut().unwrap().push(json!("fail"));
+        cfg["stages"]["fail"] = json!({"type":"run","input":"transcript.json","output":"failure","command":program("exit")});
+        cfg["stages"]["convert"]["command"] =
+            media_command("{input}", "{output}", "0.25", &input_record);
+        let calls = count(&asr);
+        assert!(error(&run(root.path(), &source, &cfg, &[])).contains("7"));
+        assert!(count(&asr) > calls);
+        for path in [
+            "converted.wav",
+            "copied.wav",
+            ".cache/audio-transcript.wav",
+            "media/media.wav",
+        ] {
+            assert!(!work.join(path).exists(), "{path}");
+        }
+        assert_eq!(std::fs::read(&original).unwrap(), original_bytes);
+        #[cfg(unix)]
+        {
+            let ready = root.path().join("ready");
+            let mut command = program("wait");
+            command.as_array_mut().unwrap().push(json!(ready));
+            cfg["stages"]["fail"]["command"] = command;
+            let mut child = spawn(root.path(), source.to_str().unwrap(), &cfg, &[], true);
+            wait_for_file(&mut child, &ready);
+            assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0);
+            assert_eq!(child.wait_with_output().unwrap().status.code(), Some(130));
+            for path in [
+                "converted.wav",
+                "copied.wav",
+                ".cache/audio-transcript.wav",
+                "media/media.wav",
+            ] {
+                assert!(!work.join(path).exists(), "{path}");
+            }
+            assert_eq!(std::fs::read(&original).unwrap(), original_bytes);
+        }
+        cfg["pipeline"].as_array_mut().unwrap().pop();
+        let calls = count(&asr);
+        done(&run(
+            root.path(),
+            &source,
+            &cfg,
+            &[
+                "--subtitle",
+                original.with_extension("srt").to_str().unwrap(),
+            ],
+        ));
+        assert_eq!(count(&asr), calls);
+    }
+}
+
+#[test]
+fn run_media_rejects_unreadable_output() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let mut command = program("text");
+    command.as_array_mut().unwrap().push(json!("not media"));
+    let cfg = json!({"pipeline":["generate","note"],"stages":{
+        "generate":{"type":"run","output":"invalid.wav","produces":"media","command":command},
+        "note":{"type":"run","input":"invalid.wav","output":"note.txt","publish":"note.txt","command":[python(),"-c","print('Note')","{input}"]}
+    }});
+    assert!(
+        error(&run(root.path(), &source, &cfg, &[]))
+            .contains("Stage generate: the program wrote invalid media")
+    );
+    assert_eq!(std::fs::read_to_string(source).unwrap(), "media");
+}
+
+#[test]
+fn run_images_feed_documents_and_validate_before_consumers_run() {
+    let root = tempfile::tempdir().unwrap();
+    let source = local(root.path());
+    let mut cfg = config();
+    let image_command = |variant: &str| {
+        let mut command = program("images");
+        command
+            .as_array_mut()
+            .unwrap()
+            .extend([json!("{output}"), json!(variant)]);
+        command
+    };
+    cfg["stages"]["screenshots"] = json!({"type":"run","output":"images","produces":"images","publish":"images","command":image_command("valid")});
+    let completed = done(&run(root.path(), &source, &cfg, &[]));
+    let note = Path::new(completed["note_dir"].as_str().unwrap());
+    assert!(note.join("images/nested/frame.png").is_file());
+    assert!(note.join("images/images.json").is_file());
+    assert_eq!(
+        document(&completed, "draft")["sections"][0]["image"],
+        "images/nested/frame.png"
+    );
+    let previous = std::fs::read(note.join("note.json")).unwrap();
+    for (variant, message) in [
+        (
+            "unordered",
+            "image times must be finite, at least 0 and in order",
+        ),
+        (
+            "negative",
+            "image times must be finite, at least 0 and in order",
+        ),
+        ("infinite", "images.json is not a list"),
+        ("escape", "Invalid note asset path"),
+        ("missing", "os error"),
+        ("directory", "Invalid note asset path"),
+        ("json", "images.json is not a list"),
+    ] {
+        cfg["stages"]["screenshots"]["command"] = image_command(variant);
+        let output = run(root.path(), &source, &cfg, &[]);
+        let failure = error(&output);
+        assert!(failure.contains(message), "{variant}: {failure}");
+        assert!(
+            failure.contains("Stage screenshots: the program wrote invalid images"),
+            "{variant}: {failure}"
+        );
+        assert!(
+            !events(&output)
+                .iter()
+                .any(|event| event["stage"] == "draft" && event["status"] == "start")
+        );
+        assert_eq!(std::fs::read(note.join("note.json")).unwrap(), previous);
+    }
+}
+
+#[test]
 fn run_transcripts_are_validated_and_document_accepts_reversed_inputs() {
     let root = tempfile::tempdir().unwrap();
     let source = video(root.path());
@@ -2460,7 +2680,7 @@ fn remote_reruns_download_only_when_active_stages_need_media() {
                 .unwrap()
                 .push(json!("consume"));
             cfg["stages"]["consume"] = json!({"type":"run","input":"media","output":"media.md","publish":"media.md","produces":"markdown","command":[
-                python(), "-c", "import json,pathlib,sys;p=pathlib.Path(sys.argv[1]);assert (p/json.loads((p/'info.json').read_text())['media']).is_file();print('Media available.')", "{input}"
+                python(), "-c", "import pathlib,sys;assert pathlib.Path(sys.argv[1]).is_file();print('Media available.')", "{input}"
             ]});
         }
         let source = Path::new("https://example.test/cached-media");
@@ -3608,7 +3828,7 @@ fn lifecycle_cleanup_warnings_survive_failure_and_cancellation() {
         cfg["stages"]["download"]["command"] =
             source_adapter_command(&root.path().join("source"), "files");
         let ready = root.path().join("ready");
-        cfg["stages"]["fail"] = json!({"type":"run","input":"media","output":"failure","publish":"failure","command":[python(),"-c",format!("import pathlib,sys,time;m=pathlib.Path(sys.argv[1]);next((m.parent/'.cache/download').glob('*/complete.json')).write_text('invalid');pathlib.Path(sys.argv[2]).write_text('ready');{}", if cancel {"time.sleep(30)"} else {"sys.exit(7)"}),"{input}",ready]});
+        cfg["stages"]["fail"] = json!({"type":"run","input":"media","output":"failure","publish":"failure","command":[python(),"-c",format!("import pathlib,sys,time;m=pathlib.Path(sys.argv[1]);next((m.parent.parent/'.cache/download').glob('*/complete.json')).write_text('invalid');pathlib.Path(sys.argv[2]).write_text('ready');{}", if cancel {"time.sleep(30)"} else {"sys.exit(7)"}),"{input}",ready]});
         let mut child = spawn(root.path(), source, &cfg, &[], true);
         wait_for_file(&mut child, &ready);
         if cancel {
