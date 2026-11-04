@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-04
+
 Caches from earlier versions are not reused: the first rerun of a source repeats its speech recognition, screenshots
 and model requests. Notes already written are not affected.
 
