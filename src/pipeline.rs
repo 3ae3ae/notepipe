@@ -37,6 +37,29 @@ fn transcript_key(asr: &settings::Asr, media_sha256: &str) -> Result<String> {
         &checkpoint::AsrIdentity::new(asr, media_sha256),
     )?))
 }
+fn validate_frames(root: &Path, frames: &[timeline::FrameEvent]) -> Result<()> {
+    anyhow::ensure!(
+        frames
+            .iter()
+            .all(|frame| frame.t.is_finite() && frame.t >= 0.)
+            && frames.windows(2).all(|pair| pair[0].t <= pair[1].t),
+        "image times must be finite, at least 0 and in order"
+    );
+    for frame in frames {
+        anyhow::ensure!(
+            artifact::safe_asset_path(root, &frame.image)?.is_file(),
+            "Invalid note asset path"
+        );
+    }
+    Ok(())
+}
+fn read_images(root: &Path) -> Result<Vec<timeline::FrameEvent>> {
+    let frames: Vec<timeline::FrameEvent> =
+        serde_json::from_slice(&std::fs::read(root.join("images.json"))?)
+            .context("images.json is not a list of {\"t\", \"image\"}")?;
+    validate_frames(root, &frames)?;
+    Ok(frames)
+}
 fn read_frames(root: &Path) -> Result<Option<scene::Output>> {
     let marker = root.join("complete.json");
     if !marker.is_file() {
@@ -45,12 +68,7 @@ fn read_frames(root: &Path) -> Result<Option<scene::Output>> {
     let output: scene::Output =
         serde_json::from_slice(&std::fs::read(marker)?).context("Screenshot cache is damaged")?;
     if let scene::Output::Frames(frames) = &output
-        && (frames.is_empty()
-            || frames.iter().any(|f| {
-                !f.t.is_finite()
-                    || f.t < 0.
-                    || !artifact::safe_asset_path(root, &f.image).is_ok_and(|p| p.is_file())
-            }))
+        && (frames.is_empty() || validate_frames(root, frames).is_err())
     {
         return Ok(None);
     }
@@ -118,6 +136,7 @@ struct Run {
     providers: BTreeMap<String, Provider>,
     warnings: Arc<std::sync::Mutex<Vec<String>>>,
     cache_locks: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    media_digests: std::sync::Mutex<BTreeMap<PathBuf, String>>,
 }
 pub async fn run(cfg: &PipelineConfig) -> Result<()> {
     let warnings = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -215,6 +234,7 @@ async fn run_inner(
         providers,
         warnings: warnings.clone(),
         cache_locks: Default::default(),
+        media_digests: Default::default(),
     });
     let result = execute(run.clone()).await;
     if result.is_err() {
@@ -409,6 +429,17 @@ impl Run {
             .or_default()
             .clone()
     }
+    fn recording(&self, input: &Path) -> Result<media::Recording> {
+        if input.is_dir() {
+            return source::Output::info(input)?.recording(input, &self.cfg.url);
+        }
+        media::Recording::resolve(
+            input.to_owned(),
+            runtime::lock_recover(&self.media_digests)
+                .get(input)
+                .map(String::as_str),
+        )
+    }
     fn transcript_cache(&self, key: &str) -> PathBuf {
         self.work.join(format!(".cache/transcript-{key}.json"))
     }
@@ -455,6 +486,7 @@ impl Run {
             .iter()
             .map(|p| self.work.join(p))
             .collect::<Vec<_>>();
+        let mut media_digest = None;
         if passthrough {
             artifact::copy_path(&inputs[0], &target)?;
             Document::read(&target, &self.work)?;
@@ -480,9 +512,7 @@ impl Run {
                         .iter()
                         .position(|p| self.kind(p) == Kind::Images)
                     {
-                        frames = serde_json::from_slice::<Vec<timeline::FrameEvent>>(
-                            &std::fs::read(inputs[index].join("images.json"))?,
-                        )?;
+                        frames = read_images(&inputs[index])?;
                         for frame in &mut frames {
                             frame.image = format!("{}/{}", stage.input[index], frame.image);
                         }
@@ -579,7 +609,19 @@ impl Run {
                     std::fs::write(&target, crate::render::markdown(&text))?;
                 }
                 StageType::Run(program) => {
-                    let (name, program, inputs, target, work) = (
+                    let inputs = stage
+                        .input
+                        .iter()
+                        .zip(&inputs)
+                        .map(|(input, path)| {
+                            if self.kind(input) == Kind::Media {
+                                Ok(self.recording(path)?.file)
+                            } else {
+                                Ok(path.clone())
+                            }
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let (program_name, program, inputs, program_target, work) = (
                         name.to_owned(),
                         program.clone(),
                         inputs,
@@ -589,9 +631,24 @@ impl Run {
                     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let _cancel = runtime::CancelOnDrop(cancelled.clone());
                     crate::runtime::spawn_blocking(move || {
-                        run_program(&name, &program, &inputs, &target, &work, &cancelled)
+                        run_program(
+                            &program_name,
+                            &program,
+                            &inputs,
+                            &program_target,
+                            &work,
+                            &cancelled,
+                        )
                     })
                     .await??;
+                    if stage.output_kind() == Kind::Media {
+                        crate::error::require_cmd("ffprobe")?;
+                        media::probe_duration(&target).await.with_context(|| {
+                            format!("Stage {name}: the program wrote invalid media")
+                        })?;
+                        media_digest =
+                            Some(media::Recording::resolve(target.clone(), None)?.digest);
+                    }
                 }
             }
         }
@@ -611,6 +668,9 @@ impl Run {
             replace_output(&target, &output)?;
         } else {
             std::fs::rename(&target, &output)?;
+        }
+        if let Some(digest) = media_digest {
+            runtime::lock_recover(&self.media_digests).insert(output, digest);
         }
         if !passthrough {
             progress::stage(name, "done");
@@ -654,7 +714,7 @@ impl Run {
     }
     fn subtitle(
         &self,
-        info: &source::Output,
+        info: Option<&source::Output>,
         media: &Path,
         t: &settings::Transcript,
     ) -> Result<Option<(PathBuf, String)>> {
@@ -668,6 +728,9 @@ impl Run {
                 },
             )));
         }
+        let Some(info) = info else {
+            return Ok(None);
+        };
         let mut tracks = info.subtitle_tracks(media, &self.cfg.url)?;
         tracks.retain(|track| {
             t.subtitles.automatic || track.kind != subtitle::SubtitleKind::Automatic
@@ -704,7 +767,7 @@ impl Run {
                     }
                 }
                 StageType::Transcript(t) => {
-                    let selected = self.subtitle(info, files, t)?.filter(|(path, _)| {
+                    let selected = self.subtitle(Some(info), files, t)?.filter(|(path, _)| {
                         selected_transcript(path)
                             .is_ok_and(|parsed| timeline::has_readable_events(&parsed.events))
                     });
@@ -790,16 +853,19 @@ impl Run {
         input: &Path,
         target: &Path,
     ) -> Result<()> {
-        let info = source::Output::info(input)?;
+        let info = input
+            .is_dir()
+            .then(|| source::Output::info(input))
+            .transpose()?;
         let selected = if self.cfg.subtitle.is_some() {
-            self.subtitle(&info, input, t)?
+            self.subtitle(info.as_ref(), input, t)?
         } else if t.sources.iter().any(|s| s == "subtitles") {
             progress::stage_label(
                 &format!("{name}/subtitles"),
                 "start",
                 "Looking for subtitles",
             );
-            let selected = self.subtitle(&info, input, t)?;
+            let selected = self.subtitle(info.as_ref(), input, t)?;
             progress::stage_label(
                 &format!("{name}/subtitles"),
                 "done",
@@ -837,7 +903,7 @@ impl Run {
                     },
                 );
             }
-            let recording = info.recording(input, &self.cfg.url)?;
+            let recording = self.recording(input)?;
             let key = transcript_key(&cfg.asr, &recording.digest)?;
             let language = cfg.asr.language.clone();
             let lock = self.cache_lock(&format!("transcript-{key}"));
@@ -888,7 +954,7 @@ impl Run {
         target: &Path,
     ) -> Result<()> {
         let mut cfg = crate::options::stage_config(&self.cfg, name, stage)?;
-        let recording = source::Output::info(input)?.recording(input, &self.cfg.url)?;
+        let recording = self.recording(input)?;
         let key = screenshot_key(&cfg, &recording.digest)?;
         let cache = self.frames_cache(&key);
         let lock = self.cache_lock(&format!("frames-{key}"));
@@ -1019,28 +1085,33 @@ fn run_program(
             std::io::copy(&mut stdout, &mut std::fs::File::create(target)?)?;
         }
         anyhow::ensure!(
-            target
-                .symlink_metadata()
-                .is_ok_and(|metadata| metadata.is_file()),
+            target.symlink_metadata().is_ok_and(|metadata| {
+                if program.produces == Some(Kind::Images) {
+                    metadata.is_dir()
+                } else {
+                    metadata.is_file()
+                }
+            }),
             "Stage {name}: the program did not write {}",
             target.file_name().unwrap().to_string_lossy()
         );
-        match program.produces {
-            Some(Kind::Document) => {
-                Document::read(target, work)?;
-                Ok(())
-            }
-            Some(Kind::Transcript) => {
-                Transcript::read(target)?;
-                Ok(())
-            }
+        let (checked, what) = match program.produces {
+            Some(Kind::Images) => (read_images(target).map(drop), "invalid images"),
+            Some(Kind::Document) => (
+                Document::read(target, work).map(drop),
+                "an invalid document",
+            ),
+            Some(Kind::Transcript) => (Transcript::read(target).map(drop), "an invalid transcript"),
             Some(Kind::Markdown) => {
                 let mut text = String::new();
-                std::fs::File::open(target)?.read_to_string(&mut text)?;
-                Ok(())
+                let read = std::fs::File::open(target)
+                    .and_then(|mut file| file.read_to_string(&mut text))
+                    .map(drop);
+                (read.map_err(Into::into), "invalid Markdown")
             }
-            _ => Ok(()),
-        }
+            _ => (Ok(()), ""),
+        };
+        checked.with_context(|| format!("Stage {name}: the program wrote {what}"))
     };
     apply().map_err(|error| stderr.attach(error, name))
 }
@@ -1049,6 +1120,31 @@ fn download_cache(cfg: &PipelineConfig) -> Result<PathBuf> {
         .join(runtime::digest(&serde_json::to_vec(&cfg.source.command)?)))
 }
 fn cleanup_media(cfg: &PipelineConfig, work: &Path, warnings: &mut Vec<String>) -> Result<()> {
+    for (_, stage) in &cfg.stages {
+        if stage.output_kind() != Kind::Media {
+            continue;
+        }
+        let relative = Path::new(&stage.output);
+        let path = work.join(relative);
+        if path
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.is_dir())
+        {
+            match source::Output::info(&path) {
+                Ok(info) => {
+                    if Path::new(&info.media).is_relative() {
+                        remove_temporary(work, &relative.join(&info.media), false, warnings);
+                    }
+                }
+                Err(error) => warnings.push(format!(
+                    "Could not remove cached media {}: {error:#}",
+                    path.display()
+                )),
+            }
+        } else {
+            remove_temporary(work, relative, false, warnings);
+        }
+    }
     if work
         .join(".cache")
         .symlink_metadata()
@@ -1077,45 +1173,45 @@ fn cleanup_media(cfg: &PipelineConfig, work: &Path, warnings: &mut Vec<String>) 
             work.join(".cache").display()
         ));
     }
-    // Downloaded media is temporary even on failure; local files are never removed.
-    if !Path::new(&cfg.url).is_file() {
-        if work
-            .join(".cache/download")
-            .symlink_metadata()
-            .is_ok_and(|m| m.is_symlink())
+    match work.join(".cache/download").symlink_metadata() {
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
         {
-            remove_temporary(work, Path::new(".cache/download"), false, warnings);
             return Ok(());
         }
-        let cache = download_cache(cfg)?;
-        if work
-            .join(&cache)
-            .symlink_metadata()
-            .is_ok_and(|m| m.is_symlink())
-        {
-            remove_temporary(work, &cache, false, warnings);
-            return Ok(());
+        result => {
+            result?;
         }
-        if let Some(output) = source::Output::read(&work.join(&cache))? {
-            remove_temporary(
-                work,
-                &cache.join("files").join(&output.media),
-                false,
-                warnings,
-            );
-            for (_, stage) in &cfg.stages {
-                if matches!(stage.kind, StageType::Download(_)) {
-                    remove_temporary(
-                        work,
-                        &Path::new(&stage.output).join(&output.media),
-                        false,
-                        warnings,
-                    );
-                }
-            }
-        } else {
-            remove_temporary(work, &cache.join("files"), true, warnings);
-        }
+    }
+    if work
+        .join(".cache/download")
+        .symlink_metadata()
+        .is_ok_and(|m| m.is_symlink())
+    {
+        remove_temporary(work, Path::new(".cache/download"), false, warnings);
+        return Ok(());
+    }
+    let cache = download_cache(cfg)?;
+    if work
+        .join(&cache)
+        .symlink_metadata()
+        .is_ok_and(|m| m.is_symlink())
+    {
+        remove_temporary(work, &cache, false, warnings);
+        return Ok(());
+    }
+    if let Some(output) = source::Output::read(&work.join(&cache))? {
+        remove_temporary(
+            work,
+            &cache.join("files").join(&output.media),
+            false,
+            warnings,
+        );
+    } else {
+        remove_temporary(work, &cache.join("files"), true, warnings);
     }
     Ok(())
 }
@@ -1186,24 +1282,31 @@ mod tests {
     }
     #[cfg(unix)]
     #[test]
-    fn audio_cleanup_covers_old_stage_names_and_unlinks_symlinks() {
+    fn media_cleanup_removes_run_outputs_and_old_audio_without_touching_sources() {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().unwrap();
         let work = root.path().join("work");
         std::fs::create_dir_all(work.join(".cache")).unwrap();
         let source = root.path().join("local.wav");
         std::fs::write(&source, "local media").unwrap();
-        let cfg = crate::options::resolve(
+        let mut cfg = crate::options::resolve(
             source.to_string_lossy().into(),
             &Default::default(),
             &Default::default(),
         )
         .unwrap();
+        for name in ["generated", "linked"] {
+            cfg.stages.push((name.into(), serde_json::from_value(serde_json::json!({"type":"run","output":format!("{name}.wav"),"produces":"media","command":["unused"]})).unwrap()));
+        }
+        std::fs::write(work.join("generated.wav"), "generated media").unwrap();
+        symlink(&source, work.join("linked.wav")).unwrap();
         std::fs::write(work.join(".cache/audio-old-stage.wav"), "audio").unwrap();
         symlink(&source, work.join(".cache/audio-transcript.wav")).unwrap();
         let mut warnings = Vec::new();
         cleanup_media(&cfg, &work, &mut warnings).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!work.join("generated.wav").exists());
+        assert!(work.join("linked.wav").symlink_metadata().is_err());
         assert_eq!(std::fs::read_dir(work.join(".cache")).unwrap().count(), 0);
         assert_eq!(std::fs::read_to_string(&source).unwrap(), "local media");
         std::fs::remove_dir(work.join(".cache")).unwrap();
@@ -1328,6 +1431,7 @@ mod tests {
             providers: Default::default(),
             warnings: Default::default(),
             cache_locks: Default::default(),
+            media_digests: Default::default(),
         };
         let info: source::Output = serde_json::from_value(
             serde_json::json!({"media":"missing.mp4","media_sha256":runtime::digest(b"media")}),
