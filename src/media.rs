@@ -1,9 +1,23 @@
 //! ffmpeg helpers: audio extraction (16 kHz mono PCM WAV) and media probing.
 
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
+
+pub(crate) struct Recording {
+    pub file: PathBuf,
+    pub digest: String,
+}
+impl Recording {
+    pub fn resolve(file: PathBuf, digest: Option<&str>) -> Result<Self> {
+        let digest = match digest {
+            Some(digest) => digest.to_owned(),
+            None => crate::runtime::file_digest(&file)?,
+        };
+        Ok(Self { file, digest })
+    }
+}
 
 /// Time limit for ffprobe, so a broken input cannot hang the run.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -34,12 +48,8 @@ pub(crate) async fn run_cmd(cmd: &mut Command, what: &str) -> Result<std::proces
     Ok(out)
 }
 
-/// Extracts 16 kHz mono 16-bit WAV audio, unless it already exists.
+/// Extracts 16 kHz mono 16-bit WAV audio.
 pub async fn extract_audio(media: &Path, dest: &Path) -> Result<()> {
-    if dest.is_file() {
-        tracing::info!(path = %dest.display(), "audio exists, skip extract");
-        return Ok(());
-    }
     if let Some(p) = dest.parent() {
         tokio::fs::create_dir_all(p).await?;
     }
@@ -174,6 +184,22 @@ pub async fn probe_duration(media: &Path) -> Result<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recording_resolves_new_bytes_and_reuses_a_known_digest_without_the_file() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("recording");
+        std::fs::write(&file, "first media").unwrap();
+        let first = Recording::resolve(file.clone(), None).unwrap();
+        assert_eq!(first.file, file);
+        assert_eq!(first.digest, crate::runtime::digest(b"first media"));
+        std::fs::write(&file, "other media").unwrap();
+        let changed = Recording::resolve(file.clone(), None).unwrap();
+        assert_ne!(first.digest, changed.digest);
+        std::fs::remove_file(&file).unwrap();
+        let cached = Recording::resolve(file, Some(&first.digest)).unwrap();
+        assert_eq!(cached.digest, first.digest);
+    }
+
     #[test]
     fn duration_requires_a_finite_nonnegative_number() {
         for text in ["", "N/A", "NaN", "inf", "-1"] {

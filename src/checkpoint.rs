@@ -3,11 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 
-const TRANSCRIPT_SCHEMA_VERSION: u32 = 4;
+const TRANSCRIPT_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AsrIdentity {
     pub schema_version: u32,
+    pub media_sha256: String,
     pub mode: crate::settings::AsrMode,
     pub endpoint_or_command: String,
     pub model: String,
@@ -19,7 +20,7 @@ pub struct AsrIdentity {
 }
 
 impl AsrIdentity {
-    pub fn new(asr: &crate::settings::Asr) -> Self {
+    pub fn new(asr: &crate::settings::Asr, media_sha256: &str) -> Self {
         let endpoint_or_command = if asr.command.is_empty() {
             let base = asr.base_url.trim();
             url::Url::parse(base)
@@ -32,6 +33,7 @@ impl AsrIdentity {
         };
         Self {
             schema_version: TRANSCRIPT_SCHEMA_VERSION,
+            media_sha256: media_sha256.into(),
             mode: asr.mode,
             endpoint_or_command,
             model: asr.model.clone(),
@@ -105,8 +107,9 @@ mod identity_tests {
             model: "model".into(),
             ..Default::default()
         };
-        let identity = AsrIdentity::new(&asr);
-        assert_eq!(identity.schema_version, 4);
+        let identity = AsrIdentity::new(&asr, "media");
+        assert_eq!(identity.schema_version, 5);
+        assert_ne!(identity, AsrIdentity::new(&asr, "other media"));
         assert_eq!(identity.endpoint_or_command, "https://example.test/v1");
         let changes: &[fn(&mut Asr)] = &[
             |a| a.mode = AsrMode::Chat,
@@ -122,18 +125,18 @@ mod identity_tests {
         for change in changes {
             let mut changed = asr.clone();
             change(&mut changed);
-            assert_ne!(identity, AsrIdentity::new(&changed));
+            assert_ne!(identity, AsrIdentity::new(&changed, "media"));
         }
         let mut changed = asr.clone();
         changed.api_key = "secret".into();
         changed.concurrency = 1;
-        assert_eq!(identity, AsrIdentity::new(&changed));
+        assert_eq!(identity, AsrIdentity::new(&changed, "media"));
         let mut managed = asr.clone();
         managed.command = vec!["adapter".into(), "--model".into(), "some model".into()];
-        let managed_id = AsrIdentity::new(&managed);
+        let managed_id = AsrIdentity::new(&managed, "media");
         managed.base_url = "ignored".into();
-        assert_eq!(managed_id, AsrIdentity::new(&managed));
+        assert_eq!(managed_id, AsrIdentity::new(&managed, "media"));
         managed.command = vec!["adapter --model".into(), "some model".into()];
-        assert_ne!(managed_id, AsrIdentity::new(&managed));
+        assert_ne!(managed_id, AsrIdentity::new(&managed, "media"));
     }
 }
