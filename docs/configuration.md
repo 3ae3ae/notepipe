@@ -74,27 +74,36 @@ these keys:
 
 ### What stages read and write
 
-Each output has a kind, fixed by the stage that writes it, and each stage type reads only some kinds:
+Each output has a kind. Every stage type writes one kind and reads only some kinds, except `run`, which reads and
+writes every kind:
 
 | Kind | Written by | Is |
 |---|---|---|
-| `media` | `download` | a folder with the media, its subtitles and `info.json` |
-| `transcript` | `transcript` | JSON: the language and timed lines, `{"language": "en", "events": [{"start", "end", "text"}, …]}` |
-| `images` | `screenshots` | a folder of `0001.jpg`, `0002.jpg`, … with `images.json`, `[{"t", "image"}, …]` |
-| `document` | `document`, `rewrite` | JSON in the [note.json format](cli.md#output): sections with their screenshot and paragraphs |
-| `markdown` | `markdown`, `write` | Markdown text |
-| `file` | `run` | whatever the program wrote; it can only be published |
+| `media` | `download`, `run` | a recording that ffmpeg can read. A download stage writes a folder with the recording, its subtitles and `info.json`; a `run` stage writes the recording file alone |
+| `transcript` | `transcript`, `run` | JSON: the language and timed lines, `{"language": "en", "events": [{"start", "end", "text"}, …]}` |
+| `images` | `screenshots`, `run` | a folder of `0001.jpg`, `0002.jpg`, … with `images.json`, `[{"t", "image"}, …]` |
+| `document` | `document`, `rewrite`, `run` | JSON in the [note.json format](cli.md#output): sections with their screenshot and paragraphs |
+| `markdown` | `markdown`, `write`, `run` | Markdown text |
+| `file` | `run` | whatever the program wrote; only `run` stages read it |
 
-A `run` stage with `produces` writes a `transcript`, `document` or `markdown` instead. Every stage also knows the
-source's title, author, duration and link, from the download stage.
+A `run` stage writes the kind named in its `produces`, or `file`, and the output is checked like any other output of
+that kind. Media is never published, and media in the work folder is deleted when the run ends.
+
+Times in a transcript and in screenshots are times in the media that stage read. A `run` stage that speeds the
+recording up or cuts parts out moves every time in the note away from the original recording; notepipe does not map
+them back.
+
+Every stage also knows the source's title, author, duration and link, from the download stage. A document's `meta` is a
+copy of them for whoever reads `note.json`; no stage reads it back.
 
 ### `download`
 
 Reads `source` and writes `media`. For a URL it runs the [download program](adapters.md#download-programs) in
 `command`; a local file
 is used where it is, with the subtitles found next to it (`NAME.srt`, `NAME.vtt` and language variants such as
-`NAME.en.srt`). A URL needs this stage with a `command`, and a run has at most one. Downloaded media is deleted once the run ends; a local file never is. The output
-of a download stage cannot be published.
+`NAME.en.srt`). A URL needs this stage with a `command`, and a run has at most one. Downloaded media is deleted once
+the run ends; a local file never is. A download whose file differs from the last one, for example after `command`
+changed, is new media, and the stages that read it make their results again.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -215,15 +224,33 @@ Runs a program of your own, or any command-line tool, as a stage. See
 
 | Key | Default | Meaning |
 |---|---|---|
-| `command` | required | The program and its arguments, as a list. `{input}` and `{output}`, as whole arguments, become the input paths and the output path |
-| `produces` | none | `"transcript"`, `"document"` or `"markdown"`, when another stage reads the output; it is then checked like any other output of that kind |
+| `command` | required | The program and its arguments, as a list. `{input}` and `{output}`, as whole arguments, become the input paths and the output path; media is passed as its recording file |
+| `produces` | `"file"` | The kind of the output: `"media"`, `"transcript"`, `"images"`, `"document"`, `"markdown"` or `"file"`. It is checked like any other output of that kind before other stages read it |
+
+A stage that prepares the recording for speech recognition, here keeping the second audio track and evening out its
+loudness, while the screenshots still come from the original video:
+
+```toml
+[stages.voice]
+type = "run"
+input = "media"
+output = "voice.flac"
+produces = "media"
+command = ["ffmpeg", "-loglevel", "error", "-i", "{input}", "-map", "0:a:1", "-af", "loudnorm", "{output}"]
+
+[stages.transcript]
+type = "transcript"
+input = "voice.flac"
+output = "transcript.json"
+```
 
 ## Publishing and the note folder
 
 When every stage has finished, notepipe writes the note folder, `<out>/<title>/`, with every file a stage publishes.
 A published document, or Markdown made from one, brings along the screenshots it shows, at the same path as in the
 work folder: `images/` with the default names. Markdown brings along the images it refers to by the path the document
-uses. The folder is built under a hidden name and renamed into place, so a reader never sees a half-written note and a
+uses. Markdown that a `run` stage makes from `images` without a document brings none along; publish the images as
+well. The folder is built under a hidden name and renamed into place, so a reader never sees a half-written note and a
 failed run writes nothing.
 
 A note folder is never changed after it is written. notepipe recognises a source's notes by `.notepipe.json` inside,
@@ -244,11 +271,13 @@ stage reads kinds it understands, names are unique, the keys of the providers in
 published. The download stage runs first, since every stage can read the source's details from it; the others then
 start as soon as their inputs are ready, so the transcript and the screenshots are made at the same time.
 
-Every stage writes its output again on every run, from what it has done before: a download, speech segments, and model
-answers are reused as long as the settings that shaped them are unchanged. A local source is recognised by its
-contents, so a moved or renamed file reuses this work. Changing a prompt therefore repeats only that
-stage's requests, and an interrupted transcription resumes where it stopped. `document`, `markdown` and `run` stages
-always run. `--no-resume` starts the source over.
+Every stage writes its output again on every run, from what it has done before. A download is reused while its
+`command` is unchanged. A transcript or screenshots are reused while their settings and the media they read are
+unchanged, and media is recognised by its contents, so a moved or renamed recording, or a `run` stage that makes the
+same recording again, reuses this work. Each speech segment and each model request is kept with its answer and is not
+sent again while what would be sent is the same. Changing a prompt therefore repeats only that stage's requests, and an
+interrupted transcription resumes where it stopped. `document`, `markdown` and `run` stages always run; a `run` stage
+that reads downloaded media downloads it again on every run. `--no-resume` starts the source over.
 
 `--skip NAMES` leaves stages out for one run. A skipped `rewrite` stage passes its input on unchanged, so
 skipping `proofread` publishes `draft.json` as `note.json`. Any other skipped stage writes nothing: a `markdown` stage

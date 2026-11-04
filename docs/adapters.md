@@ -59,7 +59,9 @@ give the provider its `base_url`.
 
 A provider program is the place for anything that is not a plain OpenAI-compatible endpoint: a local engine, a
 different API such as the OpenAI Responses API, a provider with its own authentication, or access through a
-subscription you already have.
+subscription you already have. It is also where each speech segment can be changed on its way, for example sped up so
+that a service billing by the second charges less; the transcript keeps the recording's times, because notepipe cut
+the segments.
 
 ### Contract
 
@@ -257,10 +259,12 @@ output = "media"
 command = ["notepipe-source-ytdlp", "--", "--cookies-from-browser", "firefox"]
 ```
 
-The program runs only for `http(s)` sources; a download stage without `command` takes local files only. For a local file, notepipe writes the stage's `info.json` itself, with
-the file's absolute path and the subtitles found next to it, and never deletes the file. Results are cached per URL
-and command. Downloaded media is deleted once the run ends (after a forced exit, by the next run), so a later run that only changes later stages reuses the
-transcript and screenshots, while one that needs the media again downloads it again.
+The program runs only for `http(s)` sources; a download stage without `command` takes local files only. For a local
+file, notepipe writes the stage's `info.json` itself, with the file's absolute path and the subtitles found next to it,
+and never deletes the file. Results are cached per URL and command, with the SHA-256 of the media file. Downloaded
+media is deleted once the run ends (after a forced exit, by the next run), so a later run that only changes later
+stages reuses the transcript and screenshots, while one that needs the media again downloads it again. A download whose
+file differs from the last one is new media, and the stages that read it make their results again.
 
 ### Contract
 
@@ -295,8 +299,8 @@ marks machine-generated captions. `seek_url`, if present, is a URL template in w
 open the item at a given time. Both URLs go into the document's `meta`; notepipe's own layout adds no links, but your
 prompts and programs can.
 
-notepipe saves the result line as `info.json` in the stage's output, next to the media and subtitles, where later
-stages read it. Write diagnostics to standard error.
+notepipe saves the result line, with the media file's SHA-256 added as `media_sha256`, as `info.json` in the stage's
+output, next to the media and subtitles, where later stages read it. Write diagnostics to standard error.
 Exit with status 0 on success and anything else on failure; notepipe shows the last lines of standard error.
 
 ## Run programs
@@ -317,27 +321,41 @@ input = "note.md"
 output = "note.docx"
 publish = "note.docx"
 command = ["pandoc", "{input}", "-o", "{output}"]
+
+[stages.voice]                       # ffmpeg evens out the loudness before speech recognition
+type = "run"
+input = "media"
+output = "voice.flac"
+produces = "media"
+command = ["ffmpeg", "-loglevel", "error", "-i", "{input}", "-af", "loudnorm", "{output}"]
 ```
 
 ### Contract
 
 - **No shell.** `command` is the program and its arguments, run as written. Only two placeholders exist, and each must
   be a whole argument: `{input}` becomes the absolute paths of the inputs, in order, as separate arguments, and
-  `{output}` the absolute path the program must write. Nothing else is ever substituted, so a downloaded title can
-  never reach the command line.
+  `{output}` the absolute path the program must write. Media is passed as its recording file, which the program must
+  not change: for a local source it is the original recording. Nothing else is ever substituted, so a downloaded title
+  can never reach the command line.
 - **Standard input and output.** Without `{input}`, the stage's one input file arrives on standard input, and a stage
-  with no input gets an empty one; a stage with several inputs, or with a folder as input, must use `{input}`. Without `{output}`, standard output becomes the output
-  file. Write diagnostics to standard error.
+  with no input gets an empty one; a stage with several inputs, or with media or a folder as input, must use
+  `{input}`. Without `{output}`, standard output becomes the output file; images, a folder, need `{output}`. Write
+  diagnostics to standard error.
 - **Where it runs.** In the folder notepipe was started in, so relative paths in `command`, such as `glossary.tsv`, are
   yours. There is no time limit; Ctrl-C stops the program.
 - **Result.** Exit with status 0 on success. A non-zero exit, a missing output, or an output that is not a valid
-  `produces` kind stops the run, and notepipe shows the last lines of standard error. A document must keep its
-  screenshots' paths inside the work folder.
-- **Kinds.** With `produces = "transcript"`, `"document"` or `"markdown"`, other stages can read the output; the formats
-  are in [docs/configuration.md](configuration.md#what-stages-read-and-write). Without it, the output can only be
-  published.
+  `produces` kind stops the run, and notepipe shows the last lines of standard error. Media must be a file that ffprobe
+  can read. Images must be a folder whose `images.json` lists images inside it, in time order. A document must keep
+  its screenshots' paths inside the work folder.
+- **Kinds.** `produces` names the kind of the output, so stages that read that kind can use it; the formats are in
+  [docs/configuration.md](configuration.md#what-stages-read-and-write). Without it, the output is a `file`, which other
+  `run` stages can read and which can be published. Media from a `run` stage has no subtitles and is deleted when the
+  run ends.
 - **Every run.** `run` stages are not cached: they run each time, because notepipe cannot see what the program depends
-  on.
+  on, and one that reads downloaded media downloads it again. What they write is recognised by its contents, so when a
+  rerun writes the same output, the stages after it reuse their work. A recording whose bytes differ but whose audio is
+  the same, as some containers give on every run, is segmented again, but its speech is not sent again; formats such as
+  FLAC or WAV come out the same each time.
 
 A program in Python, using only the standard library, that reads the document on standard input and prints it changed:
 

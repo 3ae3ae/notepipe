@@ -72,7 +72,9 @@ notepipe meets the outside world in a few places, and each has one shape:
   (`type`), what it reads (`input`), what it writes (`output`) and what it publishes (`publish`). The core checks
   that every input is written by an earlier stage, of a kind the stage reads, before any work starts.
 - **Files.** The kinds that pass between stages are a few documented formats: media, transcript, images, document and
-  Markdown. Apart from the source's details, which come from the download stage, stages share nothing else.
+  Markdown. Apart from the source's details, which come from the download stage, stages share nothing else. A `run`
+  stage can write every kind, so a program can take the place of any built-in stage, and what a stage makes depends
+  only on its settings, the files it read and those details.
 - **Providers.** Every connection, whether a cloud API, a server on your network or a program that notepipe starts, is a
   provider, defined once with its address and the variable that holds its key. Stages name the provider they use and
   hold only what they ask of it, such as the model and the prompt. A provider does not know what it is used for.
@@ -96,6 +98,8 @@ live instead:
 | A vendor API that is not OpenAI-compatible | a provider program that translates the request |
 | AI through a different API, or through a subscription | a provider program |
 | Cleaning up one model's output quirks | that model's provider program |
+| Preparing the recording: a track or channel, noise, loudness | a `run` stage that produces media, or the download program's arguments for online media |
+| Changing each speech segment on its way, such as speeding it up to pay for fewer seconds | a provider program, which keeps the recording's times |
 | A different summary, a translation, a glossary, study questions | a `rewrite` or `write` stage's prompt in the configuration |
 | A different note layout | a `write` or `run` stage that writes the Markdown |
 | Processing that needs no language model, such as fixed replacements | a `run` stage |
@@ -108,10 +112,12 @@ live instead:
 - **Notes are never modified.** A note folder is built completely before it appears, and is never changed afterwards. A
   rerun with unchanged results leaves it as it is, with your edits; a changed result goes into a new folder next to it.
   A run that fails or is cancelled writes nothing.
-- **Finished work is reused.** Downloads, screenshots, speech transcripts and successful AI responses are cached per
-  source and keyed by the inputs that affect them, so changing a `rewrite` or `write` prompt does not repeat speech
-  recognition, and a rerun with nothing changed repeats no paid or slow work and leaves the note as it is. Failed
-  responses are never cached. `run` stages, whose dependencies notepipe cannot see, run every time.
+- **Finished work is reused.** Downloads, screenshots, transcripts and successful answers from providers are cached per
+  source and keyed by the settings and the input they were made from: media by its contents, and each speech segment
+  or model request by what is sent. Changing a `rewrite` or `write` prompt does not repeat speech recognition, an
+  interrupted run does not repeat finished requests, and a rerun with nothing changed repeats no paid or slow work and
+  leaves the note as it is. Failed responses are never cached. `run` stages, whose dependencies notepipe cannot see,
+  run every time, and what they write is recognised by its contents.
 - **Cancellation is clean.** Ctrl-C (and SIGTERM on Unix) stops the run and every program it started. A descendant
   that starts a session of its own is not stopped.
 - **Data goes only where the configuration sends it.** notepipe contacts the providers and runs the programs that the
