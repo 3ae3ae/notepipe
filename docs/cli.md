@@ -62,7 +62,7 @@ print leaves the new note in place. It cannot be combined with `--json`.
 
 On the first signal notepipe stops its stages and the process groups of the programs it started (a descendant that
 starts its own session is outside them), abandons requests in flight (their answers
-are never cached), removes downloaded media and extracted audio, and exits. A second signal exits immediately after
+are never cached), removes the media in the work folder, and exits. A second signal exits immediately after
 killing those programs, and the next run does the cleanup.
 
 ## Output
@@ -107,9 +107,11 @@ stage adds are kept, except names the document uses itself (`schema`, `meta`, `s
 Each source has a work folder under `work/` in notepipe's cache folder: `$XDG_CACHE_HOME/notepipe` when that variable
 is set, otherwise `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and
 `~/.cache/notepipe` elsewhere. It holds every
-stage's output under its `output` name, and in `.cache/` what lets a later run reuse work: the download, speech
-segments, screenshots and model answers. `-v` prints the folder, and the `done` event gives it as `work_dir`.
+stage's output under its `output` name, and in `.cache/` what lets a later run reuse work: the download with its
+media's SHA-256, transcripts, screenshots, and in `.cache/responses/` the answers to speech and model requests. `-v`
+prints the folder, and the `done` event gives it as `work_dir`.
 
-Downloaded media and extracted audio are deleted once the run ends (after a forced exit, by the next run); a later run that needs them again, because
-screenshot or speech settings changed, downloads the media again, and one that changes only later stages does not.
+Media in the work folder, downloaded, written by a `run` stage or extracted for speech recognition, is deleted once the
+run ends (after a forced exit, by the next run); a later run that needs downloaded media again, because screenshot or
+speech settings changed, downloads it again, and one that changes only later stages does not.
 Work folders can be deleted whenever notepipe is not running; `--no-resume` clears one source's folder.

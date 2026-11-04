@@ -302,7 +302,7 @@ downstream stages can read:
 | `rewrite` | `document` | `document` | Sends the paragraphs to `provider` with `prompt` in batches, as plain text between marker lines, and replaces each with its answer (keeping the original text in `raw`). |
 | `write` | `document`, `transcript` or `markdown` | `markdown` | Sends the input to `provider` with `prompt` and writes one Markdown answer (in parts, then combined, for long recordings). |
 | `markdown` | one or more `document` / `markdown` files | `markdown` (`.md`) | Joins its inputs in order, rendering documents as `![](<images/0001.jpg>)` followed by their paragraphs, without adding front matter or headings. |
-| `run` | any stage outputs | `file` (or `produces` kind) | Runs an external command without a shell. Setting `produces = "transcript" \| "document" \| "markdown"` validates the output so later stages can read it. |
+| `run` | any stage outputs | `file` (or `produces` kind) | Runs an external command without a shell. `produces` names any kind (`media`, `transcript`, `images`, `document`, `markdown`) and validates the output so later stages can read it, so a program can stand in for any built-in stage. |
 
 Every setting and CLI override is documented in
 [docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md).
@@ -508,12 +508,13 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   - **Notes are never modified.** A note is assembled under a hidden name and renamed into `<out>/<title>/`, so a
     failed or cancelled run writes nothing. A rerun with unchanged results leaves the note as it is, edits included; a
     changed result, or another recording with the same title, goes into a new folder with a `-2`, `-3`, … suffix.
-  - **Content-addressed caching and resume.** Downloads, screenshots, speech segments and validated LLM responses are
-    cached in the source's work folder by the inputs that affect them. Editing the summary prompt sends only the summary's requests again;
-    an interrupted transcription resumes from the first unfinished segment (`--no-resume` starts fresh).
+  - **Content-addressed caching and resume.** In the source's work folder, downloads are cached by URL and command,
+    transcripts and screenshots by their settings and the contents of the media they read, and each speech segment and
+    validated LLM response by what was sent. Editing the summary prompt sends only the summary's requests again; an interrupted
+    transcription sends only the segments not yet answered (`--no-resume` starts fresh).
   - **Clean cancellation.** `Ctrl-C` (or `SIGTERM` on Unix) exits with code `130`, terminates the process group of every
-    program `notepipe` started (a descendant that starts its own session is outside it), and removes temporary
-    downloaded media and extracted audio.
+    program `notepipe` started (a descendant that starts its own session is outside it), and removes the media in the
+    work folder.
 
 See [docs/cli.md](https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md) for the complete CLI integration contract and
 [docs/design.md](https://github.com/3ae3ae/notepipe/blob/main/docs/design.md) for architecture and design principles.

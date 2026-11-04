@@ -6,6 +6,36 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+Caches from earlier versions are not reused: the first rerun of a source repeats its speech recognition, screenshots
+and model requests. Notes already written are not affected.
+
+### Added
+
+- A `run` stage can produce every kind, `media`, `images` and `file` as well as `transcript`, `document` and
+  `markdown`, and can read `file` outputs, so a program can take the place of any built-in stage. For example, ffmpeg
+  can pick a track or even out the loudness for speech recognition while the screenshots still come from the original
+  video. A run stage's media must be a file that ffprobe reads; images must be a folder whose `images.json` lists
+  images inside it in time order.
+
+### Changed
+
+- A media input reaches a `run` program as the recording file itself, not as the download stage's folder.
+- Each speech segment is cached like a model request, by the provider, the speech settings and the segment's audio,
+  so an interrupted transcription sends only the segments not yet answered. The start/end checkpoint is gone, and the
+  answers live in `.cache/responses/` (formerly `.cache/llm/`).
+- Transcripts and screenshots are reused only for the same media, recognised by the SHA-256 of its file. A download
+  keeps it as `media_sha256` in `info.json`.
+- Media is handled by kind: every media file in the work folder, downloaded, written by a `run` stage or extracted for
+  speech recognition, is deleted when the run ends, and no media output can be published.
+- A `run` stage whose output fails its kind's check names the stage: `Stage NAME: the program wrote …`.
+
+### Fixed
+
+- Changing a download's `command` so that it delivers different media no longer reuses the old media's transcript and
+  screenshots.
+- A transcription resumed after its media changed no longer mixes in lines from the old media.
+- Audio extracted by an interrupted run is no longer reused for different media.
+
 ## [0.5.0] - 2026-11-03
 
 Configurations, caches and note folders from earlier versions do not carry over: rewrite the configuration
