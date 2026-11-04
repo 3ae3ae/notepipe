@@ -2351,6 +2351,98 @@ fn source_adapter_command(record: &Path, behavior: &str) -> Value {
 }
 
 #[test]
+fn changed_download_bytes_invalidate_media_caches_and_prompt_only_changes_reuse_them() {
+    let root = tempfile::tempdir().unwrap();
+    let download = root.path().join("download");
+    let asr = root.path().join("asr");
+    let mut cfg = speech_config(&asr, "healthy");
+    let speech = cfg["providers"]["speech"].clone();
+    let provider = mock();
+    with_llm(&mut cfg, &provider.url);
+    cfg["providers"]["speech"] = speech;
+    cfg["stages"]["download"]["command"] = source_adapter_command(&download, "speech");
+    let source = Path::new("https://example.test/changing-media");
+    let first = done(&run(root.path(), source, &cfg, &[]));
+    let work = Path::new(first["work_dir"].as_str().unwrap());
+    let info = || -> Value {
+        serde_json::from_slice(&std::fs::read(work.join("media/info.json")).unwrap()).unwrap()
+    };
+    let digest = info()["media_sha256"].clone();
+    let image = std::fs::read(work.join("images/0001.jpg")).unwrap();
+    let calls = count(&asr);
+    assert!(calls > 0);
+    cfg["stages"]["download"]["command"] = source_adapter_command(&download, "speech-other");
+    let output = run(root.path(), source, &cfg, &[]);
+    let changed = done(&output);
+    assert_eq!(changed["work_dir"], first["work_dir"]);
+    assert_ne!(info()["media_sha256"], digest);
+    assert_ne!(std::fs::read(work.join("images/0001.jpg")).unwrap(), image);
+    assert!(count(&asr) > calls);
+    for stage in ["transcript/audio", "screenshots/extract"] {
+        assert!(events(&output).iter().any(|event| event["type"] == "stage"
+            && event["stage"] == stage
+            && event["status"] == "start"));
+    }
+    for prefix in ["transcript-", "frames-"] {
+        assert_eq!(
+            std::fs::read_dir(work.join(".cache"))
+                .unwrap()
+                .filter(|entry| entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(prefix))
+                .count(),
+            2
+        );
+    }
+    let cached: Value = serde_json::from_slice(
+        &std::fs::read(download_cache(work, &cfg).join("complete.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cached["media_sha256"], info()["media_sha256"]);
+    assert!(!download_cache(work, &cfg).join("files/media.mp4").exists());
+    cfg["stages"]["summary"]["prompt"] = json!("A different summary prompt.");
+    let calls = count(&asr);
+    let rerun = run(root.path(), source, &cfg, &[]);
+    done(&rerun);
+    assert_eq!(count(&download), 2);
+    assert_eq!(count(&asr), calls);
+    assert!(!events(&rerun).iter().any(|event| matches!(
+        event["stage"].as_str(),
+        Some("transcript/audio" | "screenshots/extract")
+    )));
+}
+
+#[test]
+fn stale_extracted_audio_is_replaced_before_resuming_speech() {
+    let root = tempfile::tempdir().unwrap();
+    let source = video(root.path());
+    let record = root.path().join("asr");
+    let cfg = speech_config(&record, "healthy");
+    let first = done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    let work = Path::new(first["work_dir"].as_str().unwrap());
+    for entry in std::fs::read_dir(work.join(".cache")).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("transcript-")
+        {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    let stale = work.join(".cache/audio-transcript.wav");
+    std::fs::copy(silence(root.path()), &stale).unwrap();
+    let calls = count(&record);
+    done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(count(&record), calls);
+    assert!(!stale.exists());
+}
+
+#[test]
 fn remote_reruns_download_only_when_active_stages_need_media() {
     for (cache, skip) in [
         ("frames-", ""),

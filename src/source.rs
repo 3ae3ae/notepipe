@@ -29,6 +29,7 @@ pub struct MediaMeta {
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Output {
     pub(crate) media: String,
+    media_sha256: Option<String>,
     #[serde(default)]
     title: String,
     #[serde(default)]
@@ -70,6 +71,11 @@ impl Output {
         }
         let output: Self = serde_json::from_slice(&std::fs::read(path)?)
             .context("Invalid download adapter cache")?;
+        if !output.media_sha256.as_deref().is_some_and(|digest| {
+            digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) {
+            return Ok(None);
+        }
         ensure!(
             !output.media.is_empty()
                 && Path::new(&output.media)
@@ -152,11 +158,25 @@ impl Output {
         serde_json::from_slice(&std::fs::read(root.join("info.json"))?)
             .context("Invalid media info")
     }
-    pub(crate) fn file(&self, root: &Path, source: &str) -> Result<PathBuf> {
-        if Path::new(source).is_file() && self.media == source {
-            return Ok(PathBuf::from(source));
-        }
-        output_path(root, &self.media)
+    pub(crate) fn recording(&self, root: &Path, source: &str) -> Result<crate::media::Recording> {
+        let file = if Path::new(source).is_file() && self.media == source {
+            PathBuf::from(source)
+        } else {
+            // Completed caches outlive the temporary recording.
+            match crate::artifact::safe_asset_path(root, &self.media).context(
+                "Invalid download adapter path; paths must stay inside its output directory",
+            ) {
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    root.join(&self.media)
+                }
+                result => result?,
+            }
+        };
+        crate::media::Recording::resolve(file, self.media_sha256.as_deref())
     }
     pub(crate) fn subtitle_tracks(
         &self,
@@ -226,9 +246,7 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path, stage: &str) -> R
     let _lock = runtime::lock_file(&cache.join(".lock"))?;
     let directory = cache.join("files");
     let marker = cache.join("complete.json");
-    if marker.is_file() {
-        let output: Output = serde_json::from_slice(&std::fs::read(&marker)?)
-            .context("Invalid download adapter cache")?;
+    if let Some(output) = Output::read(cache)? {
         match output.resolve(&directory, url) {
             Ok(resolved) => return Ok(resolved),
             Err(error)
@@ -322,9 +340,11 @@ pub async fn resolve(url: &str, source: &Source, cache: &Path, stage: &str) -> R
     let result = result
         .and_then(|status| {
             ensure!(status.success(), "Download adapter failed ({status})");
-            let output = last.context("Download adapter returned no result")?;
+            let mut output = last.context("Download adapter returned no result")?;
             let resolved =
                 serde_json::from_value::<Output>(output.clone())?.resolve(&directory, url)?;
+            let recording = crate::media::Recording::resolve(resolved.media.clone(), None)?;
+            output["media_sha256"] = recording.digest.into();
             runtime::check_cancelled()?;
             crate::checkpoint::atomic_write(&marker, &serde_json::to_vec(&output)?)?;
             Ok(resolved)
@@ -384,6 +404,12 @@ mod tests {
             output.media = path.into();
             assert!(
                 output
+                    .recording(root.path(), "https://example.test/media")
+                    .is_err(),
+                "{path}"
+            );
+            assert!(
+                output
                     .resolve(root.path(), "https://example.test/media")
                     .is_err(),
                 "{path}"
@@ -405,6 +431,12 @@ mod tests {
             let outside = tempfile::NamedTempFile::new().unwrap();
             std::os::unix::fs::symlink(outside.path(), root.path().join("escaped.wav")).unwrap();
             assert!(output_path(root.path(), "escaped.wav").is_err());
+            output.media = "escaped.wav".into();
+            assert!(
+                output
+                    .recording(root.path(), "https://example.test/media")
+                    .is_err()
+            );
         }
     }
 
@@ -445,6 +477,17 @@ mod tests {
             let again = resolve("https://example.test/media", &source, &cache, "download")
                 .await
                 .unwrap();
+            let marker = cache.join("complete.json");
+            let mut saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+            assert_eq!(saved["media_sha256"], runtime::digest(b"cached media"));
+            saved.as_object_mut().unwrap().remove("media_sha256");
+            std::fs::write(&marker, serde_json::to_vec(&saved).unwrap()).unwrap();
+            assert!(Output::read(&cache).unwrap().is_none());
+            let refreshed = resolve("https://example.test/media", &source, &cache, "download")
+                .await
+                .unwrap();
+            assert_eq!(first.media, refreshed.media);
             assert_eq!(first.media, again.media);
             assert!(again.media.is_file());
             assert_eq!(
@@ -452,7 +495,7 @@ mod tests {
                     .unwrap()
                     .lines()
                     .count(),
-                2
+                3
             );
         })
         .unwrap();

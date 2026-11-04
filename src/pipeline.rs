@@ -26,15 +26,15 @@ fn source_key(source: &str) -> Result<String> {
         Ok(source.into())
     }
 }
-fn screenshot_key(cfg: &PipelineConfig) -> Result<String> {
+fn screenshot_key(cfg: &PipelineConfig, media_sha256: &str) -> Result<String> {
     // The version changes when screenshots are taken differently.
     Ok(runtime::digest(&serde_json::to_vec(
-        &serde_json::json!({"version":2,"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi}),
+        &serde_json::json!({"version":3,"media_sha256":media_sha256,"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi}),
     )?))
 }
-fn transcript_key(asr: &settings::Asr) -> Result<String> {
+fn transcript_key(asr: &settings::Asr, media_sha256: &str) -> Result<String> {
     Ok(runtime::digest(&serde_json::to_vec(
-        &checkpoint::AsrIdentity::new(asr),
+        &checkpoint::AsrIdentity::new(asr, media_sha256),
     )?))
 }
 fn read_frames(root: &Path) -> Result<Option<scene::Output>> {
@@ -460,7 +460,7 @@ impl Run {
             Document::read(&target, &self.work)?;
         } else {
             match &stage.kind {
-                StageType::Download(_) => self.download(name, &target).await?,
+                StageType::Download(_) => self.download(name, &stage.output, &target).await?,
                 StageType::Transcript(t) => {
                     self.transcript(name, stage, t, &inputs[0], &target).await?
                 }
@@ -686,15 +686,20 @@ impl Run {
             .next()
             .map(|track| (track.path, track.language.unwrap_or_default())))
     }
-    fn media_needed(&self, info: &source::Output, files: &Path) -> Result<bool> {
+    fn media_needed(&self, output: &str, info: &source::Output, files: &Path) -> Result<bool> {
+        let recording = info.recording(files, &self.cfg.url)?;
         for (stage_name, stage) in &self.cfg.stages {
-            if self.cfg.skip.contains(stage_name) {
+            if self.cfg.skip.contains(stage_name)
+                || !stage.input.iter().any(|input| input == output)
+            {
                 continue;
             }
             let cfg = crate::options::stage_config(&self.cfg, stage_name, stage)?;
             match &stage.kind {
                 StageType::Screenshots(_) => {
-                    if read_frames(&self.frames_cache(&screenshot_key(&cfg)?))?.is_none() {
+                    if read_frames(&self.frames_cache(&screenshot_key(&cfg, &recording.digest)?))?
+                        .is_none()
+                    {
                         return Ok(true);
                     }
                 }
@@ -708,13 +713,13 @@ impl Run {
                     if !(subtitles_first && selected.is_some())
                         && t.sources.iter().any(|s| s == "speech")
                     {
-                        let key = transcript_key(&cfg.asr)?;
+                        let key = transcript_key(&cfg.asr, &recording.digest)?;
                         if Transcript::read(&self.transcript_cache(&key)).is_err() {
                             return Ok(true);
                         }
                     }
                 }
-                StageType::Run(_) if stage.input.iter().any(|p| self.kind(p) == Kind::Media) => {
+                StageType::Run(_) => {
                     return Ok(true);
                 }
                 _ => {}
@@ -722,7 +727,7 @@ impl Run {
         }
         Ok(false)
     }
-    async fn download(&self, name: &str, target: &Path) -> Result<()> {
+    async fn download(&self, name: &str, output: &str, target: &Path) -> Result<()> {
         std::fs::create_dir(target)?;
         if Path::new(&self.cfg.url).is_file() {
             let path = Path::new(&self.cfg.url).canonicalize()?;
@@ -742,7 +747,7 @@ impl Run {
             };
             return write_json(
                 &target.join("info.json"),
-                &serde_json::json!({"media":path,"title":path.file_stem().unwrap_or_default().to_string_lossy(),"duration":duration,"subtitles":tracks}),
+                &serde_json::json!({"media":path,"media_sha256":self.identity.strip_prefix("sha256:"),"title":path.file_stem().unwrap_or_default().to_string_lossy(),"duration":duration,"subtitles":tracks}),
             );
         }
         let cache = self.work.join(download_cache(&self.cfg)?);
@@ -761,7 +766,7 @@ impl Run {
                     result?;
                 }
             }
-            need_media = need_media || self.media_needed(info, &cache.join("files"))?;
+            need_media = need_media || self.media_needed(output, info, &cache.join("files"))?;
         }
         if need_media {
             let resolved = source::resolve(&self.cfg.url, &self.cfg.source, &cache, name).await?;
@@ -832,7 +837,8 @@ impl Run {
                     },
                 );
             }
-            let key = transcript_key(&cfg.asr)?;
+            let recording = info.recording(input, &self.cfg.url)?;
+            let key = transcript_key(&cfg.asr, &recording.digest)?;
             let language = cfg.asr.language.clone();
             let lock = self.cache_lock(&format!("transcript-{key}"));
             let _lock = lock.lock().await;
@@ -848,7 +854,7 @@ impl Run {
             crate::error::require_cmd("ffmpeg")?;
             crate::error::require_cmd("ffprobe")?;
             progress::stage_label(&format!("{name}/audio"), "start", "Extracting audio");
-            media::extract_audio(&info.file(input, &self.cfg.url)?, &audio).await?;
+            media::extract_audio(&recording.file, &audio).await?;
             progress::stage_label(&format!("{name}/audio"), "done", "Extracting audio");
             let provider = &self.providers[&t.speech.provider];
             cfg.asr.provider = provider.process.clone();
@@ -882,8 +888,10 @@ impl Run {
         target: &Path,
     ) -> Result<()> {
         let mut cfg = crate::options::stage_config(&self.cfg, name, stage)?;
-        let cache = self.frames_cache(&screenshot_key(&cfg)?);
-        let lock = self.cache_lock(&format!("frames-{}", screenshot_key(&cfg)?));
+        let recording = source::Output::info(input)?.recording(input, &self.cfg.url)?;
+        let key = screenshot_key(&cfg, &recording.digest)?;
+        let cache = self.frames_cache(&key);
+        let lock = self.cache_lock(&format!("frames-{key}"));
         let _lock = lock.lock().await;
         cfg.out_dir = cache.clone();
         let frames = match read_frames(&cache)? {
@@ -891,8 +899,7 @@ impl Run {
             None => {
                 crate::error::require_cmd("ffmpeg")?;
                 crate::error::require_cmd("ffprobe")?;
-                let info = source::Output::info(input)?;
-                match scene::run(&cfg, &info.file(input, &self.cfg.url)?).await {
+                match scene::run(&cfg, &recording.file).await {
                     Ok(output) => {
                         checkpoint::atomic_write(
                             &cache.join("complete.json"),
@@ -1283,16 +1290,56 @@ mod tests {
             .unwrap()
             .1;
         let mut cfg = crate::options::stage_config(&cfg, "screenshots", stage).unwrap();
-        let key = screenshot_key(&cfg).unwrap();
+        let key = screenshot_key(&cfg, "media").unwrap();
+        assert_ne!(key, screenshot_key(&cfg, "different media").unwrap());
+        assert_ne!(
+            transcript_key(&cfg.asr, "media").unwrap(),
+            transcript_key(&cfg.asr, "different media").unwrap()
+        );
         let old_key = runtime::digest(
             &serde_json::to_vec(&serde_json::json!({"similarity":cfg.similarity,"sample_interval":cfg.sample_interval,"cooldown":cfg.cooldown,"slide_mode":cfg.screenshot_mode,"stable_secs":cfg.stable_secs,"roi":cfg.roi})).unwrap(),
         );
         assert_ne!(key, old_key);
         cfg.asr.model = "changed".into();
-        assert_eq!(key, screenshot_key(&cfg).unwrap());
+        assert_eq!(key, screenshot_key(&cfg, "media").unwrap());
         cfg.similarity = 0.5;
-        assert_ne!(key, screenshot_key(&cfg).unwrap());
+        assert_ne!(key, screenshot_key(&cfg, "media").unwrap());
     }
+    #[test]
+    fn media_needed_checks_only_consumers_of_this_download_output() {
+        let root = tempfile::tempdir().unwrap();
+        let mut file = settings::ConfigFile::default();
+        file.stages.get_mut("download").unwrap().kind = StageType::Download(settings::Source {
+            command: Some(vec!["unused".into()]),
+        });
+        let mut cfg = crate::options::resolve(
+            "https://example.test/media".into(),
+            &Default::default(),
+            &file,
+        )
+        .unwrap();
+        cfg.stages.retain(|(name, _)| name == "screenshots");
+        cfg.stages[0].1.input = vec!["other-media".into()];
+        let mut run = Run {
+            cfg,
+            work: root.path().to_owned(),
+            identity: String::new(),
+            title: None,
+            providers: Default::default(),
+            warnings: Default::default(),
+            cache_locks: Default::default(),
+        };
+        let info: source::Output = serde_json::from_value(
+            serde_json::json!({"media":"missing.mp4","media_sha256":runtime::digest(b"media")}),
+        )
+        .unwrap();
+        assert!(!run.media_needed("media", &info, root.path()).unwrap());
+        assert!(run.media_needed("other-media", &info, root.path()).unwrap());
+        run.cfg.stages[0].1 = serde_json::from_value(serde_json::json!({"type":"run","input":"other-media","output":"unused","command":["unused","{input}"]})).unwrap();
+        assert!(!run.media_needed("media", &info, root.path()).unwrap());
+        assert!(run.media_needed("other-media", &info, root.path()).unwrap());
+    }
+
     #[test]
     fn empty_transcripts_and_missing_screenshots_are_cache_misses() {
         let root = tempfile::tempdir().unwrap();

@@ -48,9 +48,12 @@ if args.behavior == 'speech-audio':
 elif args.behavior in {'files', 'orphan', 'fragmented', 'instant', 'escaped', 'escaped-hang'}:
     media.write_bytes(b'cached media')
 else:
-    command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=64x32:d=3']
-    if args.behavior == 'speech':
+    color = 'red' if args.behavior == 'speech-other' else 'blue'
+    command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', f'color=c={color}:s=64x32:d=3']
+    if args.behavior in {'speech', 'speech-other'}:
         command += ['-i', str(Path(__file__).with_name('speech.wav')), '-shortest']
+        if args.behavior == 'speech-other':
+            command += ['-af', 'volume=0.5']
     subprocess.run(command + ['-c:v', 'mpeg4', str(media)], check=True)
 tracks = []
 captions = [] if args.behavior == 'no-subtitles' else [('fr', False, 'French captions.'), ('en', True, 'Automatic captions.'), ('en', False, 'Welcome to the source adapter.')]
