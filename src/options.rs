@@ -278,6 +278,7 @@ pub fn stage_config(
                 mode: speech.api,
                 model: speech.model.clone(),
                 prompt: speech.prompt.clone().unwrap_or_default(),
+                request: speech.request.clone(),
                 language: if t.language == "auto" {
                     String::new()
                 } else {

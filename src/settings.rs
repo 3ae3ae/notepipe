@@ -34,6 +34,7 @@ pub struct Asr {
     pub api_key: String,
     pub model: String,
     pub prompt: String,
+    pub request: serde_json::Map<String, serde_json::Value>,
     pub language: String,
     pub concurrency: usize,
     pub command: Vec<String>,
@@ -51,6 +52,7 @@ impl Default for Asr {
             api_key: String::new(),
             model: String::new(),
             prompt: String::new(),
+            request: Default::default(),
             language: String::new(),
             concurrency: 4,
             command: Vec::new(),
@@ -164,6 +166,8 @@ pub struct Speech {
     pub model: String,
     #[serde(deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
+    pub request: serde_json::Map<String, serde_json::Value>,
     pub threshold: f32,
     pub min_silence: f32,
     pub max_segment: f32,
@@ -175,6 +179,7 @@ impl Default for Speech {
             api: AsrMode::default(),
             model: String::new(),
             prompt: None,
+            request: Default::default(),
             threshold: 0.5,
             min_silence: 0.4,
             max_segment: crate::config::DEFAULT_MAX_SPEECH,
@@ -527,6 +532,13 @@ impl ConfigFile {
                         t.speech.api == AsrMode::Chat || t.speech.prompt.is_none(),
                         "Stage {name}: a speech prompt applies only to api = \"chat\""
                     );
+                    anyhow::ensure!(
+                        t.speech.api == AsrMode::Chat || t.speech.request.is_empty(),
+                        "Stage {name}: a speech request applies only to api = \"chat\""
+                    );
+                    if t.speech.api == AsrMode::Chat {
+                        crate::llm::validate_request(&t.speech.request)?;
+                    }
                     anyhow::ensure!(
                         !t.sources.is_empty()
                             && t.sources
@@ -1028,6 +1040,29 @@ mod tests {
             cfg["stages"]["transcript"]["speech"]["prompt"] = prompt;
             assert!(parse(&cfg.to_string()).is_err());
         }
+    }
+    #[test]
+    fn speech_request_applies_only_to_chat_and_cannot_override_messages() {
+        assert!(
+            serde_json::to_value(Speech::default())
+                .unwrap()
+                .get("request")
+                .is_none()
+        );
+        let mut cfg = config();
+        cfg["stages"]["transcript"]["speech"]["request"] = json!({"temperature": 0});
+        assert_eq!(
+            resolve(&cfg, &[]).unwrap_err().to_string(),
+            "Stage transcript: a speech request applies only to api = \"chat\""
+        );
+        cfg["stages"]["transcript"]["speech"]["api"] = json!("chat");
+        cfg["stages"]["transcript"]["speech"]["prompt"] = json!("Transcribe verbatim.");
+        resolve(&cfg, &[]).unwrap();
+        cfg["stages"]["transcript"]["speech"]["request"] = json!({"messages": []});
+        assert_eq!(
+            resolve(&cfg, &[]).unwrap_err().to_string(),
+            "request cannot override model, messages, stream or response_format"
+        );
     }
     #[test]
     fn cli_stdout_conflict_and_matching_stage_overrides_are_checked() {

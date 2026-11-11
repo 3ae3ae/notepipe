@@ -99,6 +99,7 @@ fn run_api(
                 key: &api_key,
                 mode: api.mode,
                 prompt: &api.prompt,
+                request: &api.request,
                 language: &api.language,
                 stage,
                 check_control: &check_control,
@@ -208,7 +209,7 @@ fn post_cloud(
 ) -> Result<serde_json::Value> {
     // Each API sends one of the two: chat the prompt, transcriptions the language.
     let chat = t.mode == crate::settings::AsrMode::Chat;
-    let fields = serde_json::json!({
+    let mut fields = serde_json::json!({
         "version": 1,
         "api": t.mode,
         "model": t.model,
@@ -216,6 +217,9 @@ fn post_cloud(
         "language": if chat { "" } else { t.language },
         "audio_sha256": crate::runtime::digest(audio),
     });
+    if !t.request.is_empty() {
+        fields["request"] = t.request.clone().into();
+    }
     Ok(crate::dispatch::request(item, t.check_control, || {
         crate::dispatch::cached_json_request(
             t.identity,
@@ -258,6 +262,7 @@ struct ApiTarget<'a> {
     key: &'a str,
     mode: crate::settings::AsrMode,
     prompt: &'a str,
+    request: &'a serde_json::Map<String, serde_json::Value>,
     language: &'a str,
     stage: &'a str,
     check_control: &'a (dyn Fn() -> Result<()> + Sync),
@@ -298,14 +303,13 @@ fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>
     use crate::settings::AsrMode;
     use base64::Engine as _;
     if t.mode == AsrMode::Chat {
-        let mut body = serde_json::json!({
-            "messages": [{"role":"user", "content":[
+        let mut body = t.request.clone();
+        body.insert("messages".into(), serde_json::json!([{"role":"user", "content":[
                 {"type":"text", "text":t.prompt},
                 {"type":"input_audio", "input_audio":{"data":base64::engine::general_purpose::STANDARD.encode(audio), "format":"wav"}}
-            ]}]
-        });
+            ]}]));
         if !t.model.is_empty() {
-            body["model"] = t.model.into();
+            body.insert("model".into(), t.model.into());
         }
         return Ok(("application/json".into(), serde_json::to_vec(&body)?));
     }
@@ -371,6 +375,7 @@ mod tests {
             key: "",
             mode: crate::settings::AsrMode::Transcriptions,
             prompt: "",
+            request: &Default::default(),
             language: "",
             stage: "transcript",
             check_control: &crate::runtime::check_cancelled,
@@ -405,6 +410,7 @@ mod tests {
             key: "",
             mode: crate::settings::AsrMode::Transcriptions,
             prompt: "",
+            request: &Default::default(),
             language: "",
             stage: "transcript",
             check_control: &crate::runtime::check_cancelled,
@@ -572,6 +578,7 @@ mod http_tests {
                 key: "",
                 mode: AsrMode::Chat,
                 prompt: "Transcribe verbatim.",
+                request: &Default::default(),
                 language: "",
                 stage: "transcript",
                 check_control: &crate::runtime::check_cancelled,
@@ -614,6 +621,7 @@ mod http_tests {
             key: "",
             mode: AsrMode::Transcriptions,
             prompt: "",
+            request: &Default::default(),
             language: "",
             stage: "transcript",
             check_control: &check,
@@ -763,6 +771,10 @@ mod http_tests {
                     ..Default::default()
                 };
                 let url = crate::config::asr_endpoint(&api).unwrap();
+                let mut request = serde_json::Map::new();
+                if with_options {
+                    request.insert("temperature".into(), 0.into());
+                }
                 let target = ApiTarget {
                     identity: "test-provider",
                     client: &crate::dispatch::http_agent(),
@@ -771,6 +783,7 @@ mod http_tests {
                     key: if with_options { "test-key" } else { "" },
                     mode,
                     prompt: "  User transcription rules.\nKeep every word.  ",
+                    request: &request,
                     language: if with_options { "ko" } else { "" },
                     stage: "transcript",
                     check_control: &crate::runtime::check_cancelled,
@@ -822,7 +835,11 @@ mod http_tests {
                 if mode == AsrMode::Chat {
                     let json: serde_json::Value = serde_json::from_slice(body).unwrap();
                     assert_eq!(json.get("model").is_some(), with_options);
-                    assert!(json.get("temperature").is_none());
+                    if with_options {
+                        assert_eq!(json["temperature"], 0);
+                    } else {
+                        assert!(json.get("temperature").is_none());
+                    }
                     assert_eq!(json["messages"][0]["content"][0]["text"], target.prompt);
                     assert_eq!(
                         json["messages"][0]["content"][1]["input_audio"]["format"],

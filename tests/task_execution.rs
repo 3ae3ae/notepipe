@@ -3184,6 +3184,12 @@ fn chat_speech_prompt_changes_transcribe_again() {
         request()["messages"][0]["content"][0]["text"],
         "Keep every word."
     );
+    cfg["stages"]["transcript"]["speech"]["request"] = json!({"temperature": 0});
+    done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(count(&record), chunks * 3);
+    assert_eq!(request()["temperature"], 0);
+    done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
+    assert_eq!(count(&record), chunks * 3);
 }
 
 #[test]
