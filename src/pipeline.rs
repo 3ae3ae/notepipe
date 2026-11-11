@@ -16,8 +16,6 @@ use std::{
     sync::Arc,
 };
 
-pub const NO_SCREENSHOTS: &str = "No screenshots retrieved";
-
 fn source_key(source: &str) -> Result<String> {
     let path = Path::new(source);
     if path.is_file() {
@@ -965,27 +963,19 @@ impl Run {
             None => {
                 crate::error::require_cmd("ffmpeg")?;
                 crate::error::require_cmd("ffprobe")?;
-                match scene::run(&cfg, &recording.file).await {
-                    Ok(output) => {
-                        checkpoint::atomic_write(
-                            &cache.join("complete.json"),
-                            &serde_json::to_vec(&output)?,
-                        )?;
-                        output
-                    }
-                    Err(error) => {
-                        self.warn(format!("Screenshots: {error:#}"));
-                        scene::Output::NoVideo
-                    }
-                }
+                let output = scene::run(&cfg, &recording.file)
+                    .await
+                    .with_context(|| format!("Stage {name}"))?;
+                checkpoint::atomic_write(
+                    &cache.join("complete.json"),
+                    &serde_json::to_vec(&output)?,
+                )?;
+                output
             }
         };
         std::fs::create_dir(target)?;
         let mut images = Vec::new();
         if let scene::Output::Frames(frames) = frames {
-            if frames.is_empty() {
-                self.warn(NO_SCREENSHOTS.into());
-            }
             for (i, frame) in frames.iter().enumerate() {
                 let image = format!("{:04}.jpg", i + 1);
                 artifact::copy_path(
