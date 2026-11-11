@@ -298,7 +298,7 @@ downstream stages can read:
 | `download` | `"source"` | `media` | Resolves a local file (plus adjacent `.srt`/`.vtt` files) in place, or runs `command` to fetch a URL's media, metadata and captions. |
 | `transcript` | `media` | `transcript` (`.json`) | Tries `sources` in order (`subtitles`, `speech`). For speech, detects voice segments locally with `earshot`, splits long stretches at quiet points, and transcribes via `provider`. |
 | `screenshots` | `media` | `images` (folder) | Samples video frames via `ffmpeg`, compares them with SSIM (`sensitivity`, optional `region`), waits for animations to settle (`mode = "stable"`), and saves full-res JPEGs. |
-| `document` | `transcript` + optional `images` | `document` (`.json`) | Puts each transcript line, whole, under the screenshot shown at its midpoint and merges lines into paragraphs with script-aware word spacing. |
+| `document` | `transcript` + optional `images` | `document` (`.json`) | Puts each transcript line, whole, under the screenshot shown at its midpoint and joins lines into paragraphs, with a space where two lines meet except in the scripts it knows to be written without spaces. |
 | `rewrite` | `document` | `document` | Sends the paragraphs to `provider` with `prompt` in batches, as plain text between marker lines, and replaces each with its answer (keeping the original text in `raw`). |
 | `write` | `document`, `transcript` or `markdown` | `markdown` | Sends the input to `provider` with `prompt` and writes one Markdown answer (in parts, then combined, for long recordings). |
 | `markdown` | one or more `document` / `markdown` files | `markdown` (`.md`) | Joins its inputs in order, rendering documents as `![](<images/0001.jpg>)` followed by their paragraphs, without adding front matter or headings. |
@@ -428,7 +428,8 @@ concurrency = 1
 | **Ollama / LM Studio / vLLM** | `http://localhost:11434/v1` (or your server's URL) | Set `concurrency = 1` for single-GPU local servers |
 
 For audio-capable chat models, set `api = "chat"` and a `prompt` under `[stages.transcript.speech]` to send speech
-segments to `/chat/completions` instead of `/audio/transcriptions`.
+segments to `/chat/completions` instead of `/audio/transcriptions`. The prompt is sent as written and `language` is not
+sent with it, so name the language in the prompt if the model needs it.
 
 ### Plug in local speech engines and other APIs (Adapters)
 
@@ -508,10 +509,11 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   - **Notes are never modified.** A note is assembled under a hidden name and renamed into `<out>/<title>/`, so a
     failed or cancelled run writes nothing. A rerun with unchanged results leaves the note as it is, edits included; a
     changed result, or another recording with the same title, goes into a new folder with a `-2`, `-3`, … suffix.
-  - **Content-addressed caching and resume.** In the source's work folder, downloads are cached by URL and command,
-    transcripts and screenshots by their settings and the contents of the media they read, and each speech segment and
-    validated LLM response by what was sent. Editing the summary prompt sends only the summary's requests again; an interrupted
-    transcription sends only the segments not yet answered (`--no-resume` starts fresh).
+  - **Content-addressed caching and resume.** In the source's work folder, transcripts and screenshots are cached by
+    their settings and the contents of the media they read, and each speech segment and validated LLM response by what
+    was sent. A download's details and subtitles are kept by URL and command; its media is deleted when the run ends
+    and fetched again only when a stage has to read it. Editing the summary prompt sends only the summary's requests
+    again; an interrupted transcription sends only the segments not yet answered (`--no-resume` starts fresh).
   - **Clean cancellation.** `Ctrl-C` (or `SIGTERM` on Unix) exits with code `130`, terminates the process group of every
     program `notepipe` started (a descendant that starts its own session is outside it), and removes the media in the
     work folder.
