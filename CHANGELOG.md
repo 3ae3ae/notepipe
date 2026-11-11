@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-11
+
 ### Added
 
 - Speech with `api = "chat"` takes a `request`, extra fields for the request body, like `rewrite` and `write` stages:
