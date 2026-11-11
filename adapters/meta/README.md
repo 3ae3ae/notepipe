@@ -21,6 +21,7 @@ provider = "meta"
 model = "muse-voice-transcribe-1.0"
 ```
 
-notepipe's API key is forwarded as is. The transcript stage's `language` (a language code) is sent as a language-name hint.
-`--base-url` overrides the default `https://api.meta.ai/v1`. Meta accepts segments up to 10 minutes and 32 MB, well above
-notepipe's default segment length.
+notepipe's API key is forwarded as is. The transcript stage's `language` is sent as a hint: the language's English name
+for the codes the adapter knows, and any other code as written. `--base-url` overrides the default
+`https://api.meta.ai/v1`. Meta accepts segments up to 10 minutes and 32 MB, well above notepipe's default segment
+length.
