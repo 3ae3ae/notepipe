@@ -317,12 +317,12 @@ output = "terms.json"
 produces = "document"
 command = ["python3", "fix-terms.py", "--glossary", "glossary.tsv"]
 
-[stages.docx]                        # pandoc makes a Word copy of the note's text
+[stages.docx]                        # pandoc makes a Word copy of the note
 type = "run"
 input = "note.md"
 output = "note.docx"
 publish = "note.docx"
-command = ["pandoc", "{input}", "-o", "{output}"]
+command = ["pandoc", "-f", "markdown+rebase_relative_paths", "{input}", "-o", "{output}"]
 
 [stages.voice]                       # ffmpeg evens out the loudness before speech recognition
 type = "run"
@@ -344,8 +344,9 @@ command = ["ffmpeg", "-loglevel", "error", "-i", "{input}", "-af", "loudnorm", "
   `{input}`. Without `{output}`, standard output becomes the output file; images, a folder, need `{output}`. Write
   diagnostics to standard error: notepipe shows its last lines when the stage fails, and the rest only with `-vv`.
 - **Where it runs.** In the folder notepipe was started in, so relative paths in `command`, such as `glossary.tsv`, are
-  yours, and a program that looks for files beside its input does not find them: pandoc, for one, leaves out the
-  screenshots that a note names. There is no time limit; Ctrl-C stops the program.
+  yours. A program that looks there for files that are beside its input does not find them: pandoc finds the
+  screenshots a note names only with `-f markdown+rebase_relative_paths`, as above. There is no time limit; Ctrl-C
+  stops the program.
 - **Result.** Exit with status 0 on success. A non-zero exit, a missing output, or an output that is not a valid
   `produces` kind stops the run. notepipe shows the last lines of standard error with it, except for media that ffprobe
   cannot read, which is reported with ffprobe's message alone. Media must be a file that ffprobe can read. Images must

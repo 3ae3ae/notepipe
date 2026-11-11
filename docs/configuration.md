@@ -305,10 +305,8 @@ Skipping a stage whose output another stage needs is an error before any work st
 
 ## Example
 
-Speech on a local engine, the AI stages on a local Ollama, glossary terms fixed by a script, a Word copy of the note's
-text made with pandoc, and the Markdown also printed for the next command in a shell pipeline. The Word copy has no
-screenshots: a `run` program starts in the folder notepipe was started in, where pandoc does not find the images that
-`note.md` names relative to the work folder.
+Speech on a local engine, the AI stages on a local Ollama, glossary terms fixed by a script, a Word copy made with
+pandoc, and the Markdown also printed for the next command in a shell pipeline:
 
 ```toml
 pipeline = ["download", "transcript", "screenshots", "draft", "terms", "proofread", "markdown", "docx"]
@@ -374,7 +372,7 @@ type = "run"
 input = "note.md"
 output = "note.docx"
 publish = "note.docx"
-command = ["pandoc", "{input}", "-o", "{output}"]
+command = ["pandoc", "-f", "markdown+rebase_relative_paths", "{input}", "-o", "{output}"]
 ```
 
 `fix-terms.py` reads the document on standard input and prints the changed document, and runs in the folder notepipe

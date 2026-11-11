@@ -375,14 +375,13 @@ input = ["summary.md", "actions.md", "translated.json"]
 output = "note.md"
 publish = "note.md"
 
-# 6. Convert note.md to Word with pandoc and publish note.docx into the note folder. The Word file has the text
-#    only: pandoc starts in the folder notepipe was started in and does not find the screenshots.
+# 6. Convert note.md to Word with pandoc and publish note.docx into the note folder
 [stages.docx]
 type = "run"
 input = "note.md"
 output = "note.docx"
 publish = "note.docx"
-command = ["pandoc", "{input}", "-o", "{output}"]
+command = ["pandoc", "-f", "markdown+rebase_relative_paths", "{input}", "-o", "{output}"]
 ```
 
 A `run` stage without `{input}` receives its single input file on `stdin`, and without `{output}` its `stdout` becomes
