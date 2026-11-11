@@ -177,10 +177,8 @@ fn is_unspaced(c: char) -> bool {
 }
 
 fn paragraph_units(text: &str) -> usize {
-    let mut utf8 = [0; 4];
-    text.chars()
-        .map(|c| dialoguer::console::measure_text_width(c.encode_utf8(&mut utf8)).max(1))
-        .sum()
+    use unicode_width::UnicodeWidthChar;
+    text.chars().map(|c| c.width().unwrap_or(0).max(1)).sum()
 }
 
 fn continues_grapheme(paragraph: &str, next: &str) -> bool {
