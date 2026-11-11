@@ -159,15 +159,17 @@ fn existing_note(
     Ok(latest.map(|(path, _)| path))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 fn rename_new(source: &Path, target: &Path) -> std::io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let source = CString::new(source.as_os_str().as_bytes())?;
     let target = CString::new(target.as_os_str().as_bytes())?;
     // Ordinary rename can replace an existing empty directory.
-    #[cfg(target_os = "linux")]
+    // The system call itself: Android's libc has no renameat2 function before Android 11.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let result = unsafe {
-        libc::renameat2(
+        libc::syscall(
+            libc::SYS_renameat2,
             libc::AT_FDCWD,
             source.as_ptr(),
             libc::AT_FDCWD,
@@ -199,7 +201,12 @@ fn rename_new(source: &Path, target: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "macos",
+    windows
+)))]
 fn rename_new(_source: &Path, _target: &Path) -> std::io::Result<()> {
     Err(std::io::ErrorKind::Unsupported.into())
 }
