@@ -1994,7 +1994,7 @@ fn transcript_extensions_cannot_replace_document_fields() {
 #[test]
 fn published_names_follow_filesystem_identity() {
     let root = tempfile::tempdir().unwrap();
-    let source = local(root.path());
+    let source = video(root.path());
     let (a, b) = ("é.md", "e\u{301}.md");
     let probe = root.path().join("probe");
     std::fs::create_dir(&probe).unwrap();
@@ -2356,13 +2356,18 @@ fn an_explicitly_published_images_directory_can_share_document_assets() {
     assert!(images.join("images.json").is_file());
 }
 #[test]
-fn broken_media_still_publishes_subtitles_with_screenshot_warnings() {
+fn broken_media_stops_at_screenshots_unless_they_are_skipped() {
     let root = tempfile::tempdir().unwrap();
     let source = local(root.path());
     let output = run(root.path(), &source, &config(), &[]);
-    let completed = done(&output);
-    assert!(!completed["warnings"].as_array().unwrap().is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Warning:"));
+    assert!(error(&output).starts_with("Stage screenshots: "));
+    assert!(!root.path().join("lecture").exists());
+    let completed = done(&run(
+        root.path(),
+        &source,
+        &config(),
+        &["--skip", "screenshots"],
+    ));
     assert_eq!(document(&completed, "draft")["sections"][0]["image"], "");
     assert!(
         !Path::new(completed["note_dir"].as_str().unwrap())
