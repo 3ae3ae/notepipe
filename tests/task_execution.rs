@@ -3168,7 +3168,7 @@ fn chat_speech_prompt_changes_transcribe_again() {
     };
     assert_eq!(
         request()["messages"][0]["content"][0]["text"],
-        "  Transcribe verbatim.\n   The speech is in ko."
+        "  Transcribe verbatim.\n  "
     );
     done(&run(root.path(), &source, &cfg, &["--skip", "screenshots"]));
     assert_eq!(count(&record), chunks);
@@ -3177,7 +3177,7 @@ fn chat_speech_prompt_changes_transcribe_again() {
     assert_eq!(count(&record), chunks * 2);
     assert_eq!(
         request()["messages"][0]["content"][0]["text"],
-        "Keep every word. The speech is in ko."
+        "Keep every word."
     );
 }
 

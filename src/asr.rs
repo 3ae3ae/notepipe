@@ -206,12 +206,14 @@ fn post_cloud(
     audio: &[u8],
     item: &crate::dispatch::Item,
 ) -> Result<serde_json::Value> {
+    // Each API sends one of the two: chat the prompt, transcriptions the language.
+    let chat = t.mode == crate::settings::AsrMode::Chat;
     let fields = serde_json::json!({
         "version": 1,
         "api": t.mode,
         "model": t.model,
-        "prompt": if t.mode == crate::settings::AsrMode::Chat { t.prompt } else { "" },
-        "language": t.language,
+        "prompt": if chat { t.prompt } else { "" },
+        "language": if chat { "" } else { t.language },
         "audio_sha256": crate::runtime::digest(audio),
     });
     Ok(crate::dispatch::request(item, t.check_control, || {
@@ -296,14 +298,9 @@ fn transcription_request(t: &ApiTarget, audio: &[u8]) -> Result<(String, Vec<u8>
     use crate::settings::AsrMode;
     use base64::Engine as _;
     if t.mode == AsrMode::Chat {
-        let mut prompt = t.prompt.to_owned();
-        if !t.language.is_empty() {
-            prompt.push_str(&format!(" The speech is in {}.", t.language));
-        }
         let mut body = serde_json::json!({
-            "temperature": 0,
             "messages": [{"role":"user", "content":[
-                {"type":"text", "text":prompt},
+                {"type":"text", "text":t.prompt},
                 {"type":"input_audio", "input_audio":{"data":base64::engine::general_purpose::STANDARD.encode(audio), "format":"wav"}}
             ]}]
         });
@@ -825,16 +822,8 @@ mod http_tests {
                 if mode == AsrMode::Chat {
                     let json: serde_json::Value = serde_json::from_slice(body).unwrap();
                     assert_eq!(json.get("model").is_some(), with_options);
-                    assert_eq!(json["temperature"], 0);
-                    let prompt = json["messages"][0]["content"][0]["text"].as_str().unwrap();
-                    assert_eq!(
-                        prompt,
-                        if with_options {
-                            format!("{} The speech is in ko.", target.prompt)
-                        } else {
-                            target.prompt.into()
-                        }
-                    );
+                    assert!(json.get("temperature").is_none());
+                    assert_eq!(json["messages"][0]["content"][0]["text"], target.prompt);
                     assert_eq!(
                         json["messages"][0]["content"][1]["input_audio"]["format"],
                         "wav"
@@ -853,34 +842,6 @@ mod http_tests {
                     assert!(body.windows(4).any(|part| part == b"RIFF"));
                 }
             }
-        }
-    }
-
-    #[test]
-    fn chat_requests_pass_language_tags_through() {
-        let client = ureq::agent();
-        for language in ["zh", "pt", "pt-BR", "zh-Hant", "xx-custom", " KO_kr "] {
-            let target = ApiTarget {
-                identity: "test-provider",
-                client: &client,
-                url: &|| Ok(String::new()),
-                model: "",
-                key: "",
-                mode: AsrMode::Chat,
-                prompt: "Transcribe verbatim.",
-                language,
-
-                stage: "transcript",
-                check_control: &crate::runtime::check_cancelled,
-            };
-            let (_, body) = transcription_request(&target, b"audio").unwrap();
-            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-            assert!(
-                body["messages"][0]["content"][0]["text"]
-                    .as_str()
-                    .unwrap()
-                    .ends_with(&format!(" The speech is in {language}."))
-            );
         }
     }
 }
