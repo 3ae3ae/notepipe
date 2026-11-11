@@ -13,6 +13,8 @@ pub struct AsrIdentity {
     pub endpoint_or_command: String,
     pub model: String,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub request: serde_json::Map<String, serde_json::Value>,
     pub language: String,
     pub max_speech: f32,
     pub vad_threshold: f32,
@@ -38,6 +40,7 @@ impl AsrIdentity {
             endpoint_or_command,
             model: asr.model.clone(),
             prompt: asr.prompt.clone(),
+            request: asr.request.clone(),
             language: asr.language.clone(),
             max_speech: asr.max_speech,
             vad_threshold: asr.vad_threshold,
@@ -111,6 +114,22 @@ mod identity_tests {
         assert_eq!(identity.schema_version, 5);
         assert_ne!(identity, AsrIdentity::new(&asr, "other media"));
         assert_eq!(identity.endpoint_or_command, "https://example.test/v1");
+        let serialized = serde_json::to_value(&identity).unwrap();
+        assert!(serialized.get("request").is_none());
+        assert_eq!(
+            serde_json::from_value::<AsrIdentity>(serialized.clone()).unwrap(),
+            identity
+        );
+        let mut with_request = asr.clone();
+        with_request.request.insert("temperature".into(), 0.into());
+        let requested_identity = AsrIdentity::new(&with_request, "media");
+        let requested_serialized = serde_json::to_value(&requested_identity).unwrap();
+        assert_eq!(
+            requested_serialized["request"],
+            serde_json::json!({"temperature": 0})
+        );
+        assert_ne!(serialized, requested_serialized);
+        assert_ne!(identity, requested_identity);
         let changes: &[fn(&mut Asr)] = &[
             |a| a.mode = AsrMode::Chat,
             |a| a.base_url.push_str("other"),
