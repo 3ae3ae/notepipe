@@ -135,7 +135,8 @@ segments and sent to the provider.
 | `provider` | required | The provider to send speech to |
 | `api` | `"transcriptions"` | `transcriptions`: `/audio/transcriptions`; `chat`: audio input to `/chat/completions` |
 | `model` | `""` | Sent only when set |
-| `prompt` | none | With `api = "chat"`, required: the instructions sent with each segment, as written. Nothing else is sent with them, neither the language nor sampling values, so name the language here if the model needs it. Not accepted with `transcriptions` |
+| `prompt` | none | With `api = "chat"`, required: the instructions sent with each segment, as written. The language is not sent with them, so name it here if the model needs it. Not accepted with `transcriptions` |
+| `request` | `{}` | With `api = "chat"`: extra fields for the request body, for example `{ temperature = 0 }`; nothing is sent for sampling without it. It cannot set `model`, `messages`, `stream` or `response_format`. Not accepted with `transcriptions` |
 | `threshold` | `0.5` | Speech confidence from 0 to 1; lower keeps quieter speech |
 | `min_silence` | `0.4` | Pauses shorter than this many seconds do not split segments |
 | `max_segment` | `20.0` | Longest stretch of speech in one request, 1 to 600 seconds; up to 0.25 s of silence is added on each side |
