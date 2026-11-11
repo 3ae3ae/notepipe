@@ -90,7 +90,7 @@ These requests go to every provider, whether it is a remote API or a program.
 
 The transcript stage sends each speech segment to `POST <base_url>/audio/transcriptions` as `multipart/form-data`,
 compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as audio input, with the stage's speech
-`prompt` and the language as text):
+`prompt` as text):
 
 | Field | Required | Content |
 |---|---|---|

@@ -94,7 +94,9 @@ recording up or cuts parts out moves every time in the note away from the origin
 them back.
 
 Every stage also knows the source's title, author, duration and link, from the download stage. A document's `meta` is a
-copy of them for whoever reads `note.json`; no stage reads it back.
+copy of them for whoever reads `note.json`; no stage reads it back. A local file's title is its name without the
+extension, as it was on the first run: the title is kept with the recording's other work, so that renaming the file
+repeats no request, and a renamed recording keeps its first title until `--no-resume` starts it over.
 
 ### `download`
 
@@ -115,7 +117,7 @@ Reads `media` and writes `transcript`. It tries its sources in order and uses th
 
 | Key | Option | Default | Meaning |
 |---|---|---|---|
-| `language` | `--language` | `"auto"` | Spoken language as a code such as `en` or `ko`; it picks the subtitle language and is sent to speech recognition. `auto`: no preference, and the provider detects it |
+| `language` | `--language` | `"auto"` | Spoken language as a code such as `en` or `ko`; it picks the subtitle language and, with `api = "transcriptions"`, is sent to speech recognition. `auto`: no preference, and the provider detects it |
 | `sources` | — | `["subtitles", "speech"]` | `subtitles`, `speech` or both, in the order to try |
 
 `[stages.NAME.subtitles]`: the subtitles in `media` are ranked with those in `language` first, then those in the
@@ -133,7 +135,7 @@ segments and sent to the provider.
 | `provider` | required | The provider to send speech to |
 | `api` | `"transcriptions"` | `transcriptions`: `/audio/transcriptions`; `chat`: audio input to `/chat/completions` |
 | `model` | `""` | Sent only when set |
-| `prompt` | none | With `api = "chat"`, required: the instructions sent with each segment, followed by the language when it is set. Not accepted with `transcriptions` |
+| `prompt` | none | With `api = "chat"`, required: the instructions sent with each segment, as written. Nothing else is sent with them, neither the language nor sampling values, so name the language here if the model needs it. Not accepted with `transcriptions` |
 | `threshold` | `0.5` | Speech confidence from 0 to 1; lower keeps quieter speech |
 | `min_silence` | `0.4` | Pauses shorter than this many seconds do not split segments |
 | `max_segment` | `20.0` | Longest stretch of speech in one request, 1 to 600 seconds; up to 0.25 s of silence is added on each side |
@@ -157,9 +159,11 @@ Reads `media` and writes `images`: a screenshot each time the picture changes. A
 ### `document`
 
 Reads a `transcript` and, optionally, `images`, and writes a `document`: each transcript line, whole, under the
-screenshot that was on screen at its midpoint, and the lines joined into paragraphs, with word spacing that follows each
-writing system. Lines that carry different extra fields, such as a speaker added by a `run` stage, start a new
-paragraph. It has no settings.
+screenshot that was on screen at its midpoint, and the lines joined into paragraphs. A space goes where two lines meet,
+unless the characters on both sides belong to a script in the stage's list of those written without spaces: Chinese
+characters, kana, Thai, Lao, Khmer and Burmese. The list is not complete, so another such script, Tibetan for example,
+gets a space at each join. Lines that carry different extra fields, such as a speaker added by a `run` stage, start a
+new paragraph. It has no settings.
 
 ### `rewrite`
 

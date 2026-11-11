@@ -6,6 +6,19 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Changed
+
+- Speech with `api = "chat"` sends the `prompt` as written and adds nothing of its own: the sentence that named the
+  `language` is no longer appended, and `temperature` is no longer sent. Name the language in the prompt if the model
+  needs it. Finished transcripts are reused as they are.
+- A screenshots stage that fails stops the run, like every other stage. It used to publish a note without images and
+  a warning. `--skip screenshots` makes the note without them.
+
+### Fixed
+
+- Notes are published on Android. The rename that puts a note folder in place without replacing another one was
+  missing there, so every run that wrote a note folder ended with `Could not publish note folder`.
+
 ## [0.6.0] - 2026-11-04
 
 Caches from earlier versions are not reused: the first rerun of a source repeats its speech recognition, screenshots
