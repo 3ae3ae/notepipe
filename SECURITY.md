@@ -19,7 +19,8 @@ notepipe is a local command-line tool. Keep these properties in mind when you ev
   input and output files are put into their arguments; values from the internet, such as a downloaded title, never
   are.
 - **Credentials** are read from the environment variables that providers name in `api_key_env`, and sent only to that
-  provider; they are never part of the configuration. notepipe does not write API keys to notes, caches or logs. A
+  provider; they are never part of the configuration. notepipe itself writes no API key to notes, caches or logs; what a
+  provider answers is kept as received, so a key that a provider put into a successful answer would be in the cache. A
   provider's error message is shown with that provider's key replaced and is never stored; another secret a service
   echoes in an error is shown as sent. But the programs it starts inherit its environment, keys included, and what they
   print is theirs. A credential written into a URL or into a program's arguments is part of that setting and can appear

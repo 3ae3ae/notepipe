@@ -25,7 +25,8 @@ stage may use is looked up, before any work starts.
 
 ## Events
 
-With `--json`, standard output carries one JSON object per line. Every object has a `type`:
+With `--json`, standard output carries one JSON object per line; `--help` and `--version` still print text. Every
+object has a `type`:
 
 | `type` | Fields | Meaning |
 |---|---|---|
@@ -56,8 +57,8 @@ print leaves the new note in place. It cannot be combined with `--json`.
 | Code | Meaning |
 |---|---|
 | 0 | the note was written (it may still carry warnings) |
-| 1 | the run failed, including invalid settings or option values; the previous note for this source, if any, is unchanged (see below for the rare exception) |
-| 2 | the command line could not be parsed, such as an unknown option |
+| 1 | the run failed, including invalid settings and option values out of range; the previous note for this source, if any, is unchanged (see below for the rare exception) |
+| 2 | the command line could not be parsed: an unknown option, or a value of the wrong form, such as text where a number goes |
 | 130 | cancelled by Ctrl-C, or by SIGTERM on Unix |
 
 On the first signal notepipe stops its stages and the process groups of the programs it started (a descendant that
@@ -78,7 +79,8 @@ its Markdown shows. With the default configuration:
 ```
 
 The folder name comes from the title; `.notepipe.json` names the source by its contents (`sha256:…`, or the URL). A
-note folder is never changed once written: a rerun with the same results leaves it as it is, even edited or renamed,
+note folder is never changed once written: a rerun with the same results leaves it as it is, even edited or renamed
+(unless `--no-resume` or a deleted work folder made notepipe forget what it published: then they get a new folder),
 and a changed result, or a different source with the same title, gets a new folder with a `-2`, `-3`, … suffix. The
 folder is built under a hidden name and renamed into place, so a reader never sees a half-written note and a failed run
 writes nothing.
@@ -105,7 +107,7 @@ stage adds are kept, except names the document uses itself (`schema`, `meta`, `s
 ## Work folders and caches
 
 Each source has a work folder under `work/` in notepipe's cache folder: `$XDG_CACHE_HOME/notepipe` when that variable
-is set, otherwise `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and
+is set and not empty, otherwise `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and
 `~/.cache/notepipe` elsewhere. It holds every
 stage's output under its `output` name, and in `.cache/` what lets a later run reuse work: the download with its
 media's SHA-256, transcripts, screenshots, and in `.cache/responses/` the answers to speech and model requests. `-v`

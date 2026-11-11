@@ -22,8 +22,8 @@ was on screen halfway through it.
 
 Look inside and almost nothing is fixed. Downloading, transcription, screenshot capture, timeline assembly, AI
 rewriting, summarization and Markdown rendering are separate stages wired together in one TOML file. Every stage names
-the file it reads and the file it writes, any command-line program can be a stage, any stage can stream its output to
-`stdout`, and other programs can drive the binary directly over `stdin` and JSON lines. The core is a single Rust
+the file it reads and the file it writes, any command-line program can be a stage, a stage that writes a file can print
+it to `stdout`, and other programs can drive the binary directly over `stdin` and JSON lines. The core is a single Rust
 binary whose only runtime dependency is `ffmpeg` — running on Linux, macOS, Windows, and Android in Termux.
 
 ```sh
@@ -32,7 +32,7 @@ notepipe lecture.mp4
 ```
 
 ```text
-Introduction-to-Compilers/
+lecture/
 ├── note.md          # summary + screenshot-illustrated paragraphs
 ├── note.json        # structured document (metadata, sections, timed paragraphs, raw text)
 └── images/          # 0001.jpg, 0002.jpg, … captured when the screen changed and settled
@@ -63,7 +63,7 @@ source ─► download ─► media ─┬─► transcript ─► transcript.js
                          note.md ◄─ markdown ◄─ summary.md ◄─ summary ◄─ proofread.json ◄─ proofread
 ```
 
-Every intermediate file lives in the recording's work directory (`notepipe -v` prints its path). You can open
+Every stage's output lives in the recording's work directory (`notepipe -v` prints its path). You can open
 `transcript.json`, inspect `draft.json` with `jq`, or compare `draft.json` against `proofread.json` to see every word a
 model changed. Independent stages — such as `transcript` and `screenshots` — run at the same time, and the entire graph
 is type-checked before any media or network work begins.
@@ -183,12 +183,12 @@ provider environment variables.
 ```sh
 notepipe config init    # write the default config.toml (--force to overwrite)
 notepipe config path    # print the config file path
-notepipe config show    # print the effective configuration as TOML
+notepipe config show    # print the config file path and the effective configuration as TOML
 ```
 
-In the generated file, settings at their built-in defaults are shown as `#` comments so every knob is visible in place,
-and the prompts for `proofread` and `summary` are written out in full. Here is the exact default configuration with the
-two multi-line prompts shortened to `'''…'''`:
+In the generated file, settings at their built-in defaults are shown as `#` comments so the defaults are visible in
+place, and the prompts for `proofread` and `summary` are written out in full. Here is the exact default configuration
+with the two multi-line prompts shortened to `'''…'''`:
 
 ```toml
 # Lines starting with # show the defaults.
@@ -300,9 +300,9 @@ downstream stages can read:
 | `screenshots` | `media` | `images` (folder) | Samples video frames via `ffmpeg`, compares them with SSIM (`sensitivity`, optional `region`), waits for animations to settle (`mode = "stable"`), and saves full-res JPEGs. |
 | `document` | `transcript` + optional `images` | `document` (`.json`) | Puts each transcript line, whole, under the screenshot shown at its midpoint and joins lines into paragraphs, with a space where two lines meet except in the scripts it knows to be written without spaces. |
 | `rewrite` | `document` | `document` | Sends the paragraphs to `provider` with `prompt` in batches, as plain text between marker lines, and replaces each with its answer (keeping the original text in `raw`). |
-| `write` | `document`, `transcript` or `markdown` | `markdown` | Sends the input to `provider` with `prompt` and writes one Markdown answer (in parts, then combined, for long recordings). |
+| `write` | `document`, `transcript` or `markdown` | `markdown` | Sends the input to `provider` with `prompt` and writes one Markdown answer (a long transcript or document in parts, then combined). |
 | `markdown` | one or more `document` / `markdown` files | `markdown` (`.md`) | Joins its inputs in order, rendering documents as `![](<images/0001.jpg>)` followed by their paragraphs, without adding front matter or headings. |
-| `run` | any stage outputs | `file` (or `produces` kind) | Runs an external command without a shell. `produces` names any kind (`media`, `transcript`, `images`, `document`, `markdown`) and validates the output so later stages can read it, so a program can stand in for any built-in stage. |
+| `run` | any stage outputs | `file` (or `produces` kind) | Runs an external command without a shell. `produces` names any kind (`media`, `transcript`, `images`, `document`, `markdown`) and validates the output so later stages can read it, so a program can stand in for any built-in stage except `download`, the only one that reads the source. |
 
 Every setting and CLI override is documented in
 [docs/configuration.md](https://github.com/3ae3ae/notepipe/blob/main/docs/configuration.md).
@@ -375,7 +375,8 @@ input = ["summary.md", "actions.md", "translated.json"]
 output = "note.md"
 publish = "note.md"
 
-# 6. Convert note.md to Word with pandoc and publish note.docx into the note folder
+# 6. Convert note.md to Word with pandoc and publish note.docx into the note folder. The Word file has the text
+#    only: pandoc starts in the folder notepipe was started in and does not find the screenshots.
 [stages.docx]
 type = "run"
 input = "note.md"
@@ -507,16 +508,17 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   ```
 - **Operational guarantees:**
   - **Notes are never modified.** A note is assembled under a hidden name and renamed into `<out>/<title>/`, so a
-    failed or cancelled run writes nothing. A rerun with unchanged results leaves the note as it is, edits included; a
-    changed result, or another recording with the same title, goes into a new folder with a `-2`, `-3`, … suffix.
+    failed or cancelled run writes no note (only a failure to print to `stdout` comes after it). A rerun with unchanged
+    results leaves the note as it is, edits included; a changed result, another recording with the same title, or a
+    rerun with `--no-resume` goes into a new folder with a `-2`, `-3`, … suffix.
   - **Content-addressed caching and resume.** In the source's work folder, transcripts and screenshots are cached by
     their settings and the contents of the media they read, and each speech segment and validated LLM response by what
     was sent. A download's details and subtitles are kept by URL and command; its media is deleted when the run ends
     and fetched again only when a stage has to read it. Editing the summary prompt sends only the summary's requests
     again; an interrupted transcription sends only the segments not yet answered (`--no-resume` starts fresh).
-  - **Clean cancellation.** `Ctrl-C` (or `SIGTERM` on Unix) exits with code `130`, terminates the process group of every
-    program `notepipe` started (a descendant that starts its own session is outside it), and removes the media in the
-    work folder.
+  - **Clean cancellation.** `Ctrl-C` (or `SIGTERM` on Unix) exits with code `130`, stops ffmpeg, terminates the process
+    group of every provider, download and run program `notepipe` started (a descendant that starts its own session is
+    outside it), and removes the media in the work folder.
 
 See [docs/cli.md](https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md) for the complete CLI integration contract and
 [docs/design.md](https://github.com/3ae3ae/notepipe/blob/main/docs/design.md) for architecture and design principles.
