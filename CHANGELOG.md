@@ -6,6 +6,19 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Added
+
+- Speech with `api = "chat"` takes a `request`, extra fields for the request body, like `rewrite` and `write` stages:
+  `request = { temperature = 0 }` under `[stages.NAME.speech]` sends the sampling value that 0.6.1 stopped sending.
+  Without it nothing changes, and answers already cached are still used.
+
+### Fixed
+
+- The pandoc examples in the documents pass `-f markdown+rebase_relative_paths`, so the Word copy holds the note's
+  screenshots; with the earlier command pandoc did not find them.
+- Documents: statements that the code did not bear out are corrected, among them what a failed run can leave behind,
+  what `--no-resume` does to an unchanged note, and the model that three adapter examples send.
+
 ## [0.6.1] - 2026-11-11
 
 ### Changed

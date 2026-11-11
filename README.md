@@ -429,7 +429,8 @@ concurrency = 1
 
 For audio-capable chat models, set `api = "chat"` and a `prompt` under `[stages.transcript.speech]` to send speech
 segments to `/chat/completions` instead of `/audio/transcriptions`. The prompt is sent as written and `language` is not
-sent with it, so name the language in the prompt if the model needs it.
+sent with it, so name the language in the prompt if the model needs it; `request = { temperature = 0 }` in the same
+table adds fields such as a sampling value to each request.
 
 ### Plug in local speech engines and other APIs (Adapters)
 
