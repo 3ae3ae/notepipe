@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-11
+
 ### Changed
 
 - Speech with `api = "chat"` sends the `prompt` as written and adds nothing of its own: the sentence that named the
