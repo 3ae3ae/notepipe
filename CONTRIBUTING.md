@@ -68,21 +68,20 @@ See [docs/adapters.md](docs/adapters.md). Third-party adapters do not need to li
   `asr: retry on HTTP 429`), and the reason in the body.
 - Add a test for new behavior.
 - Record user-visible changes under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
-- `main` changes only through pull requests, and nobody pushes tags. A pull request merges when the `ci` check passes and
-  the branch is up to date with `main`; CI runs on pull requests only, so a merge does not run it again.
+- `main` changes only through pull requests, and nobody pushes tags. A pull request merges when the `ci` check passes
+  and the branch is up to date with `main`; the tests run on pull requests only, so a merge does not run them again.
 
 ## Releases
 
-A release is a pull request that changes the version in `Cargo.toml` (and moves `Unreleased` in the changelog under
-that version). When it merges, `.github/workflows/release.yml` builds the CLI binaries and wheels and every adapter,
-creates the tag `vX.Y.Z` and a GitHub release with the files and their checksums, and publishes the packages to PyPI
-through trusted publishing. Only that workflow can create tags: it pushes them with the `RELEASE_DEPLOY_KEY` deploy
-key, the one exception to the tag rules. A version that already has a tag is not released again. When a release fails,
-re-run its failed jobs; running the workflow by hand releases `main`'s version if it has no tag yet. Versions of
-adapters that are already on PyPI are skipped, so bump an adapter's version when it changes; adapters are published
-with the next release of notepipe. Each PyPI project
-publishes from its own GitHub environment, `pypi` for notepipe and `pypi-<package>` for an adapter, and its trusted
-publisher on PyPI names that environment.
+A release is a pull request that changes the version in `Cargo.toml` and `Cargo.lock` (and moves `Unreleased` in the
+changelog under that version). When it merges, `.github/workflows/release.yml` builds the CLI binaries and wheels and
+every adapter, creates the tag `vX.Y.Z` and a GitHub release with the files and their checksums, and publishes the
+packages to PyPI through trusted publishing. Only that workflow can create tags: it pushes them with the
+`RELEASE_DEPLOY_KEY` deploy key, the one exception to the tag rules. A version that already has a tag is not released
+again. When a release fails, re-run its failed jobs; running the workflow by hand on `main` releases its version if it
+has no tag yet. Versions of adapters that are already on PyPI are skipped, so bump an adapter's version when it changes;
+adapters are published with the next release of notepipe. Each PyPI project publishes from its own GitHub environment,
+`pypi` for notepipe and `pypi-<package>` for an adapter, and its trusted publisher on PyPI names that environment.
 
 The same workflow publishes the crate to crates.io from the `crates-io` environment through trusted publishing, unless
 that version is already there.

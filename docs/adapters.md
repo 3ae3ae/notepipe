@@ -101,8 +101,8 @@ compatible with OpenAI's endpoint (or, with `api = "chat"`, to the chat API as a
 Respond `200` with `{"text": "…"}`, using an empty string when there is no speech. An optional `"warning": "…"` is shown
 next to the segment's time, for example when the program had to decode the segment differently. Return clean text:
 model-specific markers or formatting are the program's job to remove. A transcript cut off at the model's output limit
-is not a result: answer `422` with `{"error": {"code": "output_limit", "message": "…"}}`, which notepipe does not retry
-and reports as the model stopping at its output limit.
+is not a result: answer `422` with `{"error": {"code": "output_limit", "message": "…"}}`, which notepipe does not retry.
+It reports the rejection with your `message`, so say there that the output limit was reached.
 
 ### Chat API
 
@@ -118,15 +118,17 @@ format:
 The input, and the answer notepipe expects in `content`:
 
 - **`rewrite`:** the user content is an array of parts. The first is a `text` part holding up to `batch_size`
-  paragraphs, each after a marker line `<<<TAG:0>>>`, `<<<TAG:1>>>`, …, followed by a line `<<<TAG:end>>>`; TAG is
-  `np-` and hex digits that no paragraph contains. With `images = true` an `image_url` part with the screenshot follows,
-  as a JPEG data URL. Answer with the same marker lines in the same order, each followed by that paragraph's new text
-  written as it should appear, nothing escaped, and the end line. Text before the first marker or after the end line is
-  ignored; an empty block removes its paragraph; a missing, extra or reordered block makes the answer invalid.
+  paragraphs, each after a marker line `<<<TAG:0>>>`, `<<<TAG:1>>>`, …, followed by a line `<<<TAG:end>>>`; TAG is `np-`
+  and hex digits that no paragraph contains. With `images = true` an `image_url` part with the screenshot follows, as a
+  JPEG data URL; paragraphs without a screenshot that can be read are sent as text alone. Answer with the same marker
+  lines in the same order, each followed by that paragraph's new text written as it should appear, nothing escaped, and
+  the end line. Text before the first marker or after the end line is ignored; an empty block removes its paragraph; a
+  missing, extra or reordered block makes the answer invalid.
 - **`write`:** the user content is a string. For a transcript or a document: the title and author when they are known,
-  then one line per fragment or paragraph starting with its start time, such as `[03:12]` or `[1:03:12]`. For
-  Markdown: the Markdown as it is. Answer with Markdown. An input longer than `chunk_size` arrives in several requests,
-  followed by one that asks to combine their results.
+  then each fragment or paragraph on a new line after its start time, such as `[03:12]` or `[1:03:12]`, with the line
+  breaks inside its text kept. For Markdown: the Markdown as it is. Answer with Markdown. A transcript or document
+  longer than `chunk_size` arrives in several requests, split between fragments or paragraphs, followed by one that
+  asks to combine their results; Markdown always arrives whole.
 
 `stream` is never requested. Respond `200` with:
 
@@ -315,7 +317,7 @@ output = "terms.json"
 produces = "document"
 command = ["python3", "fix-terms.py", "--glossary", "glossary.tsv"]
 
-[stages.docx]                        # pandoc makes a Word copy of the note
+[stages.docx]                        # pandoc makes a Word copy of the note's text
 type = "run"
 input = "note.md"
 output = "note.docx"
@@ -340,13 +342,15 @@ command = ["ffmpeg", "-loglevel", "error", "-i", "{input}", "-af", "loudnorm", "
 - **Standard input and output.** Without `{input}`, the stage's one input file arrives on standard input, and a stage
   with no input gets an empty one; a stage with several inputs, or with media or a folder as input, must use
   `{input}`. Without `{output}`, standard output becomes the output file; images, a folder, need `{output}`. Write
-  diagnostics to standard error.
+  diagnostics to standard error: notepipe shows its last lines when the stage fails, and the rest only with `-vv`.
 - **Where it runs.** In the folder notepipe was started in, so relative paths in `command`, such as `glossary.tsv`, are
-  yours. There is no time limit; Ctrl-C stops the program.
+  yours, and a program that looks for files beside its input does not find them: pandoc, for one, leaves out the
+  screenshots that a note names. There is no time limit; Ctrl-C stops the program.
 - **Result.** Exit with status 0 on success. A non-zero exit, a missing output, or an output that is not a valid
-  `produces` kind stops the run, and notepipe shows the last lines of standard error. Media must be a file that ffprobe
-  can read. Images must be a folder whose `images.json` lists images inside it, in time order. A document must keep
-  its screenshots' paths inside the work folder.
+  `produces` kind stops the run. notepipe shows the last lines of standard error with it, except for media that ffprobe
+  cannot read, which is reported with ffprobe's message alone. Media must be a file that ffprobe can read. Images must
+  be a folder whose `images.json` lists images inside it, in time order. A document must keep its screenshots' paths
+  inside the work folder.
 - **Kinds.** `produces` names the kind of the output, so stages that read that kind can use it; the formats are in
   [docs/configuration.md](configuration.md#what-stages-read-and-write). Without it, the output is a `file`, which other
   `run` stages can read and which can be published. Media from a `run` stage has no subtitles and is deleted when the

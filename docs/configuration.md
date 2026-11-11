@@ -1,6 +1,6 @@
 # Configuration reference
 
-notepipe reads `config.toml` from `$XDG_CONFIG_HOME/notepipe/` when that variable is set, otherwise from
+notepipe reads `config.toml` from `$XDG_CONFIG_HOME/notepipe/` when that variable is set and not empty, otherwise from
 `%APPDATA%\notepipe\` on Windows and `~/.config/notepipe/` elsewhere. `notepipe config path` prints the location.
 `--config FILE` uses another file, and `--config -` reads the configuration from standard input; either may be TOML or
 JSON with the same structure.
@@ -28,16 +28,16 @@ apart from the source's title, author, duration and link, nothing else passes be
 source ─► download ─► media ─┬─► transcript ─► transcript.json ─┐
                              └─► screenshots ─► images/ ────────┴─► draft ─► draft.json
                                                                                  │
-                         note.md ◄─ markdown ◄─ summary.md ◄─ summary ◄─ proofread.json ◄─ proofread
+                     note.md ◄─ markdown ◄─┬─ summary.md ◄─ summary ◄─┬─ proofread.json ◄─ proofread
+                                           └──────────────────────────┘
 ```
 
 A stage's `publish` copies its output into the note folder, `<out>/<title>/`, or to standard output. Nothing reads a
 published copy back, so moving or renaming what you publish never changes what other stages read.
 
-The work folder is `work/<source>/` in notepipe's cache folder: `$XDG_CACHE_HOME/notepipe` when that variable is set,
-otherwise `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and `~/.cache/notepipe`
-elsewhere. `-v` prints it, and the
-`done` event of `--json` gives it as `work_dir`.
+The work folder is `work/<source>/` in notepipe's cache folder: `$XDG_CACHE_HOME/notepipe` when that variable is set and
+not empty, otherwise `~/Library/Caches/notepipe` on macOS, `%LOCALAPPDATA%\notepipe\cache` on Windows and
+`~/.cache/notepipe` elsewhere. `-v` prints it, and the `done` event of `--json` gives it as `work_dir`.
 
 ## Top level
 
@@ -160,10 +160,10 @@ Reads `media` and writes `images`: a screenshot each time the picture changes. A
 
 Reads a `transcript` and, optionally, `images`, and writes a `document`: each transcript line, whole, under the
 screenshot that was on screen at its midpoint, and the lines joined into paragraphs. A space goes where two lines meet,
-unless the characters on both sides belong to a script in the stage's list of those written without spaces: Chinese
+unless the characters on both sides belong to a script in notepipe's list of those written without spaces: Chinese
 characters, kana, Thai, Lao, Khmer and Burmese. The list is not complete, so another such script, Tibetan for example,
-gets a space at each join. Lines that carry different extra fields, such as a speaker added by a `run` stage, start a
-new paragraph. It has no settings.
+gets a space at each join. The transcript stage joins the lines of one subtitle cue by the same rule. Lines that carry
+different extra fields, such as a speaker added by a `run` stage, start a new paragraph. It has no settings.
 
 ### `rewrite`
 
@@ -198,9 +198,9 @@ sent as timed lines with the title and author, and Markdown as it is.
 
 ### Requests to models
 
-`rewrite` and `write` stages add instructions for the answer's format to the prompt and set `model`, `messages` and
-`stream` themselves; `request` cannot change those or set `response_format`. Nothing is sent by default for sampling or
-length limits.
+`rewrite` and `write` stages add instructions for the answer's format to the prompt and set `model` and `messages`
+themselves; `request` cannot change those or set `stream` or `response_format`. Nothing is sent by default for sampling
+or length limits.
 
 A request is tried at most three times. A failed connection, a `429` or `5xx` answer and an answer that is not in the
 expected format are tried again. Other client errors, and an answer cut off at the model's output limit or stopped by
@@ -251,29 +251,35 @@ output = "transcript.json"
 ## Publishing and the note folder
 
 When every stage has finished, notepipe writes the note folder, `<out>/<title>/`, with every file a stage publishes.
+The folder's name is the title made safe as a file name: characters that paths do not allow and runs of spaces become
+`-`, and a long title is cut short.
 A published document, or Markdown made from one, brings along the screenshots it shows, at the same path as in the
 work folder: `images/` with the default names. Markdown brings along the images it refers to by the path the document
 uses. Markdown that a `run` stage makes from `images` without a document brings none along; publish the images as
-well. The folder is built under a hidden name and renamed into place, so a reader never sees a half-written note and a
-failed run writes nothing.
+well. The folder is built under a hidden name and renamed into place, so a reader never sees a half-written note, and a
+run that fails before that writes nothing.
 
 A note folder is never changed after it is written. notepipe recognises a source's notes by `.notepipe.json` inside,
-which names the source by its contents. A rerun whose files are the same as the last ones it published leaves the note
-as it is, even if you edited, renamed or added to it, and says `Note unchanged`; if no folder in the output folder
-carries the source's `.notepipe.json`, the note is written again. A rerun with different results, for example after a
-prompt changed, writes a new folder next to the old one with a `-2`, `-3`, … suffix, as does a source whose title
-another folder already uses. A recording that was moved reuses all earlier work, but its new location changes its
-note, so it gets a new folder too. Delete folders you no longer want yourself.
+which names the source: a local file by its contents, a URL as it was given. A rerun whose files are the same as the
+last ones it published leaves the note as it is, even if you edited, renamed or added to it, and says `Note unchanged`;
+if no folder in the output folder carries the source's `.notepipe.json`, the note is written again. What was published
+is recorded in the work folder, so `--no-resume`, which clears that folder, writes the same results into a new folder
+too. A rerun with different results, for example after a prompt changed, writes a new folder next to the old one with a
+`-2`, `-3`, … suffix, as does a source whose title another folder already uses. A recording that was moved reuses all
+earlier work, but a published document holds the recording's location, so such a note changes and gets a new folder too.
+Delete folders you no longer want yourself.
 
 `publish = "-"` prints the output to standard output after the note folder is written; it cannot be combined with
-`--json`, which uses standard output for events. A run that publishes only to standard output writes no folder.
+`--json`, which uses standard output for events. A run that publishes only to standard output writes no folder. Printing
+comes last, so a run that fails while printing has already written its note.
 
 ## Order, speed and repeated runs
 
-Before any work starts, notepipe checks the whole configuration: every input is written by an earlier stage, each
-stage reads kinds it understands, names are unique, the keys of the providers in use are set, and something is
-published. The download stage runs first, since every stage can read the source's details from it; the others then
-start as soon as their inputs are ready, so the transcript and the screenshots are made at the same time.
+Before any work starts, notepipe checks the configuration: the settings of every stage, and for the stages in `pipeline`
+that every input is written by an earlier stage, each stage reads kinds it understands, names are unique, the keys of
+the providers in use are set, and something is published. The download stage runs first, since every stage can read the
+source's details from it; the others then start as soon as their inputs are ready, so the transcript and the screenshots
+are made at the same time.
 
 Every stage writes its output again on every run, from what it has done before. A download is reused while its
 `command` is unchanged. A transcript or screenshots are reused while their settings and the media they read are
@@ -294,12 +300,15 @@ Skipping a stage whose output another stage needs is an error before any work st
 |---|---|
 | the names in `api_key_env` | API keys of providers |
 | `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` | Configuration and cache locations |
+| `HOME`; on Windows also `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` | Where those locations are when the XDG variables are not set |
 | `RUST_LOG` | Log filter for `-v` diagnostics |
 
 ## Example
 
-Speech on a local engine, the AI stages on a local Ollama, glossary terms fixed by a script, a Word copy made with
-pandoc, and the Markdown also printed for the next command in a shell pipeline:
+Speech on a local engine, the AI stages on a local Ollama, glossary terms fixed by a script, a Word copy of the note's
+text made with pandoc, and the Markdown also printed for the next command in a shell pipeline. The Word copy has no
+screenshots: a `run` program starts in the folder notepipe was started in, where pandoc does not find the images that
+`note.md` names relative to the work folder.
 
 ```toml
 pipeline = ["download", "transcript", "screenshots", "draft", "terms", "proofread", "markdown", "docx"]
