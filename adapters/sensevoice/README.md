@@ -28,6 +28,7 @@ concurrency = 1
 
 [stages.transcript.speech]
 provider = "sensevoice"
+model = ""   # the adapter serves one model and refuses another name, such as the default file's whisper-1
 ```
 
 | Option | Default | Meaning |

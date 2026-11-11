@@ -27,6 +27,7 @@ concurrency = 1
 
 [stages.transcript.speech]
 provider = "speech-swift"
+model = ""   # the adapter serves one model and refuses another name, such as the default file's whisper-1
 ```
 
 `--model` selects `qwen3-1.7b` (default), `qwen3-0.6b` or `whisper`. The first run downloads the model.
