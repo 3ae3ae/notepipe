@@ -28,7 +28,9 @@ everything else. Any piece that fits these interfaces can replace another withou
 that, what the note is called and where it lives are yours.
 
 **Stay neutral.** The engine prefers no vendor, website, language, region or notation: nothing in its code depends on
-one, and every script and notation passes through it unchanged. It contacts only what the configuration names.
+one, and every script and notation passes through it unchanged. Writing systems are known in one place only: the
+document stage, which joins lines into paragraphs, holds a list of the scripts written without spaces between words.
+The engine contacts only what the configuration names.
 
 **Produce plain, durable output.** A note is a folder of Markdown, images and JSON that any editor, script or note app
 can read. notepipe never leaves you with a half-written note and never discards a good one for a failed run.
@@ -54,7 +56,8 @@ source ─► download ─► media ─┬─► transcript ─► transcript.js
 3. **Screenshots.** Frames are sampled with ffmpeg and compared; a screenshot is kept when the picture changes and then
    holds still. Audio-only input has none. This runs at the same time as the transcript.
 4. **Document.** Each transcript line goes, whole, under the screenshot on screen at its midpoint, and the lines are
-   joined into paragraphs, with word spacing that follows each writing system.
+   joined into paragraphs, with a space where two lines meet except in the scripts the stage knows to be written
+   without spaces.
 5. **Processing.** `rewrite` stages send a document's paragraphs, with their prompt, to their provider and replace
    them with the answers; `write` stages send a whole transcript, document or Markdown file and keep the Markdown
    answer. `run` stages pass files through
@@ -72,9 +75,9 @@ notepipe meets the outside world in a few places, and each has one shape:
   (`type`), what it reads (`input`), what it writes (`output`) and what it publishes (`publish`). The core checks
   that every input is written by an earlier stage, of a kind the stage reads, before any work starts.
 - **Files.** The kinds that pass between stages are a few documented formats: media, transcript, images, document and
-  Markdown. Apart from the source's details, which come from the download stage, stages share nothing else. A `run`
-  stage can write every kind, so a program can take the place of any built-in stage, and what a stage makes depends
-  only on its settings, the files it read and those details.
+  Markdown, and `file` for anything else that one `run` stage writes for another. Apart from the source's details, which
+  come from the download stage, stages share nothing else. A `run` stage can write every kind, so a program can take the
+  place of any built-in stage, and what a stage makes depends only on its settings, the files it read and those details.
 - **Providers.** Every connection, whether a cloud API, a server on your network or a program that notepipe starts, is a
   provider, defined once with its address and the variable that holds its key. Stages name the provider they use and
   hold only what they ask of it, such as the model and the prompt. A provider does not know what it is used for.
@@ -112,12 +115,14 @@ live instead:
 - **Notes are never modified.** A note folder is built completely before it appears, and is never changed afterwards. A
   rerun with unchanged results leaves it as it is, with your edits; a changed result goes into a new folder next to it.
   A run that fails or is cancelled writes nothing.
-- **Finished work is reused.** Downloads, screenshots, transcripts and successful answers from providers are cached per
-  source and keyed by the settings and the input they were made from: media by its contents, and each speech segment
-  or model request by what is sent. Changing a `rewrite` or `write` prompt does not repeat speech recognition, an
-  interrupted run does not repeat finished requests, and a rerun with nothing changed repeats no paid or slow work and
-  leaves the note as it is. Failed responses are never cached. `run` stages, whose dependencies notepipe cannot see,
-  run every time, and what they write is recognised by its contents.
+- **Finished work is reused.** Screenshots, transcripts and successful answers from providers are cached per source
+  and keyed by the settings and the input they were made from: media by its contents, and each speech segment or model
+  request by what is sent. A download's details and subtitles are kept as well; its media is deleted when the run ends
+  and fetched again only when a stage has to read it. Changing a `rewrite` or `write` prompt does not repeat speech
+  recognition, an interrupted run does not repeat finished requests, and a rerun with nothing changed sends no request
+  again and leaves the note as it is. Failed responses are never cached. `run` stages, whose dependencies notepipe
+  cannot see, run every time, so one that reads downloaded media downloads it again on every run; what they write is
+  recognised by its contents.
 - **Cancellation is clean.** Ctrl-C (and SIGTERM on Unix) stops the run and every program it started. A descendant
   that starts a session of its own is not stopped.
 - **Data goes only where the configuration sends it.** notepipe contacts the providers and runs the programs that the
