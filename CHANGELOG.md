@@ -10,6 +10,12 @@ All notable changes to notepipe are documented in this file. The format is based
 
 - README: the second "Why notepipe" heading no longer runs into the paragraph below it, and the pipeline diagram shows
   that the `markdown` stage also reads `proofread.json`.
+- README: `notepipe talk.mp4 | glow` printed nothing with the default configuration. The README now shows a command
+  that prints the note's Markdown for one run without editing `config.toml`, and says that `notepipe talk.mp4 | glow`
+  needs `publish = "-"` on the `markdown` stage.
+- docs/cli.md says what goes to standard output and standard error, that standard input is read only for
+  `--config -`, that `--config` replaces the whole configuration, that `--json` reports a command line that cannot be
+  parsed as an `error` event, and what `notepipe doctor` exits with.
 
 ## [0.6.2] - 2026-11-11
 

@@ -78,12 +78,16 @@ with your own layout, or call `pandoc` to publish a `.docx` file alongside `note
 ### 3. Composes with standard Unix tools
 Inside the pipeline, a `type = "run"` stage turns any command-line tool into a pipeline step, piping a file in on
 `stdin` and capturing `stdout` (or passing paths via `{input}` and `{output}`) without invoking a shell. At the end of
-the pipeline, setting `publish = "-"` on a stage streams its output to standard output so `notepipe` drops straight into
-shell pipelines:
+the pipeline, setting `publish = "-"` on a stage prints its output to standard output, while progress and messages go
+to standard error, so `notepipe` drops straight into shell pipelines. The configuration itself can arrive on standard
+input, so one run can print the note's Markdown without editing your `config.toml` (`note.json` and `images/` still go
+into the note folder):
 
 ```sh
-notepipe talk.mp4 | glow
+sed 's/^publish = "note.md"/publish = "-"/' "$(notepipe config path)" | notepipe talk.mp4 --config - | glow
 ```
+
+With `publish = "-"` on the `markdown` stage in `config.toml` itself, `notepipe talk.mp4 | glow` is enough.
 
 ### 4. Both a CLI tool and an embeddable engine
 The CLI is also a strict programmatic interface. Applications and scripts can pass a complete TOML or JSON pipeline on

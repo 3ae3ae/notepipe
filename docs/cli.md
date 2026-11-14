@@ -13,20 +13,39 @@ notepipe "$SOURCE" -o "$OUT" --config - --json < config.toml
   `command`).
 - `--config FILE` reads the configuration from `FILE` instead of the user's config file; `--config -` reads it from
   standard input. The content is TOML, or JSON when its first non-space character is `{`. It has the same structure as
-  `config.toml` (see `notepipe config init`). Command-line options still override it.
+  `config.toml` (see `notepipe config init`) and is the whole configuration: the user's file is not read, only the
+  stages it defines exist, and a setting it leaves out takes its default where it has one. Command-line options still
+  override it.
 - `--subtitle FILE` supplies an SRT or VTT transcript: it becomes the transcript stage's only source. An unreadable or
   empty file is an error.
 - `--skip a,b` leaves those stages out of the pipeline for this run.
-- notepipe never prompts.
 
 API keys come from the environment variables that providers name in `api_key_env`; a program that starts notepipe
 passes them in the child's environment. The configuration is checked, and the key of every provider that a running
 stage may use is looked up, before any work starts.
 
+## Standard streams
+
+notepipe never prompts. It reads standard input only for `--config -`; `SOURCE` and `--subtitle` are always paths, so
+`-` there names a file called `-`.
+
+| Stream | Carries |
+|---|---|
+| standard output | nothing by default; with `--json`, the [events](#events); with a stage that publishes to `-`, that stage's output |
+| standard error | messages for people: each stage as it starts, `Notes ready: PATH` or `Note unchanged: PATH`, warnings and errors (`-q` keeps only warnings and errors). With `--json`, logs and errors are events instead; warnings still appear here, and a finished run's are also in `done` |
+
+A stage that publishes to `-` prints its output on standard output after the note folder is written, so a failure to
+print leaves the new note in place. It cannot be combined with `--json`. For example, to print the Markdown that the
+default configuration would save as `note.md`:
+
+```sh
+sed 's/^publish = "note.md"/publish = "-"/' "$(notepipe config path)" | notepipe "$SOURCE" --config -
+```
+
 ## Events
 
-With `--json`, standard output carries one JSON object per line; `--help` and `--version` still print text. Every
-object has a `type`:
+With `--json`, standard output carries one JSON object per line; `--help` and `--version` still print text. A command
+line that cannot be parsed is reported as an `error` event too, with exit status 2. Every object has a `type`:
 
 | `type` | Fields | Meaning |
 |---|---|---|
@@ -49,8 +68,11 @@ each publishing stage to the path it published, or to `"-"`; `work_dir` is the s
 output is; `warnings` is the final list of warnings. The `error` event carries, in `warnings`, the warnings collected
 before the failure.
 
-A stage that publishes to `-` prints its output on standard output after the note folder is written, so a failure to
-print leaves the new note in place. It cannot be combined with `--json`.
+To run notepipe and take the note folder from the `done` event:
+
+```sh
+notepipe "$SOURCE" --json | jq -r 'select(.type == "done") | .note_dir'
+```
 
 ## Exit status
 
@@ -65,6 +87,8 @@ On the first signal notepipe stops its stages and the process groups of the prog
 starts its own session is outside them), abandons requests in flight (their answers
 are never cached), removes the media in the work folder, and exits. A second signal exits immediately after
 killing those programs, and the next run does the cleanup.
+
+`notepipe doctor` prints its checks on standard output for people and exits with 1 when one fails, 0 otherwise.
 
 ## Output
 
