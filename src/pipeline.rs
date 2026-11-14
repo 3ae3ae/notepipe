@@ -264,8 +264,10 @@ async fn run_inner(
         std::io::stdout().flush()?;
     }
     let warnings = runtime::lock_recover(&warnings);
-    for warning in warnings.iter() {
-        eprintln!("Warning: {warning}");
+    if !progress::is_json() {
+        for warning in warnings.iter() {
+            eprintln!("Warning: {warning}");
+        }
     }
     progress::done(
         &work,

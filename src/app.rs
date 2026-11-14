@@ -197,10 +197,15 @@ fn run(cli: Cli, no_args: bool, running: &std::sync::atomic::AtomicBool) -> anyh
                     settings::load_from(cli.opts.config.as_deref())?
                 }
                 Err(error) => {
-                    eprintln!(
+                    let message = format!(
                         "Could not create {}: {error}. Continuing with the default settings.",
                         settings::config_path().display()
                     );
+                    if progress::is_json() {
+                        progress::emit(progress::log_event("warn", &message));
+                    } else {
+                        eprintln!("{message}");
+                    }
                     settings::parse(settings::template())?
                 }
             };

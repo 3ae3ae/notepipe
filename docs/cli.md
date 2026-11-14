@@ -32,7 +32,7 @@ notepipe never prompts. It reads standard input only for `--config -`; `SOURCE` 
 | Stream | Carries |
 |---|---|
 | standard output | nothing by default; with `--json`, the [events](#events); with a stage that publishes to `-`, that stage's output |
-| standard error | messages for people: each stage as it starts, `Notes ready: PATH` or `Note unchanged: PATH`, warnings and errors (`-q` keeps only warnings and errors). With `--json`, logs and errors are events instead; warnings still appear here, and a finished run's are also in `done` |
+| standard error | messages for people: each stage as it starts, `Notes ready: PATH` or `Note unchanged: PATH`, warnings and errors (`-q` keeps only warnings and errors). With `--json`, these are events instead |
 
 A stage that publishes to `-` prints its output on standard output after the note folder is written, so a failure to
 print leaves the new note in place. It cannot be combined with `--json`. For example, to print the Markdown that the
