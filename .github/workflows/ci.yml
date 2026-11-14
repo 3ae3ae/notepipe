@@ -127,6 +127,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test
+      - name: MLX library beside the executable
+        run: test -f target/debug/mlx.metallib
 
   python-adapters:
     needs: changes

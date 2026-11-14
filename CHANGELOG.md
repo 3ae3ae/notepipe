@@ -21,6 +21,9 @@ All notable changes to notepipe are documented in this file. The format is based
   events; they were also printed to standard error.
 - `--help` says that `-q` keeps warnings as well as errors, and no longer suggests that notepipe prompts without
   `--json`.
+- The speech-swift adapter built from source with Cargo 1.100 or later put `mlx.metallib` in Cargo's build folder
+  instead of next to the executable, so the adapter stopped at startup; it now finds the executable's folder with
+  either folder layout. The published `notepipe-asr-speech-swift` 0.1.3 is not affected.
 - README: the second "Why notepipe" heading no longer runs into the paragraph below it, and the pipeline diagram shows
   that the `markdown` stage also reads `proofread.json`.
 - README: `notepipe talk.mp4 | glow` printed nothing with the default configuration. The README now shows a command

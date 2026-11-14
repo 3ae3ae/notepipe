@@ -173,8 +173,13 @@ fn main() {
             "Swift build produced no MLX metallib. Install Xcode and run xcodebuild -downloadComponent MetalToolchain, then rebuild",
         )
     };
-    // OUT_DIR = <target>/<profile>/build/<package>-<hash>/out.
-    let exe_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("../../..");
+    // OUT_DIR is <profile>/build/<package>-<hash>/out, or <profile>/build/<package>/<hash>/out from Cargo 1.100.
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let exe_dir = out_dir
+        .ancestors()
+        .find(|dir| dir.file_name() == Some(std::ffi::OsStr::new("build")))
+        .and_then(Path::parent)
+        .expect("OUT_DIR is not inside Cargo's build folder");
     std::fs::copy(metallib, exe_dir.join("mlx.metallib"))
         .expect("Failed to copy mlx.metallib next to the built speech-swift adapter");
     // Compatibility hooks for Swift 5 mode packages and the clang runtime (___isPlatformVersionAtLeast and others).
