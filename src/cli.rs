@@ -28,6 +28,12 @@ Settings:
   notepipe config show     Show the settings in effect
   notepipe doctor          Check ffmpeg, adapters and settings
 
+Programs:
+  --json prints events as JSON lines on standard output, and --config - reads the settings, TOML or JSON,
+  from standard input. A stage with publish = "-" prints its output on standard output; messages go to
+  standard error. Exit status: 0 note written, 1 run failed, 2 invalid command line, 130 cancelled.
+  Protocol: https://github.com/3ae3ae/notepipe/blob/main/docs/cli.md
+
 Documentation: https://github.com/3ae3ae/notepipe"#,
         path.display()
     )
@@ -127,11 +133,11 @@ pub struct RunOpts {
     #[arg(short, long, action = clap::ArgAction::Count, help_heading = "Terminal")]
     pub verbose: u8,
 
-    /// Show errors only
+    /// Show only warnings and errors
     #[arg(short, long, help_heading = "Terminal")]
     pub quiet: bool,
 
-    /// Print progress as JSON lines for other programs, and never prompt
+    /// Print progress as JSON lines for other programs
     #[arg(long, help_heading = "Terminal")]
     pub json: bool,
 }
