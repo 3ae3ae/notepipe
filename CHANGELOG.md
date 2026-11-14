@@ -6,6 +6,11 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Fixed
+
+- README: the second "Why notepipe" heading no longer runs into the paragraph below it, and the pipeline diagram shows
+  that the `markdown` stage also reads `proofread.json`.
+
 ## [0.6.2] - 2026-11-11
 
 ### Added

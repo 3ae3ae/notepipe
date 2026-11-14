@@ -60,7 +60,8 @@ what it writes (`output`) and whether its output is copied into the final note (
 source ─► download ─► media ─┬─► transcript ─► transcript.json ─┐
                              └─► screenshots ─► images/ ────────┴─► draft ─► draft.json
                                                                                  │
-                         note.md ◄─ markdown ◄─ summary.md ◄─ summary ◄─ proofread.json ◄─ proofread
+                     note.md ◄─ markdown ◄─┬─ summary.md ◄─ summary ◄─┬─ proofread.json ◄─ proofread
+                                           └──────────────────────────┘
 ```
 
 Every stage's output lives in the recording's work directory (`notepipe -v` prints its path). You can open
@@ -68,10 +69,11 @@ Every stage's output lives in the recording's work directory (`notepipe -v` prin
 model changed. Independent stages — such as `transcript` and `screenshots` — run at the same time, and the entire graph
 is type-checked before any media or network work begins.
 
-### 2. Almost nothing is hardcoded Even `proofread` and `summary` are not built-in features: they are a `rewrite` and a
-`write` stage in your `config.toml` with plain-text prompts you can edit, duplicate or delete. You can rewire the graph
-to translate paragraphs, generate study questions, run a Python or `jq` script between stages, replace the default
-Markdown assembly with your own layout, or call `pandoc` to publish a `.docx` file alongside `note.md`.
+### 2. Almost nothing is hardcoded
+Even `proofread` and `summary` are not built-in features: they are a `rewrite` and a `write` stage in your
+`config.toml` with plain-text prompts you can edit, duplicate or delete. You can rewire the graph to translate
+paragraphs, generate study questions, run a Python or `jq` script between stages, replace the default Markdown assembly
+with your own layout, or call `pandoc` to publish a `.docx` file alongside `note.md`.
 
 ### 3. Composes with standard Unix tools
 Inside the pipeline, a `type = "run"` stage turns any command-line tool into a pipeline step, piping a file in on
