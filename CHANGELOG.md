@@ -10,11 +10,15 @@ All notable changes to notepipe are documented in this file. The format is based
 
 - `notepipe config show` starts with `# Configuration file: PATH`, a TOML comment, so its whole output is TOML and can
   be passed to `--config -`.
+- `--help` has a "Programs" section: what `--json`, `--config -` and `publish = "-"` do with the standard streams, the
+  exit statuses, and a link to docs/cli.md.
 
 ### Fixed
 
 - With `--json`, a finished run's warnings, and a configuration file that cannot be created, are reported only as
   events; they were also printed to standard error.
+- `--help` says that `-q` keeps warnings as well as errors, and no longer suggests that notepipe prompts without
+  `--json`.
 - README: the second "Why notepipe" heading no longer runs into the paragraph below it, and the pipeline diagram shows
   that the `markdown` stage also reads `proofread.json`.
 - README: `notepipe talk.mp4 | glow` printed nothing with the default configuration. The README now shows a command
