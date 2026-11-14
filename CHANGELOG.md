@@ -8,6 +8,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ### Fixed
 
+- With `--json`, a finished run's warnings, and a configuration file that cannot be created, are reported only as
+  events; they were also printed to standard error.
 - README: the second "Why notepipe" heading no longer runs into the paragraph below it, and the pipeline diagram shows
   that the `markdown` stage also reads `proofread.json`.
 - README: `notepipe talk.mp4 | glow` printed nothing with the default configuration. The README now shows a command

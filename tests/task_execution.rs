@@ -2549,7 +2549,7 @@ fn llm_changes_reuse_download_asr_and_frames_and_rebuild_named_outputs() {
                     .contains("Could not remove cached media")
             })
     );
-    assert!(String::from_utf8_lossy(&output.stderr).contains("Could not remove cached media"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("Could not remove cached media"));
     assert!(
         Path::new(completed["note_dir"].as_str().unwrap())
             .join("images/0001.jpg")
@@ -3795,6 +3795,11 @@ fn lifecycle_unknown_duration_is_null_and_warns_on_success_and_failure() {
                 .unwrap()
                 .starts_with("Could not read the duration of lecture.mp4: ")
         }));
+        assert!(
+            output.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let work = std::fs::read_dir(root.path().join("cache/notepipe/work"))
             .unwrap()
             .map(|e| e.unwrap().path())
