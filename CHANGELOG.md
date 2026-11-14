@@ -6,6 +6,8 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-14
+
 ### Changed
 
 - `notepipe config show` starts with `# Configuration file: PATH`, a TOML comment, so its whole output is TOML and can
