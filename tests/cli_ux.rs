@@ -146,8 +146,8 @@ fn config_path_init_and_show_share_the_literal_template() {
     let shown = cli.run(&["config", "show"]);
     assert!(shown.status.success(), "{}", stderr(&shown));
     let text = stdout(&shown);
-    assert!(text.starts_with(&format!("Configuration file: {}\n", path.display())));
-    let parsed: toml::Value = toml::from_str(text.split_once('\n').unwrap().1).unwrap();
+    assert!(text.starts_with(&format!("# Configuration file: {}\n", path.display())));
+    let parsed: toml::Value = toml::from_str(&text).unwrap();
     assert_eq!(
         parsed["stages"]["screenshots"]["settle"].as_float(),
         Some(0.8)
