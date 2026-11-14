@@ -659,7 +659,7 @@ pub fn template() -> &'static str {
 }
 pub fn print_effective(cfg: &ConfigFile) -> Result<()> {
     cfg.validate()?;
-    println!("Configuration file: {}", config_path().display());
+    println!("# Configuration file: {}", config_path().display());
     print!("{}", toml::to_string_pretty(cfg)?);
     Ok(())
 }

@@ -6,6 +6,11 @@ All notable changes to notepipe are documented in this file. The format is based
 
 ## [Unreleased]
 
+### Changed
+
+- `notepipe config show` starts with `# Configuration file: PATH`, a TOML comment, so its whole output is TOML and can
+  be passed to `--config -`.
+
 ### Fixed
 
 - With `--json`, a finished run's warnings, and a configuration file that cannot be created, are reported only as
